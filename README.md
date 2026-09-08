@@ -64,11 +64,37 @@ Windows 桌面应用，Tauri 2 + React + Rust，MIT。
   自己占着删不掉（Windows 允许改名正在运行的 exe，不允许删除），
   所以清理放在**下一次**升级的开头。
 
+### 要锁哪些文件
+
+**每一个完整可执行的 `claude.exe` 副本都必须锁上。漏掉一个，那一个就是现成的绕过入口。**
+
+2026-09-08 实测本机布局（比早期档案记的多两处，加路径时先实测别照抄）：
+
+| 路径 | 锁? |
+|---|---|
+| `~\.local\bin\claude.exe` | 锁 |
+| `%APPDATA%\Claude\claude-code\<版本>\claude.exe` | 锁，**每个版本都锁** |
+| `%LOCALAPPDATA%\Microsoft\WinGet\Packages\Anthropic.ClaudeCode*\claude.exe` | 锁 |
+| `%LOCALAPPDATA%\AnthropicClaude\claude.exe` | 锁（存根，本机当前没有） |
+| `%LOCALAPPDATA%\AnthropicClaude\app-<版本>\claude.exe` | **不锁** |
+
+本机实测这四类里有 **4 个**实际存在的可执行副本。早期只覆盖 `.local\bin`
+一处时，另外三个是完全敞开的。
+
 ### 已知缺口
 
 `app-<版本>\claude.exe` 不能加 Deny ACE（一加，桌面端开新窗口就崩）。
 刻意进那个目录直接双击能绕开**启动**门禁，20 秒内会被看门狗收掉——
 前提是当时有看门狗在跑。要彻底堵死需要 AppLocker / WDAC，不在本项目范围。
+
+### 解锁不能用 REVOKE_ACCESS
+
+实测 `SetEntriesInAclW` + `REVOKE_ACCESS` 对 **deny** 条目会**返回成功却什么都不做**
+（`gate/acl.rs` 的往返测试就是钉这条的）。照着写的话，锁上之后再也解不开，
+面板会彻底打不开 Claude。
+
+现在的做法是自己重建 DACL：取显式条目（`GetExplicitEntriesFromAclW` 不返回继承来的）、
+滤掉我们那条、用 `oldacl = None` 从零建。没设 PROTECTED 标志，所以继承权限会自动回来。
 
 ---
 

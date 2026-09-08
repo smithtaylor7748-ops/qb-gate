@@ -103,6 +103,22 @@ pub fn find_official_claude() -> Result<PathBuf> {
     if let Some(h) = dirs::home_dir() {
         candidates.push(h.join(".local").join("bin").join("claude.exe"));
     }
+    // 新布局：%APPDATA%\Claude\claude-code\<版本>\claude.exe。
+    // 版本目录名按字符串倒序，优先拿看起来最新的那个 —— 这里只是「挑一个来跑」，
+    // 上锁那边（targets.rs）是**每一个版本都锁**，两者目的不同，别混。
+    if let Some(r) = dirs::config_dir() {
+        let cc = r.join("Claude").join("claude-code");
+        if let Ok(rd) = std::fs::read_dir(&cc) {
+            let mut vers: Vec<PathBuf> = rd
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir())
+                .map(|e| e.path())
+                .collect();
+            vers.sort();
+            vers.reverse();
+            candidates.extend(vers.into_iter().map(|v| v.join("claude.exe")));
+        }
+    }
     if let Some(l) = dirs::data_local_dir() {
         candidates.push(l.join("Programs").join("Claude").join("claude.exe"));
     }
@@ -189,12 +205,12 @@ pub fn status() -> PluginStatus {
     checks.push(DependencyCheck::new(
         format!("桥接端口 {}", cfg.bridge_port),
         true,
-        if bridge_up { "在监听" } else { "空闲" }.into(),
+        if bridge_up { "在监听" } else { "空闲" },
     ));
     checks.push(DependencyCheck::new(
         format!("酒馆端口 {}", cfg.st_port),
         true,
-        if st_up { "在监听" } else { "空闲" }.into(),
+        if st_up { "在监听" } else { "空闲" },
     ));
 
     let deps_ok = checks.iter().take(4).all(|c| c.ok);

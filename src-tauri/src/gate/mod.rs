@@ -78,6 +78,11 @@ pub fn lock_all() -> Result<usize> {
         let mut n = 0;
         let mut first_err = None;
         for p in targets::lockable() {
+            // 双保险：即使 lockable() 哪天回归漏进了 app-* 副本，也不给它上锁 ——
+            // 一加 Deny，桌面端开新窗口就崩。
+            if targets::is_desktop_runtime_copy(&p) {
+                continue;
+            }
             match acl::lock(&p, sid) {
                 Ok(()) => n += 1,
                 Err(e) => {
