@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "官方安装包的下载地址与 SHA-256。仓库不分发安装包本体，只钉地址和哈希。",
+    "sha256 为空时程序会拒绝安装 —— 这是有意的，不要用占位值填满它。",
+    "填法：先手动从官方地址下载一次，核对无误后运行",
+    "  node scripts/pin-hash.mjs <id> <本地文件路径>",
+    "把实际哈希写回本文件，再连同来源说明一起提交。"
+  ],
+  "installers": [
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "url": "https://claude.ai/install.ps1",
+      "sha256": "",
+      "filename": "claude-code-install.ps1"
+    },
+    {
+      "id": "claude-desktop",
+      "name": "Claude 桌面端",
+      "url": "https://claude.ai/download/windows",
+      "sha256": "",
+      "filename": "Claude-Setup.exe"
+    },
+    {
+      "id": "codex",
+      "name": "Codex CLI",
+      "url": "https://github.com/openai/codex/releases/latest",
+      "sha256": "",
+      "filename": "codex-setup.exe"
+    }
+  ]
+}

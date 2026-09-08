@@ -1,0 +1,13 @@
+node_modules
+dist
+.DS_Store
+*.local
+
+src-tauri/target
+src-tauri/gen
+
+# 运行期状态，绝不入库
+allowlist.txt
+ip-gate.log
+*.bak
+installers-cache/
