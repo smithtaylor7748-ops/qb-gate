@@ -1,0 +1,72 @@
+name: Build Windows installer
+
+# 打 tag 时出安装包并挂到 Release；也可以手动触发只跑构建看看能不能过。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Rust 依赖编译很慢，缓存住。key 跟着 Cargo.lock 走。
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Typecheck frontend
+        run: npx tsc --noEmit
+
+      # 单测全部打桩：不联网、不动真 ACL、不碰真进程。
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      - name: Build installer
+        run: npm run tauri build
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-installers | Out-Null
+          Get-ChildItem -Recurse src-tauri/target/release/bundle `
+            -Include *.exe, *.msi |
+            ForEach-Object { Copy-Item $_.FullName dist-installers/ }
+          Get-ChildItem dist-installers
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: claude-gate-windows
+          path: dist-installers/*
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-installers/*
+          body: |
+            Windows 安装包。
+
+            首次运行请注意：
+            - 「IP 锁」会给 `claude.exe` 加 Deny ExecuteFile ACE，
+              加上之后**双击 exe 会被系统拒绝**，这是设计如此，
+              登录与启动都要走面板里的受控入口。
+            - `installers.lock.json` 里的 SHA-256 若为空，安装按钮会拒绝下载 ——
+              这是有意的，需要你自己钉定哈希，见 README。

@@ -6,6 +6,8 @@ pub mod accounts;
 pub mod error;
 pub mod gate;
 pub mod install;
+pub mod killswitch;
+pub mod plugins;
 pub mod probe;
 pub mod progress;
 pub mod relay;
@@ -249,6 +251,114 @@ fn progress_set(
     progress::set(&id, state, risk, detail)
 }
 
+// ------------------------------------------------------------ 升级
+
+#[tauri::command]
+async fn upgrade_plan(channel: install::upgrade::Channel) -> install::upgrade::UpgradePlan {
+    install::upgrade::plan(channel).await
+}
+
+#[tauri::command]
+async fn upgrade_execute(
+    channel: install::upgrade::Channel,
+    force: bool,
+) -> Result<String> {
+    install::upgrade::execute(channel, force).await
+}
+
+// ------------------------------------------------------------ 一键关闭
+
+/// 只看不动，把会被收的进程列给用户确认。
+#[tauri::command]
+async fn killswitch_preview() -> killswitch::KillReport {
+    killswitch::preview().await
+}
+
+#[tauri::command]
+async fn killswitch_execute() -> Result<killswitch::KillReport> {
+    killswitch::execute().await
+}
+
+// ------------------------------------------------------------ 插件
+
+#[tauri::command]
+fn plugin_list() -> Vec<plugins::PluginStatus> {
+    vec![plugins::sillytavern::status()]
+}
+
+/// 启动酒馆：先过 IP 门禁，再拉起桥接与酒馆，最后挂上看门狗。
+///
+/// 门禁不过就一个进程都不起 —— 这是接管启动链之后仍要守住的那条线。
+#[tauri::command]
+async fn plugin_start(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<String> {
+    gate::open_authorized("sillytavern", &state.gate).await?;
+
+    let url = match plugins::sillytavern::start().await {
+        Ok(u) => u,
+        Err(e) => {
+            // 起失败就把租约还回去，不能让门开着。
+            let _ = gate::release_lease(&state.gate);
+            return Err(e);
+        }
+    };
+
+    // 桥接跑起来之后由 ClaudeGate 的看门狗接管，不再起 PowerShell 的 WatchBridge。
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    *state.watchdog_stop.lock().unwrap() = Some(tx);
+    let gs = state.gate.clone();
+    tauri::async_runtime::spawn(async move {
+        gate::run_watchdog(gate::watchdog::WatchMode::Cli, gs, rx).await;
+    });
+    let _ = app;
+
+    Ok(url)
+}
+
+#[tauri::command]
+async fn plugin_stop(state: tauri::State<'_, AppState>) -> Result<Vec<String>> {
+    let done = plugins::sillytavern::stop().await?;
+    if let Some(tx) = state.watchdog_stop.lock().unwrap().take() {
+        let _ = tx.send(true);
+    }
+    gate::release_lease(&state.gate)?;
+    Ok(done)
+}
+
+#[tauri::command]
+fn tavern_config() -> plugins::sillytavern::TavernConfig {
+    plugins::sillytavern::load_config()
+}
+
+#[tauri::command]
+fn tavern_config_save(cfg: plugins::sillytavern::TavernConfig) -> Result<()> {
+    plugins::sillytavern::save_config(&cfg)
+}
+
+// ------------------------------------------------------------ 酒馆资产
+
+#[tauri::command]
+fn tavern_assets() -> Vec<plugins::tavern_assets::CategoryListing> {
+    plugins::tavern_assets::list_all()
+}
+
+#[tauri::command]
+fn tavern_backup() -> Result<plugins::tavern_assets::BackupEntry> {
+    plugins::tavern_assets::backup()
+}
+
+#[tauri::command]
+fn tavern_backups() -> Vec<plugins::tavern_assets::BackupEntry> {
+    plugins::tavern_assets::list_backups()
+}
+
+#[tauri::command]
+fn tavern_restore(backup_id: String) -> Result<String> {
+    plugins::tavern_assets::restore(&backup_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -283,6 +393,19 @@ pub fn run() {
             tz_restore,
             progress_load,
             progress_set,
+            upgrade_plan,
+            upgrade_execute,
+            killswitch_preview,
+            killswitch_execute,
+            plugin_list,
+            plugin_start,
+            plugin_stop,
+            tavern_config,
+            tavern_config_save,
+            tavern_assets,
+            tavern_backup,
+            tavern_backups,
+            tavern_restore,
         ])
         .setup(|app| {
             // 启动时先把锁重建一遍。等价于现有实现的 -Mode Check：

@@ -126,6 +126,86 @@ export interface Installer {
   filename: string;
 }
 
+export type PluginState = 'missing' | 'ready' | 'running' | 'broken';
+
+export interface DependencyCheck {
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface PluginStatus {
+  id: string;
+  name: string;
+  state: PluginState;
+  detail: string;
+  checks: DependencyCheck[];
+}
+
+export interface TavernConfig {
+  bridge_root: string;
+  sillytavern_root: string;
+  st_launcher: string;
+  bridge_port: number;
+  st_port: number;
+}
+
+export interface AssetItem {
+  name: string;
+  path: string;
+  size: number;
+  modified?: string | null;
+  is_dir: boolean;
+}
+
+export interface CategoryListing {
+  id: string;
+  label: string;
+  dir: string;
+  exists: boolean;
+  items: AssetItem[];
+}
+
+export interface BackupEntry {
+  id: string;
+  path: string;
+  created: string;
+  size: number;
+}
+
+export type Channel = 'latest' | 'stable';
+
+export type UpgradeAction =
+  | 'fresh_install'
+  | 'upgrade'
+  | 'up_to_date'
+  | 'would_downgrade'
+  | 'unknown';
+
+export interface UpgradePlan {
+  installed?: string | null;
+  available?: string | null;
+  action: UpgradeAction;
+  detail: string;
+}
+
+export type Evidence = 'AnthropicSigned' | 'BridgeAndDataDir';
+
+export interface KillTarget {
+  pid: number;
+  name: string;
+  path?: string | null;
+  evidence: Evidence;
+}
+
+export interface KillReport {
+  targets: KillTarget[];
+  killed: number[];
+  failed: Array<[number, string]>;
+  relocked: number;
+  spared: string[];
+}
+
 // ------------------------------------------------------------------ 调用
 
 /** 统一把 Rust 侧的错误字符串抛成 Error，页面上只做 try/catch。 */
@@ -183,4 +263,26 @@ export const api = {
   progressLoad: () => call<Progress>('progress_load'),
   progressSet: (id: string, state: StepState, risk: Risk, detail: string) =>
     call<Progress>('progress_set', { id, state, risk, detail }),
+
+  // 升级
+  upgradePlan: (channel: Channel = 'latest') => call<UpgradePlan>('upgrade_plan', { channel }),
+  upgradeExecute: (channel: Channel = 'latest', force = false) =>
+    call<string>('upgrade_execute', { channel, force }),
+
+  // 一键关闭
+  killswitchPreview: () => call<KillReport>('killswitch_preview'),
+  killswitchExecute: () => call<KillReport>('killswitch_execute'),
+
+  // 插件
+  pluginList: () => call<PluginStatus[]>('plugin_list'),
+  pluginStart: () => call<string>('plugin_start'),
+  pluginStop: () => call<string[]>('plugin_stop'),
+  tavernConfig: () => call<TavernConfig>('tavern_config'),
+  tavernConfigSave: (cfg: TavernConfig) => call<void>('tavern_config_save', { cfg }),
+
+  // 酒馆资产
+  tavernAssets: () => call<CategoryListing[]>('tavern_assets'),
+  tavernBackup: () => call<BackupEntry>('tavern_backup'),
+  tavernBackups: () => call<BackupEntry[]>('tavern_backups'),
+  tavernRestore: (backupId: string) => call<string>('tavern_restore', { backupId }),
 };

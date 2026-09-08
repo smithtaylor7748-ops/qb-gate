@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type Risk, type SoftwareReport } from '../lib/api';
+import { api, type Channel, type Risk, type SoftwareReport, type UpgradePlan } from '../lib/api';
 import type { StepApi } from '../App';
 import StepFooter from '../components/StepFooter';
 import { runScan, type ScanResult } from '../lib/signals';
@@ -41,6 +41,9 @@ export default function Environment(step: StepApi) {
   const [prompt, setPrompt] = useState<PromptDef | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [channel, setChannel] = useState<Channel>('latest');
+  const [plan, setPlan] = useState<UpgradePlan | null>(null);
+  const [upgradeMsg, setUpgradeMsg] = useState('');
 
   async function refresh() {
     setBusy(true);
@@ -188,6 +191,85 @@ export default function Environment(step: StepApi) {
       )}
 
       {prompt && <PromptBlock p={prompt} onClose={() => setPrompt(null)} />}
+
+      <h2>升级 Claude Code</h2>
+      <div className="card">
+        <p className="notice" style={{ marginTop: 0 }}>
+          默认走 <code>latest</code> 渠道。<strong>不要写死 stable</strong> ——
+          实测 stable 可能比本机还旧，照着装就是降级，面板会直接拦下。
+          本机版本从文件属性读，不会去运行 <code>claude.exe</code>（它上面挂着 Deny ACE）。
+        </p>
+
+        {plan && (
+          <div className="grid3">
+            <div className="metric">
+              <span className="k">本机</span>
+              <span className="v">{plan.installed ?? '未安装'}</span>
+            </div>
+            <div className="metric">
+              <span className="k">渠道 {channel}</span>
+              <span className="v">{plan.available ?? '查不到'}</span>
+            </div>
+            <div className="metric">
+              <span className="k">建议</span>
+              <span className="v">
+                {plan.action === 'upgrade' && <span className="pill warn">可升级</span>}
+                {plan.action === 'up_to_date' && <span className="pill ok">已最新</span>}
+                {plan.action === 'would_downgrade' && <span className="pill bad">会降级</span>}
+                {plan.action === 'fresh_install' && <span className="pill neutral">全新安装</span>}
+                {plan.action === 'unknown' && <span className="pill neutral">未知</span>}
+              </span>
+            </div>
+          </div>
+        )}
+        {plan && <p className="notice">{plan.detail}</p>}
+
+        <select
+          value={channel}
+          onChange={(e) => setChannel(e.target.value as Channel)}
+          style={{ width: 160, marginRight: 8 }}
+        >
+          <option value="latest">latest（推荐）</option>
+          <option value="stable">stable</option>
+        </select>
+        <button
+          className="btn"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setErr('');
+            try {
+              setPlan(await api.upgradePlan(channel));
+            } catch (e) {
+              setErr(String(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          检查版本
+        </button>
+        <button
+          className="btn primary"
+          disabled={busy || !plan || plan.action === 'up_to_date' || plan.action === 'would_downgrade'}
+          onClick={async () => {
+            setBusy(true);
+            setErr('');
+            try {
+              const r = await api.upgradeExecute(channel, false);
+              setUpgradeMsg(r);
+              await refresh();
+            } catch (e) {
+              setErr(String(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? '处理中…' : '升级'}
+        </button>
+        {upgradeMsg && <p className="notice">{upgradeMsg}</p>}
+      </div>
 
       <h2>时区对齐</h2>
       <div className="card">

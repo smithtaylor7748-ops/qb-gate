@@ -1,12 +1,19 @@
 import { useState } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { api } from '../lib/api';
+import { api, type KillReport } from '../lib/api';
 import { ALL_PROMPTS, type PromptDef } from '../prompts';
+
+const EVIDENCE_LABEL: Record<string, string> = {
+  AnthropicSigned: 'Anthropic 签名',
+  BridgeAndDataDir: 'bridge.py + 数据目录',
+};
 
 export default function Settings() {
   const [open, setOpen] = useState<PromptDef | null>(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+  const [kill, setKill] = useState<KillReport | null>(null);
+  const [busy, setBusy] = useState('');
 
   async function restoreTz() {
     setErr('');
@@ -59,6 +66,82 @@ export default function Settings() {
           三份都刻意写成「先诊断、再报告、要确认才动手」——
           让模型直接对网络配置和软件安装动手，出错代价比多问一句大得多。
         </p>
+      </div>
+
+      <h2>一键关闭所有 Claude</h2>
+      <div className="card danger">
+        <p className="notice" style={{ color: 'var(--danger)', marginTop: 0 }}>
+          只收满足<strong>双重证据</strong>的进程：可执行文件由 Anthropic 签名，
+          <strong>或</strong>命令行同时命中 <code>bridge.py</code> 与本项目数据目录。
+          <strong>绝不按进程名杀</strong> —— 叫 claude.exe 或 python.exe 的东西
+          可能是你正在干的别的活。收完会自动重新上锁。
+        </p>
+        <button
+          className="btn"
+          disabled={!!busy}
+          onClick={async () => {
+            setBusy('preview');
+            setErr('');
+            setMsg('');
+            try {
+              setKill(await api.killswitchPreview());
+            } catch (e) {
+              setErr(String(e));
+            } finally {
+              setBusy('');
+            }
+          }}
+        >
+          {busy === 'preview' ? '扫描中…' : '先看会收哪些'}
+        </button>
+        <button
+          className="btn danger"
+          disabled={!!busy || !kill?.targets.length}
+          onClick={async () => {
+            setBusy('kill');
+            setErr('');
+            try {
+              const r = await api.killswitchExecute();
+              setKill(r);
+              setMsg(
+                `收掉 ${r.killed.length} 个进程，重新上锁 ${r.relocked} 个可执行文件。` +
+                  (r.failed.length ? ` ${r.failed.length} 个失败。` : '')
+              );
+            } catch (e) {
+              setErr(String(e));
+            } finally {
+              setBusy('');
+            }
+          }}
+        >
+          {busy === 'kill' ? '执行中…' : '确认关闭'}
+        </button>
+
+        {kill && (
+          <div style={{ marginTop: 10 }}>
+            {kill.targets.length ? (
+              kill.targets.map((t) => (
+                <div className="row" key={t.pid}>
+                  <span>
+                    PID {t.pid} · {t.name}
+                    <span className="pill bad">{EVIDENCE_LABEL[t.evidence] ?? t.evidence}</span>
+                  </span>
+                  <span className="notice mono" style={{ fontSize: 11 }}>
+                    {t.path ?? '—'}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <div className="empty">没有满足双重证据的进程，什么都不会动。</div>
+            )}
+            {kill.spared.length > 0 && (
+              <p className="notice">
+                放过 {kill.spared.length} 个：{kill.spared.slice(0, 3).join('；')}
+                {kill.spared.length > 3 && ' …'}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       <h2>还原</h2>

@@ -17,6 +17,7 @@ export const STEPS = [
 export type StepId = (typeof STEPS)[number]['id'];
 
 export const ALWAYS_AVAILABLE = [
+  { id: 'plugins', label: '插件商店' },
   { id: 'relay', label: '中转站' },
   { id: 'settings', label: '设置' },
 ] as const;

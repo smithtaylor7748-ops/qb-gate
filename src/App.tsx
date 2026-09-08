@@ -7,10 +7,11 @@ import Environment from './pages/Environment';
 import DnsLeak from './pages/DnsLeak';
 import IpLock from './pages/IpLock';
 import Accounts from './pages/Accounts';
+import Plugins from './pages/Plugins';
 import Relay from './pages/Relay';
 import Settings from './pages/Settings';
 
-export type PageId = 'dashboard' | StepId | 'relay' | 'settings';
+export type PageId = 'dashboard' | StepId | 'plugins' | 'relay' | 'settings';
 
 export interface StepApi {
   progress: Progress;
@@ -131,6 +132,7 @@ export default function App() {
           {page === 'dns' && <DnsLeak {...stepApi} />}
           {page === 'iplock' && <IpLock {...stepApi} />}
           {page === 'accounts' && <Accounts {...stepApi} />}
+          {page === 'plugins' && <Plugins />}
           {page === 'relay' && <Relay />}
           {page === 'settings' && <Settings />}
         </div>
