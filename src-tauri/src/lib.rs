@@ -60,6 +60,21 @@ fn gate_lock_all() -> Result<usize> {
     gate::lock_all()
 }
 
+/// 应急解锁：无条件摘掉所有 Deny ACE，**不验 IP**。
+///
+/// 这是故意留的逃生口。门禁的正常入口 `gate_open` 要求出口 IP 在白名单里，
+/// 可是「白名单是空的」「查不到公网 IP」「填错了 IP」这几种情况都会让它
+/// 永远过不了 —— 那时候 claude.exe 是锁着的，用户就被自己的工具关在门外。
+///
+/// 安全上不吃亏：能点这个按钮的人本来就能改白名单文件、也能自己改 ACL。
+/// 门禁防的是「跑起来之后出口 IP 悄悄变了」，不是防本机管理员。
+#[tauri::command]
+fn gate_unlock_all() -> Result<usize> {
+    let n = gate::unlock_all()?;
+    gate::log::write("应急解锁：已摘掉全部执行锁（未验证 IP）");
+    Ok(n)
+}
+
 #[tauri::command]
 async fn gate_open(holder: String, state: tauri::State<'_, AppState>) -> Result<()> {
     gate::open_authorized(&holder, &state.gate).await
@@ -369,6 +384,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             gate_status,
             gate_lock_all,
+            gate_unlock_all,
             gate_open,
             gate_release,
             gate_clean_stale,
@@ -408,9 +424,21 @@ pub fn run() {
             tavern_restore,
         ])
         .setup(|app| {
-            // 启动时先把锁重建一遍。等价于现有实现的 -Mode Check：
+            // 启动时重建锁，等价于现有实现的 -Mode Check：
             // 宁可多锁一次，也不要因为上次异常退出而敞着。
-            let _ = gate::lock_all();
+            //
+            // **但白名单为空时绝不上锁。** 那种情况通常是首次运行：
+            // 锁上之后 open_authorized 一定过不了（IP 不可能在空名单里），
+            // 用户就被自己的工具关在门外了。空名单 = 还没配置好，
+            // 这时候什么都不做才是对的。
+            match gate::allowlist::read() {
+                Ok(list) if !list.is_empty() => {
+                    let _ = gate::lock_all();
+                }
+                _ => {
+                    gate::log::write("白名单为空，启动时不上锁（首次运行请先添加当前 IP）");
+                }
+            }
             let _ = app;
             Ok(())
         })

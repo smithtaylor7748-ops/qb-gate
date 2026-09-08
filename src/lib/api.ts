@@ -221,6 +221,7 @@ export const api = {
   // 门禁
   gateStatus: () => call<GateStatus>('gate_status'),
   gateLockAll: () => call<number>('gate_lock_all'),
+  gateUnlockAll: () => call<number>('gate_unlock_all'),
   gateOpen: (holder: string) => call<void>('gate_open', { holder }),
   gateRelease: () => call<void>('gate_release'),
   gateCleanStale: () => call<Array<[string, boolean]>>('gate_clean_stale'),

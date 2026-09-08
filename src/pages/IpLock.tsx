@@ -60,6 +60,16 @@ export default function IpLock(step: StepApi) {
 
       {err && <div className="err">{err}</div>}
 
+      {st && st.allowlist.length === 0 && (
+        <div className="card warn">
+          <div className="v" style={{ color: 'var(--warn)' }}>白名单是空的，门禁尚未启用</div>
+          <p className="notice" style={{ color: 'var(--warn)' }}>
+            空名单意味着任何 IP 都过不了门禁，所以面板**启动时不会上锁** ——
+            否则你会被自己的工具关在门外。先把当前 IP 加进来再启用。
+          </p>
+        </div>
+      )}
+
       <div className="grid4">
         <div className="metric">
           <span className="k">当前出口</span>
@@ -144,6 +154,21 @@ export default function IpLock(step: StepApi) {
         <button className="btn" onClick={() => act(api.gateLockAll)} disabled={busy}>
           立即全部上锁
         </button>
+        <button
+          className="btn danger"
+          disabled={busy}
+          onClick={() => act(api.gateUnlockAll)}
+          title="不验 IP，无条件摘掉所有执行锁"
+        >
+          应急解锁
+        </button>
+        <p className="notice">
+          <strong>应急解锁</strong>不验 IP，是故意留的逃生口 ——
+          白名单为空、查不到公网 IP、IP 填错了，这几种情况都会让正常入口永远过不了，
+          那时 claude.exe 锁着而你打不开它。安全上不吃亏：能点这个按钮的人
+          本来就能改白名单文件、也能自己改 ACL；门禁防的是「跑起来之后出口 IP
+          悄悄变了」，不是防本机管理员。
+        </p>
       </div>
 
       {st && st.stale_copies.length > 0 && (
