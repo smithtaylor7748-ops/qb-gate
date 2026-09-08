@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   把 ClaudeGate 放上桌面，并把旧的一批按钮移进备份文件夹。
 
@@ -55,10 +55,12 @@ function Resolve-ClaudeGateExe {
         }
         return (Resolve-Path -LiteralPath $ExePath).Path
     }
+    # 注意可执行文件名是 claude-gate.exe（跟 Cargo 包名走），不是 ClaudeGate.exe。
+    # productName 只影响安装目录与快捷方式显示名。
     $repo = Split-Path -Parent $PSScriptRoot
     $candidates = @(
-        (Join-Path $env:LOCALAPPDATA 'ClaudeGate\ClaudeGate.exe'),
-        (Join-Path ${env:ProgramFiles} 'ClaudeGate\ClaudeGate.exe'),
+        (Join-Path $env:LOCALAPPDATA 'ClaudeGate\claude-gate.exe'),
+        (Join-Path ${env:ProgramFiles} 'ClaudeGate\claude-gate.exe'),
         (Join-Path $repo 'src-tauri\target\release\claude-gate.exe')
     )
     foreach ($c in $candidates) {
@@ -81,13 +83,21 @@ Write-Host "    目标  $exe"
 Write-Host "    落点  $lnk"
 
 if ($Apply) {
+    # WScript.Shell 这个 COM 对象存不了带非 ASCII 字符的路径 ——
+    # 中文桌面（…\OneDrive\桌面\）会被它变成 "??" 然后报 FileNotFoundException，
+    # 存出来的 .lnk 目标是空的。NSIS 安装器建的那个桌面快捷方式也栽在这。
+    # 办法：先在纯 ASCII 的临时路径上建好，再用 Copy-Item 搬过去（它支持 Unicode）。
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) 'ClaudeGate-shortcut.lnk'
     $shell = New-Object -ComObject WScript.Shell
-    $sc = $shell.CreateShortcut($lnk)
+    $sc = $shell.CreateShortcut($tmp)
     $sc.TargetPath = $exe
     $sc.WorkingDirectory = Split-Path -Parent $exe
     $sc.Description = 'Claude 环境控制面板：IP 锁 · 纯净度 · DNS 泄露 · 插件'
     $sc.IconLocation = "$exe,0"
     $sc.Save()
+
+    Copy-Item -LiteralPath $tmp -Destination $lnk -Force
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
     Write-Host '    已创建。' -ForegroundColor Green
 }
 Write-Host ''

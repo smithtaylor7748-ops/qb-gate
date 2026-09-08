@@ -206,6 +206,27 @@ cd src-tauri && cargo test
 
 ---
 
+## 桌面快捷方式
+
+```powershell
+.\scripts\setup-desktop.ps1            # 预演，什么都不改
+.\scripts\setup-desktop.ps1 -Apply -SkipBackup   # 只建快捷方式
+.\scripts\setup-desktop.ps1 -Apply     # 顺便把旧按钮收进备份文件夹
+```
+
+旧按钮是**移动**不是删除，落在桌面的 `old-claude-buttons-backup-<日期>\`，
+随时能拖回来。清单是写死的 7 个，**不按通配符扫桌面** ——
+那会误伤 `Turb GPT 一键开关.lnk` 这类同样带「一键」字样的无关项。
+
+> **已知问题：安装器自己建的桌面快捷方式在中文路径下是坏的。**
+> `WScript.Shell` 这个 COM 对象存不了带非 ASCII 字符的路径，
+> 中文桌面（`…\OneDrive\桌面\`）会被它变成 `??`，存出来的 `.lnk` 目标是空的。
+> 上面那个脚本绕开了这一点：先在纯 ASCII 的临时路径建好，再用 `Copy-Item` 搬过去。
+> 如果你是从安装器装的、桌面图标点不开，跑一次这个脚本即可。
+>
+> 另：`.ps1` 必须存成 **UTF-8 with BOM**。Windows PowerShell 5.1 没有 BOM
+> 就按 ANSI 读，中文注释会变乱码并直接引发语法错误。
+
 ## 安装包
 
 仓库**不分发官方安装包本体**，只在 `installers.lock.json` 里钉地址与 SHA-256。
