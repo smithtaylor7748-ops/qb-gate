@@ -106,6 +106,12 @@ export interface Slot {
   logged_in: boolean;
   cli_days_left?: number | null;
   account_uuid?: string | null;
+  /** 套餐，例如 `Claude Pro`。读自本槽位的 .claude.json，**不联网**。 */
+  plan?: string | null;
+  /** 计费方式，例如 `Google Play 订阅`。 */
+  billing?: string | null;
+  /** 官方客户端上次刷新这份档案的时间。这是缓存，可能过期。 */
+  plan_fetched_at?: string | null;
 }
 
 export interface AccountMigration {
@@ -116,6 +122,8 @@ export interface AccountMigration {
 export interface AccountsReport {
   slots: Slot[];
   caveat: string;
+  /** 套餐是怎么读出来的 —— 界面上要如实说明，不能让人以为是查了接口。 */
+  planCaveat: string;
   migration?: AccountMigration | null;
 }
 

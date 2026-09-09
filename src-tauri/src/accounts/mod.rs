@@ -36,7 +36,28 @@ pub struct Slot {
     /// refreshToken 剩余天数。负数表示已过期。
     pub cli_days_left: Option<i64>,
     pub account_uuid: Option<String>,
+    /// 套餐，例如 `Claude Pro`。读自本槽位的 `.claude.json`，**不联网**。
+    pub plan: Option<String>,
+    /// 计费方式，例如 `Google Play 订阅`。同上。
+    pub billing: Option<String>,
+    /// 官方客户端上次刷新这份档案的时间。界面上要标出来 —— 这是缓存，可能过期。
+    pub plan_fetched_at: Option<String>,
 }
+
+/// 套餐是**读文件读出来的，不是查接口查出来的**。
+///
+/// `~/.claude.json` 的 `oauthAccount` 是官方客户端自己写下的一份档案缓存，
+/// 每个槽位目录里各有一份 —— 所以不用切过去就能看到每个槽位的套餐。
+///
+/// 这不违反 README 的第 1 条政策边界（不读取限流 / 429 / 额度状态）：
+/// 这里读的是**套餐名和计费方式**，不是用量、不是配额、不是速率限制状态，
+/// 而且不发任何网络请求。切换也依然只能由人手动触发。
+///
+/// **不要**顺手把 `organizationRateLimitTier` / `userRateLimitTier` 显示出来。
+/// 那两个字段名里带 rateLimit，展示它们会让这条边界变得可疑，
+/// 而它们对用户的价值几乎为零。
+pub const PLAN_CAVEAT: &str =
+    "套餐与计费方式读自各槽位本地的 .claude.json（官方客户端写下的缓存），不联网、不读用量与额度。";
 
 /// 剩余天数只能回答「名义上到期没」，回答不了「服务端还认不认」。
 ///
@@ -179,11 +200,19 @@ pub fn slots() -> Vec<Slot> {
             let name = e.file_name().into_string().ok()?;
             let label = name.strip_prefix("claude-profile-")?.to_string();
             let dir = e.path();
+            let profile = read_profile(&dir);
             Some(Slot {
                 active: active.as_deref() == Some(name.as_str()),
                 logged_in: dir.join(".credentials.json").exists(),
                 cli_days_left: cli_days_left(&dir),
-                account_uuid: account_uuid(&dir),
+                account_uuid: profile
+                    .as_ref()
+                    .and_then(|v| v.get("accountUuid"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                plan: profile.as_ref().and_then(plan_of),
+                billing: profile.as_ref().and_then(billing_of),
+                plan_fetched_at: profile.as_ref().and_then(fetched_at_of),
                 label,
             })
         })
@@ -207,13 +236,69 @@ fn cli_days_left(dir: &std::path::Path) -> Option<i64> {
     Some((ms - now) / 86_400_000)
 }
 
-fn account_uuid(dir: &std::path::Path) -> Option<String> {
+/// 读本槽位的 `oauthAccount`。**纯文件读取，不发任何请求。**
+fn read_profile(dir: &std::path::Path) -> Option<serde_json::Value> {
     let text = std::fs::read_to_string(dir.join(".claude.json")).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-    v.get("oauthAccount")?
-        .get("accountUuid")?
-        .as_str()
-        .map(String::from)
+    v.get("oauthAccount").cloned()
+}
+
+/// 套餐名。
+///
+/// 优先 `seatTier`（Team / Enterprise 席位才有值），退回 `organizationType`
+/// （个人订阅是 `claude_pro` / `claude_max` 这种）。**认不出来就如实回原值**，
+/// 不猜成 Pro —— 猜错了用户会以为自己买的是别的套餐。
+fn plan_of(o: &serde_json::Value) -> Option<String> {
+    let raw = o
+        .get("seatTier")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            o.get("organizationType")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })?;
+    Some(pretty_plan(raw))
+}
+
+pub fn pretty_plan(raw: &str) -> String {
+    match raw {
+        "claude_pro" => "Claude Pro".into(),
+        "claude_max" => "Claude Max".into(),
+        "claude_team" => "Claude Team".into(),
+        "claude_enterprise" => "Claude Enterprise".into(),
+        "claude_free" => "免费版".into(),
+        // 认不出来就原样显示，不猜。
+        other => other.to_string(),
+    }
+}
+
+fn billing_of(o: &serde_json::Value) -> Option<String> {
+    let raw = o
+        .get("billingType")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+    Some(pretty_billing(raw))
+}
+
+pub fn pretty_billing(raw: &str) -> String {
+    match raw {
+        "google_play_subscription" => "Google Play 订阅".into(),
+        "apple_subscription" => "App Store 订阅".into(),
+        "stripe_subscription" => "信用卡订阅".into(),
+        other => other.to_string(),
+    }
+}
+
+/// `profileFetchedAt` 是毫秒时间戳。界面上要标出来 —— 这是缓存，可能过期。
+fn fetched_at_of(o: &serde_json::Value) -> Option<String> {
+    let ms = o.get("profileFetchedAt")?.as_i64()?;
+    let dt = chrono::DateTime::from_timestamp_millis(ms)?;
+    Some(
+        dt.with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string(),
+    )
 }
 
 /// 切换激活槽位：重建联结点。
@@ -291,6 +376,9 @@ mod tests {
             logged_in: true,
             cli_days_left: Some(-3),
             account_uuid: None,
+            plan: None,
+            billing: None,
+            plan_fetched_at: None,
         };
         assert!(s.logged_in, "过期不得影响可切换性");
         assert!(s.cli_days_left.is_some_and(|d| d < 0));
@@ -309,5 +397,52 @@ mod tests {
         copy_dir_recursive(&source, &target).unwrap();
         assert_eq!(std::fs::read_to_string(target.join("credentials.json")).unwrap(), "first");
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn plan_prefers_seat_tier_then_org_type() {
+        // Team / Enterprise 席位有 seatTier，个人订阅只有 organizationType。
+        let team = serde_json::json!({ "seatTier": "claude_team", "organizationType": "claude_pro" });
+        assert_eq!(plan_of(&team).as_deref(), Some("Claude Team"));
+
+        let personal = serde_json::json!({ "seatTier": "", "organizationType": "claude_pro" });
+        assert_eq!(plan_of(&personal).as_deref(), Some("Claude Pro"));
+
+        // 两个都没有就是 None，不许猜一个出来。
+        assert_eq!(plan_of(&serde_json::json!({})), None);
+        assert_eq!(
+            plan_of(&serde_json::json!({ "seatTier": "", "organizationType": "" })),
+            None
+        );
+    }
+
+    #[test]
+    fn unknown_plan_is_shown_as_is_not_guessed() {
+        // 认不出来的套餐原样显示。猜成 Pro 会让用户以为买错了东西。
+        assert_eq!(pretty_plan("claude_something_new"), "claude_something_new");
+        assert_eq!(pretty_billing("some_new_channel"), "some_new_channel");
+    }
+
+    #[test]
+    fn plan_reading_never_touches_rate_limit_fields() {
+        // 政策边界：字段名里带 rateLimit 的一律不读。
+        let o = serde_json::json!({
+            "organizationType": "claude_pro",
+            "organizationRateLimitTier": "default_claude_ai",
+            "userRateLimitTier": "tier_x"
+        });
+        let plan = plan_of(&o).unwrap();
+        assert_eq!(plan, "Claude Pro");
+        assert!(!plan.contains("default_claude_ai"));
+        assert!(!plan.contains("tier_x"));
+    }
+
+    #[test]
+    fn fetched_at_is_formatted_or_absent() {
+        // profileFetchedAt 是毫秒时间戳。界面要标出来 —— 这是缓存，可能过期。
+        let o = serde_json::json!({ "profileFetchedAt": 1788865933692i64 });
+        let got = fetched_at_of(&o).expect("应当格式化出来");
+        assert!(got.starts_with("20"), "格式不对：{got}");
+        assert_eq!(fetched_at_of(&serde_json::json!({})), None);
     }
 }

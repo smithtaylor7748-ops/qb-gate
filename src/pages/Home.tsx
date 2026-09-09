@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import {
   AlertTriangle,
+  Activity,
   Flag,
   MonitorSmartphone,
   RotateCw,
   ShieldAlert,
   Square,
   Terminal,
+  Users,
   Wine,
 } from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
@@ -17,6 +19,7 @@ import { AFTER, R } from '../lib/resources';
 import { invalidate, useResource, useSession } from '../lib/store';
 import { endTask, resetTask, useTask } from '../lib/tasks';
 import { STEPS } from '../lib/steps';
+import { BAND_LABEL, BAND_TONE, computeScore } from '../lib/score';
 import {
   Button,
   Bullet,
@@ -41,6 +44,10 @@ export default function Home() {
   const accounts = useResource('accounts', R.accounts);
   const criteria = useResource('criteria', R.criteria);
   const plugins = useResource('plugins', R.plugins);
+  // 这两个是 auto:false —— useResource 只把缓存拿出来，不会自己去跑。
+  // 没跑过就是 undefined，评分那边会如实记成「未检测」。
+  const dns = useResource('dns', R.dns);
+  const signals = useResource('signals', R.signals);
 
   const tavern = useTask('tavern-start');
   const launchCodeTask = useTask('launch-claude-code');
@@ -53,6 +60,9 @@ export default function Home() {
   const [kill, setKill] = useState<KillReport | null>(null);
   const [killing, setKilling] = useState(false);
   const [bannerOff, setBannerOff] = useSession('home.banner.off', false);
+  const [onlyUsable, setOnlyUsable] = useSession('home.accounts.usable', false);
+  const [checkup, setCheckup] = useState('');
+  const [switchTo, setSwitchTo] = useState<string | null>(null);
 
   function taskProgress(task: ReturnType<typeof useTask>, label: string) {
     if (!task.running && !task.error && !task.finished) return null;
@@ -76,6 +86,65 @@ export default function Home() {
   const skipped = Object.values(progress.steps).filter((s) => s.state === 'skipped').length;
 
   const active = accounts.data?.slots.find((s) => s.active);
+  const slots = accounts.data?.slots ?? [];
+  const usableSlots = slots.filter((s) => s.logged_in && (s.cli_days_left ?? 0) >= 0);
+  const shownSlots = onlyUsable ? usableSlots : slots;
+
+  const score = computeScore({
+    progress,
+    dns: dns.data,
+    signals: signals.data,
+    gate: gate.data,
+  });
+
+  /**
+   * 一键全面体检。
+   *
+   * 串行跑，因为 DNS 那项本身就要六秒、中文环境识别里还有个 1 秒的
+   * WebRTC 超时 —— 并发跑省不了多少时间，却会让进度文字没法看。
+   *
+   * **跑不了 IP 纯净度**：那一项的结论只能由用户自己去 IPQS / ippure 看，
+   * 面板不替他判定。所以体检完那一项可能仍然是「未检测」，这是对的。
+   */
+  /**
+   * 切账户。
+   *
+   * **只能由这里的点击触发。** 不要给它加任何自动调用点 ——
+   * 加了就变成自动轮换账户，直接踩 README 第 2 条政策线。
+   */
+  async function doSwitch(label: string) {
+    setBusy('switch');
+    try {
+      await api.accountsSwitch(label);
+      toast.ok(`已切换到 ${label}`);
+      invalidate('accounts', 'gate');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy('');
+      setSwitchTo(null);
+    }
+  }
+
+  async function runCheckup() {
+    const steps: Array<[string, () => Promise<unknown>]> = [
+      ['出口 IP', () => ip.refresh()],
+      ['门禁状态', () => gate.refresh()],
+      ['DNS 泄露', () => dns.refresh()],
+      ['中文环境识别', () => signals.refresh()],
+    ];
+    for (const [label, run] of steps) {
+      setCheckup(label);
+      try {
+        await run();
+      } catch {
+        // 单项失败不中断整轮 —— 各自的卡片会显示自己的错误。
+      }
+    }
+    setCheckup('');
+    toast.ok('体检跑完了。IP 纯净度需要你自己去权威站点核对。');
+  }
+
   const locked = gate.data?.targets.filter((t) => t.locked).length ?? 0;
   const total = gate.data?.targets.length ?? 0;
   const running = plugins.data?.[0]?.state === 'running';
@@ -176,18 +245,171 @@ export default function Home() {
         title="总览"
         sub="上面看状态，下面点启动。"
         actions={
-          <Button
-            icon={<RotateCw size={13} />}
-            loading={ip.loading}
-            onClick={() => {
-              void ip.refresh();
-              void gate.refresh();
-            }}
-          >
-            重新检测
-          </Button>
+          <>
+            <Button
+              icon={<RotateCw size={13} />}
+              loading={ip.loading}
+              disabled={!!checkup}
+              onClick={() => {
+                void ip.refresh();
+                void gate.refresh();
+              }}
+            >
+              重新检测
+            </Button>
+            <Button
+              variant="primary"
+              icon={<Activity size={13} />}
+              loading={!!checkup}
+              onClick={() => void runCheckup()}
+            >
+              {checkup ? `正在查${checkup}…` : '一键全面体检'}
+            </Button>
+          </>
         }
       />
+
+      {/* ------------------------------------------- 综合评分 + 账户 */}
+      <div className="mb-3 grid gap-3 lg:grid-cols-2">
+        <Card title="综合评分">
+          <div className="flex items-end gap-3">
+            <span className="text-[32px] leading-none font-medium">
+              {score.total ?? '—'}
+            </span>
+            <span className="notice mb-1">/ 100</span>
+            {score.total !== null && (
+              <span className="mb-1">
+                <Pill tone={BAND_TONE[score.band]}>{BAND_LABEL[score.band]}</Pill>
+              </span>
+            )}
+            {score.missing > 0 && (
+              <span className="notice mb-1 ml-auto">{score.missing} 项未检测</span>
+            )}
+          </div>
+
+          <ProgressBar
+            className="mt-2"
+            value={score.total ?? 0}
+            tone={BAND_TONE[score.band]}
+            label={`综合评分 ${score.total ?? '未知'} / 100`}
+          />
+
+          <div className="mt-2">
+            {score.items.map((it) => (
+              <Row
+                key={it.id}
+                side={
+                  it.earned === null ? (
+                    <Button size="sm" onClick={() => go(it.page)}>
+                      去检测
+                    </Button>
+                  ) : (
+                    <span className="font-mono">
+                      {it.earned} / {it.weight}
+                    </span>
+                  )
+                }
+              >
+                <span>
+                  {it.label}
+                  {it.earned === null && <Pill tone="default">未检测</Pill>}
+                </span>
+                <span className="notice">{it.detail}</span>
+              </Row>
+            ))}
+          </div>
+
+          <p className="notice mt-2">
+            <strong>分母只算已检测项。</strong>没跑过的不按 0 分算 ——
+            那会在你什么都没做时就报「环境很差」；也不按满分算 ——
+            那是替一个没做过的检测打包票。
+          </p>
+        </Card>
+
+        <Card
+          title="账户槽位"
+          icon={<Users size={14} />}
+          tone="accent"
+          actions={
+            <>
+              <Button
+                size="sm"
+                variant={onlyUsable ? 'primary' : 'default'}
+                onClick={() => setOnlyUsable(!onlyUsable)}
+              >
+                {onlyUsable ? `可用 ${usableSlots.length}` : `全部 ${slots.length}`}
+              </Button>
+              <Button size="sm" onClick={() => go('accounts')}>
+                管理
+              </Button>
+            </>
+          }
+        >
+          {slots.length === 0 ? (
+            <p className="notice">
+              还没有账户槽位。用下面的「启动 Claude Code」登录一次，
+              第一个槽位就建好了。
+            </p>
+          ) : (
+            <>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {shownSlots.map((s) => {
+                  const days = s.cli_days_left;
+                  const tone = !s.logged_in
+                    ? 'default'
+                    : days == null
+                      ? 'default'
+                      : days < 0
+                        ? 'danger'
+                        : days < 5
+                          ? 'warn'
+                          : 'ok';
+                  return (
+                    <div
+                      key={s.label}
+                      className={`rounded-md border p-2.5 ${
+                        s.active ? 'border-accent-line bg-accent-bg' : 'border-line'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate font-medium">{s.label}</span>
+                        {s.active ? (
+                          <span className="text-xs text-accent">使用中</span>
+                        ) : (
+                          <Button
+                            size="sm"
+                            disabled={!!busy}
+                            onClick={() => setSwitchTo(s.label)}
+                          >
+                            切换
+                          </Button>
+                        )}
+                      </div>
+                      <div className="notice mt-1 truncate" title={s.billing ?? undefined}>
+                        {s.plan ?? '套餐未知'}
+                        {s.billing ? ` · ${s.billing}` : ''}
+                      </div>
+                      <div className="mt-1.5">
+                        {s.logged_in ? (
+                          <Pill tone={tone}>{fmtDaysLeft(days)}</Pill>
+                        ) : (
+                          <Pill tone="default">未登录</Pill>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <p className="notice mt-2">{accounts.data?.planCaveat}</p>
+              <p className="notice mt-1">{accounts.data?.caveat}</p>
+              <Button className="mt-2" size="sm" onClick={() => void openUrl(claudeUsageUrl)}>
+                打开 Claude 官方 Usage 页面
+              </Button>
+            </>
+          )}
+        </Card>
+      </div>
 
       {/* ---------------------------------------------------------- 出口 */}
       <Card title="出口" className="mb-3">
@@ -235,27 +457,6 @@ export default function Home() {
             </div>
           </>
         )}
-      </Card>
-
-      <Card title="Claude 订阅" className="mb-3" tone="accent">
-        <div className="grid gap-2 sm:grid-cols-3">
-          <Metric label="当前账户">{active?.label ?? '无激活槽位'}</Metric>
-          <Metric label="登录状态">
-            {active ? (
-              active.logged_in ? <Pill tone="ok">已登录</Pill> : <Pill tone="danger">未登录</Pill>
-            ) : <Pill>未知</Pill>}
-          </Metric>
-          <Metric label="凭证状态" hint="只读本地 refresh token 时间戳">
-            {active ? fmtDaysLeft(active.cli_days_left) : '—'}
-          </Metric>
-        </div>
-        <p className="notice mt-3">
-          Claude 的订阅用量由官方统一计算，ClaudeGate 不读取额度、429 或内部接口。
-          请在 Claude 官方 Usage 页面查看当前套餐、剩余用量和重置时间。
-        </p>
-        <Button className="mt-2" variant="primary" onClick={() => void openUrl(claudeUsageUrl)}>
-          打开 Claude 官方 Usage 页面
-        </Button>
       </Card>
 
       {/* ------------------------------------------------- 未走完的检查项 */}
@@ -429,6 +630,23 @@ export default function Home() {
       </div>
 
       {/* --------------------------------------------------- 确认框 */}
+
+      <ConfirmDialog
+        open={!!switchTo}
+        onCancel={() => setSwitchTo(null)}
+        onConfirm={() => switchTo && void doSwitch(switchTo)}
+        title={`切换到 ${switchTo ?? ''}？`}
+        confirmLabel="确认切换"
+        loading={busy === 'switch'}
+      >
+        <p>
+          重建目录联结点，让 Claude Code 与桌面端都指向这个槽位。
+          <strong>正在跑的会话不会自动换过去</strong>，要重启才生效。
+        </p>
+        <p className="notice mt-2">
+          凭证过期的槽位也能切 —— 你得先切过去，才能在那个槽里重新登录。
+        </p>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={askDesktop}

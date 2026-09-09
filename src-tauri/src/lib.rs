@@ -259,6 +259,7 @@ fn accounts_list() -> serde_json::Value {
     serde_json::json!({
         "slots": accounts::slots(),
         "caveat": accounts::EXPIRY_CAVEAT,
+        "planCaveat": accounts::PLAN_CAVEAT,
         "migration": migration,
     })
 }
