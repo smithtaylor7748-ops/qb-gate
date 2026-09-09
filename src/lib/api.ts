@@ -214,6 +214,48 @@ export interface Settings {
   codex_under_gate: boolean;
 }
 
+export interface SnapshotManifest {
+  created: string;
+  note: string;
+  active_account?: string | null;
+  timezone?: string | null;
+  all_locked: boolean;
+  files: string[];
+}
+
+export interface SnapshotEntry {
+  id: string;
+  path: string;
+  manifest: SnapshotManifest;
+}
+
+/** 一套用法：账户 + 三个中转站 + 时区。没填的部分保持原样，不会被清空。 */
+export interface Profile {
+  id: string;
+  name: string;
+  note?: string | null;
+  /** 账户槽位标签。null = 不动账户。 */
+  account?: string | null;
+  /** target → provider id。缺的不动。 */
+  relays: Record<string, string>;
+  timezone?: string | null;
+  sort: number;
+  created_at: string;
+}
+
+export interface ProfileStore {
+  profiles: Profile[];
+  last_applied?: string | null;
+}
+
+export interface ApplyReport {
+  applied: string[];
+  skipped: string[];
+  failed: string[];
+  snapshot?: string | null;
+  detail: string;
+}
+
 export interface UpdateStatus {
   current_version: string;
   repository?: string | null;
@@ -459,6 +501,19 @@ export const api = {
   tzRestore: () => call<void>('tz_restore'),
 
   // 进度
+  snapshotList: () => call<SnapshotEntry[]>('snapshot_list'),
+  snapshotCreate: (note: string) => call<SnapshotEntry>('snapshot_create', { note }),
+  snapshotRestore: (id: string) => call<string>('snapshot_restore', { id }),
+  snapshotRemove: (id: string) => call<void>('snapshot_remove', { id }),
+  snapshotDir: (id: string) => call<string>('snapshot_dir', { id }),
+
+  profileList: () => call<ProfileStore>('profile_list'),
+  profileSave: (item: Profile) => call<string>('profile_save', { item }),
+  profileRemove: (id: string) => call<void>('profile_remove', { id }),
+  profileCapture: (name: string) => call<Profile>('profile_capture', { name }),
+  /** 会切账户。**只由界面点击触发**，不要从任何自动路径调。 */
+  profileApply: (id: string) => call<ApplyReport>('profile_apply', { id }),
+
   settingsLoad: () => call<Settings>('settings_load'),
   settingsSave: (next: Settings) => call<Settings>('settings_save', { next }),
 

@@ -14,8 +14,10 @@ pub mod plugins;
 pub mod probe;
 pub mod progress;
 pub mod process;
+pub mod profile;
 pub mod relay;
 pub mod settings;
+pub mod snapshot;
 pub mod sysenv;
 pub mod update;
 
@@ -416,6 +418,64 @@ fn settings_save(next: settings::Settings) -> Result<settings::Settings> {
     Ok(settings::load())
 }
 
+// ------------------------------------------------------------------ 快照
+
+#[tauri::command]
+fn snapshot_list() -> Vec<snapshot::SnapshotEntry> {
+    snapshot::list()
+}
+
+#[tauri::command]
+fn snapshot_create(note: String) -> Result<snapshot::SnapshotEntry> {
+    snapshot::create(&note)
+}
+
+/// 回滚。**恢复之前会先把现状再存一份** —— 回滚本身也是个能出错的操作。
+#[tauri::command]
+fn snapshot_restore(id: String) -> Result<String> {
+    snapshot::restore(&id)
+}
+
+#[tauri::command]
+fn snapshot_remove(id: String) -> Result<()> {
+    snapshot::remove(&id)
+}
+
+#[tauri::command]
+fn snapshot_dir(id: String) -> Result<String> {
+    Ok(snapshot::dir_of(&id)?.display().to_string())
+}
+
+// ------------------------------------------------------------------ 档案
+
+#[tauri::command]
+fn profile_list() -> profile::ProfileStore {
+    profile::load()
+}
+
+#[tauri::command]
+fn profile_save(item: profile::Profile) -> Result<String> {
+    profile::upsert(item)
+}
+
+#[tauri::command]
+fn profile_remove(id: String) -> Result<()> {
+    profile::remove(&id)
+}
+
+/// 按当前状态生成一个档案草稿（不落盘，交给界面确认后再存）。
+#[tauri::command]
+fn profile_capture(name: String) -> profile::Profile {
+    profile::capture(&name)
+}
+
+/// 应用一个档案。**只由界面点击触发，不要加任何自动调用点** ——
+/// 它会切账户，加了就变成自动轮换账户，直接踩政策线。
+#[tauri::command]
+fn profile_apply(id: String) -> Result<profile::ApplyReport> {
+    profile::apply(&id)
+}
+
 // ------------------------------------------------------------------ 时区
 
 #[tauri::command]
@@ -643,6 +703,16 @@ pub fn run() {
             relay_test_latency,
             settings_load,
             settings_save,
+            snapshot_list,
+            snapshot_create,
+            snapshot_restore,
+            snapshot_remove,
+            snapshot_dir,
+            profile_list,
+            profile_save,
+            profile_remove,
+            profile_capture,
+            profile_apply,
             tz_current,
             tz_apply,
             tz_restore,

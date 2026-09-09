@@ -30,6 +30,8 @@ export const R = {
   relay: res(() => api.relayList()),
   tz: res(() => api.tzCurrent()),
   settings: res(() => api.settingsLoad()),
+  snapshots: res(() => api.snapshotList()),
+  profiles: res(() => api.profileList()),
 
   plugins: res(() => api.pluginList(), { pollMs: 20_000 }),
 
@@ -63,4 +65,6 @@ export const AFTER = {
   install: ['software', 'gate', 'upgrade', 'install'] as const,
   /** 酒馆启停。 */
   tavern: ['plugins', 'gate'] as const,
+  /** 应用档案 / 回滚快照：账户、中转站、门禁、快照列表全都可能变了。 */
+  profile: ['accounts', 'relay', 'gate', 'tz', 'snapshots', 'profiles'] as const,
 };

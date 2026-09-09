@@ -20,6 +20,7 @@ export type PageId =
   | 'environment'
   | 'plugins'
   | 'relay'
+  | 'profiles'
   | 'settings';
 
 export interface Nav {

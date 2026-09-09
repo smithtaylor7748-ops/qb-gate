@@ -5,6 +5,7 @@ import {
   Globe,
   KeyRound,
   LayoutDashboard,
+  Layers,
   Lock,
   Package,
   RotateCw,
@@ -30,6 +31,7 @@ import Accounts from './pages/Accounts';
 import Environment from './pages/Environment';
 import Plugins from './pages/Plugins';
 import Relay from './pages/Relay';
+import Profiles from './pages/Profiles';
 import Settings from './pages/Settings';
 
 const EMPTY_PROGRESS: Progress = { steps: {}, completed_once: false };
@@ -80,6 +82,7 @@ const GROUPS: NavGroup[] = [
       { id: 'environment', label: '环境与安装', icon: <Package size={15} /> },
       { id: 'plugins', label: '插件商店', icon: <Blocks size={15} /> },
       { id: 'relay', label: '中转站', icon: <Waypoints size={15} /> },
+      { id: 'profiles', label: '档案与快照', icon: <Layers size={15} /> },
       { id: 'settings', label: '设置', icon: <SettingsIcon size={15} /> },
     ],
   },
@@ -268,6 +271,8 @@ function Pages() {
       return <Plugins />;
     case 'relay':
       return <Relay />;
+    case 'profiles':
+      return <Profiles />;
     case 'settings':
       return <Settings />;
   }
