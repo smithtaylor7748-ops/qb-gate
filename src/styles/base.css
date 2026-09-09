@@ -1,0 +1,137 @@
+/**
+ * 基础层：重置、排版、焦点环、滚动条。
+ *
+ * 焦点环这一条是补旧代码的窟窿：原来只有 `input:focus { outline: none }`，
+ * 既没有 `:focus-visible` 替代，全项目也没有一个 `aria-*`。
+ * 这里给所有可聚焦元素一个统一的、**只在键盘操作时出现**的环。
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  /* 窄窗口下横向不许滚 —— 宽内容各自在自己的容器里滚。 */
+  overflow-x: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+h1 {
+  font-size: var(--text-xl);
+  font-weight: 500;
+  margin: 0 0 4px;
+  letter-spacing: 0.01em;
+}
+
+h2 {
+  font-size: var(--text-lg);
+  font-weight: 500;
+  margin: 0;
+}
+
+p {
+  margin: 0;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+/* ---------------------------------------------------------------- 焦点 */
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* 鼠标点击不出环，键盘 Tab 出环 —— 上面 :focus-visible 已经是这个语义，
+   这里额外保证输入框在键盘聚焦时同时换边框色，方便低视力用户定位。 */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  border-color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- 滚动条 */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+  background-clip: content-box;
+}
+
+/* ---------------------------------------------------------------- 动效 */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 只对读屏器可见。用在图标按钮上，替掉「div onClick 当按钮」那些地方。 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}

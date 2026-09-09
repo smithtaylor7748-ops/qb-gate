@@ -68,5 +68,6 @@ jobs:
             - 「IP 锁」会给 `claude.exe` 加 Deny ExecuteFile ACE，
               加上之后**双击 exe 会被系统拒绝**，这是设计如此，
               登录与启动都要走面板里的受控入口。
-            - `installers.lock.json` 里的 SHA-256 若为空，安装按钮会拒绝下载 ——
-              这是有意的，需要你自己钉定哈希，见 README。
+            - 安装 Claude 走 winget（`Anthropic.ClaudeCode` / `Anthropic.Claude`），
+              Claude Code 装不上时会自动回退到官方安装脚本。
+              没有 winget 的机器只给「打开官方下载页」。

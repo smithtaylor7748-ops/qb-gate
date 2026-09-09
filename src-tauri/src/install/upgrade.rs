@@ -13,6 +13,7 @@
 //!      门禁那条 Deny 跟着旧文件一起没了。重锁失败要报错，不能默默放过。
 
 use crate::error::{GateError, Result};
+use crate::events::Reporter;
 use serde::Serialize;
 
 const RELEASES_URL: &str = "https://downloads.claude.ai/claude-code-releases";
@@ -114,7 +115,7 @@ pub fn decide(installed: Option<(u32, u32, u32)>, available: Option<(u32, u32, u
 /// 读本机版本。**从文件属性读，不运行它。**
 #[cfg(windows)]
 async fn installed_version(path: &std::path::Path) -> Option<String> {
-    let out = tokio::process::Command::new("powershell")
+    let out = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -202,17 +203,24 @@ pub async fn plan(ch: Channel) -> UpgradePlan {
 }
 
 /// 执行升级。`force` 为真时允许降级。
-pub async fn execute(ch: Channel, force: bool) -> Result<String> {
+pub async fn execute(ch: Channel, force: bool, rep: &Reporter) -> Result<String> {
+    rep.phase(1, "比对本机版本与渠道版本");
     let p = plan(ch).await;
     if !force && matches!(p.action, Action::UpToDate | Action::WouldDowngrade) {
+        rep.done(p.detail.clone());
         return Ok(p.detail);
     }
 
     // 先清上一次留下的残留 —— 见 gate::clean_stale_copies 的说明，
     // 本次安装新产生的那一份很可能正被占用，留到下次开头再清。
+    rep.phase(2, "清理上一次升级留下的残留副本");
     let cleaned = crate::gate::clean_stale_copies();
+    for (path, ok) in &cleaned {
+        rep.log(2, format!("{} {}", if *ok { "已删除" } else { "删不掉（多半正被占用）" }, path.display()));
+    }
 
     // 官方安装器自己做校验和验证，这里不重复实现。
+    rep.phase(3, "下载官方安装脚本");
     let script = std::env::temp_dir().join(format!("claude-installer-{}.ps1", std::process::id()));
     let body = reqwest::Client::new()
         .get(INSTALLER_URL)
@@ -223,7 +231,8 @@ pub async fn execute(ch: Channel, force: bool) -> Result<String> {
         .await?;
     std::fs::write(&script, body)?;
 
-    let out = tokio::process::Command::new("powershell")
+    rep.phase(4, format!("运行官方安装器（{} 渠道）", ch.as_str()));
+    let out = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
         .args([
             "-NoProfile",
             "-ExecutionPolicy",
@@ -237,15 +246,20 @@ pub async fn execute(ch: Channel, force: bool) -> Result<String> {
     let _ = std::fs::remove_file(&script);
 
     let out = out?;
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        if !line.trim().is_empty() {
+            rep.log(4, line.trim().to_string());
+        }
+    }
     if !out.status.success() {
-        return Err(GateError::Other(format!(
-            "官方 Claude 安装程序失败：{}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        )));
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        rep.fail(format!("官方 Claude 安装程序失败：{err}"));
+        return Err(GateError::Other(format!("官方 Claude 安装程序失败：{err}")));
     }
 
     // 装完必须重新上锁 —— 新 exe 继承的是干净 ACL，门禁那条 Deny 没了。
     // 这里失败要报错，不能默默放过，否则会留下一个没有执行锁的新二进制。
+    rep.phase(5, "重新上锁");
     let relocked = crate::gate::lock_all().map_err(|e| {
         GateError::Other(format!(
             "安装成功，但执行锁重建失败：{e}。新的 claude.exe 目前没有锁，\
@@ -260,7 +274,7 @@ pub async fn execute(ch: Channel, force: bool) -> Result<String> {
         relocked
     ));
 
-    Ok(format!(
+    let detail = format!(
         "已安装 {}。重新上锁 {} 个可执行文件。{}",
         after.installed.unwrap_or_default(),
         relocked,
@@ -269,7 +283,9 @@ pub async fn execute(ch: Channel, force: bool) -> Result<String> {
         } else {
             format!("顺带清理了 {} 个旧残留副本。", cleaned.len())
         }
-    ))
+    );
+    rep.done(detail.clone());
+    Ok(detail)
 }
 
 #[cfg(test)]

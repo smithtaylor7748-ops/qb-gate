@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "面板窗口需要的插件权限。自定义命令（gate_* / probe_* 等）不走 ACL，这里只列插件命令。",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "opener:allow-open-url",
+    "dialog:allow-open"
+  ]
+}

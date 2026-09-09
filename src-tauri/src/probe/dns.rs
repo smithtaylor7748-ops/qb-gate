@@ -16,6 +16,7 @@
 //! 两者都是**简易通过**。深度排查（抓包、WebRTC、路由）交给高级通过的 Codex。
 
 use crate::error::Result;
+use crate::events::Reporter;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,6 +42,8 @@ pub struct DnsReport {
     /// bash.ws 自己给的结论行，原样透出。
     pub upstream_conclusion: Option<String>,
     pub note: &'static str,
+    pub score: u8,
+    pub ethernet_safe: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,8 +107,11 @@ async fn obtain_test_id() -> Result<String> {
 ///     自己发包就绕过了要检测的那条链路，测了个寂寞。
 ///   - 串行 + 间隔 200ms。并发打十个查询容易被解析器合并或限流，
 ///     回显清单会不全。
-async fn trigger_probes(id: &str) {
+async fn trigger_probes(id: &str, rep: &Reporter) {
     for i in 1..=PROBE_COUNT {
+        // 十个域名逐个报，界面上才看得出它在动 —— 整套要六秒多，
+        // 一动不动的六秒和卡死没法区分。
+        rep.phase(u32::from(i), format!("解析第 {i} / {PROBE_COUNT} 个探针域名"));
         let host = format!("{i}.{id}.bash.ws:80");
         let _ = tokio::net::lookup_host(host).await;
         tokio::time::sleep(std::time::Duration::from_millis(DELAY_BETWEEN_PROBES_MS)).await;
@@ -126,7 +132,7 @@ async fn fetch_results(id: &str) -> Result<Vec<BashWsEntry>> {
 /// 且没有安全影响。（ACL 那边不一样 —— 那是管控点，必须用 API，见 gate/acl.rs。）
 #[cfg(windows)]
 async fn adapter_resolvers() -> Vec<(String, String)> {
-    let Ok(out) = tokio::process::Command::new("powershell")
+    let Ok(out) = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -154,12 +160,16 @@ async fn adapter_resolvers() -> Vec<(String, String)> {
     Vec::new()
 }
 
-pub async fn check() -> Result<DnsReport> {
+pub async fn check(rep: &Reporter) -> Result<DnsReport> {
+    rep.phase(0, "向 bash.ws 取测试 id");
     let id = obtain_test_id().await?;
-    trigger_probes(&id).await;
+    trigger_probes(&id, rep).await;
+
     // 权威 NS 记账有延迟，等满 3 秒再取，否则常常读到半截清单。
+    rep.phase(PROBE_COUNT.into(), "等权威域名服务器记账（3 秒）");
     tokio::time::sleep(std::time::Duration::from_millis(WAIT_AFTER_PROBES_MS)).await;
 
+    rep.phase(PROBE_COUNT.into(), "取回解析器清单");
     let entries = fetch_results(&id).await.unwrap_or_default();
 
     let mut egress_asn = None;
@@ -208,6 +218,7 @@ pub async fn check() -> Result<DnsReport> {
     }
 
     let findings = evaluate(&resolvers);
+    let (score, ethernet_safe) = score_report(&resolvers);
 
     Ok(DnsReport {
         passed: findings.is_empty() && !resolvers.is_empty(),
@@ -218,7 +229,29 @@ pub async fn check() -> Result<DnsReport> {
                深度排查请用高级通过让 Codex 抓包核实。",
         resolvers,
         findings,
+        score,
+        ethernet_safe,
     })
+}
+
+/// 100 分制：以太网安全 50 分、无国内 DNS 30 分、证据完整 20 分。
+fn score_report(resolvers: &[Resolver]) -> (u8, Option<bool>) {
+    if resolvers.is_empty() { return (0, None); }
+    let ethernet: Vec<&Resolver> = resolvers.iter().filter(|r| {
+        let n = r.interface.as_deref().unwrap_or("").to_lowercase();
+        n.contains("以太网") || n.contains("ethernet")
+    }).collect();
+    let ethernet_safe = if ethernet.is_empty() { None } else { Some(ethernet.iter().all(|r| !r.is_private)) };
+    let mut score = 0u8;
+    if ethernet_safe == Some(true) { score += 50; }
+    let has_domestic = resolvers.iter().any(|r| r.is_domestic);
+    if !has_domestic { score += 30; }
+    // 有权威回显或网卡信息即有证据；两者均有时给满证据分。
+    let has_authoritative = resolvers.iter().any(|r| !r.from_adapter);
+    let has_adapter = resolvers.iter().any(|r| r.from_adapter);
+    if has_authoritative { score += 10; }
+    if has_adapter { score += 10; }
+    (score, ethernet_safe)
 }
 
 /// 判定逻辑抽出来，便于单测。
@@ -315,5 +348,18 @@ mod tests {
     fn empty_result_is_not_a_pass() {
         let f = evaluate(&[]);
         assert_eq!(f.len(), 1, "读不到解析器要说无法判定，不能当通过");
+    }
+
+    #[test]
+    fn ethernet_safe_report_gets_full_score() {
+        let r = vec![res("1.1.1.1", false, false, None), res("8.8.8.8", false, true, Some("以太网"))];
+        assert_eq!(score_report(&r), (100, Some(true)));
+    }
+
+    #[test]
+    fn ethernet_private_dns_loses_network_score() {
+        let r = vec![res("192.168.1.1", false, true, Some("以太网"))];
+        assert_eq!(score_report(&r).1, Some(false));
+        assert!(score_report(&r).0 < 50);
     }
 }

@@ -38,6 +38,24 @@ pub struct DependencyCheck {
     pub detail: String,
 }
 
+/// 官方插件清单状态。仓库尚未创建时明确保持停用，插件页也不会接受任意 URL。
+#[derive(Debug, Clone, Serialize)]
+pub struct OfficialCatalogStatus {
+    pub configured: bool,
+    pub source: Option<String>,
+    pub signed: bool,
+    pub detail: String,
+}
+
+pub fn official_catalog_status() -> OfficialCatalogStatus {
+    OfficialCatalogStatus {
+        configured: false,
+        source: None,
+        signed: false,
+        detail: "官方插件清单仓库尚未配置；仅可使用内置插件。".into(),
+    }
+}
+
 impl DependencyCheck {
     pub fn new(label: impl Into<String>, ok: bool, detail: impl Into<String>) -> Self {
         Self {

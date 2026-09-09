@@ -58,7 +58,7 @@ pub fn iana_to_windows(iana: &str) -> Option<&'static str> {
 
 #[cfg(windows)]
 pub fn current_windows_tz() -> Result<String> {
-    let out = std::process::Command::new("tzutil").arg("/g").output()?;
+    let out = crate::process::hidden_std(std::process::Command::new("tzutil")).arg("/g").output()?;
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if s.is_empty() {
         return Err(GateError::Other("读不到当前系统时区".into()));
@@ -87,7 +87,7 @@ pub fn apply_timezone(iana: &str, restore_on_exit: bool) -> Result<TzState> {
             restore_on_exit,
         });
     }
-    let out = std::process::Command::new("tzutil")
+    let out = crate::process::hidden_std(std::process::Command::new("tzutil"))
         .args(["/s", target])
         .output()?;
     if !out.status.success() {
@@ -111,7 +111,7 @@ pub fn apply_timezone(_iana: &str, _restore_on_exit: bool) -> Result<TzState> {
 
 #[cfg(windows)]
 pub fn restore_timezone(st: &TzState) -> Result<()> {
-    let out = std::process::Command::new("tzutil")
+    let out = crate::process::hidden_std(std::process::Command::new("tzutil"))
         .args(["/s", &st.original])
         .output()?;
     if out.status.success() {

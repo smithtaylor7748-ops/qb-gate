@@ -1,55 +1,28 @@
-import type { Risk, StepState } from './api';
-
 /**
- * 侧栏的五个菜单**本身就是引导步骤**，没有单独的「新手引导」页。
+ * 五个进度步骤。
  *
- * 导航是自由的 —— 随便点，只标状态；每行右侧标风险度。
- * id 必须与 Rust 侧 `progress.rs` 的 STEP_IDS 一一对应，改名要两边一起改。
+ * ⚠ 这五个 id 与 `src-tauri/src/progress.rs` 的 `STEP_IDS` 硬绑定，
+ * 也是 `%LOCALAPPDATA%\ClaudeIpGate\progress.json` 里**已有数据的 key**。
+ * 改名 = 老用户进度全丢。加新 id 也要两边一起改。
+ *
+ * 侧栏不再是「①②③④⑤ 向导」——它现在按功能分组，进度只用在总览顶部那条
+ * 可关闭的横幅上。但进度本身照常记：哪一步没走过、哪一步是被知情跳过的，
+ * 仍然要能查得到。
+ *
+ * 「中文环境识别」拆成了独立页面，但它**不是第六个步骤** —— 它归在
+ * `environment` 这一步里，由环境页负责记录。这样 progress.json 的形状不变。
  */
+
 export const STEPS = [
-  { id: 'purity', label: 'IP 纯净度', blurb: '三项硬指标，缺一不可' },
-  { id: 'environment', label: '环境与安装', blurb: '检测、清理、安装 Claude' },
-  { id: 'dns', label: 'DNS 泄露', blurb: '简易通过与高级通过' },
-  { id: 'iplock', label: 'IP 锁', blurb: '白名单、执行锁与看门狗' },
-  { id: 'accounts', label: '账户与启动', blurb: '登录、切换、验证后启动' },
+  { id: 'purity', label: 'IP 纯净度' },
+  { id: 'environment', label: '环境与安装' },
+  { id: 'dns', label: 'DNS 泄露' },
+  { id: 'iplock', label: 'IP 锁' },
+  { id: 'accounts', label: '账户与启动' },
 ] as const;
 
 export type StepId = (typeof STEPS)[number]['id'];
 
-export const ALWAYS_AVAILABLE = [
-  { id: 'plugins', label: '插件商店' },
-  { id: 'relay', label: '中转站' },
-  { id: 'settings', label: '设置' },
-] as const;
-
-export const RISK_LABEL: Record<Risk, string> = {
-  unknown: '未检测',
-  low: '通过',
-  medium: '注意',
-  high: '高危',
-};
-
-export const STATE_MARK: Record<StepState, string> = {
-  pending: '',
-  passed: '✓',
-  failed: '!',
-  skipped: '–',
-};
-
-export function nextStep(id: StepId): StepId | null {
-  const i = STEPS.findIndex((s) => s.id === id);
-  return i >= 0 && i < STEPS.length - 1 ? STEPS[i + 1].id : null;
-}
-
-export function prevStep(id: StepId): StepId | null {
-  const i = STEPS.findIndex((s) => s.id === id);
-  return i > 0 ? STEPS[i - 1].id : null;
-}
-
 export function stepLabel(id: string): string {
   return STEPS.find((s) => s.id === id)?.label ?? id;
-}
-
-export function stepIndex(id: string): number {
-  return STEPS.findIndex((s) => s.id === id) + 1;
 }

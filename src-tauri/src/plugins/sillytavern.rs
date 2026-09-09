@@ -16,6 +16,7 @@
 //!   - 数据目录的 ACL 要修，否则 Python 报 WinError 5。
 
 use crate::error::{GateError, Result};
+use crate::events::Reporter;
 use crate::plugins::{DependencyCheck, PluginState, PluginStatus};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -143,7 +144,7 @@ pub fn find_official_claude() -> Result<PathBuf> {
 
 fn find_python() -> Result<PathBuf> {
     for exe in ["python.exe", "python3.exe", "py.exe"] {
-        if let Ok(out) = std::process::Command::new("where").arg(exe).output() {
+        if let Ok(out) = crate::process::hidden_std(std::process::Command::new("where")).arg(exe).output() {
             if out.status.success() {
                 if let Some(first) = String::from_utf8_lossy(&out.stdout).lines().next() {
                     let p = PathBuf::from(first.trim());
@@ -262,7 +263,7 @@ async fn existing_bridge_pid(cfg: &TavernConfig) -> Result<Option<u32>> {
         return Ok(None);
     };
 
-    let out = tokio::process::Command::new("powershell")
+    let out = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -339,7 +340,7 @@ fn fix_data_dir_acl(dir: &Path) -> Result<()> {
             "/Q".into(),
         ],
     ] {
-        let _ = std::process::Command::new("icacls").args(&args).output();
+    let _ = crate::process::hidden_std(std::process::Command::new("icacls")).args(&args).output();
     }
     Ok(())
 }
@@ -352,7 +353,7 @@ fn fix_data_dir_acl(dir: &Path) -> Result<()> {
 
 #[cfg(windows)]
 fn whoami_name() -> String {
-    std::process::Command::new("whoami")
+    crate::process::hidden_std(std::process::Command::new("whoami"))
         .output()
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -386,11 +387,12 @@ async fn bridge_healthy(port: u16) -> bool {
 ///
 /// 调用方（lib.rs 的命令）负责在此之前完成 IP 门禁放行，
 /// 并在成功之后起 `WatchMode::Cli` 看门狗。
-pub async fn start() -> Result<String> {
+pub async fn start(rep: &Reporter) -> Result<String> {
     let cfg = load_config();
     let dd = bridge_data_dir();
 
     // 依赖先查齐，别起到一半才发现缺东西。
+    rep.phase(1, "检查依赖与数据目录权限");
     let claude = find_official_claude()?;
     let python = find_python()?;
     let bridge_py = cfg.bridge_root.join("bridge.py");
@@ -401,6 +403,7 @@ pub async fn start() -> Result<String> {
     fix_data_dir_acl(&dd)?;
 
     // ---- 桥接 ----
+    rep.phase(2, "启动 Claude 桥接");
     let reused_bridge = existing_bridge_pid(&cfg).await?;
     let bridge_pid = match reused_bridge {
         Some(pid) => pid,
@@ -437,6 +440,7 @@ pub async fn start() -> Result<String> {
     };
 
     // ---- 等桥接就绪：必须打 /health，不能只看进程活着 ----
+    rep.phase(3, "等桥接就绪（最长 20 秒）");
     let mut ready = false;
     for _ in 0..BRIDGE_READY_ATTEMPTS {
         tokio::time::sleep(std::time::Duration::from_millis(POLL_MS)).await;
@@ -468,6 +472,7 @@ pub async fn start() -> Result<String> {
     }
 
     // ---- 酒馆 ----
+    rep.phase(4, "启动酒馆");
     let st_was_running = port_in_use(cfg.st_port);
     if !st_was_running {
         if !cfg.st_launcher.is_file() {
@@ -482,10 +487,16 @@ pub async fn start() -> Result<String> {
         std::fs::write(dd.join("sillytavern.pid"), child.id().to_string())?;
     }
 
+    rep.phase(5, "等酒馆就绪（最长 60 秒）");
     for _ in 0..ST_READY_ATTEMPTS {
         tokio::time::sleep(std::time::Duration::from_millis(POLL_MS)).await;
         if port_in_use(cfg.st_port) {
             crate::gate::log::write("酒馆与桥接已就绪");
+            rep.done(if st_was_running {
+                "酒馆已在运行，直接打开页面"
+            } else {
+                "酒馆与桥接已就绪"
+            });
             // **复用路径也要返回 URL 让界面打开页面。**
             // 少了这一步，成功的启动和崩溃看起来一模一样。
             return Ok(format!("http://127.0.0.1:{}", cfg.st_port));
@@ -496,7 +507,7 @@ pub async fn start() -> Result<String> {
 }
 
 async fn kill_tree(pid: u32) -> Result<()> {
-    let _ = tokio::process::Command::new("taskkill")
+    let _ = crate::process::hidden_tokio(tokio::process::Command::new("taskkill"))
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .output()
         .await;

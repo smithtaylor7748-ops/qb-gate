@@ -117,7 +117,7 @@ Get-CimInstance Win32_Process |
   } | ConvertTo-Json -Compress -AsArray
 "#;
 
-    let Ok(out) = tokio::process::Command::new("powershell")
+    let Ok(out) = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
         .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
         .output()
         .await
@@ -131,6 +131,33 @@ Get-CimInstance Win32_Process |
 #[cfg(not(windows))]
 async fn enumerate() -> Vec<RawProcess> {
     Vec::new()
+}
+
+/// 单个文件的 Authenticode 主体。
+///
+/// 与上面 `enumerate` 里那段用的是同一个 `Get-AuthenticodeSignature`，
+/// 抽出来给安装流程复用 —— 装完要核对新文件的签名主体含不含 Anthropic。
+///
+/// **`None` 表示拿不到，不表示没签名。** 这个区别在调用方那里要保住：
+/// 拿不到只能说「没验成」，不能说成「验证失败」。
+#[cfg(windows)]
+pub async fn signer_of(path: &std::path::Path) -> Option<String> {
+    let script = format!(
+        "try {{ (Get-AuthenticodeSignature -LiteralPath '{}' -ErrorAction Stop).SignerCertificate.Subject }} catch {{ }}",
+        path.display()
+    );
+    let out = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .await
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+#[cfg(not(windows))]
+pub async fn signer_of(_path: &std::path::Path) -> Option<String> {
+    None
 }
 
 /// 只看不动：列出会被收的进程，交给界面让用户确认。
@@ -171,7 +198,7 @@ pub async fn execute() -> Result<KillReport> {
     for t in &report.targets {
         // /T 连子进程一起收：Squirrel 存根会拉起 app-* 下的真身，
         // 只收父进程会留下一堆孤儿。
-        let out = tokio::process::Command::new("taskkill")
+        let out = crate::process::hidden_tokio(tokio::process::Command::new("taskkill"))
             .args(["/PID", &t.pid.to_string(), "/T", "/F"])
             .output()
             .await;

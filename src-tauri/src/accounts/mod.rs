@@ -22,6 +22,12 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize)]
+pub struct MigrationReport {
+    pub migrated: Vec<String>,
+    pub backup: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct Slot {
     pub label: String,
     pub active: bool,
@@ -41,6 +47,119 @@ pub const EXPIRY_CAVEAT: &str =
 
 pub fn profiles_root() -> PathBuf {
     crate::gate::state_dir()
+}
+
+/// Import legacy account slots once. The operation is deliberately local and
+/// idempotent: existing ClaudeGate slots are never overwritten.
+pub fn migrate_legacy() -> Result<MigrationReport> {
+    let root = profiles_root();
+    std::fs::create_dir_all(&root)?;
+    let marker = root.join("account-migration-v1.done");
+    if marker.exists() {
+        return Ok(MigrationReport { migrated: Vec::new(), backup: None });
+    }
+
+    let mut candidates: Vec<(PathBuf, String)> = Vec::new();
+    if let Some(local) = dirs::data_local_dir() {
+        let legacy = local.join("ClaudeTavernBridge");
+        if legacy.is_dir() {
+            if let Ok(rd) = std::fs::read_dir(&legacy) {
+                for entry in rd.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with("claude-profile-") && entry.path().is_dir() {
+                        candidates.push((entry.path(), name.trim_start_matches("claude-profile-").to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    // Claude Desktop keeps a separate encrypted profile tree in %APPDATA%.
+    // Discover the already-migrated `Claude-*` directories as well, and when
+    // the active `Claude` path is a real directory preserve it as `Claude-main`.
+    // Desktop credentials are intentionally never parsed or copied into the
+    // Claude Code slots: the two OAuth clients use different stores.
+    if let Some(appdata) = dirs::config_dir() {
+        if let Ok(rd) = std::fs::read_dir(&appdata) {
+            for entry in rd.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("Claude-") && entry.path().is_dir() {
+                    let label = name.trim_start_matches("Claude-").to_string();
+                    let marker = format!("desktop:{label}");
+                    // Include a marker in the report only; do not duplicate a
+                    // Claude Code slot with incompatible Desktop credentials.
+                    if !candidates.iter().any(|(_, l)| l == &marker) {
+                        candidates.push((entry.path(), marker));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut backup = None;
+    if !candidates.is_empty() {
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let backup_dir = root.join(format!("account-migration-backup-{stamp}"));
+        std::fs::create_dir_all(&backup_dir)?;
+        backup = Some(backup_dir.display().to_string());
+    }
+
+    let mut migrated = Vec::new();
+    for (source, label) in candidates {
+        let is_desktop = label.starts_with("desktop:");
+        let name = if is_desktop {
+            label.trim_start_matches("desktop:").to_string()
+        } else {
+            label.clone()
+        };
+        if !is_desktop {
+            if let Some(dir) = backup.as_ref() {
+            let backup_target = PathBuf::from(dir).join(source.file_name().unwrap_or_default());
+            if !backup_target.exists() { copy_dir_recursive(&source, &backup_target)?; }
+            }
+        }
+        if is_desktop {
+            // Already present in its canonical Desktop location; report it so
+            // the UI can tell the user both account families were discovered.
+            migrated.push(format!("desktop:{name}"));
+            continue;
+        }
+        let target = root.join(format!("claude-profile-{name}"));
+        if target.exists() { continue; }
+        copy_dir_recursive(&source, &target)?;
+        migrated.push(name.to_string());
+    }
+
+    // If a legacy active profile exists, copy it as the default/main slot only
+    // when no Code slot was imported. Never replace an existing user slot.
+    if migrated.is_empty() {
+        if let Some(appdata) = dirs::config_dir() {
+            let active = appdata.join("Claude");
+            let target = root.join("claude-profile-main");
+            if active.is_dir() && !target.exists() && !active.is_symlink() {
+                copy_dir_recursive(&active, &target)?;
+                migrated.push("claude-profile-main".into());
+            }
+        }
+    }
+
+    std::fs::write(marker, b"completed\n")?;
+    if !migrated.is_empty() {
+        crate::gate::log::write(&format!("账户迁移完成：导入 {} 个槽位", migrated.len()));
+    }
+    Ok(MigrationReport { migrated, backup })
+}
+
+fn copy_dir_recursive(source: &std::path::Path, target: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = target.join(entry.file_name());
+        if from.is_dir() { copy_dir_recursive(&from, &to)?; }
+        else if !to.exists() { std::fs::copy(&from, &to)?; }
+    }
+    Ok(())
 }
 
 pub fn slots() -> Vec<Slot> {
@@ -113,7 +232,7 @@ pub fn switch(label: &str) -> Result<()> {
     if link.exists() {
         std::fs::remove_dir(&link)?;
     }
-    let out = std::process::Command::new("cmd")
+    let out = crate::process::hidden_std(std::process::Command::new("cmd"))
         .args([
             "/C",
             "mklink",
@@ -127,6 +246,27 @@ pub fn switch(label: &str) -> Result<()> {
             "建立联结点失败：{}",
             String::from_utf8_lossy(&out.stderr).trim()
         )));
+    }
+    // Keep Claude Desktop aligned when a matching encrypted profile exists.
+    // If the active path is a real directory, move it aside before creating
+    // the junction; never recursively delete user data.
+    if let Some(appdata) = dirs::config_dir() {
+        let desktop_target = appdata.join(format!("Claude-{label}"));
+        let desktop_link = appdata.join("Claude");
+        if desktop_target.is_dir() {
+            if desktop_link.exists() && !desktop_link.is_symlink() {
+                let backup = appdata.join(format!("Claude-backup-{}", chrono::Local::now().format("%Y%m%d-%H%M%S")));
+                std::fs::rename(&desktop_link, &backup)?;
+            } else if desktop_link.exists() {
+                std::fs::remove_dir(&desktop_link)?;
+            }
+            let out = crate::process::hidden_std(std::process::Command::new("cmd"))
+                .args(["/C", "mklink", "/J", &desktop_link.display().to_string(), &desktop_target.display().to_string()])
+                .output()?;
+            if !out.status.success() {
+                return Err(GateError::Other(format!("Claude Desktop 配置联结点建立失败：{}", String::from_utf8_lossy(&out.stderr).trim())));
+            }
+        }
     }
     crate::gate::log::write(&format!("账户槽位切换为 {label}"));
     Ok(())
@@ -154,5 +294,20 @@ mod tests {
         };
         assert!(s.logged_in, "过期不得影响可切换性");
         assert!(s.cli_days_left.is_some_and(|d| d < 0));
+    }
+
+    #[test]
+    fn migration_copy_is_idempotent_and_never_overwrites() {
+        let base = std::env::temp_dir().join(format!("claudegate-migration-test-{}", std::process::id()));
+        let source = base.join("source");
+        let target = base.join("target");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("credentials.json"), "first").unwrap();
+        copy_dir_recursive(&source, &target).unwrap();
+        std::fs::write(source.join("credentials.json"), "changed").unwrap();
+        copy_dir_recursive(&source, &target).unwrap();
+        assert_eq!(std::fs::read_to_string(target.join("credentials.json")).unwrap(), "first");
+        let _ = std::fs::remove_dir_all(base);
     }
 }

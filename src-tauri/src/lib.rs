@@ -4,18 +4,23 @@
 
 pub mod accounts;
 pub mod error;
+pub mod events;
 pub mod gate;
 pub mod install;
+pub mod legacy;
 pub mod killswitch;
+pub mod launch;
 pub mod plugins;
 pub mod probe;
 pub mod progress;
+pub mod process;
 pub mod relay;
 pub mod sysenv;
+pub mod update;
 
 use error::Result;
+use events::Reporter;
 use std::sync::Arc;
-use tauri::Manager;
 
 pub struct AppState {
     pub gate: Arc<gate::GateState>,
@@ -114,17 +119,25 @@ async fn allowlist_add_current() -> Result<Vec<String>> {
 #[tauri::command]
 fn watchdog_start(
     mode: gate::watchdog::WatchMode,
-    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<()> {
+    start_watchdog(mode, state);
+    Ok(())
+}
+
+/// 起看门狗并把停止句柄挂到 AppState 上。
+///
+/// 每次都换一个新的 watch channel：旧的那个 sender 被 take 走之后，
+/// 上一轮的循环下次醒来会自己退出。
+fn start_watchdog(mode: gate::watchdog::WatchMode, state: tauri::State<'_, AppState>) {
     let (tx, rx) = tokio::sync::watch::channel(false);
-    *state.watchdog_stop.lock().unwrap() = Some(tx);
+    if let Some(old) = state.watchdog_stop.lock().unwrap().replace(tx) {
+        let _ = old.send(true);
+    }
     let gs = state.gate.clone();
     tauri::async_runtime::spawn(async move {
         gate::run_watchdog(mode, gs, rx).await;
-        let _ = app;
     });
-    Ok(())
 }
 
 #[tauri::command]
@@ -132,6 +145,37 @@ fn watchdog_stop(state: tauri::State<'_, AppState>) {
     if let Some(tx) = state.watchdog_stop.lock().unwrap().take() {
         let _ = tx.send(true);
     }
+}
+
+/// 验 IP → 解锁 → **真的把进程拉起来** → 挂看门狗。
+///
+/// `gate_open` 只解锁不启动，所以旧界面上那两个「启动 …」按钮其实一个进程
+/// 都没起过。这条链任何一步失败都会把租约还回去并重新上锁 ——
+/// 门禁不过就一个进程都不起。
+#[tauri::command]
+async fn launch_claude(
+    app: tauri::AppHandle,
+    target: launch::LaunchTarget,
+    state: tauri::State<'_, AppState>,
+) -> Result<launch::LaunchResult> {
+    let task = match target {
+        launch::LaunchTarget::ClaudeCode => events::TASK_LAUNCH_CODE,
+        launch::LaunchTarget::ClaudeDesktop => events::TASK_LAUNCH_DESKTOP,
+    };
+    let rep = Reporter::new(app, task, 4);
+    rep.phase(1, "验证出口 IP 与门禁");
+    let r = match launch::launch(target, &state.gate).await {
+        Ok(r) => r,
+        Err(e) => {
+            rep.fail(e.to_string());
+            return Err(e);
+        }
+    };
+    rep.phase(2, "出口 IP 已通过，执行锁已临时放行");
+    rep.phase(3, "启动 Claude 进程");
+    start_watchdog(target.watch_mode(), state);
+    rep.done("启动完成，看门狗已挂载");
+    Ok(r)
 }
 
 // ------------------------------------------------------------------ 探测
@@ -148,8 +192,15 @@ async fn probe_purity() -> Result<probe::verdict::PanelVerdict> {
 }
 
 #[tauri::command]
-async fn probe_dns() -> Result<probe::dns::DnsReport> {
-    probe::dns::check().await
+async fn probe_dns(app: tauri::AppHandle) -> Result<probe::dns::DnsReport> {
+    // 10 个探针域名各报一次，界面上那条进度条才动得起来。
+    let rep = Reporter::new(app, events::TASK_DNS_PROBE, 10);
+    let r = probe::dns::check(&rep).await;
+    match &r {
+        Ok(_) => rep.done("检测完成"),
+        Err(e) => rep.fail(e.to_string()),
+    }
+    r
 }
 
 /// 权威站点地址与通过标准。前端原样展示，不要在前端硬编码第二份。
@@ -175,32 +226,40 @@ async fn detect_software() -> serde_json::Value {
     serde_json::json!({
         "claudeCode": install::detect::claude_code().await,
         "claudeDesktop": install::detect::claude_desktop(),
-        "codex": install::detect::codex(),
+        "codex": install::detect::codex().await,
         "browsers": install::detect::browsers(),
     })
 }
 
+/// winget 在不在、两个包查不查得到、各自什么版本。
 #[tauri::command]
-fn installers_list(app: tauri::AppHandle) -> Result<install::download::Lockfile> {
-    let dir = app
-        .path()
-        .resource_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
-    install::download::load_lockfile(&dir)
+async fn install_probe() -> install::winget::InstallProbe {
+    install::winget::probe().await
 }
 
+/// 装一个目标：解锁 → winget（失败回退官方脚本）→ 重新枚举 → 验签 → 重新上锁。
 #[tauri::command]
-async fn installer_fetch(inst: install::download::Installer) -> Result<std::path::PathBuf> {
-    install::download::fetch_verified(&inst).await
+async fn install_run(
+    app: tauri::AppHandle,
+    target: install::winget::InstallTarget,
+) -> Result<install::winget::InstallResult> {
+    let rep = Reporter::new(app, events::TASK_INSTALL, install::winget::TOTAL);
+    let r = install::winget::install(target, &rep).await;
+    if let Err(e) = &r {
+        rep.fail(e.to_string());
+    }
+    r
 }
 
 // ------------------------------------------------------------------ 账户
 
 #[tauri::command]
 fn accounts_list() -> serde_json::Value {
+    let migration = accounts::migrate_legacy().ok();
     serde_json::json!({
         "slots": accounts::slots(),
         "caveat": accounts::EXPIRY_CAVEAT,
+        "migration": migration,
     })
 }
 
@@ -212,9 +271,11 @@ fn accounts_switch(label: String) -> Result<()> {
 
 // ------------------------------------------------------------------ 中转站
 
+/// 每个 target 各返回一条。**不要退回成返回单条** —— 旧版读到 Claude
+/// 就提前 return，Codex 那边的配置在界面上永远看不见。
 #[tauri::command]
-fn relay_current() -> Option<relay::Provider> {
-    relay::current_provider()
+fn relay_current() -> Vec<relay::Provider> {
+    relay::current_providers()
 }
 
 #[tauri::command]
@@ -275,23 +336,51 @@ async fn upgrade_plan(channel: install::upgrade::Channel) -> install::upgrade::U
 
 #[tauri::command]
 async fn upgrade_execute(
+    app: tauri::AppHandle,
     channel: install::upgrade::Channel,
     force: bool,
 ) -> Result<String> {
-    install::upgrade::execute(channel, force).await
+    let rep = Reporter::new(app, events::TASK_UPGRADE, 5);
+    let r = install::upgrade::execute(channel, force, &rep).await;
+    if let Err(e) = &r {
+        rep.fail(e.to_string());
+    }
+    r
+}
+
+// ------------------------------------------------------------ 应用更新
+
+/// 返回更新配置状态。仓库未创建前保持安全的未配置状态，启动时调用也不会联网。
+#[tauri::command]
+fn update_status() -> update::UpdateStatus {
+    update::status()
 }
 
 // ------------------------------------------------------------ 一键关闭
 
 /// 只看不动，把会被收的进程列给用户确认。
 #[tauri::command]
-async fn killswitch_preview() -> killswitch::KillReport {
-    killswitch::preview().await
+async fn killswitch_preview(app: tauri::AppHandle) -> killswitch::KillReport {
+    let rep = Reporter::new(app, events::TASK_KILL_PREVIEW, 2);
+    rep.phase(1, "扫描 Claude 相关进程并核对证据");
+    let r = killswitch::preview().await;
+    rep.done(format!("扫描完成，发现 {} 个可关闭进程", r.targets.len()));
+    r
 }
 
 #[tauri::command]
-async fn killswitch_execute() -> Result<killswitch::KillReport> {
-    killswitch::execute().await
+async fn killswitch_execute(app: tauri::AppHandle) -> Result<killswitch::KillReport> {
+    let rep = Reporter::new(app, events::TASK_KILL_EXECUTE, 3);
+    rep.phase(1, "扫描并核对待关闭进程");
+    let r = killswitch::execute().await;
+    match &r {
+        Ok(v) => {
+            rep.phase(2, format!("已关闭 {} 个进程，正在重新上锁", v.killed.len()));
+            rep.done("关闭完成，执行锁已恢复");
+        }
+        Err(e) => rep.fail(e.to_string()),
+    }
+    r
 }
 
 // ------------------------------------------------------------ 插件
@@ -299,6 +388,11 @@ async fn killswitch_execute() -> Result<killswitch::KillReport> {
 #[tauri::command]
 fn plugin_list() -> Vec<plugins::PluginStatus> {
     vec![plugins::sillytavern::status()]
+}
+
+#[tauri::command]
+fn plugin_catalog_status() -> plugins::OfficialCatalogStatus {
+    plugins::official_catalog_status()
 }
 
 /// 启动酒馆：先过 IP 门禁，再拉起桥接与酒馆，最后挂上看门狗。
@@ -311,11 +405,13 @@ async fn plugin_start(
 ) -> Result<String> {
     gate::open_authorized("sillytavern", &state.gate).await?;
 
-    let url = match plugins::sillytavern::start().await {
+    let rep = Reporter::new(app, events::TASK_TAVERN_START, 5);
+    let url = match plugins::sillytavern::start(&rep).await {
         Ok(u) => u,
         Err(e) => {
             // 起失败就把租约还回去，不能让门开着。
             let _ = gate::release_lease(&state.gate);
+            rep.fail(e.to_string());
             return Err(e);
         }
     };
@@ -327,7 +423,6 @@ async fn plugin_start(
     tauri::async_runtime::spawn(async move {
         gate::run_watchdog(gate::watchdog::WatchMode::Cli, gs, rx).await;
     });
-    let _ = app;
 
     Ok(url)
 }
@@ -379,7 +474,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_shell::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             gate_status,
@@ -398,8 +492,9 @@ pub fn run() {
             probe_dns,
             purity_criteria,
             detect_software,
-            installers_list,
-            installer_fetch,
+            install_probe,
+            install_run,
+            launch_claude,
             accounts_list,
             accounts_switch,
             relay_current,
@@ -411,9 +506,11 @@ pub fn run() {
             progress_set,
             upgrade_plan,
             upgrade_execute,
+            update_status,
             killswitch_preview,
             killswitch_execute,
             plugin_list,
+            plugin_catalog_status,
             plugin_start,
             plugin_stop,
             tavern_config,
@@ -424,6 +521,7 @@ pub fn run() {
             tavern_restore,
         ])
         .setup(|app| {
+            let _ = legacy::disable_known_launchers();
             // 启动时重建锁，等价于现有实现的 -Mode Check：
             // 宁可多锁一次，也不要因为上次异常退出而敞着。
             //

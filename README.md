@@ -135,6 +135,9 @@ Windows 桌面应用，Tauri 2 + React + Rust，MIT。
 侧栏「随时可开」里。清单驱动（`src/plugins/registry.ts`），
 现在是内置数组，将来换成拉远程 index 即可，调用方不用改。
 
+官方清单仓库尚未创建前，商店保持“仅内置插件”模式，不接受任意下载地址。
+启用远程清单时必须通过签名校验，并提供来源、许可证和文件哈希，才能刷新、安装或升级。
+
 ### 酒馆 SillyTavern
 
 启动**真正的** SillyTavern 与 Claude 桥接 —— 所以世界书、角色卡、群聊、扩展
@@ -163,6 +166,9 @@ Windows 桌面应用，Tauri 2 + React + Rust，MIT。
 
 默认走 `latest` 渠道。写死 `stable` 会导致降级（实测 stable 可能比本机还旧），
 面板会直接拦下并说明原因。
+
+ClaudeGate 自身更新同样保持安全默认：当前 GitHub Releases 仓库尚未配置，启动时不联网检查。
+仓库发布后将只接受签名的 Tauri 更新包，并在设置页提供一键更新入口。
 
 两个坑已经填上：版本号统一取**前三段**再比（本机文件属性是 `2.1.258.0`，
 渠道返回 `2.1.258`，按四段比会误判成「渠道更旧」）；本机版本从**文件属性**读，
@@ -227,14 +233,27 @@ cd src-tauri && cargo test
 > 另：`.ps1` 必须存成 **UTF-8 with BOM**。Windows PowerShell 5.1 没有 BOM
 > 就按 ANSI 读，中文注释会变乱码并直接引发语法错误。
 
-## 安装包
+## 安装 Claude
 
-仓库**不分发官方安装包本体**，只在 `installers.lock.json` 里钉地址与 SHA-256。
-运行时拉取后校验，不匹配直接拒绝安装。
+面板**不分发也不自己下载官方安装包**，走 winget 优先、官方安装脚本兜底：
 
-`sha256` 为空时程序会拒绝下载——这是有意的，
-**一个能被绕过的校验比没有校验更危险**，它会让人以为验过了。
-填法见 `scripts/pin-hash.mjs`。
+| 目标 | 首选 | 兜底 |
+|---|---|---|
+| Claude Code | `winget install --id Anthropic.ClaudeCode -e` | `irm https://claude.ai/install.ps1 \| iex` |
+| Claude 桌面端 | `winget install --id Anthropic.Claude -e` | 打开官方下载页（没有等价的一行命令） |
+
+早期版本自己钉 SHA-256（`installers.lock.json` + `scripts/pin-hash.mjs`），
+现已下线。原因是那在 Windows 上是个不必要的死结：哈希得手工钉，
+钉不上安装按钮就永远是灰的 —— 而它确实一直是灰的。完整性本来就有三层保障：
+
+1. winget manifest 自带 `InstallerSha256`，由 winget 自己校验；
+2. 官方安装脚本走 Anthropic 自己签名的清单；
+3. Windows 二进制上还有 Authenticode 签名。
+
+装完面板会再核对一次第 3 条（主体里有没有 Anthropic）作为独立佐证，
+**核不过只警告不阻断** —— 用户完全可能自己装了别的构建。
+
+装完必然重新枚举副本并**重新上锁**，重锁失败会报错，不会默默放过。
 
 ---
 
@@ -246,6 +265,9 @@ cd src-tauri && cargo test
 2. 账户切换只能由人手动触发，无定时器、无 watchdog、无自动调用点
 3. 任意时刻只有一个账户激活
 4. **所有账户必须是使用者本人拥有的**
+
+总览中的 Claude 订阅卡片只显示本地登录状态和凭证时间戳，并打开 Claude 官方
+`Settings → Usage` 页面查看用量。ClaudeGate 不读取额度、429、限流或 OAuth 内部接口。
 
 卸载清理功能的定位是：修复损坏安装、移交机器、清除本人数据。
 **不为规避封禁或用量限制而设计**——Anthropic 政策禁止为规避限制而

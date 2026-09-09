@@ -35,6 +35,33 @@ MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件
 
 ---
 
+## 界面依赖
+
+前端重做（2026-09-09）引入的两个库，都是 MIT，都作为普通依赖使用，
+没有改动其源码：
+
+### Tailwind CSS v4
+
+- 仓库：https://github.com/tailwindlabs/tailwindcss
+- 许可：**MIT**，Copyright (c) Tailwind Labs, Inc.
+- 用在：`src/styles/`，只用它的工具类与 `@theme` 令牌层
+
+配色**没有用它的调色板**：`src/styles/tokens.css` 里那套暖褐底加赭橙的变量
+是本项目原有的，逐行搬过来的，一个 hex 都没改。
+Tailwind 在这里只负责生成间距、字号、圆角这些工具类。
+
+### lucide-react
+
+- 仓库：https://github.com/lucide-icons/lucide
+- 许可：**ISC**，Copyright (c) Lucide Icons and Contributors
+  （项目本身是 Feather Icons 的分支，那部分沿用其 MIT 声明）
+- 用在：全部界面图标
+
+替掉了原来用 `▾ ▸ ● ○ ✓ 📁` 这些字符当图标的做法 ——
+那些在不同字体下宽度和基线都不一样，而且读屏器会把它们念出来。
+
+---
+
 ## 作为独立程序启动，没有链接也没有改源码
 
 ### SillyTavern — 酒馆插件
@@ -59,6 +86,11 @@ MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件
 ---
 
 ## 只用了公开接口，没有复制代码
+
+### Claude 官方 Usage 页面与更新边界
+
+总览的订阅卡片只打开 Claude 官方 `Settings → Usage` 页面，不读取额度、429、限流或 OAuth 内部接口。
+ClaudeGate 自身的 GitHub Releases 更新在仓库创建和签名公钥配置前保持停用，不下载或执行未经签名的包。
 
 ### bash.ws — DNS 泄露测试的权威 NS 回显
 

@@ -1,14 +1,14 @@
 import type { ComponentType } from 'react';
-import type { PluginState } from '../lib/api';
 import TavernPanel from './TavernPanel';
 
 /**
  * 插件清单。
  *
- * 现在是内置数组；将来要做远程插件市场时，把这里换成 fetch 一个 index.json
- * 即可，调用方（Plugins.tsx）只认下面这个形状，不认具体插件。
+ * 现在是内置数组；将来远程清单只能来自配置的 GitHub 官方仓库并通过签名校验，
+ * 调用方（Plugins.tsx）只认下面这个形状，不接受用户任意输入的下载地址。
  *
  * 后端 `plugin_list` 负责报状态与依赖检查，前端这份只补充「怎么展示」。
+ * 状态的中文名在 `src/ui/labels.ts`，与其它后端枚举放在一起。
  */
 export interface PluginMeta {
   id: string;
@@ -35,17 +35,3 @@ export const PLUGINS: PluginMeta[] = [
     },
   },
 ];
-
-export const STATE_LABEL: Record<PluginState, string> = {
-  missing: '依赖不齐',
-  ready: '就绪',
-  running: '运行中',
-  broken: '状态异常',
-};
-
-export const STATE_CLASS: Record<PluginState, string> = {
-  missing: 'neutral',
-  ready: 'ok',
-  running: 'ok',
-  broken: 'bad',
-};
