@@ -1,16 +1,39 @@
-import { useState } from 'react';
-import { RotateCw, Save } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Download,
+  ExternalLink as ExternalIcon,
+  Gauge,
+  Pencil,
+  Plus,
+  RotateCw,
+  Save,
+  Trash2,
+} from 'lucide-react';
 
-import { api, type AuthStyle, type Provider, type WireApi } from '../lib/api';
+import {
+  api,
+  type AuthStyle,
+  type LatencyResult,
+  type Preset,
+  type ProviderView,
+  type RelayTarget,
+  type WireApi,
+} from '../lib/api';
 import { R } from '../lib/resources';
-import { invalidate, useResource } from '../lib/store';
+import { invalidate, useResource, useSession } from '../lib/store';
 import { QUICKSTART_DOC } from '../prompts';
 import {
   Button,
   Card,
   Collapsible,
+  ConfirmDialog,
   EmptyState,
   ExternalLink,
+  Modal,
   PageHeader,
   Pill,
   Row,
@@ -18,270 +41,461 @@ import {
   useToast,
 } from '../ui';
 
-/** 常见预设。用户可以改成任何中转站。 */
-const PRESETS: Array<Pick<Provider, 'id' | 'name' | 'base_url'>> = [
-  { id: 'sulianyan', name: '速联言', base_url: 'https://api.sulianyan.com/v1' },
-  { id: 'openai', name: 'OpenAI 官方', base_url: 'https://api.openai.com/v1' },
+/**
+ * 中转站。
+ *
+ * 三个 target 各一份独立列表，卡片式排布。布局思路参考 Cockpit Tools
+ * （标签 + 筛选压密度），但**代码是自己写的** —— 那个项目是
+ * CC BY-NC-SA 4.0，抄源码会把本项目从 MIT 拖成同一个协议。
+ *
+ * Key 从来不会到这个文件里来：后端 `ProviderView` 结构上装不下 Key，
+ * 界面上只有掩码和「有没有配」。
+ */
+
+const TARGETS: Array<{ id: RelayTarget; label: string; hint: string }> = [
+  { id: 'claude-code', label: 'Claude Code', hint: '写 ~/.claude/settings.json 的 env 段' },
+  { id: 'claude-desktop', label: 'Claude 桌面端', hint: '与 Claude Code 共用 settings.json' },
+  { id: 'codex', label: 'Codex', hint: '写 ~/.codex/config.toml 与 auth.json' },
 ];
 
 interface Form {
-  target: 'codex' | 'claude';
   id: string;
+  target: RelayTarget;
+  slug: string;
   name: string;
   base_url: string;
   model: string;
-  api_key: string;
   wire_api: WireApi;
   auth_style: AuthStyle;
+  note: string;
+  website: string;
+  api_key: string;
 }
 
-const BLANK: Form = {
-  target: 'codex',
-  id: 'sulianyan',
-  name: '速联言',
-  base_url: 'https://api.sulianyan.com/v1',
-  model: '',
-  api_key: '',
-  wire_api: 'responses',
-  auth_style: 'env_key',
-};
-
-const TARGET_LABEL: Record<'codex' | 'claude', string> = {
-  codex: 'Codex',
-  claude: 'Claude Code',
-};
-
-function toForm(p: Provider): Form {
+function blank(target: RelayTarget): Form {
   return {
-    target: p.target ?? 'codex',
+    id: '',
+    target,
+    slug: '',
+    name: '',
+    base_url: '',
+    model: '',
+    wire_api: 'responses',
+    auth_style: target === 'codex' ? 'env_key' : 'bearer_token',
+    note: '',
+    website: '',
+    api_key: '',
+  };
+}
+
+function toForm(p: ProviderView): Form {
+  return {
     id: p.id,
+    target: p.target,
+    slug: p.slug,
     name: p.name,
     base_url: p.base_url,
     model: p.model ?? '',
+    wire_api: p.wire_api,
+    auth_style: p.auth_style,
+    note: p.note ?? '',
+    website: p.website ?? '',
     api_key: '',
-    wire_api: p.wire_api ?? 'responses',
-    auth_style: p.auth_style ?? 'env_key',
   };
 }
 
 export default function Relay() {
   const toast = useToast();
-  const cur = useResource('relay', R.relay);
+  const list = useResource('relay', R.relay);
+  const [tab, setTab] = useSession<RelayTarget>('relay.tab', 'claude-code');
+
   const [form, setForm] = useState<Form | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [askDelete, setAskDelete] = useState<ProviderView | null>(null);
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [models, setModels] = useState<string[] | null>(null);
+  const [latency, setLatency] = useState<Record<string, LatencyResult>>({});
 
-  // 每个 target 各一条。后端不再「读到 Claude 就提前返回」，
-  // 所以 Codex 那条也看得见了。
-  const list = cur.data ?? [];
+  const rows = useMemo(
+    () => (list.data ?? []).filter((p) => p.target === tab),
+    [list.data, tab]
+  );
 
-  // 首次拿到当前配置时用它填表单，之后以用户的编辑为准。
-  const f = form ?? (list[0] ? toForm(list[0]) : BLANK);
+  useEffect(() => {
+    let live = true;
+    void api
+      .relayPresets(tab)
+      .then((p) => live && setPresets(p))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [tab]);
 
   function set(patch: Partial<Form>) {
-    setForm({ ...f, ...patch });
+    setForm((f) => (f ? { ...f, ...patch } : f));
   }
 
-  async function save() {
-    setBusy(true);
+  async function act(name: string, fn: () => Promise<unknown>, ok?: string) {
+    setBusy(name);
     try {
-      await api.relayApply({
-        target: f.target,
-        id: f.id.trim(),
-        name: f.name.trim(),
-        base_url: f.base_url.trim(),
-        model: f.model.trim() || undefined,
-        wire_api: f.wire_api,
-        auth_style: f.auth_style,
-        api_key: f.api_key.trim() || undefined,
-      });
-      toast.ok(f.target === 'claude' ? '已写入 Claude 配置，原有配置项保留，并已自动备份' : '已写入 Codex 配置，原有配置项保留，并已自动备份');
-      setForm({ ...f, api_key: '' });
+      await fn();
+      if (ok) toast.ok(ok);
       invalidate('relay');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      setBusy('');
     }
   }
+
+  async function save() {
+    if (!form) return;
+    if (!form.name.trim() || !form.base_url.trim()) {
+      toast.error('显示名和 Base URL 都要填');
+      return;
+    }
+    await act(
+      'save',
+      async () => {
+        await api.relaySave({
+          id: form.id,
+          target: form.target,
+          slug: form.slug.trim(),
+          name: form.name.trim(),
+          base_url: form.base_url.trim(),
+          model: form.model.trim() || null,
+          wire_api: form.wire_api,
+          auth_style: form.auth_style,
+          note: form.note.trim() || null,
+          website: form.website.trim() || null,
+          icon: null,
+          sort: 0,
+          created_at: '',
+          api_key: form.api_key.trim() || undefined,
+        });
+        setForm(null);
+        setModels(null);
+      },
+      '已保存'
+    );
+  }
+
+  async function fetchModels() {
+    if (!form) return;
+    setBusy('models');
+    try {
+      const r = await api.relayFetchModels(form.base_url.trim(), form.id || undefined);
+      setModels(r.models);
+      toast.ok(r.detail);
+    } catch (e) {
+      setModels(null);
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function testOne(p: ProviderView) {
+    setBusy(`ping-${p.id}`);
+    try {
+      const r = await api.relayTestLatency(p.base_url, p.id);
+      setLatency((m) => ({ ...m, [p.id]: r }));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function testAll() {
+    setBusy('ping-all');
+    try {
+      // 串行跑。并发打同一批端点容易触发对方的限流，
+      // 测出来的数字反而不准。
+      for (const p of rows) {
+        const r = await api.relayTestLatency(p.base_url, p.id);
+        setLatency((m) => ({ ...m, [p.id]: r }));
+      }
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function move(p: ProviderView, dir: -1 | 1) {
+    const ids = rows.map((r) => r.id);
+    const i = ids.indexOf(p.id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    await act('reorder', () => api.relayReorder(tab, ids));
+  }
+
+  async function importLive() {
+    setBusy('import');
+    try {
+      const m = await api.relayImportLive(tab);
+      if (!m) {
+        toast.info('这个工具的配置里还没有中转端点');
+        return;
+      }
+      setForm({
+        ...blank(tab),
+        slug: m.slug,
+        name: m.name,
+        base_url: m.base_url,
+        model: m.model ?? '',
+        wire_api: m.wire_api,
+        auth_style: m.auth_style,
+      });
+      toast.ok('已读入当前配置，确认后保存');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  const tabMeta = TARGETS.find((t) => t.id === tab)!;
 
   return (
     <>
       <PageHeader
         title="中转站"
-        sub="给 Codex 配置模型供应商，供「DNS 泄露 · 高级通过」使用。"
+        sub="三个工具各一份供应商列表，一键切换。写入前自动备份，原有配置项保留。"
         actions={
-          <Button icon={<RotateCw size={13} />} loading={cur.loading} onClick={() => void cur.refresh()}>
-            刷新
-          </Button>
+          <>
+            <Button
+              icon={<RotateCw size={13} />}
+              loading={list.loading}
+              onClick={() => void list.refresh()}
+            >
+              刷新
+            </Button>
+            <Button
+              variant="primary"
+              icon={<Plus size={13} />}
+              onClick={() => {
+                setForm(blank(tab));
+                setModels(null);
+              }}
+            >
+              添加
+            </Button>
+          </>
         }
       />
 
-      <Card title="当前配置" className="mb-3">
-        {list.length > 0 ? (
-          list.map((p) => {
-            const target = p.target ?? 'codex';
-            return (
-              <Row
-                key={target}
-                side={
-                  <>
-                    <Pill tone="default">{p.wire_api ?? 'responses'}</Pill>
-                    <Button size="sm" onClick={() => setForm(toForm(p))}>
-                      编辑
-                    </Button>
-                  </>
-                }
-              >
-                <span>
-                  <Pill tone="accent">{TARGET_LABEL[target]}</Pill>{' '}
-                  <span className="text-md">{p.name}</span>
-                </span>
-                <span className="break-all font-mono">{p.base_url}</span>
-                <span className="notice">模型 {p.model ?? '未指定'}</span>
-              </Row>
-            );
-          })
-        ) : (
-          <EmptyState title="还没有配置过供应商">
-            在下面填好 Base URL 与 API Key，保存之后对应的工具就能用了。
-          </EmptyState>
-        )}
-      </Card>
+      {/* --------------------------------------------------- 三个应用分栏 */}
+      <div className="mb-3 flex flex-wrap gap-2">
+        {TARGETS.map((t) => {
+          const n = (list.data ?? []).filter((p) => p.target === t.id).length;
+          return (
+            <Button
+              key={t.id}
+              size="sm"
+              variant={tab === t.id ? 'primary' : 'default'}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+              {n > 0 && ` · ${n}`}
+            </Button>
+          );
+        })}
+      </div>
 
-      <Card title="预设" className="mb-3">
-        {PRESETS.map((p) => (
-          <Row
-            key={p.id}
-            side={
-              <Button size="sm" onClick={() => set({ id: p.id, name: p.name, base_url: p.base_url })}>
-                填入
+      {list.error && <p className="notice notice--danger mb-3">{list.error}</p>}
+
+      <Card
+        title={tabMeta.label}
+        className="mb-3"
+        actions={
+          <>
+            <Button size="sm" disabled={!!busy} onClick={() => void importLive()}>
+              从当前配置导入
+            </Button>
+            <Button
+              size="sm"
+              icon={<Gauge size={12} />}
+              loading={busy === 'ping-all'}
+              disabled={!!busy || rows.length === 0}
+              onClick={() => void testAll()}
+            >
+              全部测速
+            </Button>
+          </>
+        }
+      >
+        <p className="notice mb-2">{tabMeta.hint}</p>
+
+        {rows.length === 0 ? (
+          <EmptyState
+            title={`${tabMeta.label} 还没有配过供应商`}
+            action={
+              <Button
+                variant="primary"
+                icon={<Plus size={13} />}
+                onClick={() => setForm(blank(tab))}
+              >
+                添加一个
               </Button>
             }
           >
-            <span>{p.name}</span>
-            <span className="notice break-all font-mono">{p.base_url}</span>
-          </Row>
-        ))}
-      </Card>
-
-      <Card title="编辑" className="mb-3">
-        <div className="mb-3 flex gap-2">
-          <Button size="sm" variant={f.target === 'codex' ? 'primary' : 'default'} onClick={() => set({ target: 'codex' })}>Codex</Button>
-          <Button size="sm" variant={f.target === 'claude' ? 'primary' : 'default'} onClick={() => set({ target: 'claude' })}>Claude</Button>
-        </div>
-        {f.target === 'claude' && <p className="notice notice--warn mb-3">Claude 目标只写入官方支持的 <code>~/.claude/settings.json</code> 环境变量。请填写你已获授权使用的中转端点；面板不会提供虚构地址或绕过官方登录。</p>}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <TextField label="标识 id" value={f.id} onChange={(v) => set({ id: v })} placeholder="sulianyan" />
-          <TextField label="显示名" value={f.name} onChange={(v) => set({ name: v })} />
-        </div>
-        <div className="mt-3">
-          <TextField
-            label="Base URL"
-            value={f.base_url}
-            onChange={(v) => set({ base_url: v })}
-            placeholder="https://api.example.com/v1"
-          />
-        </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <TextField
-            label="默认模型"
-            hint="可以留空，由目标工具自己决定"
-            value={f.model}
-            onChange={(v) => set({ model: v })}
-          />
-          <TextField
-            label="API Key"
-            type="password"
-            hint="留空则不改动现有 Key"
-            value={f.api_key}
-            onChange={(v) => set({ api_key: v })}
-          />
-        </div>
-
-        {/* 这两个选项以前是写死的（chat + OPENAI_API_KEY），会把实机在用的
-            responses 中转站改坏 —— 所以现在必须由用户选。 */}
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          {f.target === 'codex' && (
-            <div>
-              <span className="field-label">上游协议</span>
-              <div className="mt-1 flex gap-2">
-                {(['responses', 'chat'] as const).map((w) => (
-                  <Button
-                    key={w}
-                    size="sm"
-                    variant={f.wire_api === w ? 'primary' : 'default'}
-                    onClick={() => set({ wire_api: w })}
-                  >
-                    {w}
-                  </Button>
-                ))}
-              </div>
-              <span className="field-hint">
-                大多数中转站是 responses。填错了连不上，但不会弄坏别的配置。
-              </span>
-            </div>
-          )}
-          <div>
-            <span className="field-label">凭证写在哪</span>
-            <div className="mt-1 flex flex-wrap gap-2">
-              {(
-                [
-                  ['env_key', f.target === 'codex' ? 'auth.json' : 'API_KEY'],
-                  ['bearer_token', f.target === 'codex' ? 'config.toml' : 'AUTH_TOKEN'],
-                  ['none', '不写'],
-                ] as const
-              ).map(([style, label]) => (
-                <Button
-                  key={style}
-                  size="sm"
-                  variant={f.auth_style === style ? 'primary' : 'default'}
-                  onClick={() => set({ auth_style: style })}
+            也可以点上面的「从当前配置导入」，把这个工具现在用的端点读进来。
+          </EmptyState>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {rows.map((p, i) => {
+              const ping = latency[p.id];
+              return (
+                <div
+                  key={p.id}
+                  className={`rounded-md border p-3 ${
+                    p.active ? 'border-accent-line bg-accent-bg' : 'border-line'
+                  }`}
                 >
-                  {label}
-                </Button>
-              ))}
-            </div>
-            <span className="field-hint">
-              {f.target === 'codex'
-                ? 'auth.json 会并入写，不会动你的 Codex 登录凭证。'
-                : '两个环境变量只会留一个，避免「改了没生效」。'}
-            </span>
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate font-medium">{p.name}</span>
+                    {p.active ? (
+                      <Pill tone="accent" icon={<Check size={11} />}>
+                        当前启用
+                      </Pill>
+                    ) : (
+                      <Button
+                        size="sm"
+                        loading={busy === `on-${p.id}`}
+                        disabled={!!busy}
+                        onClick={() =>
+                          void act(`on-${p.id}`, () => api.relayActivate(tab, p.id), `已切换到 ${p.name}`)
+                        }
+                      >
+                        启用
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="notice mt-1 break-all font-mono">{p.base_url}</div>
+
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {p.target === 'codex' && <Pill tone="default">{p.wire_api}</Pill>}
+                    {p.has_key ? (
+                      <Pill tone={p.key_encrypted ? 'ok' : 'warn'}>
+                        {p.key_masked ?? '已配 Key'}
+                      </Pill>
+                    ) : (
+                      <Pill tone="default">未配 Key</Pill>
+                    )}
+                    {p.model && <span className="notice">{p.model}</span>}
+                    {ping && (
+                      <Pill tone={ping.ok ? 'ok' : 'danger'} title={ping.detail}>
+                        {ping.ms != null ? `${ping.ms} ms` : '连不上'}
+                      </Pill>
+                    )}
+                  </div>
+
+                  {p.note && <p className="notice mt-1">{p.note}</p>}
+                  {p.has_key && !p.key_encrypted && (
+                    <p className="notice notice--warn mt-1">
+                      这条的 Key 是明文存的（早期版本或手改留下的）。保存一次就会转成加密。
+                    </p>
+                  )}
+
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    <Button size="sm" icon={<Pencil size={11} />} onClick={() => setForm(toForm(p))}>
+                      编辑
+                    </Button>
+                    <Button
+                      size="sm"
+                      icon={<Gauge size={11} />}
+                      loading={busy === `ping-${p.id}`}
+                      disabled={!!busy}
+                      onClick={() => void testOne(p)}
+                    >
+                      测速
+                    </Button>
+                    <Button
+                      size="sm"
+                      icon={<Copy size={11} />}
+                      disabled={!!busy}
+                      onClick={() =>
+                        void act('dup', () => api.relayDuplicate(p.id), `已复制 ${p.name}`)
+                      }
+                    >
+                      复制
+                    </Button>
+                    <Button
+                      size="sm"
+                      icon={<ChevronUp size={11} />}
+                      aria-label="上移"
+                      disabled={!!busy || i === 0}
+                      onClick={() => void move(p, -1)}
+                    />
+                    <Button
+                      size="sm"
+                      icon={<ChevronDown size={11} />}
+                      aria-label="下移"
+                      disabled={!!busy || i === rows.length - 1}
+                      onClick={() => void move(p, 1)}
+                    />
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      icon={<Trash2 size={11} />}
+                      aria-label="删除"
+                      disabled={!!busy}
+                      onClick={() => setAskDelete(p)}
+                    />
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        </div>
-
-        <Button
-          className="mt-3"
-          variant="primary"
-          icon={<Save size={13} />}
-          loading={busy}
-          disabled={!f.base_url.trim()}
-          onClick={save}
-        >
-          保存并切换
-        </Button>
-
-        <Collapsible className="mt-2" summary="Key 会存到哪里？">
-          <p className="notice">
-            按上面「凭证写在哪」决定：Codex 是并入 <code>~/.codex/auth.json</code>{' '}
-            或写进 <code>config.toml</code> 的 provider 段；Claude Code 是{' '}
-            <code>~/.claude/settings.json</code> 的 <code>env</code> 段。
-            <strong>面板本身不保存明文</strong>，读回来时也不会把完整 Key 传回界面 ——
-            后端那个字段带 <code>skip_serializing</code>，有单测钉着。
-          </p>
-          <p className="notice mt-2">
-            <strong>auth.json 是并入写，不是整份覆盖。</strong>
-            覆盖会把 Codex 官方登录留下的 <code>tokens</code> 和 <code>type</code>{' '}
-            一起抹掉，等于把你从 Codex 登出 —— 这是修掉的三个真 bug 之一。
-          </p>
-          <p className="notice mt-2">
-            配置文件用增量方式改写，你自己加的其它配置项（
-            <code>[projects.*]</code>、<code>[mcp_servers.*]</code> 这些）会保留；
-            写入前自动备份，原子写。
-          </p>
-        </Collapsible>
+        )}
       </Card>
 
-      <Card tone="warn">
+      {/* ------------------------------------------------------- 预设 */}
+      <Card title="预设" className="mb-3">
+        <p className="notice mb-2">
+          这里<strong>只放厂商自己文档里公开的官方端点</strong>。
+          第三方中转站的地址各家自己在变，预置一个记错的地址会让你先怀疑 Key
+          而不是怀疑地址 —— 所以那些请自己填。
+        </p>
+        {presets.length === 0 ? (
+          <p className="notice">这个工具暂时没有内置预设。</p>
+        ) : (
+          presets.map((p) => (
+            <Row
+              key={p.id}
+              side={
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    setForm({
+                      ...blank(tab),
+                      name: p.name,
+                      base_url: p.base_url,
+                      wire_api: p.wire_api,
+                      auth_style: p.auth_style,
+                      model: p.model ?? '',
+                      website: p.website ?? '',
+                      note: p.note,
+                    })
+                  }
+                >
+                  填入
+                </Button>
+              }
+            >
+              <span>
+                {p.name}
+                {p.target === 'codex' && <Pill tone="default">{p.wire_api}</Pill>}
+              </span>
+              <span className="notice break-all font-mono">{p.base_url}</span>
+              <span className="notice">{p.note}</span>
+            </Row>
+          ))
+        )}
+      </Card>
+
+      <Card tone="warn" className="mb-3">
         <p className="notice notice--warn">
           走中转端点时请留意：据第三方逆向分析主张（<strong>未经证实</strong>），
           Claude Code 在 <code>ANTHROPIC_BASE_URL</code> 指向中转端点时会读取系统
@@ -289,11 +503,218 @@ export default function Relay() {
         </p>
       </Card>
 
+      <Collapsible summary="Key 存在哪里？备份呢？">
+        <p className="notice">
+          Key 用 <strong>Windows DPAPI 加密</strong>后存在{' '}
+          <code>%LOCALAPPDATA%\ClaudeIpGate\relay.json</code>。密文只有
+          <strong>同一个 Windows 用户在同一台机器上</strong>解得开 ——
+          文件被拷走就是一串没用的十六进制。
+        </p>
+        <p className="notice mt-2">
+          界面上永远只有掩码。后端回给前端的结构<strong>装不下 Key</strong>，
+          不是靠「记得加 skip_serializing」，是结构上就没有那个字段。
+        </p>
+        <p className="notice mt-2">
+          写目标工具的配置前会先存一份<strong>带时间戳的备份</strong>到{' '}
+          <code>relay-backups\</code>，保留最近 20 份。旧版只有一个{' '}
+          <code>.bak</code>，写第二次就把第一次的备份盖掉了。
+        </p>
+        <p className="notice mt-2">
+          Codex 的 <code>auth.json</code> 是<strong>并入写</strong>，不会动你的
+          官方登录凭证；<code>config.toml</code> 里你自己加的{' '}
+          <code>[projects.*]</code>、<code>[mcp_servers.*]</code> 也都保留。
+        </p>
+      </Collapsible>
+
       <div className="mt-3">
         <ExternalLink href={QUICKSTART_DOC} asButton>
           新手指引文档
         </ExternalLink>
       </div>
+
+      {/* ------------------------------------------------------- 编辑框 */}
+      <Modal
+        open={!!form}
+        onClose={() => setForm(null)}
+        title={form?.id ? `编辑 ${form.name}` : `添加到 ${tabMeta.label}`}
+        footer={
+          <>
+            <Button onClick={() => setForm(null)}>取消</Button>
+            <Button
+              variant="primary"
+              icon={<Save size={13} />}
+              loading={busy === 'save'}
+              onClick={() => void save()}
+            >
+              保存
+            </Button>
+          </>
+        }
+      >
+        {form && (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <TextField label="显示名" value={form.name} onChange={(v) => set({ name: v })} />
+              <TextField
+                label="标识 slug"
+                hint="留空自动生成。Codex 用它做 model_providers 的键"
+                value={form.slug}
+                onChange={(v) => set({ slug: v })}
+              />
+            </div>
+
+            <div className="mt-3">
+              <TextField
+                label="Base URL"
+                value={form.base_url}
+                onChange={(v) => set({ base_url: v })}
+                placeholder={form.target === 'codex' ? 'https://api.example.com/v1' : 'https://api.example.com'}
+                hint={
+                  form.target === 'codex'
+                    ? 'Codex 侧通常要带 /v1'
+                    : 'Claude 侧通常不带 /v1'
+                }
+              />
+            </div>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <TextField
+                  label="默认模型"
+                  hint="可以留空，由目标工具自己决定"
+                  value={form.model}
+                  onChange={(v) => set({ model: v })}
+                />
+                <Button
+                  className="mt-1"
+                  size="sm"
+                  icon={<Download size={11} />}
+                  loading={busy === 'models'}
+                  disabled={!!busy || !form.base_url.trim()}
+                  onClick={() => void fetchModels()}
+                >
+                  从端点获取模型
+                </Button>
+              </div>
+              <TextField
+                label="API Key"
+                type="password"
+                hint={form.id ? '留空则不改动现有 Key' : '会用 DPAPI 加密后存本地'}
+                value={form.api_key}
+                onChange={(v) => set({ api_key: v })}
+              />
+            </div>
+
+            {models && (
+              <div className="mt-2">
+                <span className="field-label">端点返回的模型</span>
+                {models.length === 0 ? (
+                  <p className="notice">端点通了，但没返回任何模型。模型 id 需要手填。</p>
+                ) : (
+                  <div className="mt-1 flex max-h-32 flex-wrap gap-1 overflow-y-auto">
+                    {models.map((m) => (
+                      <Button key={m} size="sm" onClick={() => set({ model: m })}>
+                        {m}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 这两个以前是写死的，会把实机在用的配置改坏 —— 必须由用户选。 */}
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {form.target === 'codex' && (
+                <div>
+                  <span className="field-label">上游协议</span>
+                  <div className="mt-1 flex gap-2">
+                    {(['responses', 'chat'] as const).map((w) => (
+                      <Button
+                        key={w}
+                        size="sm"
+                        variant={form.wire_api === w ? 'primary' : 'default'}
+                        onClick={() => set({ wire_api: w })}
+                      >
+                        {w}
+                      </Button>
+                    ))}
+                  </div>
+                  <span className="field-hint">
+                    大多数中转站是 responses。选错了对方解析不了请求体。
+                  </span>
+                </div>
+              )}
+              <div>
+                <span className="field-label">凭证写在哪</span>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {(
+                    [
+                      ['env_key', form.target === 'codex' ? 'auth.json' : 'API_KEY'],
+                      ['bearer_token', form.target === 'codex' ? 'config.toml' : 'AUTH_TOKEN'],
+                      ['none', '不写'],
+                    ] as const
+                  ).map(([style, label]) => (
+                    <Button
+                      key={style}
+                      size="sm"
+                      variant={form.auth_style === style ? 'primary' : 'default'}
+                      onClick={() => set({ auth_style: style })}
+                    >
+                      {label}
+                    </Button>
+                  ))}
+                </div>
+                <span className="field-hint">
+                  {form.target === 'codex'
+                    ? 'auth.json 是并入写，不会动你的 Codex 官方登录。'
+                    : '两个环境变量只会留一个，避免「改了没生效」。'}
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <TextField label="备注" value={form.note} onChange={(v) => set({ note: v })} />
+              <TextField
+                label="网站"
+                hint="供应商控制台地址"
+                value={form.website}
+                onChange={(v) => set({ website: v })}
+              />
+            </div>
+
+            {form.website.trim() && (
+              <div className="mt-2">
+                <ExternalLink href={form.website.trim()} asButton>
+                  <ExternalIcon size={12} /> 打开控制台
+                </ExternalLink>
+              </div>
+            )}
+          </>
+        )}
+      </Modal>
+
+      <ConfirmDialog
+        open={!!askDelete}
+        onCancel={() => setAskDelete(null)}
+        onConfirm={() => {
+          const p = askDelete;
+          setAskDelete(null);
+          if (p) void act('del', () => api.relayDelete(p.id), `已删除 ${p.name}`);
+        }}
+        title={`删除 ${askDelete?.name ?? ''}？`}
+        confirmLabel="确认删除"
+        danger
+      >
+        <p>这条记录连同它保存的 Key 一起删掉，删了恢复不了。</p>
+        {askDelete?.active && (
+          <p className="notice notice--warn mt-2">
+            这是<strong>当前启用</strong>的那条。删掉不会改动{' '}
+            {TARGETS.find((t) => t.id === askDelete.target)?.label}{' '}
+            已经写好的配置文件，那个工具会继续用现在的端点 ——
+            只是面板这边不再有这条记录。
+          </p>
+        )}
+      </ConfirmDialog>
     </>
   );
 }

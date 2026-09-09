@@ -27,11 +27,44 @@ MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件
 
 - 仓库：https://github.com/farion1231/cc-switch
 - 许可：**MIT**，Copyright (c) Jason Young
-- 用在：`src-tauri/src/relay/mod.rs`
+- 用在：`src-tauri/src/relay/`（`mod.rs` · `store.rs` · `presets.rs`）
 
 参考的是「多供应商 + 一键切换 + 直接写进 CLI 自己的配置文件」这套产品形态，
 以及原子写（临时文件 + 改名）与自动备份的做法。代码为独立实现，未复制。
 技术栈选型（Tauri 2 + React + TypeScript）同样是跟着它走的。
+
+具体参考到的几处，逐条列明：
+
+| 参考点 | 说明 |
+|---|---|
+| 三个应用各一份供应商列表 | 切一个不影响另一个，`RelayTarget` 就是照这个分的 |
+| Codex 侧按 `wire_api` 分 responses / chat 两类预设 | 这个分法是对的，照做 |
+| 「从当前配置导入」与编辑当前启用项时的回填 | `relay_import_live` |
+| Codex 写 `config.toml` + `auth.json` 两个文件的配置形态 | 端点结构参照其公开文档 |
+
+**MIT 允许直接复制源码**（保留版权声明即可）。本项目仍然选择独立实现，
+原因是 cc-switch 现在这部分已经和 SQLite DAO、本地代理层缠在一起，
+逐行搬进来的维护成本高于重写。
+
+### Cockpit Tools —— ⛔ 只看界面，一行代码都不许抄
+
+- 仓库：https://github.com/jlcodes99/cockpit-tools
+- 许可：**CC BY-NC-SA 4.0**（署名-非商业性使用-相同方式共享），
+  写在其 README「许可证」一节。**仓库里没有 LICENSE 文件。**
+- 用在：`src/pages/Relay.tsx` 的**布局思路**
+
+**这个协议和本项目不兼容，两条都致命：**
+
+- **SA（相同方式共享）**：任何衍生作品必须用同一个协议发布。
+  抄它的代码进来，整个 ClaudeGate 就得从 MIT 变成 CC BY-NC-SA 4.0。
+- **NC（非商业）**：其 README 明确禁止「任何未获授权的商业使用
+  （含企业内部商业目的、对外商业服务、付费产品集成、二次分发售卖）」。
+
+所以只借鉴了**界面布局思路**（多账号 / 多供应商用「卡片网格 + 标签 + 筛选」
+压密度），实现全部自己写。布局思路本身不受版权保护，源码受。
+
+这跟本文件下面对 DNSLeakTester 的处理是同一条线：
+**授权不允许就不抄代码**，只按公开信息自己实现。
 
 ---
 

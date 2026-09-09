@@ -271,16 +271,91 @@ fn accounts_switch(label: String) -> Result<()> {
 
 // ------------------------------------------------------------------ 中转站
 
-/// 每个 target 各返回一条。**不要退回成返回单条** —— 旧版读到 Claude
-/// 就提前 return，Codex 那边的配置在界面上永远看不见。
+/// 整个中转站目录。
+///
+/// 回的是 `ProviderView`，那个结构**装不下 API Key** —— 不是靠
+/// `skip_serializing` 记得加，是结构上就没有能放 Key 的字段。
 #[tauri::command]
-fn relay_current() -> Vec<relay::Provider> {
+fn relay_list() -> Vec<relay::ProviderView> {
+    relay::store::load().all_views()
+}
+
+/// 新增或更新一条。`api_key` 留空表示**保留原有的那把**，不是清空。
+#[tauri::command]
+fn relay_save(provider: relay::ProviderInput) -> Result<String> {
+    let mut s = relay::store::load();
+    let id = s.upsert(provider)?;
+    relay::store::save(&s)?;
+    Ok(id)
+}
+
+#[tauri::command]
+fn relay_delete(id: String) -> Result<()> {
+    let mut s = relay::store::load();
+    s.remove(&id);
+    relay::store::save(&s)
+}
+
+#[tauri::command]
+fn relay_duplicate(id: String) -> Result<Option<String>> {
+    let mut s = relay::store::load();
+    let new = s.duplicate(&id);
+    relay::store::save(&s)?;
+    Ok(new)
+}
+
+/// 启用某一条：写进目标工具的配置，并记住它。
+#[tauri::command]
+fn relay_activate(target: relay::RelayTarget, id: String) -> Result<()> {
+    relay::activate(target, &id)
+}
+
+#[tauri::command]
+fn relay_reorder(target: relay::RelayTarget, ids: Vec<String>) -> Result<()> {
+    let mut s = relay::store::load();
+    s.reorder(target, &ids);
+    relay::store::save(&s)
+}
+
+/// 从目标工具的 live 配置里读回当前值，用于「从当前配置导入」。
+#[tauri::command]
+fn relay_import_live(target: relay::RelayTarget) -> Option<relay::ProviderMeta> {
+    relay::import_live(target)
+}
+
+/// 每个 target 的 live 配置各返回一条。**不要退回成返回单条** ——
+/// 旧版读到 Claude 就提前 return，Codex 那边的配置在界面上永远看不见。
+#[tauri::command]
+fn relay_current() -> Vec<relay::ProviderMeta> {
     relay::current_providers()
 }
 
 #[tauri::command]
-fn relay_apply(provider: relay::Provider) -> Result<()> {
-    relay::apply_provider(&provider)
+fn relay_presets(target: relay::RelayTarget) -> Vec<relay::presets::Preset> {
+    relay::presets::for_target(target)
+}
+
+/// 拉模型列表。会把 Key 发到用户填的地址上，**只在用户点了才跑**。
+#[tauri::command]
+async fn relay_fetch_models(
+    base_url: String,
+    id: Option<String>,
+) -> Result<relay::probe::ModelList> {
+    let key = key_of(id.as_deref());
+    relay::probe::fetch_models(&base_url, key.as_deref()).await
+}
+
+/// 测端点延迟。同上，只在用户点了才跑。
+#[tauri::command]
+async fn relay_test_latency(base_url: String, id: Option<String>) -> relay::probe::LatencyResult {
+    let key = key_of(id.as_deref());
+    relay::probe::measure(&base_url, key.as_deref()).await
+}
+
+/// 取某条记录的明文 Key，**只在后端流转**，绝不作为命令返回值。
+fn key_of(id: Option<&str>) -> Option<String> {
+    let id = id?;
+    relay::store::load().get(id)?.plain_key()
 }
 
 // ------------------------------------------------------------------ 时区
@@ -497,8 +572,17 @@ pub fn run() {
             launch_claude,
             accounts_list,
             accounts_switch,
+            relay_list,
+            relay_save,
+            relay_delete,
+            relay_duplicate,
+            relay_activate,
+            relay_reorder,
+            relay_import_live,
             relay_current,
-            relay_apply,
+            relay_presets,
+            relay_fetch_models,
+            relay_test_latency,
             tz_current,
             tz_apply,
             tz_restore,

@@ -130,14 +130,69 @@ export type WireApi = 'responses' | 'chat';
  */
 export type AuthStyle = 'env_key' | 'bearer_token' | 'none';
 
-export interface Provider {
-  target?: 'codex' | 'claude';
+/** 中转站服务的哪个工具。三个是各自独立的列表。 */
+export type RelayTarget = 'claude-desktop' | 'claude-code' | 'codex';
+
+/** 一条供应商的公开信息。Rust 侧三个结构体共用这一份。 */
+export interface ProviderMeta {
   id: string;
+  target: RelayTarget;
+  /** 写进 config.toml 的 `model_providers.<slug>`。Codex 用，Claude 侧忽略。 */
+  slug: string;
   name: string;
   base_url: string;
   model?: string | null;
-  wire_api?: WireApi;
-  auth_style?: AuthStyle;
+  wire_api: WireApi;
+  auth_style: AuthStyle;
+  note?: string | null;
+  website?: string | null;
+  icon?: string | null;
+  sort: number;
+  created_at: string;
+}
+
+/**
+ * 后端回给前端的一条。
+ *
+ * **这里没有、也不会有任何 Key 字段** —— Rust 侧 `ProviderView` 结构上
+ * 就装不下 Key，不是靠 `skip_serializing` 记得加。只有掩码和「有没有」。
+ */
+export interface ProviderView extends ProviderMeta {
+  has_key: boolean;
+  key_masked?: string | null;
+  /** 落盘时是 DPAPI 加密存的吗。裸明文要在界面上提示。 */
+  key_encrypted: boolean;
+  active: boolean;
+}
+
+/** 前端发过去的一条。`api_key` 留空表示**保留原有的那把**，不是清空。 */
+export interface ProviderInput extends ProviderMeta {
+  api_key?: string;
+}
+
+export interface Preset {
+  id: string;
+  name: string;
+  target: RelayTarget;
+  base_url: string;
+  wire_api: WireApi;
+  auth_style: AuthStyle;
+  model?: string | null;
+  website?: string | null;
+  note: string;
+}
+
+export interface ModelList {
+  models: string[];
+  detail: string;
+}
+
+export interface LatencyResult {
+  base_url: string;
+  /** 毫秒。null = 没连上。 */
+  ms?: number | null;
+  ok: boolean;
+  detail: string;
 }
 
 export interface UpdateStatus {
@@ -356,10 +411,24 @@ export const api = {
   accountsSwitch: (label: string) => call<void>('accounts_switch', { label }),
 
   // 中转站
-  /** 每个 target 各一条（Claude / Codex），没配过的不出现。 */
-  relayCurrent: () => call<Provider[]>('relay_current'),
-  relayApply: (provider: Provider & { api_key?: string }) =>
-    call<void>('relay_apply', { provider }),
+  relayList: () => call<ProviderView[]>('relay_list'),
+  relaySave: (provider: ProviderInput) => call<string>('relay_save', { provider }),
+  relayDelete: (id: string) => call<void>('relay_delete', { id }),
+  relayDuplicate: (id: string) => call<string | null>('relay_duplicate', { id }),
+  relayActivate: (target: RelayTarget, id: string) =>
+    call<void>('relay_activate', { target, id }),
+  relayReorder: (target: RelayTarget, ids: string[]) =>
+    call<void>('relay_reorder', { target, ids }),
+  relayImportLive: (target: RelayTarget) =>
+    call<ProviderMeta | null>('relay_import_live', { target }),
+  /** 每个 target 的 live 配置各一条，没配过的不出现。 */
+  relayCurrent: () => call<ProviderMeta[]>('relay_current'),
+  relayPresets: (target: RelayTarget) => call<Preset[]>('relay_presets', { target }),
+  /** 会把 Key 发到用户填的地址上，**只在用户点了才调**。 */
+  relayFetchModels: (baseUrl: string, id?: string) =>
+    call<ModelList>('relay_fetch_models', { baseUrl, id }),
+  relayTestLatency: (baseUrl: string, id?: string) =>
+    call<LatencyResult>('relay_test_latency', { baseUrl, id }),
 
   // 时区
   tzCurrent: () => call<string>('tz_current'),
