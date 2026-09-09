@@ -1,7 +1,7 @@
 {
   "name": "claude-gate",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Claude 环境控制面板：IP 锁、纯净度、DNS 泄露、环境检测与安装",
   "license": "MIT",

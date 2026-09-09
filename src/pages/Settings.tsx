@@ -27,7 +27,10 @@ export default function Settings() {
   const [busy, setBusy] = useState('');
   const [ask, setAsk] = useState<null | 'tz' | 'release' | 'codexGate'>(null);
   const settings = useResource('settings', R.settings);
-  const appVersion = '0.2.0';
+  // 兜底文案。真正的版本号来自 Rust 的 env!("CARGO_PKG_VERSION")，
+  // 这里**不再写死一个会过期的数字** —— 上一版就是因为它一直停在 0.2.0，
+  // 而 Cargo.toml 早就往前走了，界面上根本看不出本机装的是新是旧。
+  const appVersion = '读取中…';
   const [updates, setUpdates] = useState<UpdateStatus | null>(null);
 
   useEffect(() => {

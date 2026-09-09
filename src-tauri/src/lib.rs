@@ -767,6 +767,27 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("启动 ClaudeGate 失败");
+        .build(tauri::generate_context!())
+        .expect("启动 ClaudeGate 失败")
+        .run(|_app, event| {
+            // **面板退出时把门关上。**
+            //
+            // 没有这一步的话：用户在租约期内关掉面板，claude.exe 上的
+            // Deny ACE 就一直摘着，看门狗也随进程没了 —— 门开着，
+            // 而且没有任何东西在看。这跟「跑起来之后出口 IP 悄悄变了」
+            // 是同一类风险，只是触发方式变成了「关掉了面板」。
+            //
+            // 启动时那段注释写的是「宁可多锁一次，也不要因为上次异常退出
+            // 而敞着」——那是在给这个洞打补丁。现在正常退出这条路自己堵上了，
+            // 启动时那道保险仍然留着（应对崩溃 / 断电）。
+            //
+            // 已经在跑的进程不受影响（Windows 不会因为加了 Deny ACE 就杀掉
+            // 已加载的映像），挡住的是**下一次启动**。
+            if matches!(event, tauri::RunEvent::Exit) {
+                match gate::lock_all() {
+                    Ok(n) => gate::log::write(&format!("面板退出，已重新上锁 {n} 个可执行文件")),
+                    Err(e) => gate::log::write(&format!("面板退出时重锁失败：{e}")),
+                }
+            }
+        });
 }
