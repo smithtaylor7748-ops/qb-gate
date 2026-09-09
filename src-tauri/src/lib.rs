@@ -19,6 +19,7 @@ pub mod relay;
 pub mod settings;
 pub mod snapshot;
 pub mod sysenv;
+pub mod tray;
 pub mod update;
 
 use error::Result;
@@ -281,8 +282,11 @@ fn accounts_list() -> serde_json::Value {
 
 /// 只由界面上的手动点击触发。**不要**从任何自动路径调用它。
 #[tauri::command]
-fn accounts_switch(label: String) -> Result<()> {
-    accounts::switch(&label)
+fn accounts_switch(app: tauri::AppHandle, label: String) -> Result<()> {
+    accounts::switch(&label)?;
+    // 托盘菜单是静态对象，不重建就会显示上一次的账户。
+    tray::refresh(&app);
+    Ok(())
 }
 
 // ------------------------------------------------------------------ 中转站
@@ -322,8 +326,10 @@ fn relay_duplicate(id: String) -> Result<Option<String>> {
 
 /// 启用某一条：写进目标工具的配置，并记住它。
 #[tauri::command]
-fn relay_activate(target: relay::RelayTarget, id: String) -> Result<()> {
-    relay::activate(target, &id)
+fn relay_activate(app: tauri::AppHandle, target: relay::RelayTarget, id: String) -> Result<()> {
+    relay::activate(target, &id)?;
+    tray::refresh(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -472,8 +478,10 @@ fn profile_capture(name: String) -> profile::Profile {
 /// 应用一个档案。**只由界面点击触发，不要加任何自动调用点** ——
 /// 它会切账户，加了就变成自动轮换账户，直接踩政策线。
 #[tauri::command]
-fn profile_apply(id: String) -> Result<profile::ApplyReport> {
-    profile::apply(&id)
+fn profile_apply(app: tauri::AppHandle, id: String) -> Result<profile::ApplyReport> {
+    let r = profile::apply(&id)?;
+    tray::refresh(&app);
+    Ok(r)
 }
 
 // ------------------------------------------------------------------ 时区
@@ -751,7 +759,12 @@ pub fn run() {
                     gate::log::write("白名单为空，启动时不上锁（首次运行请先添加当前 IP）");
                 }
             }
-            let _ = app;
+            // 托盘：不打开主窗口也能看状态、切账户、切中转站。
+            // 建不起来不该让整个程序起不来 —— 有些精简版 Windows 没有
+            // 通知区域，那时候面板本身仍然完全可用。
+            if let Err(e) = tray::init(app.handle()) {
+                gate::log::write(&format!("托盘建立失败（不影响面板使用）：{e}"));
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
