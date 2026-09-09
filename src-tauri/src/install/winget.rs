@@ -75,10 +75,14 @@ impl InstallTarget {
 
     /// 这个目标归 Claude 的 IP 门禁管吗？
     ///
-    /// 决定 `install()` 要不要跑第 1 步解锁与第 6 步重锁。Codex 现在还没纳入
-    /// 门禁，对它跑那两步等于无谓地把 Claude 的锁摘掉再装回去。
+    /// 决定 `install()` 要不要跑第 1 步解锁与第 6 步重锁。Codex 只有在设置里
+    /// 打开开关之后才归门禁管；关着的时候对它跑那两步，等于无谓地把 Claude
+    /// 的锁摘掉再装回去。
     pub fn under_claude_gate(self) -> bool {
-        !matches!(self, InstallTarget::Codex)
+        match self {
+            InstallTarget::Codex => crate::settings::codex_under_gate(),
+            _ => true,
+        }
     }
 
     /// 期望的 Authenticode 签名主体关键词。
@@ -583,13 +587,22 @@ mod tests {
     }
 
     #[test]
-    fn codex_is_not_under_the_claude_gate() {
-        // 归门禁管的目标才跑「解锁 → 装 → 重锁」。对 Codex 跑那两步，
-        // 等于每装一次就把 Claude 的门无谓地开一遍。
+    fn claude_targets_are_always_under_the_gate() {
+        // 归门禁管的目标才跑「解锁 → 装 → 重锁」。Claude 那两个永远归门禁管，
+        // 这条不受任何设置影响。
         assert!(InstallTarget::ClaudeCode.under_claude_gate());
         assert!(InstallTarget::ClaudeDesktop.under_claude_gate());
-        assert!(!InstallTarget::Codex.under_claude_gate());
-        assert_eq!(relock_if_gated(InstallTarget::Codex), 0);
+    }
+
+    #[test]
+    fn codex_follows_the_setting_and_defaults_to_outside_the_gate() {
+        // Codex 归不归门禁管由设置决定，默认在门禁之外 ——
+        // 默认开着的话，装一次 Codex 就会把 Claude 的门无谓地开一遍。
+        assert!(!crate::settings::Settings::default().codex_under_gate);
+        assert_eq!(
+            InstallTarget::Codex.under_claude_gate(),
+            crate::settings::codex_under_gate()
+        );
     }
 
     #[test]

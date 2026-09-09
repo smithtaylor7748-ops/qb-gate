@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Clock, FileText, Info, Scale, Undo2 } from 'lucide-react';
+import { Clock, FileText, Info, Lock, Scale, Undo2 } from 'lucide-react';
 
-import { api, type UpdateStatus } from '../lib/api';
+import { api, type Settings as AppSettings, type UpdateStatus } from '../lib/api';
 import { useNav } from '../lib/nav';
-import { AFTER } from '../lib/resources';
-import { invalidate } from '../lib/store';
+import { AFTER, R } from '../lib/resources';
+import { invalidate, useResource } from '../lib/store';
 import { ALL_PROMPTS, type PromptDef } from '../prompts';
 import {
   Bullet,
@@ -16,6 +16,7 @@ import {
   ExternalLink,
   PageHeader,
   Row,
+  Checkbox,
   useToast,
 } from '../ui';
 
@@ -24,7 +25,8 @@ export default function Settings() {
   const toast = useToast();
   const [open, setOpen] = useState<PromptDef | null>(null);
   const [busy, setBusy] = useState('');
-  const [ask, setAsk] = useState<null | 'tz' | 'release'>(null);
+  const [ask, setAsk] = useState<null | 'tz' | 'release' | 'codexGate'>(null);
+  const settings = useResource('settings', R.settings);
   const appVersion = '0.2.0';
   const [updates, setUpdates] = useState<UpdateStatus | null>(null);
 
@@ -48,9 +50,71 @@ export default function Settings() {
     }
   }
 
+  async function setCodexGate(on: boolean) {
+    const next: AppSettings = { ...(settings.data ?? { codex_under_gate: false }), codex_under_gate: on };
+    setBusy('codexGate');
+    try {
+      await api.settingsSave(next);
+      toast.ok(
+        on
+          ? 'Codex 已纳入门禁。出口 IP 不合规时 codex 会被系统拒绝执行。'
+          : 'Codex 已移出门禁，它身上的执行锁已摘除。'
+      );
+      invalidate('settings', 'gate');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy('');
+      setAsk(null);
+    }
+  }
+
+  const codexGated = settings.data?.codex_under_gate ?? false;
+
   return (
     <>
-      <PageHeader title="设置" sub="提示词、还原操作、合规边界与来源致谢。" />
+      <PageHeader title="设置" sub="提示词、门禁范围、还原操作、合规边界与来源致谢。" />
+
+      {/* ------------------------------------------------ 门禁范围 */}
+      <Card title="门禁范围" icon={<Lock size={14} />} className="mb-3">
+        <Row
+          side={
+            <Checkbox
+              checked={codexGated}
+              disabled={!!busy || settings.loading}
+              onChange={(on) => (on ? setAsk('codexGate') : void setCodexGate(false))}
+            >
+              {codexGated ? '已接管' : '未接管'}
+            </Checkbox>
+          }
+        >
+          <span>让 IP 锁也接管 Codex</span>
+          <span className="notice">
+            默认关闭。打开后 <code>codex</code> 会跟 <code>claude.exe</code>{' '}
+            一样被加执行锁 —— 出口 IP 不在白名单时<strong>命令会被系统拒绝执行</strong>。
+          </span>
+        </Row>
+
+        <Collapsible className="mt-1" summary="打开之前先知道这几件事">
+          <p className="notice">
+            <strong>它会影响你日常用 Codex。</strong>
+            上锁之后要跑 Codex，得先在总览点「启动 Codex」走面板的受控入口，
+            或者确认出口 IP 在白名单里。这跟 Claude Code 现在的行为完全一样。
+          </p>
+          <p className="notice mt-2">
+            <strong>npm 装的是 <code>codex.cmd</code> 批处理，不是 exe。</strong>
+            给批处理加执行锁能挡住 <code>codex</code> 这个命令本身，
+            但挡不住有人直接去调它内部那个 node 脚本 ——
+            这跟桌面端 <code>app-*</code> 那个已知缺口是同一类，
+            要彻底堵死需要 AppLocker / WDAC，不在本项目范围内。
+          </p>
+          <p className="notice mt-2">
+            关掉这个开关时，面板会<strong>主动把 Codex 身上的锁摘掉</strong>。
+            不摘的话它已经不在门禁清单里了，往后谁都不会再碰它，
+            你会得到一个永远跑不起来的 codex。
+          </p>
+        </Collapsible>
+      </Card>
 
       <Card title="ClaudeGate 版本" icon={<Info size={14} />} className="mb-3">
         <Row side={<span className="font-mono">v{updates?.current_version ?? appVersion}</span>}>
@@ -166,6 +230,24 @@ export default function Settings() {
       </Card>
 
       {/* ---------------------------------------------------- 确认框 */}
+
+      <ConfirmDialog
+        open={ask === 'codexGate'}
+        onCancel={() => setAsk(null)}
+        onConfirm={() => void setCodexGate(true)}
+        title="让 IP 锁接管 Codex？"
+        confirmLabel="确认接管"
+        loading={busy === 'codexGate'}
+      >
+        <p>
+          Codex 的可执行文件会被加上 Deny ExecuteFile。
+          <strong>出口 IP 不在白名单时，`codex` 命令会被系统直接拒绝执行。</strong>
+        </p>
+        <p className="notice mt-2">
+          之后要跑 Codex，请到总览点「启动 Codex」走受控入口。
+          随时可以回到这里关掉，关掉时锁会自动摘除。
+        </p>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={ask === 'tz'}

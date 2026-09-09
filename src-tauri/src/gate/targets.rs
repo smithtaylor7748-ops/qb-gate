@@ -38,6 +38,8 @@ pub enum TargetKind {
     DesktopStub,
     /// 升级残留的旧副本，**没有 Deny ACL，是可绕过的执行副本**
     StaleCopy,
+    /// Codex CLI。**只在设置里打开「Codex 也归门禁管」之后才会出现在清单里。**
+    CodexCli,
 }
 
 fn home() -> Option<PathBuf> {
@@ -109,10 +111,31 @@ pub fn lockable() -> Vec<PathBuf> {
         }
     }
 
+    // Codex **默认不在门禁管辖内**。打开这个开关之后 `codex` 会跟
+    // claude.exe 一样被 Deny ExecuteFile 挡住 —— 这对「请求不能从没核实过的
+    // IP 出去」是对的，但对正在用 Codex 干活的人是个突然的变化，
+    // 所以只能由他自己在设置里打开。见 `settings.rs`。
+    if crate::settings::codex_under_gate() {
+        out.extend(codex_lockable());
+    }
+
     out.retain(|p| p.is_file());
     out.sort();
     out.dedup();
     out
+}
+
+/// Codex 侧可锁的副本。
+///
+/// ⚠ **npm 全局装出来的是 `codex.cmd`（批处理），不是 exe。**
+/// 对批处理加 Deny ExecuteFile 能挡住 `codex` 这个命令本身，但挡不住
+/// 有人直接去调它内部那个 node 脚本 —— 那不是这一层能解决的问题，
+/// 跟 `app-*` 那个已知缺口是同一类。界面上要如实说明。
+pub fn codex_lockable() -> Vec<PathBuf> {
+    crate::install::detect::codex_candidates()
+        .into_iter()
+        .filter(|p| p.is_file())
+        .collect()
 }
 
 /// 桌面端真正在跑的那些 exe 所在目录（`app-*` 与 `Update.exe`）。
@@ -171,6 +194,10 @@ pub fn kind_of(p: &Path) -> TargetKind {
     let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if name.starts_with("claude.exe.old.") {
         return TargetKind::StaleCopy;
+    }
+    // 按文件名认，不按路径 —— Codex 的落点有五种，路径匹配迟早漏一个。
+    if name.eq_ignore_ascii_case("codex.exe") || name.eq_ignore_ascii_case("codex.cmd") {
+        return TargetKind::CodexCli;
     }
     let lower = p.to_string_lossy().to_lowercase().replace('/', "\\");
     if lower.contains("\\claude\\claude-code\\") {
@@ -248,4 +275,37 @@ mod tests {
             TargetKind::StaleCopy
         );
     }
+
+    #[test]
+    fn codex_is_recognised_by_filename_not_by_path() {
+        // Codex 的落点有五种（npm / .local\bin / Programs / OpenAI\Codex\bin
+        // 的哈希目录 / WindowsApps），按路径匹配迟早漏一个。
+        for p in [
+            r"C:\Users\me\AppData\Roaming\npm\codex.cmd",
+            r"C:\Users\me\.local\bin\codex.exe",
+            r"C:\Users\me\AppData\Local\OpenAI\Codex\bin\abc123\codex.exe",
+            r"C:\Users\me\AppData\Local\Microsoft\WindowsApps\codex.exe",
+        ] {
+            assert_eq!(kind_of(Path::new(p)), TargetKind::CodexCli, "{p}");
+        }
+    }
+
+    #[test]
+    fn claude_paths_are_never_mistaken_for_codex() {
+        assert_eq!(
+            kind_of(Path::new(r"C:\Users\me\.local\bin\claude.exe")),
+            TargetKind::Cli
+        );
+        assert_eq!(
+            kind_of(Path::new(
+                r"C:\Users\me\AppData\Roaming\Claude\claude-code\2.1.260\claude.exe"
+            )),
+            TargetKind::CliVersioned
+        );
+        assert_eq!(
+            kind_of(Path::new(r"C:\Users\me\.local\bin\claude.exe.old.123")),
+            TargetKind::StaleCopy
+        );
+    }
+
 }

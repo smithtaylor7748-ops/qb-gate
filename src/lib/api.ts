@@ -67,7 +67,7 @@ export interface GateTarget {
    * `%APPDATA%\Claude\claude-code\<版本>\` 这个布局却没同步前端类型，
    * 而它恰恰是本机最常见的一种副本。中文名在 `ui/labels.ts`。
    */
-  kind: 'Cli' | 'CliVersioned' | 'DesktopStub' | 'StaleCopy';
+  kind: 'Cli' | 'CliVersioned' | 'DesktopStub' | 'StaleCopy' | 'CodexCli';
   exists: boolean;
   locked: boolean;
 }
@@ -203,6 +203,17 @@ export interface LatencyResult {
   detail: string;
 }
 
+/** 面板自己的开关。存 settings.json，会改变程序行为。 */
+export interface Settings {
+  /**
+   * Codex 要不要也归 IP 门禁管。
+   *
+   * **默认 false。** 打开之后 `codex` 会跟 claude.exe 一样被加 Deny
+   * ExecuteFile —— 出口 IP 不在白名单时命令直接被系统拒绝执行。
+   */
+  codex_under_gate: boolean;
+}
+
 export interface UpdateStatus {
   current_version: string;
   repository?: string | null;
@@ -228,7 +239,7 @@ export interface Progress {
 export type InstallTarget = 'claude-code' | 'claude-desktop' | 'codex';
 
 /** 启动什么。与 `InstallTarget` 同名不同义，各自独立。 */
-export type LaunchTarget = 'claude-code' | 'claude-desktop';
+export type LaunchTarget = 'claude-code' | 'claude-desktop' | 'codex';
 
 export interface LaunchResult {
   target: LaunchTarget;
@@ -448,6 +459,9 @@ export const api = {
   tzRestore: () => call<void>('tz_restore'),
 
   // 进度
+  settingsLoad: () => call<Settings>('settings_load'),
+  settingsSave: (next: Settings) => call<Settings>('settings_save', { next }),
+
   progressLoad: () => call<Progress>('progress_load'),
   progressSet: (id: string, state: StepState, risk: Risk, detail: string) =>
     call<Progress>('progress_set', { id, state, risk, detail }),

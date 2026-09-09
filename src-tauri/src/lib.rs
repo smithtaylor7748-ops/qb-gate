@@ -15,6 +15,7 @@ pub mod probe;
 pub mod progress;
 pub mod process;
 pub mod relay;
+pub mod settings;
 pub mod sysenv;
 pub mod update;
 
@@ -161,9 +162,11 @@ async fn launch_claude(
     let task = match target {
         launch::LaunchTarget::ClaudeCode => events::TASK_LAUNCH_CODE,
         launch::LaunchTarget::ClaudeDesktop => events::TASK_LAUNCH_DESKTOP,
+        launch::LaunchTarget::Codex => events::TASK_LAUNCH_CODEX,
     };
+    let gated = target.gated();
     let rep = Reporter::new(app, task, 4);
-    rep.phase(1, "验证出口 IP 与门禁");
+    rep.phase(1, if gated { "验证出口 IP 与门禁" } else { "定位可执行文件" });
     let r = match launch::launch(target, &state.gate).await {
         Ok(r) => r,
         Err(e) => {
@@ -171,10 +174,20 @@ async fn launch_claude(
             return Err(e);
         }
     };
-    rep.phase(2, "出口 IP 已通过，执行锁已临时放行");
-    rep.phase(3, "启动 Claude 进程");
-    start_watchdog(target.watch_mode(), state);
-    rep.done("启动完成，看门狗已挂载");
+    if gated {
+        rep.phase(2, "出口 IP 已通过，执行锁已临时放行");
+    } else {
+        rep.phase(2, "该目标当前不归 IP 门禁管，未验证出口 IP");
+    }
+    rep.phase(3, format!("启动 {}", target.label()));
+    // 不归门禁管就别挂看门狗 —— 看门狗的动作是收回租约并上锁，
+    // 而这次根本没有租约，挂上去只会去动 Claude 那边的锁。
+    if gated {
+        start_watchdog(target.watch_mode(), state);
+        rep.done("启动完成，看门狗已挂载");
+    } else {
+        rep.done("启动完成");
+    }
     Ok(r)
 }
 
@@ -357,6 +370,50 @@ async fn relay_test_latency(base_url: String, id: Option<String>) -> relay::prob
 fn key_of(id: Option<&str>) -> Option<String> {
     let id = id?;
     relay::store::load().get(id)?.plain_key()
+}
+
+// ------------------------------------------------------------------ 设置
+
+#[tauri::command]
+fn settings_load() -> settings::Settings {
+    settings::load()
+}
+
+/// 存设置。
+///
+/// 打开 `codex_under_gate` 之后**立刻按新的目标清单重新上锁一次**，
+/// 否则「我打开了开关」和「codex 真的被锁上」之间会隔着一次重启，
+/// 中间那段时间界面说管了、实际没管。关掉时同理要把 Codex 上的锁摘掉。
+#[tauri::command]
+fn settings_save(next: settings::Settings) -> Result<settings::Settings> {
+    let before = settings::load();
+    settings::save(&next)?;
+
+    if before.codex_under_gate != next.codex_under_gate {
+        if next.codex_under_gate {
+            // 只有门本来就关着的时候才顺手把 Codex 也锁上。租约期内
+            // （用户正开着 Claude 在用）不该因为改了个设置就把门关上 ——
+            // 等这次租约收回时 lock_all 自然会带上 Codex。
+            //
+            // 判断时要**把 Codex 自己排除掉**：它刚进清单，当然还没锁，
+            // 算进去的话这个条件永远不成立。
+            let gate_closed = gate::collect_targets()
+                .iter()
+                .filter(|t| t.kind != gate::targets::TargetKind::CodexCli)
+                .all(|t| t.locked);
+            if gate_closed {
+                let _ = gate::lock_all();
+            }
+            gate::log::write("设置：Codex 已纳入 IP 门禁");
+        } else {
+            // 关掉开关时 Codex 上可能还挂着 Deny ACE。这时它已经不在目标
+            // 清单里了，lock_all / unlock_all 再也不会碰它 —— 不单独摘掉的话，
+            // 用户关了开关 codex 仍然跑不起来，而面板显示一切正常。
+            let n = gate::unlock_paths(&gate::targets::codex_lockable());
+            gate::log::write(&format!("设置：Codex 已移出 IP 门禁，摘除 {n} 处执行锁"));
+        }
+    }
+    Ok(settings::load())
 }
 
 // ------------------------------------------------------------------ 时区
@@ -584,6 +641,8 @@ pub fn run() {
             relay_presets,
             relay_fetch_models,
             relay_test_latency,
+            settings_load,
+            settings_save,
             tz_current,
             tz_apply,
             tz_restore,

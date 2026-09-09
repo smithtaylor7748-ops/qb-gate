@@ -31,6 +31,7 @@ export type TaskName =
   | 'dns-probe'
   | 'launch-claude-code'
   | 'launch-claude-desktop'
+  | 'launch-codex'
   | 'killswitch-preview'
   | 'killswitch-execute';
 

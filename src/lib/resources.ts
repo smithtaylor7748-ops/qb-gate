@@ -29,6 +29,7 @@ export const R = {
   /** 中转站目录（三个 target 的全部记录）。Key 不在里面，只有掩码。 */
   relay: res(() => api.relayList()),
   tz: res(() => api.tzCurrent()),
+  settings: res(() => api.settingsLoad()),
 
   plugins: res(() => api.pluginList(), { pollMs: 20_000 }),
 

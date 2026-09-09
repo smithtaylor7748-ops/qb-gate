@@ -20,6 +20,7 @@ pub const TASK_TAVERN_START: &str = "tavern-start";
 pub const TASK_DNS_PROBE: &str = "dns-probe";
 pub const TASK_LAUNCH_CODE: &str = "launch-claude-code";
 pub const TASK_LAUNCH_DESKTOP: &str = "launch-claude-desktop";
+pub const TASK_LAUNCH_CODEX: &str = "launch-codex";
 pub const TASK_KILL_PREVIEW: &str = "killswitch-preview";
 pub const TASK_KILL_EXECUTE: &str = "killswitch-execute";
 
@@ -191,6 +192,7 @@ mod tests {
                 TASK_DNS_PROBE,
                 TASK_LAUNCH_CODE,
                 TASK_LAUNCH_DESKTOP,
+                TASK_LAUNCH_CODEX,
                 TASK_KILL_PREVIEW,
                 TASK_KILL_EXECUTE,
             ],
@@ -201,6 +203,7 @@ mod tests {
                 "dns-probe",
                 "launch-claude-code",
                 "launch-claude-desktop",
+                "launch-codex",
                 "killswitch-preview",
                 "killswitch-execute",
             ]

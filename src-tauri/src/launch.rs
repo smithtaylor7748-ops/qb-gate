@@ -31,6 +31,7 @@ use std::path::PathBuf;
 pub enum LaunchTarget {
     ClaudeCode,
     ClaudeDesktop,
+    Codex,
 }
 
 impl LaunchTarget {
@@ -38,6 +39,7 @@ impl LaunchTarget {
         match self {
             LaunchTarget::ClaudeCode => "Claude Code",
             LaunchTarget::ClaudeDesktop => "Claude 桌面端",
+            LaunchTarget::Codex => "Codex",
         }
     }
 
@@ -46,6 +48,7 @@ impl LaunchTarget {
         match self {
             LaunchTarget::ClaudeCode => "claude-code",
             LaunchTarget::ClaudeDesktop => "claude-desktop",
+            LaunchTarget::Codex => "codex",
         }
     }
 
@@ -55,8 +58,21 @@ impl LaunchTarget {
     /// 「等等看」的实际含义就是让它在无法核实的网络上继续跑。
     pub fn watch_mode(self) -> WatchMode {
         match self {
-            LaunchTarget::ClaudeCode => WatchMode::Cli,
+            // Codex 跟 Claude Code 一样是控制台程序，冻得住，
+            // 所以给它 Cli 那档（查不到 IP 时留 180 秒宽限）。
+            LaunchTarget::ClaudeCode | LaunchTarget::Codex => WatchMode::Cli,
             LaunchTarget::ClaudeDesktop => WatchMode::Desktop,
+        }
+    }
+
+    /// 这个目标归 IP 门禁管吗？
+    ///
+    /// Codex 只有在设置里打开开关之后才归门禁管；关着的时候
+    /// 「启动 Codex」就是单纯起个进程，不验 IP、不动任何 ACL。
+    pub fn gated(self) -> bool {
+        match self {
+            LaunchTarget::Codex => crate::settings::codex_under_gate(),
+            _ => true,
         }
     }
 }
@@ -90,6 +106,14 @@ pub fn resolve(target: LaunchTarget) -> Result<PathBuf> {
                 "找不到 Claude 桌面端的启动存根，请先在「环境与安装」里装好桌面端。".into(),
             )
         }),
+        // 与检测共用同一份候选路径表，免得「检测到的那份」和「启动的那份」
+        // 不是同一个。
+        LaunchTarget::Codex => crate::install::detect::codex_candidates()
+            .into_iter()
+            .find(|p| p.is_file())
+            .ok_or_else(|| {
+                GateError::Other("找不到 Codex，请先在「环境与安装」里装好。".into())
+            }),
     }
 }
 
@@ -100,7 +124,9 @@ fn spawn(target: LaunchTarget, exe: &std::path::Path) -> Result<Option<u32>> {
     const DETACHED_PROCESS: u32 = 0x0000_0008;
 
     match target {
-        LaunchTarget::ClaudeCode => {
+        // Codex 也是控制台程序，跟 Claude Code 走同一条路。
+        // npm 装的是 codex.cmd 批处理，`start` 一样能起。
+        LaunchTarget::ClaudeCode | LaunchTarget::Codex => {
             // 控制台程序：借 `start` 让 Windows 给它开一个新控制台窗口。
             // 第一个空引号是窗口标题占位 —— 少了它，带空格的路径会被 start
             // 当成标题，然后什么都不启动。
@@ -146,22 +172,38 @@ pub async fn launch(target: LaunchTarget, gate: &crate::gate::GateState) -> Resu
     // 先把 exe 找出来。找不到就直接失败，**不要先解锁再发现没东西可起**。
     let exe = resolve(target)?;
 
-    crate::gate::open_authorized(target.holder(), gate).await?;
+    // 不归门禁管的目标（默认状态的 Codex）：直接起，不验 IP、不动任何 ACL。
+    // **别在这里偷偷验一下 IP** —— 开关关着就是关着，
+    // 「顺手挡一下」等于一个用户没打开却生效了的功能。
+    let gated = target.gated();
+    if gated {
+        crate::gate::open_authorized(target.holder(), gate).await?;
+    }
 
     let pid = match spawn(target, &exe) {
         Ok(pid) => pid,
         Err(e) => {
-            let _ = crate::gate::release_lease(gate);
+            if gated {
+                let _ = crate::gate::release_lease(gate);
+            }
             return Err(e);
         }
     };
 
-    let detail = format!(
-        "{} 已放行并启动（{}）。看门狗每 {} 秒核一次出口 IP。",
-        target.label(),
-        exe.display(),
-        target.watch_mode().interval().as_secs()
-    );
+    let detail = if gated {
+        format!(
+            "{} 已放行并启动（{}）。看门狗每 {} 秒核一次出口 IP。",
+            target.label(),
+            exe.display(),
+            target.watch_mode().interval().as_secs()
+        )
+    } else {
+        format!(
+            "{} 已启动（{}）。它当前不归 IP 门禁管 —— 要接管请到设置里打开。",
+            target.label(),
+            exe.display()
+        )
+    };
     crate::gate::log::write(&detail);
 
     Ok(LaunchResult {

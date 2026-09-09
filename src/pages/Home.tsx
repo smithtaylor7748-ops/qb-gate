@@ -7,13 +7,14 @@ import {
   RotateCw,
   ShieldAlert,
   Square,
+  SquareTerminal,
   Terminal,
   Users,
   Wine,
 } from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 
-import { api, type KillReport } from '../lib/api';
+import { api, type KillReport, type LaunchTarget } from '../lib/api';
 import { useNav } from '../lib/nav';
 import { AFTER, R } from '../lib/resources';
 import { invalidate, useResource, useSession } from '../lib/store';
@@ -47,11 +48,13 @@ export default function Home() {
   // 这两个是 auto:false —— useResource 只把缓存拿出来，不会自己去跑。
   // 没跑过就是 undefined，评分那边会如实记成「未检测」。
   const dns = useResource('dns', R.dns);
+  const settings = useResource('settings', R.settings);
   const signals = useResource('signals', R.signals);
 
   const tavern = useTask('tavern-start');
   const launchCodeTask = useTask('launch-claude-code');
   const launchDesktopTask = useTask('launch-claude-desktop');
+  const launchCodexTask = useTask('launch-codex');
   const killPreviewTask = useTask('killswitch-preview');
   const killExecuteTask = useTask('killswitch-execute');
 
@@ -152,19 +155,27 @@ export default function Home() {
 
   // ------------------------------------------------------------ 启动
 
-  async function launch(target: 'claude-code' | 'claude-desktop') {
+  /** 启动目标 → 任务名。写死成三元表达式的话，加第三个目标必然漏改。 */
+  const LAUNCH_TASK = {
+    'claude-code': 'launch-claude-code',
+    'claude-desktop': 'launch-claude-desktop',
+    codex: 'launch-codex',
+  } as const;
+
+  async function launch(target: LaunchTarget) {
+    const task = LAUNCH_TASK[target];
     setBusy(target);
-    resetTask(target === 'claude-code' ? 'launch-claude-code' : 'launch-claude-desktop');
+    resetTask(task);
     try {
       const r = await api.launchClaude(target);
-      endTask(target === 'claude-code' ? 'launch-claude-code' : 'launch-claude-desktop');
+      endTask(task);
       toast.ok(r.detail);
       invalidate(...AFTER.lease);
     } catch (e) {
       // 门禁不过就一个进程都不起 —— 这里的错误原文已经说清是 IP 不在白名单
       // 还是根本查不到 IP，两者必须分开，不能合并成「启动失败」。
       const msg = e instanceof Error ? e.message : String(e);
-      endTask(target === 'claude-code' ? 'launch-claude-code' : 'launch-claude-desktop', msg);
+      endTask(task, msg);
       toast.error(msg);
     } finally {
       setBusy('');
@@ -566,6 +577,25 @@ export default function Home() {
                 : '起桥接与酒馆，最长 80 秒。端口被别人占住会报错退出，不会去动无关进程。'}
             </p>
             {taskProgress(tavern, '酒馆启动中…')}
+          </div>
+
+          <div>
+            <Button
+              variant="primary"
+              launch
+              icon={<SquareTerminal size={15} />}
+              loading={busy === 'codex'}
+              disabled={!!busy}
+              onClick={() => launch('codex')}
+            >
+              启动 Codex
+            </Button>
+            <p className="notice mt-1.5">
+              {settings.data?.codex_under_gate
+                ? '已纳入门禁：先验出口 IP，再放行执行锁，看门狗每 15 秒复核一次。'
+                : '当前不归 IP 门禁管 —— 直接起进程，不验 IP。要接管请到设置里打开。'}
+            </p>
+            {taskProgress(launchCodexTask, 'Codex 启动中…')}
           </div>
 
           <div className="flex flex-col justify-end">

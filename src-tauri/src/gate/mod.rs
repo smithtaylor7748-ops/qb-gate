@@ -127,6 +127,30 @@ pub fn unlock_all() -> Result<usize> {
     Err(GateError::Other("IP 锁只在 Windows 上可用".into()))
 }
 
+/// 摘掉指定几个文件上的 Deny ACE。
+///
+/// 存在的理由只有一个：**把 Codex 移出门禁管辖时得能把它身上的锁摘掉。**
+/// 那一刻它已经不在 `targets::lockable()` 里了，`unlock_all` 再也不会碰它 ——
+/// 不单独摘的话，用户关掉开关之后 codex 仍然跑不起来，而面板显示一切正常。
+#[cfg(windows)]
+pub fn unlock_paths(paths: &[PathBuf]) -> usize {
+    with_sid(|sid| {
+        let mut n = 0;
+        for p in paths {
+            if acl::unlock(p, sid).is_ok() {
+                n += 1;
+            }
+        }
+        Ok(n)
+    })
+    .unwrap_or(0)
+}
+
+#[cfg(not(windows))]
+pub fn unlock_paths(_paths: &[PathBuf]) -> usize {
+    0
+}
+
 /// 清理升级残留的可绕过副本。
 ///
 /// K1：**发起升级的那个会话自己占着最新一份，删不掉**（Windows 允许改名
