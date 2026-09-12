@@ -39,11 +39,20 @@ pub struct TavernConfig {
 
 impl Default for TavernConfig {
     fn default() -> Self {
-        // 默认值是本机现有部署的位置。别人用这个项目要在设置里改。
+        // 三个路径**故意留空**。
+        //
+        // 这里原来写死的是作者本机那份部署（`D:\tools\…`）。在作者机器上没出过事，
+        // 在别人机器上则是两个问题：一是面板一上来就报一串跟他毫无关系的盘符路径，
+        // 二是把作者的目录布局随源码发了出去。
+        //
+        // 留空之后，`status()` 里的存在性检查一律不过，插件如实停在
+        // `PluginState::Missing`（「依赖不齐，展开看缺哪一项」）——
+        // 这正是「还没配」的准确描述。用户在设置里填完自己的路径就好。
+        // 端口保留默认值：5001 / 8000 是桥接与酒馆各自的约定端口，与机器无关。
         Self {
-            bridge_root: PathBuf::from(r"D:\tools\claude-code-sillytavern-bridge-v2"),
-            sillytavern_root: PathBuf::from(r"D:\tools\SillyTavern"),
-            st_launcher: PathBuf::from(r"D:\tools\start-sillytavern.cmd"),
+            bridge_root: PathBuf::new(),
+            sillytavern_root: PathBuf::new(),
+            st_launcher: PathBuf::new(),
             bridge_port: 5001,
             st_port: 8000,
         }
@@ -529,12 +538,23 @@ pub async fn stop() -> Result<Vec<String>> {
 mod tests {
     use super::*;
 
+    /// 默认配置里**不许出现任何一台具体机器的路径**。
+    ///
+    /// 开源之前这里写死过作者本机的 `D:\tools\…`，别人装上就看到一串
+    /// 跟自己无关的盘符。端口是协议约定，与机器无关，照旧带默认值。
     #[test]
-    fn default_config_points_at_current_deployment() {
+    fn default_config_carries_no_machine_specific_paths() {
         let c = TavernConfig::default();
         assert_eq!(c.bridge_port, 5001);
         assert_eq!(c.st_port, 8000);
-        assert!(c.bridge_root.ends_with("claude-code-sillytavern-bridge-v2"));
+        for p in [&c.bridge_root, &c.sillytavern_root, &c.st_launcher] {
+            assert_eq!(
+                p.as_os_str().len(),
+                0,
+                "默认路径必须为空，实得 {}",
+                p.display()
+            );
+        }
     }
 
     #[test]
@@ -549,7 +569,7 @@ mod tests {
     #[test]
     fn vendored_copy_is_excluded_by_path_rule() {
         // find_official_claude 里那条排除规则的口径，单独钉一下。
-        let vendored = r"d:\tools\claude-code-cli\claude.exe";
+        let vendored = r"d:\tools\sillytavern\claude-code-cli\claude.exe";
         assert!(vendored.to_lowercase().contains(r"\claude-code-cli\"));
         let official = r"c:\users\me\.local\bin\claude.exe";
         assert!(!official.to_lowercase().contains(r"\claude-code-cli\"));
