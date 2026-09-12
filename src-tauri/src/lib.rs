@@ -1,4 +1,4 @@
-//! ClaudeGate —— Claude 环境控制面板。
+//! QB Gate —— Claude 环境控制面板。
 //!
 //! 命令层。业务逻辑全在各自模块里，这里只做参数搬运与状态持有。
 
@@ -1107,7 +1107,7 @@ async fn plugin_start(
         }
     };
 
-    // 桥接跑起来之后由 ClaudeGate 的看门狗接管，不再起 PowerShell 的 WatchBridge。
+    // 桥接跑起来之后由 QB Gate 的看门狗接管，不再起 PowerShell 的 WatchBridge。
     let (tx, rx) = tokio::sync::watch::channel(false);
     *state.watchdog_stop.lock().unwrap() = Some(tx);
     let gs = state.gate.clone();
@@ -1176,7 +1176,7 @@ pub fn run() {
         //
         // 收进托盘之后看门狗还在跑、租约还在，门是有人看着的开 ——
         // 这跟「没人看着还敞着」是两码事，安全模型没有被放松。
-        // 真要退出走托盘菜单的「退出 ClaudeGate」，那条路照旧重锁。
+        // 真要退出走托盘菜单的「退出 QB Gate」，那条路照旧重锁。
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // 托盘没建起来就照旧退出 —— 藏起一个叫不回来的窗口更糟。
@@ -1309,7 +1309,7 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("启动 ClaudeGate 失败")
+        .expect("启动 QB Gate 失败")
         .run(|_app, event| {
             // **面板退出时把门关上。**
             //

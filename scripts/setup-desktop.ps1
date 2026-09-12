@@ -1,11 +1,11 @@
 ﻿<#
 .SYNOPSIS
-  把 ClaudeGate 放上桌面，并把旧的一批按钮移进备份文件夹。
+  把 QB Gate 放上桌面，并把旧的一批按钮移进备份文件夹。
 
 .DESCRIPTION
   两件事分开做，默认都只「预演」不动手，确认无误再加 -Apply。
 
-  顺序很重要：**先确认 ClaudeGate 里那几项功能都能用，再移旧按钮。**
+  顺序很重要：**先确认 QB Gate 里那几项功能都能用，再移旧按钮。**
   那 7 个按钮目前是启动 Claude 的唯一合法入口 —— claude.exe 上有
   Deny ExecuteFile ACE，双击会被系统拒绝。移早了会把自己关在门外。
 
@@ -29,7 +29,7 @@ param(
     # 只建快捷方式，不动旧按钮。
     [switch]$SkipBackup,
 
-    # ClaudeGate 可执行文件路径。默认找安装后的位置，找不到再找构建产物。
+    # QB Gate 可执行文件路径。默认找安装后的位置，找不到再找构建产物。
     [string]$ExePath
 )
 
@@ -48,36 +48,36 @@ $oldButtons = @(
     '添加克劳德白名单地址.vbs'
 )
 
-function Resolve-ClaudeGateExe {
+function Resolve-QB GateExe {
     if ($ExePath) {
         if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
             throw "指定的 ExePath 不存在：$ExePath"
         }
         return (Resolve-Path -LiteralPath $ExePath).Path
     }
-    # 注意可执行文件名是 claude-gate.exe（跟 Cargo 包名走），不是 ClaudeGate.exe。
+    # 注意可执行文件名是 qb-gate.exe（跟 Cargo 包名走），不是 QB Gate.exe。
     # productName 只影响安装目录与快捷方式显示名。
     $repo = Split-Path -Parent $PSScriptRoot
     $candidates = @(
-        (Join-Path $env:LOCALAPPDATA 'ClaudeGate\claude-gate.exe'),
-        (Join-Path ${env:ProgramFiles} 'ClaudeGate\claude-gate.exe'),
-        (Join-Path $repo 'src-tauri\target\release\claude-gate.exe')
+        (Join-Path $env:LOCALAPPDATA 'QB Gate\qb-gate.exe'),
+        (Join-Path ${env:ProgramFiles} 'QB Gate\qb-gate.exe'),
+        (Join-Path $repo 'src-tauri\target\release\qb-gate.exe')
     )
     foreach ($c in $candidates) {
         if ($c -and (Test-Path -LiteralPath $c -PathType Leaf)) { return $c }
     }
-    throw '找不到 ClaudeGate 可执行文件。先跑 npm run tauri build，或者用 -ExePath 指定。'
+    throw '找不到 QB Gate 可执行文件。先跑 npm run tauri build，或者用 -ExePath 指定。'
 }
 
-Write-Host '=== ClaudeGate 桌面部署 ===' -ForegroundColor Cyan
+Write-Host '=== QB Gate 桌面部署 ===' -ForegroundColor Cyan
 if (-not $Apply) {
     Write-Host '预演模式：只显示会做什么，不会改动任何文件。加 -Apply 才真的执行。' -ForegroundColor Yellow
 }
 Write-Host ''
 
 # ---- 1. 建快捷方式 ----
-$exe = Resolve-ClaudeGateExe
-$lnk = Join-Path $desktop 'ClaudeGate.lnk'
+$exe = Resolve-QB GateExe
+$lnk = Join-Path $desktop 'QB Gate.lnk'
 Write-Host "[1] 桌面快捷方式" -ForegroundColor Cyan
 Write-Host "    目标  $exe"
 Write-Host "    落点  $lnk"
@@ -87,7 +87,7 @@ if ($Apply) {
     # 中文桌面（…\OneDrive\桌面\）会被它变成 "??" 然后报 FileNotFoundException，
     # 存出来的 .lnk 目标是空的。NSIS 安装器建的那个桌面快捷方式也栽在这。
     # 办法：先在纯 ASCII 的临时路径上建好，再用 Copy-Item 搬过去（它支持 Unicode）。
-    $tmp = Join-Path ([IO.Path]::GetTempPath()) 'ClaudeGate-shortcut.lnk'
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) 'QB Gate-shortcut.lnk'
     $shell = New-Object -ComObject WScript.Shell
     $sc = $shell.CreateShortcut($tmp)
     $sc.TargetPath = $exe

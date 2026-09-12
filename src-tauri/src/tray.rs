@@ -25,7 +25,7 @@ use tauri::{
 
 use crate::relay::RelayTarget;
 
-pub const TRAY_ID: &str = "claudegate";
+pub const TRAY_ID: &str = "qbgate";
 
 /// 托盘图标到底建起来没有。
 ///
@@ -52,7 +52,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let menu = build_menu(app)?;
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
-        .tooltip("ClaudeGate")
+        .tooltip("QB Gate")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(on_menu_event)
@@ -85,7 +85,7 @@ pub fn refresh<R: Runtime>(app: &AppHandle<R>) {
 
 fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let open = MenuItem::with_id(app, ID_OPEN, "打开面板", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, ID_QUIT, "退出 ClaudeGate", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, ID_QUIT, "退出 QB Gate", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
 

@@ -432,7 +432,7 @@ mod tests {
             Err(_) => return,
         };
 
-        let path = std::env::temp_dir().join(format!("claude-gate-acl-{}.bin", std::process::id()));
+        let path = std::env::temp_dir().join(format!("qb-gate-acl-{}.bin", std::process::id()));
         std::fs::write(&path, b"stand-in").expect("写替身文件");
 
         assert!(!is_locked(&path, &sid).unwrap(), "新建文件不该带锁");
@@ -463,7 +463,7 @@ mod tests {
             Err(_) => return,
         };
         let path =
-            std::env::temp_dir().join(format!("claude-gate-nulldacl-{}.bin", std::process::id()));
+            std::env::temp_dir().join(format!("qb-gate-nulldacl-{}.bin", std::process::id()));
         std::fs::write(&path, b"stand-in").expect("写替身文件");
 
         lock(&path, &sid).expect("上锁");
@@ -493,7 +493,7 @@ mod tests {
             Err(_) => return,
         };
         let path =
-            std::env::temp_dir().join(format!("claude-gate-relock-{}.bin", std::process::id()));
+            std::env::temp_dir().join(format!("qb-gate-relock-{}.bin", std::process::id()));
         std::fs::write(&path, b"stand-in").expect("写替身文件");
 
         lock(&path, &sid).expect("上锁");
@@ -562,7 +562,7 @@ mod tests {
             Err(_) => return,
         };
         let path =
-            std::env::temp_dir().join(format!("claude-gate-damaged-{}.bin", std::process::id()));
+            std::env::temp_dir().join(format!("qb-gate-damaged-{}.bin", std::process::id()));
         std::fs::write(&path, b"stand-in").expect("写替身文件");
 
         damage(&path, &sid);
@@ -596,7 +596,7 @@ mod tests {
             Err(_) => return,
         };
         let path =
-            std::env::temp_dir().join(format!("claude-gate-damaged2-{}.bin", std::process::id()));
+            std::env::temp_dir().join(format!("qb-gate-damaged2-{}.bin", std::process::id()));
         std::fs::write(&path, b"stand-in").expect("写替身文件");
 
         damage(&path, &sid);
@@ -618,7 +618,7 @@ mod tests {
             Ok(s) => s,
             Err(_) => return,
         };
-        let p = std::env::temp_dir().join("claude-gate-does-not-exist-xyz.bin");
+        let p = std::env::temp_dir().join("qb-gate-does-not-exist-xyz.bin");
         assert!(matches!(
             is_locked(&p, &sid),
             Err(GateError::NotFound(_))

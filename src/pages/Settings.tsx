@@ -186,7 +186,7 @@ export default function Settings() {
         </p>
       </Card>
 
-      <Card title="ClaudeGate 版本" icon={<Info size={14} />} className="mb-3">
+      <Card title="QB Gate 版本" icon={<Info size={14} />} className="mb-3">
         <Row side={<span className="font-mono">v{updates?.current_version ?? appVersion}</span>}>
           <span>当前版本</span>
           <span className="notice">{updates?.detail ?? '更新状态读取中…'}</span>

@@ -5,7 +5,7 @@
 //! 原来那条路（`installers.lock.json` + `scripts/pin-hash.mjs`）在 Windows 上是个
 //! 不必要的死结：哈希得手工钉，钉不上安装按钮就永远是灰的 —— 而它确实一直是灰的。
 //!
-//! 实际上完整性已经有三层保障，ClaudeGate 不需要自己再钉一份：
+//! 实际上完整性已经有三层保障，QB Gate 不需要自己再钉一份：
 //!
 //!   1. **winget manifest** 自带 `InstallerSha256`，由 winget 自己校验；
 //!   2. 官方安装脚本走 Anthropic 自己签名的 `manifest.json`；
@@ -78,7 +78,7 @@ impl InstallTarget {
     /// 决定 `install()` 要不要跑第 1 步解锁与第 6 步重锁。Codex 只有在设置里
     /// 打开开关之后才归门禁管；关着的时候对它跑那两步，等于无谓地把 Claude
     /// 的锁摘掉再装回去。
-    pub fn under_claude_gate(self) -> bool {
+    pub fn under_qb_gate(self) -> bool {
         match self {
             InstallTarget::Codex => crate::settings::codex_under_gate(),
             _ => true,
@@ -285,7 +285,7 @@ pub enum Method {
 /// 提出来是因为失败分支有两处要调它，漏掉任何一处都会让面板在
 /// 「第 1 步已解锁」之后带着开着的门返回。
 fn relock_if_gated(t: InstallTarget) -> usize {
-    if t.under_claude_gate() {
+    if t.under_qb_gate() {
         crate::gate::lock_all().unwrap_or(0)
     } else {
         0
@@ -389,8 +389,8 @@ pub async fn install(target: InstallTarget, rep: &Reporter) -> Result<InstallRes
 
     // ---- 1 ----
     // Codex 不归 Claude 门禁管，对它解锁再重锁只是白白把 Claude 的门
-    // 开一遍。等 Codex 也纳入门禁后，`under_claude_gate` 会变成 true。
-    if target.under_claude_gate() {
+    // 开一遍。等 Codex 也纳入门禁后，`under_qb_gate` 会变成 true。
+    if target.under_qb_gate() {
         rep.phase(1, "摘掉执行锁");
         match crate::gate::unlock_all() {
             Ok(n) => log.push(format!("已解锁 {n} 个副本")),
@@ -517,7 +517,7 @@ pub async fn install(target: InstallTarget, rep: &Reporter) -> Result<InstallRes
     }
 
     // ---- 6 ----
-    let relocked = if target.under_claude_gate() {
+    let relocked = if target.under_qb_gate() {
         rep.phase(6, "重新上锁");
         crate::gate::lock_all().map_err(|e| {
             rep.fail(format!("安装成功，但执行锁重建失败：{e}"));
@@ -623,8 +623,8 @@ mod tests {
     fn claude_targets_are_always_under_the_gate() {
         // 归门禁管的目标才跑「解锁 → 装 → 重锁」。Claude 那两个永远归门禁管，
         // 这条不受任何设置影响。
-        assert!(InstallTarget::ClaudeCode.under_claude_gate());
-        assert!(InstallTarget::ClaudeDesktop.under_claude_gate());
+        assert!(InstallTarget::ClaudeCode.under_qb_gate());
+        assert!(InstallTarget::ClaudeDesktop.under_qb_gate());
     }
 
     #[test]
@@ -633,7 +633,7 @@ mod tests {
         // 默认开着的话，装一次 Codex 就会把 Claude 的门无谓地开一遍。
         assert!(!crate::settings::Settings::default().codex_under_gate);
         assert_eq!(
-            InstallTarget::Codex.under_claude_gate(),
+            InstallTarget::Codex.under_qb_gate(),
             crate::settings::codex_under_gate()
         );
     }

@@ -1,10 +1,10 @@
 {
-  "name": "claude-gate",
+  "name": "qb-gate",
   "private": true,
   "version": "0.9.0",
   "type": "module",
   "description": "Claude 环境控制面板：IP 锁、纯净度、DNS 泄露、环境检测与安装",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

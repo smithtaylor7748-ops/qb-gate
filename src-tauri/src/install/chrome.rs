@@ -624,7 +624,7 @@ mod tests {
     #[test]
     fn a_needle_straddling_a_chunk_boundary_is_still_found() {
         let dir = std::env::temp_dir();
-        let path = dir.join(format!("claude-gate-scan-{}.bin", std::process::id()));
+        let path = dir.join(format!("qb-gate-scan-{}.bin", std::process::id()));
 
         // 1 MB 缓冲区，故意让 needle 跨过第一块的末尾。
         let chunk = 1usize << 20;
@@ -649,7 +649,7 @@ mod tests {
     /// 这跟档案 §7.17 那条 `unwrap_or_default()` 是同一条教训。
     #[test]
     fn an_unreadable_file_is_unknown_not_absent() {
-        let p = std::env::temp_dir().join("claude-gate-no-such-file-xyz.bin");
+        let p = std::env::temp_dir().join("qb-gate-no-such-file-xyz.bin");
         assert_eq!(file_contains(&p, NEEDLE), None);
     }
 

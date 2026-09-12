@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ClaudeGate",
+  "productName": "QB Gate",
   "version": "0.9.0",
-  "identifier": "com.claudegate.panel",
+  "identifier": "com.qbgate.panel",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "ClaudeGate",
+        "title": "QB Gate",
         "width": 1180,
         "height": 820,
         "minWidth": 680,

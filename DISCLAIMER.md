@@ -2,7 +2,7 @@
 
 **最后更新：2026-09-11｜适用版本：v0.7.1 起**
 
-请在下载、构建或运行 ClaudeGate 之前**完整读完本文件**。下载、构建或运行本项目，
+请在下载、构建或运行 QB Gate 之前**完整读完本文件**。下载、构建或运行本项目，
 即表示你已阅读、理解并接受以下全部条款；不接受其中任何一条，请不要使用本项目。
 
 ---
@@ -16,7 +16,7 @@
 
 需要特别说明的是：
 
-> **「MIT 协议」「本地运行」「开源免费」「仅供学习交流」「全程手动操作」
+> **「开源协议」「本地运行」「开源免费」「仅供学习交流」「全程手动操作」
 > 都不是统一的免责条件。**
 
 它们既不能让违反服务条款的行为变得合规，也不能免除使用者在所在地法律下的责任。
@@ -26,14 +26,16 @@
 
 ## 1. 非官方项目，与 Anthropic 没有任何关系
 
-- ClaudeGate 是**独立的第三方工具**，与 Anthropic PBC **没有**任何隶属、合作、
+- QB Gate 是**独立的第三方工具**，与 Anthropic PBC **没有**任何隶属、合作、
   赞助、代理、认证或背书关系，也**未经**其审阅或许可。
 - `Claude`、`Claude Code`、`Anthropic` 是 Anthropic PBC 的商标；`Codex`、`OpenAI`
   是 OpenAI 的商标；`SillyTavern`、`DeepSeek`、`Kimi`、`智谱` 等名称归各自权利人所有。
   本项目仅为说明兼容性而提及这些名称，**不主张任何权利，也不代表获得授权**。
-- **项目名称中含有 "Claude" 字样不代表取得商标许可。** 维护者已知悉 Anthropic
-  《商标指引》对未经许可的品牌使用与暗示合作的限制。若权利人认为该名称不当，
-  维护者将配合更名或下架，见本文第 11 节。
+- **本项目名称（QB Gate）不含任何他人商标。** 文档与界面中出现的
+  `Claude` / `Codex` 等名称均为**叙述性使用** —— 用于说明本工具与哪些软件配合，
+  不作为产品标识，也不暗示合作。维护者已知悉 Anthropic《商标指引》
+  对未经许可的品牌使用与暗示合作的限制。若权利人仍认为不当，
+  维护者将配合更名或下架，见本文第 10 节。
 - 本项目**不分发、不镜像、不修改** Claude、Claude Code、Codex 或 SillyTavern 的
   任何二进制或源代码。安装一律调用官方渠道（winget / 官方安装脚本 / 官方下载页），
   下载与校验由这些官方渠道自己完成。
@@ -50,7 +52,7 @@
 无论该责任产生于合同、侵权或其他事由，也无论其是否由本软件或本软件的使用
 或其他交易引起、与之相关。
 
-本条为 `LICENSE` 中 MIT 条款的中文表述，**如有歧义以 `LICENSE` 英文原文为准**。
+本条为 `LICENSE`（GNU GPL v3）中免责条款第 15、16 节的中文表述，**如有歧义以 `LICENSE` 英文原文为准**。
 
 ---
 
@@ -189,7 +191,7 @@ npm 全局安装出来的 `codex.cmd` 挡得住 `codex` 命令本身，挡不住
   桥接功能涉及第三方前端如何使用凭证发起请求，**其合规性取决于该桥接脚本的具体实现，
   不在本项目的审阅范围内，使用者需自行对照相应服务条款确认。**
 - 外部链接指向的官方文档、第三方博客、视频、品牌名称与商家页面
-  **均不在本项目 MIT 授权范围内**，其内容、可用性与合法性由各自网站负责。
+  **均不在本项目开源授权范围内**，其内容、可用性与合法性由各自网站负责。
   本项目只放链接，不转载其图文。
 
 ### 推广关系披露
@@ -204,32 +206,7 @@ npm 全局安装出来的 `codex.cmd` 挡得住 `codex` 命令本身，挡不住
 
 ---
 
-## 9. 关于「订阅引导」页的特别说明
-
-`src/subscription-guide/` 是一份**纯图文资料**，不联网、不读账号、不写文件。
-它记录的是社区中流传的订阅操作经验，**不是官方指引，也不是维护者的推荐做法**。
-
-请特别注意，该资料中**包含以下带有明确条款与合规风险的内容**，
-维护者在此如实披露，不为其背书：
-
-- **使用地址生成器填写非本人真实住址的账单地址**（以规避 8%~10% 消费税）。
-  此类做法可能违反 Apple、Google 及支付服务商关于账单资料真实性的条款，
-  并可能引发账号审查、扣款失败、拒付或退款纠纷。
-- **使用海外接码平台注册账号**。此类做法可能违反相应服务商关于真实身份与
-  地区资格的条款。
-- **跨区购买礼品卡与订阅**。各平台对付款国家/地区有独立政策。
-
-> **维护者的明确立场：注册账号、登记付款资料、填写账单地址时，
-> 应当使用你本人真实、合法、有效的信息。**
->
-> 该资料仅作为社区经验的记录而保留。**使用者若据此操作，
-> 其合法性、真实性与全部后果由使用者本人承担，与本项目无关。**
-
-如果你认为这部分内容不应存在，欢迎提 issue 讨论移除。
-
----
-
-## 10. 无支持承诺
+## 9. 无支持承诺
 
 本项目是个人业余项目，**不提供任何服务等级承诺**：不保证响应 issue、
 不保证修复缺陷、不保证兼容后续版本的 Claude / Windows，
@@ -239,7 +216,7 @@ npm 全局安装出来的 `codex.cmd` 挡得住 `codex` 命令本身，挡不住
 
 ---
 
-## 11. 权利人通知与下架
+## 10. 权利人通知与下架
 
 若你是相关商标、著作权或其他权利的持有人，认为本项目的任何内容侵犯了你的权利，
 或认为项目名称、文案造成了混淆，请通过 GitHub Issue 或仓库主页的联系方式告知。
@@ -249,12 +226,14 @@ npm 全局安装出来的 `codex.cmd` 挡得住 `codex` 命令本身，挡不住
 
 ## English Summary
 
-**ClaudeGate is an unofficial, independent, personal project. It is NOT affiliated
+**QB Gate is an unofficial, independent, personal project. It is NOT affiliated
 with, endorsed by, sponsored by, or reviewed by Anthropic PBC, OpenAI, Apple,
 Google, or any other company.** All trademarks belong to their respective owners.
-The presence of "Claude" in the project name does **not** imply any trademark license.
+References to "Claude", "Anthropic", "Codex" or "OpenAI" in this project are
+nominative only — they identify the software this tool works with, and imply
+no trademark license, affiliation or endorsement.
 
-- **Provided "AS IS", with NO WARRANTY of any kind.** See `LICENSE` (MIT).
+- **Provided "AS IS", with NO WARRANTY of any kind.** See `LICENSE` (GNU GPL v3 or later).
   The authors are not liable for any claim, damage, or other liability.
 - **This tool does NOT prevent account bans.** Its IP-purity, DNS-leak, and
   locale-fingerprint checks are informational heuristics built on public
@@ -280,11 +259,7 @@ The presence of "Claude" in the project name does **not** imply any trademark li
 - **Affiliate disclosure:** the IPRoyal link in this project carries a referral
   code (`?r=sulianyan`) that may generate commission. No other commercial
   relationship exists with any vendor mentioned.
-- The bundled subscription guide records community practices that **may violate
-  third-party terms of service** (non-genuine billing addresses, SMS-activation
-  services, cross-region purchases). It is documented, **not recommended**. Use
-  your own real and lawful information.
-- **This document is not legal advice.** "MIT", "open source", "runs locally", and
+- **This document is not legal advice.** "GPL", "open source", "runs locally", and
   "for educational purposes only" are not blanket legal defenses.
 
 **Rights holders:** if you believe this project infringes your rights or causes

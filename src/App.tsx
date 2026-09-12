@@ -1,7 +1,6 @@
 import { Component, useCallback, useMemo, useState, type ReactNode } from 'react';
 import {
   Blocks,
-  BookOpen,
   Fingerprint,
   Globe,
   KeyRound,
@@ -30,7 +29,6 @@ import ChineseSignals from './pages/ChineseSignals';
 import IpLock from './pages/IpLock';
 import Accounts from './pages/Accounts';
 import Environment from './pages/Environment';
-import SubscriptionGuidePage from './pages/SubscriptionGuidePage';
 import Plugins from './pages/Plugins';
 import Relay from './pages/Relay';
 import Profiles from './pages/Profiles';
@@ -83,7 +81,6 @@ const GROUPS: NavGroup[] = [
     title: '其它',
     items: [
       { id: 'environment', label: '环境与安装', icon: <Package size={15} /> },
-      { id: 'subscription-guide', label: '订阅引导', icon: <BookOpen size={15} /> },
       { id: 'plugins', label: '插件商店', icon: <Blocks size={15} /> },
       { id: 'relay', label: '中转站', icon: <Waypoints size={15} /> },
       { id: 'profiles', label: '档案与快照', icon: <Layers size={15} /> },
@@ -181,7 +178,7 @@ function Sidebar() {
       <div className="brand">
         <Lock size={16} className="flex-shrink-0 text-[var(--accent)]" aria-hidden="true" />
         <span className="brand-text">
-          <span className="brand-title">ClaudeGate</span>
+          <span className="brand-title">QB Gate</span>
           <small className="brand-sub">
             {progress.completed_once
               ? skipped > 0
@@ -271,8 +268,6 @@ function Pages() {
       return <Accounts />;
     case 'environment':
       return <Environment />;
-    case 'subscription-guide':
-      return <SubscriptionGuidePage />;
     case 'plugins':
       return <Plugins />;
     case 'relay':
@@ -315,11 +310,7 @@ export default function App() {
         <div className="app">
           <Sidebar />
           <main className="main">
-            {/* 订阅引导是外来模块，自带一套按 1460px 设计的三栏布局（步骤导航 ·
-                正文 · 手机示意图），也自带内外边距。套在 980px 的 `.main-inner`
-                里会被压成一条窄缝 —— 它的断点看的是**视口宽度**不是容器宽度，
-                窗口开得越大反而挤得越狠。所以这一页单独放宽，边距交给模块自己。 */}
-            <div className={page === 'subscription-guide' ? 'main-inner main-inner--wide' : 'main-inner'}>
+            <div className="main-inner">
               <ErrorBoundary key={page}>
                 <Pages />
               </ErrorBoundary>

@@ -318,7 +318,7 @@ fn probe_lock(dir: &Path, fail: impl Fn(Option<String>, String) -> Probe) -> Pro
     }
     let fs_name = fs.map(|(n, _)| n);
 
-    let probe = dir.join(format!(".claudegate-lock-probe-{}.tmp", std::process::id()));
+    let probe = dir.join(format!(".qbgate-lock-probe-{}.tmp", std::process::id()));
     if let Err(e) = std::fs::write(&probe, b"MZ probe") {
         return fail(fs_name, format!("这个目录写不进去：{e}"));
     }
@@ -478,7 +478,7 @@ pub fn parse_codex_release(json: &str, asset: &str) -> Result<Release> {
 fn http() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(20))
-        .user_agent(concat!("ClaudeGate/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("QB Gate/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| GateError::Other(format!("建不了网络客户端：{e}")))
 }
@@ -1453,7 +1453,7 @@ mod tests {
     impl Tmp {
         fn new(tag: &str) -> Self {
             let p = std::env::temp_dir().join(format!(
-                "claudegate-managed-{tag}-{}-{}",
+                "qbgate-managed-{tag}-{}-{}",
                 std::process::id(),
                 chrono::Local::now().format("%H%M%S%f")
             ));
@@ -1612,9 +1612,9 @@ mod tests {
         let home = Path::new(r"C:\Users\me");
         let roaming = Path::new(r"C:\Users\me\AppData\Roaming");
         let local = Path::new(r"C:\Users\me\AppData\Local");
-        let panel = Path::new(r"C:\Users\me\AppData\Local\ClaudeGate");
+        let panel = Path::new(r"C:\Users\me\AppData\Local\QB Gate");
         let why = |d: &str| forbidden_reason(Path::new(d), Some(home), Some(roaming), Some(local), Some(panel));
-        assert!(why(r"C:\Users\me\AppData\Local\ClaudeGate\apps").is_some());
+        assert!(why(r"C:\Users\me\AppData\Local\QB Gate\apps").is_some());
         assert!(why(r"C:\Users\me\AppData\Roaming\Claude-main\x").is_some());
         assert!(why(r"C:\Users\me\AppData\Roaming\Claude").is_some());
         assert!(why(r"C:\Users\me\AppData\Local\AnthropicClaude\x").is_some());

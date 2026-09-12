@@ -55,7 +55,7 @@ fn client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .no_proxy()
         .timeout(std::time::Duration::from_secs(8))
-        .user_agent("ClaudeGate/0.1")
+        .user_agent("QB Gate/0.1")
         .build()
         .map_err(GateError::from)
 }

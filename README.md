@@ -1,16 +1,17 @@
-# ClaudeGate
+# QB Gate
 
 Claude 运行环境控制面板。把 IP 锁、纯净度复核、DNS 泄露检测、环境检测与安装、
 中转站配置、账户与启动收进一个界面。
 
-Windows 桌面应用，Tauri 2 + React + Rust，MIT。
+Windows 桌面应用，Tauri 2 + React + Rust，GPL-3.0-or-later。
 
 ---
 
 > ### ⚠ 使用前必读：[免责声明 DISCLAIMER.md](DISCLAIMER.md)
 >
 > - **非官方项目，与 Anthropic PBC 没有任何隶属、合作或背书关系。**
->   商标归各自权利人所有，项目名含 "Claude" 不代表取得授权。
+>   "Claude"、"Anthropic"、"Codex"、"OpenAI" 等商标归各自权利人所有，
+>   本文档中提到它们只为说明本工具与哪些软件配合使用，不代表取得任何授权。
 > - **不承诺「防封」。** 面板所有检测都是基于公开接口的参考性判断，
 >   不等于任何服务商的实际判定，不构成安全保证。
 > - **不含任何代理 / VPN / 翻墙功能**，只读取并展示你已有网络环境的状态。
@@ -217,7 +218,7 @@ MSIX 版桌面端与编辑器扩展这两类的布局是按安装机制推的，
 装了面板托管的 Claude Code，升级就升那一份：同样先比版本、同样拦降级，再走[托管安装](#安装-claude)
 那条下载 + 校验。旧版本改名留底为 `claude.exe.old.<时间>` 并单独加上执行锁，下次安装时清掉。
 
-ClaudeGate 自身更新同样保持安全默认：当前 GitHub Releases 仓库尚未配置，启动时不联网检查。
+QB Gate 自身更新同样保持安全默认：当前 GitHub Releases 仓库尚未配置，启动时不联网检查。
 仓库发布后将只接受签名的 Tauri 更新包，并在设置页提供一键更新入口。
 
 两个坑已经填上：版本号统一取**前三段**再比（本机文件属性是 `2.1.258.0`，
@@ -385,7 +386,7 @@ winget 源里的版本落后（2026-09-11：Claude Code 2.1.263 对官方 2.1.26
 
 **套餐是读文件读出来的，不是查接口查出来的。** 每个槽位目录里都有一份
 `.claude.json`，其中的 `oauthAccount` 是官方客户端自己写下的档案缓存
-（套餐、计费方式、上次刷新时间）。ClaudeGate 只读这个本地文件 ——
+（套餐、计费方式、上次刷新时间）。QB Gate 只读这个本地文件 ——
 不发任何网络请求，不读用量、额度、429 或 OAuth 内部接口，
 也**不显示** `organizationRateLimitTier` / `userRateLimitTier`
 这两个字段（名字里带 rateLimit，展示它们会让第 1 条边界变得可疑，
@@ -437,4 +438,25 @@ Codex **默认不在 IP 门禁的管辖范围内**，可以在「设置 → 门�
 
 ## 许可
 
-MIT
+**GNU General Public License v3.0 or later**（GPL-3.0-or-later），全文见 [LICENSE](LICENSE)。
+
+```
+Copyright (C) 2026 QB Gate contributors
+
+本程序是自由软件：你可以依据自由软件基金会发布的 GNU 通用公共许可证
+（第 3 版，或你选择的任一更新版本）的条款，重新发布和／或修改它。
+
+发布本程序是希望它能派上用场，但**不作任何担保**；甚至不含对
+适销性或特定用途适用性的默示担保。详见 GNU 通用公共许可证。
+
+你应当已随本程序收到一份 GNU 通用公共许可证的副本。
+如果没有，请见 <https://www.gnu.org/licenses/>。
+```
+
+一句话版本：**你可以自由使用、修改、再分发；但把改过的版本分发出去时，
+也必须以 GPL-3.0 开放源码。**
+
+依赖许可的相容性：上游那几个来源（FuckClaude、cc-switch、Tailwind、
+lucide-react）都是 MIT，MIT 与 GPL-3.0 相容，其版权声明按要求保留在
+对应文件里，逐条见 [ATTRIBUTION.md](ATTRIBUTION.md)。
+SillyTavern 是 AGPL-3.0，本项目只把它当独立进程启动，未复制未修改未链接。

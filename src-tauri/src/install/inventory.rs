@@ -691,7 +691,7 @@ mod tests {
     impl Tree {
         fn new(tag: &str) -> Self {
             let base = std::env::temp_dir().join(format!(
-                "claudegate-inventory-{tag}-{}-{}",
+                "qbgate-inventory-{tag}-{}-{}",
                 std::process::id(),
                 chrono::Local::now().format("%H%M%S%f")
             ));

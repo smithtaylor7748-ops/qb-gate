@@ -861,7 +861,7 @@ export default function Environment() {
             </p>
             <p className="notice mt-2">
               只碰 Google Chrome。Edge、Firefox 及其它浏览器一概不动。
-              ClaudeGate 自己跑在 WebView2（Edge 内核）上，
+              QB Gate 自己跑在 WebView2（Edge 内核）上，
               <strong>卸载 Chrome 不会影响这个面板</strong>。
             </p>
           </>

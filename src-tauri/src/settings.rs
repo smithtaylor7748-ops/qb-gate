@@ -92,7 +92,7 @@ pub fn gate_auto_rearm() -> bool {
 }
 
 /// 托管安装根目录的默认位置。跟面板的运行期数据放在一起 ——
-/// 面板自己的安装 / 卸载器只动 `%LOCALAPPDATA%\ClaudeGate`，不会碰这里。
+/// 面板自己的安装 / 卸载器只动 `%LOCALAPPDATA%\QB Gate`，不会碰这里。
 pub fn default_managed_dir() -> std::path::PathBuf {
     crate::gate::state_dir().join("apps")
 }

@@ -912,7 +912,7 @@ mod tests {
     impl Machine {
         fn new(tag: &str, with_bridge: bool) -> Self {
             let base = std::env::temp_dir().join(format!(
-                "claudegate-accounts-{tag}-{}-{}",
+                "qbgate-accounts-{tag}-{}-{}",
                 std::process::id(),
                 chrono::Local::now().format("%H%M%S%f")
             ));

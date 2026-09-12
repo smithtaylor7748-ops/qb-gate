@@ -655,7 +655,7 @@ export const api = {
    *
    * 原来那套「自己下 exe 再钉 SHA-256」已经下线：完整性在 Windows 上本来就有
    * 三层保障（winget manifest、官方安装器自带的签名清单、二进制上的
-   * Authenticode），ClaudeGate 不需要自己再钉一份哈希 —— 而钉不上就意味着
+   * Authenticode），QB Gate 不需要自己再钉一份哈希 —— 而钉不上就意味着
    * 安装按钮永远是灰的，那才是真正的问题。
    */
   installProbe: () => call<InstallProbe>('install_probe'),

@@ -33,7 +33,7 @@ export default function Plugins() {
     <>
       <PageHeader
         title="插件商店"
-        sub="把外部工具接进 ClaudeGate，共用同一套 IP 门禁与看门狗。"
+        sub="把外部工具接进 QB Gate，共用同一套 IP 门禁与看门狗。"
         actions={
           <Button
             icon={<RotateCw size={13} />}
@@ -91,7 +91,7 @@ export default function Plugins() {
               <Collapsible className="mt-1" summary="AGPL 对我有什么要求？">
                 <p className="notice">
                   本面板<strong>只是启动与管理它，没有修改其源码</strong>，
-                  也没有链接进来，所以 ClaudeGate 自己仍然是 MIT。
+                  也没有链接进来，所以 QB Gate 自己仍然是 MIT。
                 </p>
                 <p className="notice mt-2">
                   但如果<strong>你</strong>改了酒馆的源码并拿它对外提供网络服务，

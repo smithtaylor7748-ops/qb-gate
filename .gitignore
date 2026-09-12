@@ -11,3 +11,8 @@ allowlist.txt
 ip-gate.log
 *.bak
 installers-cache/
+
+# 本地资料，永不入库 —— 里面含带条款与合规风险的操作指引（见 DISCLAIMER）。
+# 这两条是硬防线：删掉它们等于把那份内容公开出去。
+/docs/subscription-guide/
+/src/subscription-guide/

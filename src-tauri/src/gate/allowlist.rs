@@ -41,7 +41,7 @@ pub fn write(entries: &[String]) -> Result<()> {
         std::fs::create_dir_all(d)?;
     }
     let body = format!(
-        "# ClaudeGate 白名单 —— 一行一个出口 IP，# 开头为注释\n{}\n",
+        "# QB Gate 白名单 —— 一行一个出口 IP，# 开头为注释\n{}\n",
         entries.join("\n")
     );
     // 原子写：先写临时文件再改名，避免看门狗读到半截。
