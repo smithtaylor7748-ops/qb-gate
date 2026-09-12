@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 
 import { api, type Progress, type Risk, type StepState } from './lib/api';
+import { DEMO_ENABLED } from './lib/demo';
 import { NavCtx, useNav, type PageId } from './lib/nav';
 import { R } from './lib/resources';
 import { put, useResource } from './lib/store';
@@ -36,6 +37,24 @@ import Settings from './pages/Settings';
 import AccountDialogs from './pages/accounts/AccountDialogs';
 
 const EMPTY_PROGRESS: Progress = { steps: {}, completed_once: false };
+
+const PAGE_IDS: PageId[] = [
+  'home', 'purity', 'dns', 'signals', 'iplock', 'accounts',
+  'environment', 'plugins', 'relay', 'profiles', 'settings',
+];
+
+/**
+ * 起始页。正常永远是总览 —— 面板没有路由，也不需要。
+ *
+ * **只有演示模式**认 `?page=iplock` 这种参数：截图脚本（scripts/screenshots.mjs）
+ * 要一次拍多个页面，而无头浏览器点不了侧栏。装好的面板里 `DEMO_ENABLED`
+ * 是编译期常量 false，这段连同判断一起被摇掉。
+ */
+function initialPage(): PageId {
+  if (!DEMO_ENABLED) return 'home';
+  const want = new URLSearchParams(window.location.search).get('page');
+  return PAGE_IDS.find((p) => p === want) ?? 'home';
+}
 
 /** 侧栏右侧那条摘要的语气。 */
 type SummaryTone = '' | 'ok' | 'warn' | 'danger';
@@ -280,7 +299,7 @@ function Pages() {
 }
 
 export default function App() {
-  const [page, setPageRaw] = useState<PageId>('home');
+  const [page, setPageRaw] = useState<PageId>(initialPage);
   // 切页时把主区域滚回顶部 —— 否则从长页面切到短页面会停在半空。
   const setPage = useCallback((next: PageId) => {
     setPageRaw(next);

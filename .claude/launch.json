@@ -4,7 +4,19 @@
     {
       "name": "qb-gate-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 1420
+    },
+    {
+      "name": "qb-gate-demo",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "demo"
+      ],
       "port": 1420
     }
   ]

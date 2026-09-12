@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
+import { DEMO_ENABLED, demoCall } from './demo';
+
 // ------------------------------------------------------------------ 类型
 
 export type Check = 'Pass' | 'Fail' | 'Unknown';
@@ -598,6 +600,9 @@ export interface KillReport {
 
 /** 统一把 Rust 侧的错误字符串抛成 Error，页面上只做 try/catch。 */
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  // 截图 / 界面预览用的演示数据。`VITE_DEMO` 没设成 1 时这是编译期常量 false，
+  // 整个分支连同 demo.ts 一起被摇掉 —— 安装包里的数据来源只有 Rust 一处。
+  if (DEMO_ENABLED) return demoCall<T>(cmd);
   try {
     return await invoke<T>(cmd, args);
   } catch (e) {
