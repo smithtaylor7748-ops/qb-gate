@@ -76,6 +76,23 @@ cd .. && npm run tauri build  # 出安装包（release 编译约 3 分钟）
 
 ---
 
+## ⛔ 看门狗查不到 IP 就立刻收，两档都没有宽限
+
+`WatchMode::unknown_grace()` 两档都返回 `None`。**这是使用者明确选的严格档，
+不是忘了写。**
+
+改回去只要一个函数（返回 `Some(Duration::from_secs(180))`，`decide` 里的分支还在），
+但改之前先看 `watchdog.rs` 里那段说明和 `cli_no_longer_gets_a_grace_period` 这条
+测试 —— 它们写着这个决定的代价：网络抖一下就会关掉正在用的 Claude，未保存的
+对话会丢。
+
+**判定仍然是分开的**（E4 没有被推翻）：`IpUnknown` / `CountryUnknown` 与
+`IpNotAllowed` / `CountryNotAllowed` 是四个不同的值，日志上是四句不同的话。
+改的只是「查不到」这一档的处置。日志上分不分得开决定了使用者该去查网络还是
+去换节点 —— 这两件事的处理方式完全相反，合并了谁都查不出来。
+
+---
+
 ## ⛔ 单测不许碰真实的运行期状态
 
 不联网、不动真 ACL、不碰真进程，**也不写 `%LOCALAPPDATA%\ClaudeIpGate\` 下的任何文件**。

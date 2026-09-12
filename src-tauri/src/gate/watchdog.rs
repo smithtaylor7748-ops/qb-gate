@@ -10,11 +10,15 @@
 //!   Claude 废掉了，而且没有任何提示。同样的洞还有 Check、Install、
 //!   以及 Claude 自动更新导致的掉锁 —— 让看门狗每轮多看一眼 ACL，一并兜住。
 //!
-//! E4 —— 「查不到 IP」和「IP 变了」必须分开处理。
-//!   合并的写法（try { 验IP } catch { 上锁; 杀进程 }）会让网络抖一下、
-//!   隧道重连一次、查询服务限一次流，就直接杀掉正在进行的会话。
-//!   分开之后安全强度没有降低：查不到就**立刻上锁**（能不能发出请求由锁
-//!   说了算，那才是真正的管控点），进程留着等网络回来。
+//! E4 —— 「查不到 IP」和「IP 变了」必须分开**判定**。
+//!   合并的写法（try { 验IP } catch { 上锁; 杀进程 }）让你连日志都看不出
+//!   到底是网络抖了还是真的换了地方。判定至今仍然是分开的：`Judgement` 里
+//!   `IpUnknown` / `CountryUnknown` 与 `IpNotAllowed` / `CountryNotAllowed`
+//!   是四个不同的值，日志上写的也是四句不同的话。
+//!
+//!   ⚠ **但「查不到」的处置已经改了。** 原来是「上锁 + 留进程 + CLI 等 180 秒」，
+//!   现在两档都是立刻收摊 —— 使用者明确选的严格档，理由与代价写在
+//!   `WatchMode::unknown_grace` 上。别照着这段老注释以为进程还留着。
 
 use std::time::Duration;
 
@@ -22,7 +26,10 @@ use super::judge::Judgement;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WatchMode {
-    /// 桥接 / 交互式 Claude Code。可以「先冻住等等看」。
+    /// 桥接 / 交互式 Claude Code。
+    ///
+    /// 原来这一档可以「先冻住等等看」（查不到 IP 时留 180 秒宽限）。
+    /// **现在不留了**，跟桌面端一样查不到就收 —— 见 `unknown_grace`。
     Cli,
     /// Claude 桌面端。冻不住 —— 真正在跑的是 app-* 下那个不能加 Deny 的副本，
     /// 而且它早把自己加载进内存了，事后上锁对它毫无作用。
@@ -38,17 +45,31 @@ impl WatchMode {
         }
     }
 
-    /// 查不到 IP 的宽限期。
+    /// 查不到 IP 的宽限期。**两档都是 `None`：查不到就立刻收，不给宽限。**
     ///
-    /// 桌面端是 `None` —— 用户明确选的严格档，查不到就立刻关，不给宽限。
-    /// 理由：桌面端冻不住，「等等看」的实际含义就是
-    /// 「让它在无法核实的网络上继续跑」。
-    /// 代价说清楚：VPN 重连、DNS 抖动、查询服务限流都会直接关掉正在用的桌面端，
-    /// 会丢没保存的对话。
+    /// # 这里推翻了 E4 的一半，是使用者明确要求的
+    ///
+    /// E4（见文件头）说的是「查不到 IP」与「IP 变了」必须分开处理，
+    /// 因为合并会让网络抖一下就杀掉正在进行的会话。这条**仍然成立**，
+    /// 而且代码里仍然分得开 —— `Judgement` 里 `IpUnknown` / `CountryUnknown`
+    /// 与 `IpNotAllowed` / `CountryNotAllowed` 是四个不同的值，日志上也分得开。
+    ///
+    /// 变的只是「查不到」这一档的**处置**：从「上锁 + 留进程 + 等 180 秒」
+    /// 改成了「上锁 + 立刻收」。使用者的原话是「宁可错杀不可放过」，
+    /// 而且他指出宽限期内本来就发不出新请求（门锁着、会话内 hook 在逐次拦），
+    /// 留着的只是上下文，不是可用性。
+    ///
+    /// **代价写在这里，别让后来的人以为是疏忽：**
+    /// VPN 重连、DNS 抖动、ippure / Cloudflare / ipinfo 三家同时限流，
+    /// 都会直接关掉正在用的 Claude Code 与桌面端，**未保存的对话会丢**。
+    /// 三源并发探测（`probe::ip::reading`）就是为了把这种误杀压到最低 ——
+    /// 「查不到」现在意味着三家全挂，不是一家抽风。
+    ///
+    /// 要改回去：这个函数返回 `Some(Duration::from_secs(180))` 即可，
+    /// `decide` 那边的分支还在。
     pub fn unknown_grace(self) -> Option<Duration> {
         match self {
-            WatchMode::Cli => Some(Duration::from_secs(180)),
-            WatchMode::Desktop => None,
+            WatchMode::Cli | WatchMode::Desktop => None,
         }
     }
 }
@@ -59,7 +80,10 @@ pub enum Tick {
     Nothing,
     /// E3：IP 仍合法但锁被别人加回来了，把租约要回来。
     ReclaimLease,
-    /// E4：查不到 IP —— 上锁，但**留着进程**，等网络回来自动续。
+    /// 查不到 IP —— 上锁，但**留着进程**，等网络回来自动续。
+    ///
+    /// ⚠ **当前配置下产生不出这个值**：两档的 `unknown_grace()` 都是 `None`。
+    /// 留着它（和 `decide` 里那条分支）是为了把宽限加回去只需要改一个函数。
     LockKeepProcess,
     /// 收摊：上锁 + 关停。
     StopEverything(StopReason),
@@ -69,7 +93,8 @@ pub enum Tick {
 pub enum StopReason {
     /// 查到了，但不在白名单 —— 第一轮就关停，一点不含糊。
     IpChanged(String),
-    /// 一直查不到，超过宽限期。
+    /// 一直查不到，超过宽限期。⚠ 同 `Tick::LockKeepProcess`：
+    /// 当前没有任何一档设了宽限，所以这个值产生不出来。
     IpUnknownTooLong,
     /// 桌面端：查不到就立刻关，没有宽限期这回事。
     IpUnknownNoGrace,
@@ -87,13 +112,14 @@ pub enum StopReason {
 ///
 /// - **国家查到了、不在名单里** → 跟 IP 换了同档，第一轮就收。这不是抖动，
 ///   是真的换了地方。
-/// - **国家查不到**（三家都没答出国家）→ 跟查不到 IP 同档：上锁、留进程、
-///   CLI 有宽限、桌面端没有。这是探测服务挂了，不是使用者换了出口；
-///   合并进「立刻收」会让 ipinfo 限一次流就杀掉正在进行的会话。
+/// - **国家查不到**（三家都没答出国家）→ 跟查不到 IP 同档。
 ///
-/// 安全强度没有因此降低：宽限期内**门是锁着的**（发不出新的启动），
-/// 而已经在跑的那个会话由会话内 hook 逐次请求拦着 —— hook 那一档是
-/// 严格 fail-closed 的。两者合起来才是「严」，单靠看门狗硬杀只是「暴」。
+/// 「同档」现在的含义是**两者都立刻收摊**（`unknown_grace()` 返回 `None`）。
+/// 分开的意义仍然在：日志上写的是「查不到」还是「落在 HK」，
+/// 决定了使用者该去查网络还是去换节点 —— 这两件事的处理方式完全相反。
+///
+/// 会话内 hook 那一档是独立的严格 fail-closed：即使看门狗这一轮还没醒，
+/// 下一次请求也发不出去。两者合起来才是「严」。
 pub fn decide(
     j: &Judgement,
     mode: WatchMode,
@@ -125,7 +151,7 @@ pub fn decide(
                 detail: detail.clone(),
             })
         }
-        // 探测侧失败的两种，走同一条宽限逻辑。
+        // 探测侧失败的两种，走同一条处置（当前无宽限，直接收）。
         Judgement::IpUnknown | Judgement::CountryUnknown { .. } => match mode.unknown_grace() {
             None => Tick::StopEverything(StopReason::IpUnknownNoGrace),
             Some(grace) if unknown_for > grace => {
@@ -157,20 +183,28 @@ mod tests {
         assert_eq!(t, Tick::Nothing);
     }
 
+    /// **CLI 档也不再给宽限**（使用者明确要求，见 `unknown_grace` 的说明）。
+    ///
+    /// 这条断言的是一个会丢数据的行为，所以要有测试盯着：抖动一次就收摊。
+    /// 哪天有人想把宽限加回来，先改这条测试 —— 逼他在改之前先看见代价。
     #[test]
-    fn jitter_then_recover_keeps_process() {
-        // 抖动中：查不到，但还在宽限期内 —— 上锁不杀。
-        let t = decide(&UNKNOWN, WatchMode::Cli, true, false, Duration::from_secs(30));
-        assert_eq!(t, Tick::LockKeepProcess);
-        // 恢复后：IP 回来了且仍合法，锁还在 -> 把租约要回来。
-        let t = decide(&ok(), WatchMode::Cli, true, true, ZERO);
-        assert_eq!(t, Tick::ReclaimLease);
+    fn cli_no_longer_gets_a_grace_period() {
+        // unknown_for 填多少都一样，第一轮就收。
+        for waited in [ZERO, Duration::from_secs(30), Duration::from_secs(181)] {
+            let t = decide(&UNKNOWN, WatchMode::Cli, true, false, waited);
+            assert_eq!(
+                t,
+                Tick::StopEverything(StopReason::IpUnknownNoGrace),
+                "等了 {waited:?} 仍然应该是立刻收"
+            );
+        }
     }
 
     #[test]
-    fn persistent_failure_stops_after_grace() {
-        let t = decide(&UNKNOWN, WatchMode::Cli, true, true, Duration::from_secs(181));
-        assert_eq!(t, Tick::StopEverything(StopReason::IpUnknownTooLong));
+    fn recovering_after_a_stop_reclaims_the_lease() {
+        // 收摊之后转入重整待命；IP 回来且仍合法、锁还在 -> 把租约要回来。
+        let t = decide(&ok(), WatchMode::Cli, true, true, ZERO);
+        assert_eq!(t, Tick::ReclaimLease);
     }
 
     #[test]
@@ -246,25 +280,26 @@ mod tests {
     /// 这条挂了，ipinfo 限一次流就会杀掉正在进行的会话 —— 正是 E4 当初
     /// 花实机代价买来的那个教训。宽限期内门是锁着的，会话内 hook 还在
     /// 逐次请求拦，安全强度并没有降低。
+    /// 查不出国家跟查不到 IP 走同一条处置 —— 现在都是立刻收。
+    ///
+    /// 注意「分得开」这件事没有变：`CountryUnknown` 与 `CountryNotAllowed`
+    /// 仍然是两个不同的 `Judgement`，日志上写的也是两句不同的话。
+    /// 变的只是处置，不是判定。
     #[test]
-    fn country_unknown_gets_the_same_grace_as_unknown_ip() {
+    fn country_unknown_is_handled_like_an_unknown_ip() {
         let j = Judgement::CountryUnknown { ip: IP.into() };
-        let t = decide(&j, WatchMode::Cli, true, false, Duration::from_secs(30));
-        assert_eq!(t, Tick::LockKeepProcess);
-
-        // 超过宽限期照样收。
-        let t = decide(&j, WatchMode::Cli, true, true, Duration::from_secs(181));
-        assert_eq!(t, Tick::StopEverything(StopReason::IpUnknownTooLong));
-
-        // 桌面端仍然不给宽限。
-        let t = decide(&j, WatchMode::Desktop, true, false, ZERO);
-        assert_eq!(t, Tick::StopEverything(StopReason::IpUnknownNoGrace));
+        for mode in [WatchMode::Cli, WatchMode::Desktop] {
+            let t = decide(&j, mode, true, false, Duration::from_secs(30));
+            assert_eq!(t, Tick::StopEverything(StopReason::IpUnknownNoGrace));
+        }
     }
 
     #[test]
     fn intervals_match_existing_implementation() {
         assert_eq!(WatchMode::Cli.interval(), Duration::from_secs(15));
         assert_eq!(WatchMode::Desktop.interval(), Duration::from_secs(20));
+        // 两档都不给宽限 —— 这是使用者定的严格档。
         assert_eq!(WatchMode::Desktop.unknown_grace(), None);
+        assert_eq!(WatchMode::Cli.unknown_grace(), None);
     }
 }
