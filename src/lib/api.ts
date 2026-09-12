@@ -313,6 +313,32 @@ export interface Settings {
    * `settingsSave` 会忽略这个字段。
    */
   managed_apps_dir?: string | null;
+
+  /**
+   * 国家白名单（ISO 3166-1 alpha-2 大写）。
+   *
+   * **空 = 这一层不启用，不是全拒。** 界面上必须显著标注「国家层未启用」，
+   * 别让人以为配了。启用之后：出口 IP 落在名单外、查不出国家、
+   * 或者几个探测源报的国家互相打架，一律按不合格处理。
+   */
+  country_allowlist: string[];
+
+  /**
+   * 会话内门禁装没装。**只读**：只能经 `hookInstall` / `hookUninstall` 改，
+   * `settingsSave` 会忽略这个字段（它们还要写脚本、改槽位的 settings.json）。
+   */
+  hook_enabled: boolean;
+}
+
+/** 会话内门禁的现状。 */
+export interface HookStatus {
+  installed: boolean;
+  /** 装在哪个槽位。`null` = 没有激活槽位，装在 `~\.claude`。 */
+  slot?: string | null;
+  settings_path?: string | null;
+  script_path: string;
+  /** 最近几条拦截记录，最新的在前。 */
+  recent_blocks: string[];
 }
 
 // ------------------------------------------------------------ 托管安装
@@ -633,7 +659,21 @@ export const api = {
    */
   allowlistRead: () => call<string[]>('allowlist_read'),
   allowlistWrite: (entries: string[]) => call<void>('allowlist_write', { entries }),
+  /**
+   * 把当前出口 IP 加进白名单。**国家不合格会直接报错，一个字都不写。**
+   *
+   * 手改白名单（`allowlistWrite`）不做这个检查 —— 见 Rust 侧的说明：
+   * 国家层是判定时生效的，塞进去的脏 IP 照样用不了。
+   */
   allowlistAddCurrent: () => call<string[]>('allowlist_add_current'),
+  /** 国家白名单的两个起手式：`[名字, 国家码[]]`。面板不替你选。 */
+  countryPresets: () => call<Array<[string, string[]]>>('country_presets'),
+
+  // 会话内门禁（装进 Claude Code 的 hook）
+  hookStatus: () => call<HookStatus>('hook_status'),
+  /** 装。**白名单为空时会拒绝** —— 装上等于每次请求都被拦。 */
+  hookInstall: () => call<HookStatus>('hook_install'),
+  hookUninstall: () => call<HookStatus>('hook_uninstall'),
   watchdogStart: (mode: 'Cli' | 'Desktop') => call<void>('watchdog_start', { mode }),
   watchdogStop: () => call<void>('watchdog_stop'),
 

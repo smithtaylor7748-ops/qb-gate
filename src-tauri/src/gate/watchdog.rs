@@ -18,6 +18,8 @@
 
 use std::time::Duration;
 
+use super::judge::Judgement;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WatchMode {
     /// 桥接 / 交互式 Claude Code。可以「先冻住等等看」。
@@ -71,19 +73,36 @@ pub enum StopReason {
     IpUnknownTooLong,
     /// 桌面端：查不到就立刻关，没有宽限期这回事。
     IpUnknownNoGrace,
+    /// 国家白名单层：IP 合法但落在名单外。跟 `IpChanged` 同档，第一轮就收。
+    CountryChanged { ip: String, country: String },
+    /// 国家白名单层：几个探测源报的国家打架。按最严的算，证据带在 detail 里。
+    CountryConflict { ip: String, detail: String },
 }
 
 /// 看门狗每一轮的决策。纯函数，无副作用，全部分支可单测。
+///
+/// # 「查不到」与「查到了不合格」为什么必须分开（E4 的国家层版本）
+///
+/// 国家这一维完全照搬 E4 的分法，不能因为使用者要「宁可错杀」就合并：
+///
+/// - **国家查到了、不在名单里** → 跟 IP 换了同档，第一轮就收。这不是抖动，
+///   是真的换了地方。
+/// - **国家查不到**（三家都没答出国家）→ 跟查不到 IP 同档：上锁、留进程、
+///   CLI 有宽限、桌面端没有。这是探测服务挂了，不是使用者换了出口；
+///   合并进「立刻收」会让 ipinfo 限一次流就杀掉正在进行的会话。
+///
+/// 安全强度没有因此降低：宽限期内**门是锁着的**（发不出新的启动），
+/// 而已经在跑的那个会话由会话内 hook 逐次请求拦着 —— hook 那一档是
+/// 严格 fail-closed 的。两者合起来才是「严」，单靠看门狗硬杀只是「暴」。
 pub fn decide(
-    ip: Option<&str>,
-    allow: &[String],
+    j: &Judgement,
     mode: WatchMode,
     lease_held: bool,
     targets_locked: bool,
     unknown_for: Duration,
 ) -> Tick {
-    match ip {
-        Some(ip) if allow.iter().any(|a| a == ip) => {
+    match j {
+        Judgement::Allowed { .. } => {
             // E3：租约在外、目标却是锁着的 —— 有人（编辑器 / Check / Install /
             // 自动更新）把锁加回来了。IP 明明还合法，把租约要回来。
             if lease_held && targets_locked {
@@ -93,8 +112,21 @@ pub fn decide(
             }
         }
         // 查到了但不在白名单（含白名单被清空的情况）——两种模式都第一轮关停。
-        Some(ip) => Tick::StopEverything(StopReason::IpChanged(ip.to_string())),
-        None => match mode.unknown_grace() {
+        Judgement::IpNotAllowed { ip } => Tick::StopEverything(StopReason::IpChanged(ip.clone())),
+        Judgement::CountryNotAllowed { ip, country } => {
+            Tick::StopEverything(StopReason::CountryChanged {
+                ip: ip.clone(),
+                country: country.clone(),
+            })
+        }
+        Judgement::CountryConflict { ip, detail } => {
+            Tick::StopEverything(StopReason::CountryConflict {
+                ip: ip.clone(),
+                detail: detail.clone(),
+            })
+        }
+        // 探测侧失败的两种，走同一条宽限逻辑。
+        Judgement::IpUnknown | Judgement::CountryUnknown { .. } => match mode.unknown_grace() {
             None => Tick::StopEverything(StopReason::IpUnknownNoGrace),
             Some(grace) if unknown_for > grace => {
                 Tick::StopEverything(StopReason::IpUnknownTooLong)
@@ -109,36 +141,41 @@ mod tests {
     use super::*;
 
     const IP: &str = "203.0.113.7";
-    fn allow() -> Vec<String> {
-        vec![IP.to_string()]
-    }
     const ZERO: Duration = Duration::from_secs(0);
+
+    fn ok() -> Judgement {
+        Judgement::Allowed { ip: IP.into() }
+    }
+    fn changed(ip: &str) -> Judgement {
+        Judgement::IpNotAllowed { ip: ip.into() }
+    }
+    const UNKNOWN: Judgement = Judgement::IpUnknown;
 
     #[test]
     fn ip_normal_does_nothing() {
-        let t = decide(Some(IP), &allow(), WatchMode::Cli, true, false, ZERO);
+        let t = decide(&ok(), WatchMode::Cli, true, false, ZERO);
         assert_eq!(t, Tick::Nothing);
     }
 
     #[test]
     fn jitter_then_recover_keeps_process() {
         // 抖动中：查不到，但还在宽限期内 —— 上锁不杀。
-        let t = decide(None, &allow(), WatchMode::Cli, true, false, Duration::from_secs(30));
+        let t = decide(&UNKNOWN, WatchMode::Cli, true, false, Duration::from_secs(30));
         assert_eq!(t, Tick::LockKeepProcess);
         // 恢复后：IP 回来了且仍合法，锁还在 -> 把租约要回来。
-        let t = decide(Some(IP), &allow(), WatchMode::Cli, true, true, ZERO);
+        let t = decide(&ok(), WatchMode::Cli, true, true, ZERO);
         assert_eq!(t, Tick::ReclaimLease);
     }
 
     #[test]
     fn persistent_failure_stops_after_grace() {
-        let t = decide(None, &allow(), WatchMode::Cli, true, true, Duration::from_secs(181));
+        let t = decide(&UNKNOWN, WatchMode::Cli, true, true, Duration::from_secs(181));
         assert_eq!(t, Tick::StopEverything(StopReason::IpUnknownTooLong));
     }
 
     #[test]
     fn ip_really_changed_stops_on_first_round() {
-        let t = decide(Some("1.2.3.4"), &allow(), WatchMode::Cli, true, false, ZERO);
+        let t = decide(&changed("1.2.3.4"), WatchMode::Cli, true, false, ZERO);
         assert_eq!(
             t,
             Tick::StopEverything(StopReason::IpChanged("1.2.3.4".into()))
@@ -146,38 +183,82 @@ mod tests {
     }
 
     #[test]
-    fn empty_allowlist_stops() {
-        let t = decide(Some(IP), &[], WatchMode::Cli, true, false, ZERO);
-        assert_eq!(t, Tick::StopEverything(StopReason::IpChanged(IP.into())));
-    }
-
-    #[test]
     fn lease_stolen_is_reclaimed() {
         // E3 的回归测试：这条挂了，「加白名单」就会静默废掉正在跑的 Claude。
-        let t = decide(Some(IP), &allow(), WatchMode::Cli, true, true, ZERO);
+        let t = decide(&ok(), WatchMode::Cli, true, true, ZERO);
         assert_eq!(t, Tick::ReclaimLease);
     }
 
     #[test]
     fn no_lease_means_nothing_to_reclaim() {
-        let t = decide(Some(IP), &allow(), WatchMode::Cli, false, true, ZERO);
+        let t = decide(&ok(), WatchMode::Cli, false, true, ZERO);
         assert_eq!(t, Tick::Nothing);
     }
 
     #[test]
     fn desktop_has_no_grace_at_all() {
         // 断言桌面端在**第一次**查不到时就动手，unknown_for = 0 也照关。
-        let t = decide(None, &allow(), WatchMode::Desktop, true, false, ZERO);
+        let t = decide(&UNKNOWN, WatchMode::Desktop, true, false, ZERO);
         assert_eq!(t, Tick::StopEverything(StopReason::IpUnknownNoGrace));
     }
 
     #[test]
     fn desktop_ip_changed_also_stops() {
-        let t = decide(Some("1.2.3.4"), &allow(), WatchMode::Desktop, true, false, ZERO);
+        let t = decide(&changed("1.2.3.4"), WatchMode::Desktop, true, false, ZERO);
         assert_eq!(
             t,
             Tick::StopEverything(StopReason::IpChanged("1.2.3.4".into()))
         );
+    }
+
+    // ------------------------------------------------------------ 国家层
+
+    /// 国家查到了、不在名单里 = 真的换了地方，**第一轮就收**，跟 IP 换了同档。
+    #[test]
+    fn country_outside_the_list_stops_on_first_round() {
+        let j = Judgement::CountryNotAllowed { ip: IP.into(), country: "HK".into() };
+        let t = decide(&j, WatchMode::Cli, true, false, ZERO);
+        assert_eq!(
+            t,
+            Tick::StopEverything(StopReason::CountryChanged {
+                ip: IP.into(),
+                country: "HK".into()
+            })
+        );
+    }
+
+    #[test]
+    fn country_conflict_stops_and_carries_the_evidence() {
+        let j = Judgement::CountryConflict {
+            ip: IP.into(),
+            detail: "ippure=US cloudflare=HK".into(),
+        };
+        match decide(&j, WatchMode::Cli, true, false, ZERO) {
+            Tick::StopEverything(StopReason::CountryConflict { detail, .. }) => {
+                assert!(detail.contains("cloudflare=HK"), "证据不能在这一层丢掉");
+            }
+            other => panic!("国家冲突必须收摊，实际是 {other:?}"),
+        }
+    }
+
+    /// E4 的国家层版本：**查不出国家 ≠ 国家不合格**。
+    ///
+    /// 这条挂了，ipinfo 限一次流就会杀掉正在进行的会话 —— 正是 E4 当初
+    /// 花实机代价买来的那个教训。宽限期内门是锁着的，会话内 hook 还在
+    /// 逐次请求拦，安全强度并没有降低。
+    #[test]
+    fn country_unknown_gets_the_same_grace_as_unknown_ip() {
+        let j = Judgement::CountryUnknown { ip: IP.into() };
+        let t = decide(&j, WatchMode::Cli, true, false, Duration::from_secs(30));
+        assert_eq!(t, Tick::LockKeepProcess);
+
+        // 超过宽限期照样收。
+        let t = decide(&j, WatchMode::Cli, true, true, Duration::from_secs(181));
+        assert_eq!(t, Tick::StopEverything(StopReason::IpUnknownTooLong));
+
+        // 桌面端仍然不给宽限。
+        let t = decide(&j, WatchMode::Desktop, true, false, ZERO);
+        assert_eq!(t, Tick::StopEverything(StopReason::IpUnknownNoGrace));
     }
 
     #[test]

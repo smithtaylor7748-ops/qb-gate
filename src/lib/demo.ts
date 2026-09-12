@@ -27,6 +27,7 @@ import type {
   CleanupReport,
   DnsReport,
   GateStatus,
+  HookStatus,
   InstallProbe,
   IpInfo,
   KillReport,
@@ -300,10 +301,23 @@ const dns: DnsReport = {
   ethernet_safe: true,
 };
 
+const hook: HookStatus = {
+  installed: true,
+  slot: 'demo-main',
+  settings_path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\claude-profile-demo-main\\settings.json`,
+  script_path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\hooks\\gate-check.ps1`,
+  recent_blocks: [
+    '2026-09-11 22:14:03  出口 IP 198.51.100.22 不在白名单内',
+    '2026-09-11 22:13:58  门禁裁决已过期 142 秒（面板没在跑，或看门狗已停）',
+  ],
+};
+
 const settings: Settings = {
   codex_under_gate: false,
   gate_auto_rearm: true,
   managed_apps_dir: null,
+  country_allowlist: ['US'],
+  hook_enabled: true,
 };
 
 const managed: ManagedStatus = {
@@ -577,6 +591,14 @@ const externals: ManagedExternal[] = [];
 const FIXTURES: Record<string, () => unknown> = {
   gate_status: () => gate,
   allowlist_read: () => gate.allowlist,
+  hook_status: () => hook,
+  country_presets: () => [
+    ['只留美国', ['US']],
+    [
+      '常用支持地区',
+      ['AU', 'CA', 'CH', 'DE', 'ES', 'FR', 'GB', 'IE', 'IT', 'JP', 'KR', 'NL', 'NZ', 'PL', 'SE', 'SG', 'TW', 'US'],
+    ],
+  ],
   probe_ip: () => ip,
   probe_purity: () => purity,
   probe_dns: () => dns,

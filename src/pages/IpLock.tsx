@@ -192,6 +192,9 @@ export default function IpLock() {
         )}
       </Card>
 
+      {/* ------------------------------------------------ 会话内门禁 */}
+      <SessionGate emptyAllowlist={emptyAllowlist} />
+
       {/* -------------------------------------------------- 受管文件 */}
       <Card title="受管可执行文件" className="mb-3">
         {/* 这段说明原来只写在项目档案里（§7.22），软件里一个字都没有。
@@ -461,5 +464,95 @@ export default function IpLock() {
         )}
       </ConfirmDialog>
     </>
+  );
+}
+
+/**
+ * 会话内门禁 —— 执行锁与看门狗之间那一档。
+ *
+ * 锁只管启动，会话跑起来之后就管不着了；看门狗手里只有 taskkill 一招，
+ * 一杀就丢上下文。这个 hook 在下一次请求前温和拦下，进程留着。
+ *
+ * 界面上必须说清两件事，因为它们都会让人「本来能用的东西突然不能用」：
+ * 面板没跑 = 一律拦；以及怎么自救。
+ */
+function SessionGate({ emptyAllowlist }: { emptyAllowlist: boolean }) {
+  const toast = useToast();
+  const hook = useResource('hook', R.hook);
+  const [busy, setBusy] = useState(false);
+  const h = hook.data;
+
+  async function toggle() {
+    setBusy(true);
+    try {
+      if (h?.installed) {
+        await api.hookUninstall();
+        toast.ok('会话内门禁已停用');
+      } else {
+        await api.hookInstall();
+        toast.ok('会话内门禁已启用 —— 之后每次请求都会先验一遍门禁');
+      }
+      await hook.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card
+      title="会话内门禁"
+      className="mb-3"
+      actions={
+        <Button
+          size="sm"
+          variant={h?.installed ? 'ghost' : 'primary'}
+          loading={busy}
+          disabled={!h?.installed && emptyAllowlist}
+          title={
+            !h?.installed && emptyAllowlist
+              ? '白名单为空时不许启用 —— 每一次请求都会被拦'
+              : undefined
+          }
+          onClick={toggle}
+        >
+          {h?.installed ? '停用' : '启用'}
+        </Button>
+      }
+    >
+      <p className="sub">
+        执行锁只管<strong>启动</strong>。会话一旦跑起来，锁就管不着它了 ——
+        进程已经在内存里，换了网照样能发请求，看门狗只能整个杀掉。
+        这一档在<strong>下一次请求发出前</strong>拦下，进程留着，上下文不丢。
+      </p>
+
+      <Row className="mt-2">
+        <span>状态</span>
+        {h?.installed ? <Pill tone="ok">已启用</Pill> : <Pill>未启用</Pill>}
+        {h?.slot ? (
+          <span className="sub">装在槽位 {h.slot}</span>
+        ) : (
+          h?.installed && <span className="sub">没有激活槽位，装在 ~\.claude</span>
+        )}
+      </Row>
+
+      {h?.installed && (
+        <p className="notice notice--warn mt-2">
+          <strong>这是严格档（fail-closed）：判不过就拦，查不到也拦。</strong>
+          <br />
+          包括「面板没在跑」—— 裁决超过 90 秒没刷新就算不新鲜，一律拦。
+          被拦时命令行里会印出自救步骤；面板打不开时，手动删掉
+          {h.settings_path ? <code className="mx-1">{h.settings_path}</code> : ' settings.json '}
+          里带 <code>_qb_gate</code> 的两段即可解除。
+        </p>
+      )}
+
+      {!!h?.recent_blocks.length && (
+        <Collapsible summary={`最近拦截 ${h.recent_blocks.length} 次`} className="mt-2">
+          <LogView lines={h.recent_blocks} />
+        </Collapsible>
+      )}
+    </Card>
   );
 }

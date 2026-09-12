@@ -24,6 +24,8 @@
 //! README 合规边界那四条一条都没碰。
 
 pub mod allowlist;
+pub mod hook;
+pub mod judge;
 pub mod lease;
 pub mod log;
 pub mod targets;
@@ -255,16 +257,68 @@ fn lease_release(state: &GateState) {
     lease::persist(&l);
 }
 
-/// 当前出口 IP 验得过、而且在白名单里吗？
+/// 探一轮并给出裁决。**全项目唯一的判定入口。**
 ///
-/// 抽出来是因为放行、维护窗口收尾、重整待命三处走的必须是**同一套判定** ——
-/// 各写一份迟早会有一份漏掉「白名单为空」这种边界。
+/// 放行、维护窗口收尾、重整待命、看门狗、会话内 hook 全走这一条 ——
+/// 各写一份迟早会有一份漏掉「白名单为空」或者「国家层」这种维度，
+/// 而漏掉的那一处就是现成的绕过入口。
+pub async fn judge_now() -> judge::Judgement {
+    let r = crate::probe::ip::reading().await;
+    let allow = allowlist::read().unwrap_or_default();
+    let countries = crate::settings::country_allowlist();
+    let j = judge::judge(&r, &allow, &countries);
+    write_verdict(&j);
+    j
+}
+
+/// 当前出口 IP 验得过、而且在白名单（含国家白名单）里吗？
 async fn verified_ip() -> std::result::Result<String, GateError> {
-    let allow = allowlist::read()?;
-    match crate::probe::ip::public_ip().await.ok() {
-        None => Err(GateError::IpUnknown),
-        Some(ip) if !allowlist::contains(&allow, &ip) => Err(GateError::IpNotAllowed { ip }),
-        Some(ip) => Ok(ip),
+    match judge_now().await {
+        judge::Judgement::Allowed { ip } => Ok(ip),
+        judge::Judgement::IpUnknown => Err(GateError::IpUnknown),
+        // IP 不在白名单、国家不合格、国家查不到、国家冲突 —— 四种都是
+        // 「查到了但没过」，放行侧的处理完全一样（上锁 + 拒绝），
+        // 差别只在写给人看的那句话里。
+        other => Err(GateError::GateRejected(other.reason())),
+    }
+}
+
+/// 看门狗与手动检测每次都把结论落到这里，会话内 hook 只读它。
+///
+/// 这样 hook 不必每次请求都自己去网上问一轮 —— 那会给每条 prompt
+/// 加上几百毫秒，而且三个探测源的额度也扛不住。
+/// 带 `checked_at`，hook 自己判断新不新鲜（陈旧就自己探）。
+pub fn verdict_path() -> PathBuf {
+    state_dir().join("gate-verdict.json")
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct Verdict {
+    pub allowed: bool,
+    pub reason: String,
+    /// Unix 秒。hook 拿它算新鲜度。
+    pub checked_at: u64,
+}
+
+fn write_verdict(j: &judge::Judgement) {
+    let v = Verdict {
+        allowed: j.is_allowed(),
+        reason: j.reason(),
+        checked_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    };
+    let p = verdict_path();
+    if let Some(d) = p.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    // 原子写：hook 可能正好在读，不能让它读到半截 JSON。
+    if let Ok(body) = serde_json::to_string_pretty(&v) {
+        let tmp = p.with_extension("json.tmp");
+        if std::fs::write(&tmp, body).is_ok() {
+            let _ = std::fs::rename(&tmp, &p);
+        }
     }
 }
 
@@ -288,7 +342,7 @@ pub async fn open_authorized_with_mode(
             let _ = lock_all();
             Err(GateError::IpUnknown)
         }
-        Err(e @ GateError::IpNotAllowed { .. }) => {
+        Err(e @ (GateError::IpNotAllowed { .. } | GateError::GateRejected(_))) => {
             let _ = lock_all();
             log::write(&format!("拒绝放行：{e}"));
             Err(e)
@@ -597,13 +651,26 @@ pub async fn run_watchdog(
             continue;
         }
 
-        let allow = allowlist::read().unwrap_or_default();
-        let ip = crate::probe::ip::public_ip().await.ok();
+        let verdict = judge_now().await;
+        // 「探测侧没答上来」才算 unknown 并开始计宽限：国家查得到但不合格
+        // 是**结论**，不是失败，不能让它在这里被当成抖动而拖着不收。
+        let probe_failed = matches!(
+            verdict,
+            judge::Judgement::IpUnknown | judge::Judgement::CountryUnknown { .. }
+        );
+        let ip = match &verdict {
+            judge::Judgement::IpUnknown => None,
+            judge::Judgement::Allowed { ip }
+            | judge::Judgement::IpNotAllowed { ip }
+            | judge::Judgement::CountryNotAllowed { ip, .. }
+            | judge::Judgement::CountryUnknown { ip }
+            | judge::Judgement::CountryConflict { ip, .. } => Some(ip.clone()),
+        };
 
-        unknown_since = match (&ip, unknown_since) {
-            (Some(_), _) => None,
-            (None, Some(t)) => Some(t),
-            (None, None) => Some(Instant::now()),
+        unknown_since = match (probe_failed, unknown_since) {
+            (false, _) => None,
+            (true, Some(t)) => Some(t),
+            (true, None) => Some(Instant::now()),
         };
         let unknown_for = unknown_since
             .map(|t| t.elapsed())
@@ -612,14 +679,7 @@ pub async fn run_watchdog(
         let lease_held = state.lease.lock().unwrap().is_held();
         let targets_locked = collect_targets().iter().any(|t| t.locked);
 
-        match decide(
-            ip.as_deref(),
-            &allow,
-            mode,
-            lease_held,
-            targets_locked,
-            unknown_for,
-        ) {
+        match decide(&verdict, mode, lease_held, targets_locked, unknown_for) {
             Tick::Nothing => {}
             Tick::ReclaimLease => {
                 if unlock_all().is_ok() {
@@ -639,6 +699,14 @@ pub async fn run_watchdog(
                     StopReason::IpChanged(ip) => format!("出口 IP 变为 {ip}，不在白名单内"),
                     StopReason::IpUnknownTooLong => "持续查不到公网 IP 超过宽限期".into(),
                     StopReason::IpUnknownNoGrace => "查不到公网 IP（桌面端不给宽限）".into(),
+                    StopReason::CountryChanged { ip, country } => {
+                        format!("出口 IP {ip} 落在 {country}，不在国家白名单内")
+                    }
+                    // 冲突原文必须进日志。只写「国家不合格」的话，
+                    // 一次 GeoIP 打架造成的误杀事后完全无从查起。
+                    StopReason::CountryConflict { ip, detail } => {
+                        format!("出口 IP {ip} 的国家有冲突（{detail}），按不合格处理")
+                    }
                 };
                 log::write(&format!("收摊：{msg}"));
 

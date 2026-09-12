@@ -48,6 +48,29 @@ pub struct Settings {
     /// `settings_save` 会忽略前端传来的这个字段 —— 不然前端改个开关顺手把它改了，
     /// 文件还在旧目录，面板就又「找不到软件」了。
     pub managed_apps_dir: Option<std::path::PathBuf>,
+
+    /// 国家白名单（ISO 3166-1 alpha-2 大写）。
+    ///
+    /// **默认空，空 = 这一层不启用。** 不能让空名单等于全拒 ——
+    /// 使用者装完面板、还没来得及配国家名单时，全拒会把他直接关在门外，
+    /// 与硬约束 4「白名单为空时不许上锁」是同一类事故。界面上必须
+    /// 显著标注「国家层未启用」，别让人以为配了。
+    ///
+    /// 启用之后这一层是**硬的**：出口 IP 落在名单外、查不出国家、
+    /// 或者几个探测源报的国家互相打架，一律按不合格处理（见 `gate::judge`）。
+    /// 代价写在 DISCLAIMER 里：GeoIP 不准会误杀正在进行的会话。
+    pub country_allowlist: Vec<String>,
+
+    /// 会话内门禁（装进 Claude Code 的 hook）要不要开。
+    ///
+    /// **默认 false** —— 它会在门禁判不过时拦下每一次请求，是个会让
+    /// 「本来能用的东西突然不能用」的开关，跟 `codex_under_gate` 同一档，
+    /// 必须由使用者自己打开。
+    ///
+    /// 这个字段存的是**意图**，不是现状：每个槽位的 `settings.json` 里
+    /// 装没装才是现状。切换账户后 `gate::hook::follow_active_slot`
+    /// 拿它把现状对齐回来。
+    pub hook_enabled: bool,
 }
 
 impl Default for Settings {
@@ -56,6 +79,8 @@ impl Default for Settings {
             codex_under_gate: false,
             gate_auto_rearm: true,
             managed_apps_dir: None,
+            country_allowlist: Vec::new(),
+            hook_enabled: false,
         }
     }
 }
@@ -89,6 +114,29 @@ pub fn codex_under_gate() -> bool {
 /// 看门狗收摊之后要不要转入重整待命。默认开。
 pub fn gate_auto_rearm() -> bool {
     load().gate_auto_rearm
+}
+
+/// 国家白名单。空 = 国家层不启用（**不是全拒**，见字段上的说明）。
+///
+/// 读出来就规整成两位大写，免得使用者手打小写把整层悄悄废掉。
+pub fn country_allowlist() -> Vec<String> {
+    normalize_countries(load().country_allowlist)
+}
+
+/// 规整国家白名单：去空白、转大写、丢掉不是两位字母的、去重。
+///
+/// 认不出的条目**直接丢掉而不是报错** —— 但这意味着一份全是错别字的名单
+/// 会变成空名单，也就是「整层关掉」。所以 `settings_save` 那边要把
+/// 丢掉了哪几条回给界面，不能默默吞掉。
+pub fn normalize_countries(raw: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = raw
+        .into_iter()
+        .map(|c| c.trim().to_uppercase())
+        .filter(|c| c.len() == 2 && c.chars().all(|ch| ch.is_ascii_alphabetic()))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// 托管安装根目录的默认位置。跟面板的运行期数据放在一起 ——
@@ -147,6 +195,33 @@ mod tests {
     fn missing_field_uses_the_default_not_an_error() {
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.codex_under_gate);
+    }
+
+    /// 国家白名单默认必须是**空**的。
+    ///
+    /// 空 = 这一层不启用。默认给一份名单等于替使用者做了判定，
+    /// 而且升级面板的人第二天会发现门禁按一份他没见过的名单在收进程。
+    #[test]
+    fn country_allowlist_defaults_to_empty_meaning_layer_off() {
+        assert!(Settings::default().country_allowlist.is_empty());
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(
+            s.country_allowlist.is_empty(),
+            "旧配置文件里没有这个字段，不能凭空长出一份名单"
+        );
+    }
+
+    #[test]
+    fn country_codes_are_normalized_deduped_and_sorted() {
+        let got = normalize_countries(vec![
+            " us ".into(),
+            "US".into(),
+            "tw".into(),
+            "".into(),
+            "USA".into(),
+            "1".into(),
+        ]);
+        assert_eq!(got, vec!["TW".to_string(), "US".to_string()]);
     }
 
     #[test]

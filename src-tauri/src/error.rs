@@ -23,6 +23,13 @@ pub enum GateError {
     #[error("查不到当前出口 IP")]
     IpUnknown,
 
+    /// 门禁判定没过，原因已经是一句可以直接显示的人话（见 `gate::judge::Judgement::reason`）。
+    ///
+    /// 单独一个变体是因为国家层有四种不同的拒绝理由，硬塞进 `IpNotAllowed`
+    /// 会拼出「当前出口 IP 出口 IP 1.2.3.4 落在 HK…… 不在白名单内」这种句子。
+    #[error("{0}")]
+    GateRejected(String),
+
     #[error("{0}")]
     Other(String),
 }

@@ -673,6 +673,9 @@ pub fn switch_in(r: &AccountRoots, label: &str, mode: DesktopMode) -> Result<Swi
 pub fn switch(label: &str) -> Result<SwitchOutcome> {
     let out = switch_in(&AccountRoots::current(), label, DesktopMode::Auto)?;
     log_outcome(label, &out);
+    // 槽位换了 = `CLAUDE_CONFIG_DIR` 换了目录，会话内门禁得跟过去，
+    // 否则它在新槽位里静默失效 —— 界面写着「已启用」，实际一次都不跑。
+    crate::gate::hook::follow_active_slot();
     Ok(out)
 }
 
@@ -683,6 +686,7 @@ pub fn switch(label: &str) -> Result<SwitchOutcome> {
 pub fn switch_with(label: &str, mode: DesktopMode) -> Result<SwitchOutcome> {
     let out = switch_in(&AccountRoots::current(), label, mode)?;
     log_outcome(label, &out);
+    crate::gate::hook::follow_active_slot();
     Ok(out)
 }
 

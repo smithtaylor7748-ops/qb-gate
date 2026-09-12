@@ -139,20 +139,76 @@ fn allowlist_read() -> Result<Vec<String>> {
     gate::allowlist::read()
 }
 
+/// 手改白名单。
+///
+/// **这里不做逐条国家查询。** 想查一个任意 IP 的国家得一条一条去问远端
+/// （`ipinfo.io/<ip>/json`），离线或者接口限流时就意味着「你改不了自己的白名单」——
+/// 那正是硬约束 4 要防的「被自己的工具关在门外」。
+///
+/// 放过这一关不留洞：国家层是**判定时**生效的，不是插入时。手工塞进来的脏 IP
+/// 照样过不了 `gate::judge` —— 看门狗每轮、hook 每次请求都会重新看一遍当前国家。
+/// 它唯一的效果是把报错从「加不进去」推迟到「用的时候被拦」。
 #[tauri::command]
 fn allowlist_write(entries: Vec<String>) -> Result<()> {
     gate::allowlist::write(&entries)
 }
 
+/// 把当前出口 IP 加进白名单 —— **国家不合格就一个字都不写**。
+///
+/// 这一关堵的是「先把脏 IP 塞进白名单，再回头抱怨门禁没用」。
+/// 这条路上我们手里正好有一轮完整的多源探测，查国家是免费的，
+/// 所以这里可以严，也必须严。
 #[tauri::command]
 async fn allowlist_add_current() -> Result<Vec<String>> {
-    let ip = probe::ip::public_ip().await?;
+    let reading = probe::ip::reading().await;
+    let ip = gate::judge::may_add(&reading, &settings::country_allowlist()).map_err(|j| {
+        match j {
+            gate::judge::Judgement::IpUnknown => GateError::IpUnknown,
+            other => GateError::GateRejected(format!("{}，拒绝加入白名单", other.reason())),
+        }
+    })?;
+
     let mut all = gate::allowlist::read().unwrap_or_default();
     if !all.contains(&ip) {
         all.push(ip);
         gate::allowlist::write(&all)?;
     }
     Ok(all)
+}
+
+// ------------------------------------------------------------ 会话内门禁
+
+#[tauri::command]
+fn hook_status() -> gate::hook::HookStatus {
+    gate::hook::status()
+}
+
+#[tauri::command]
+fn hook_install() -> Result<gate::hook::HookStatus> {
+    gate::hook::install()
+}
+
+#[tauri::command]
+fn hook_uninstall() -> Result<gate::hook::HookStatus> {
+    gate::hook::uninstall()
+}
+
+/// 国家白名单的两个起手式。**面板不替你选**，只是省得手打。
+#[tauri::command]
+fn country_presets() -> Vec<(String, Vec<String>)> {
+    vec![
+        (
+            "只留美国".into(),
+            gate::judge::PRESET_US.iter().map(|s| s.to_string()).collect(),
+        ),
+        (
+            "常用支持地区".into(),
+            gate::judge::PRESET_COMMON
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        ),
+    ]
 }
 
 #[tauri::command]
@@ -796,6 +852,13 @@ fn settings_save(mut next: settings::Settings) -> Result<settings::Settings> {
     // 托管目录只能经 `managed_set_dir` 改（它会先实测、再把已装的搬过去）。
     // 这里原样保留旧值：前端改个开关不该顺手把它改掉 —— 文件还在旧目录，面板就又找不到了。
     next.managed_apps_dir = before.managed_apps_dir.clone();
+    // 国家码规整成两位大写再落盘：使用者手打个 `us` 或者多敲个空格，
+    // 判定那边就永远匹配不上，整层会**悄悄失效** —— 比报错难查得多。
+    next.country_allowlist = settings::normalize_countries(next.country_allowlist);
+    // 会话内门禁只能经 hook_install / hook_uninstall 开关 —— 它们要写脚本、
+    // 要改槽位的 settings.json，还要拦「白名单为空」。让前端在这里直接翻这个
+    // 布尔值，就会出现「设置里写着开，实际一个 hook 都没装」的假象。
+    next.hook_enabled = before.hook_enabled;
     settings::save(&next)?;
 
     if before.codex_under_gate != next.codex_under_gate {
@@ -1199,6 +1262,10 @@ pub fn run() {
             allowlist_read,
             allowlist_write,
             allowlist_add_current,
+            country_presets,
+            hook_status,
+            hook_install,
+            hook_uninstall,
             watchdog_start,
             watchdog_stop,
             probe_ip,

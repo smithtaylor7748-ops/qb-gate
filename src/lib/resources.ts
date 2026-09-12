@@ -23,6 +23,9 @@ export const R = {
   /** 门禁状态。本地 ACL 查询，轮询无妨。 */
   gate: res(() => api.gateStatus(), { pollMs: 15_000 }),
 
+  /** 会话内门禁装没装。读两个本地文件，便宜。 */
+  hook: res(() => api.hookStatus()),
+
   software: res(() => api.detectSoftware()),
   accounts: res(() => api.accountsList()),
   progress: res(() => api.progressLoad()),

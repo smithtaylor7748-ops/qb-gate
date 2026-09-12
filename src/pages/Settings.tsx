@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Clock, FileText, FolderCog, Info, Lock, Scale, Undo2 } from 'lucide-react';
+import { Clock, FileText, FolderCog, Globe, Info, Lock, Scale, Undo2 } from 'lucide-react';
 
 import { api, type Settings as AppSettings, type UpdateStatus } from '../lib/api';
 import { useNav } from '../lib/nav';
@@ -55,7 +55,12 @@ export default function Settings() {
   }
 
   /** 默认值集中在这一处 —— 分散写就会像上一版那样，加一个字段漏一处。 */
-  const DEFAULTS: AppSettings = { codex_under_gate: false, gate_auto_rearm: true };
+  const DEFAULTS: AppSettings = {
+    codex_under_gate: false,
+    gate_auto_rearm: true,
+    country_allowlist: [],
+    hook_enabled: false,
+  };
 
   async function save(name: string, patch: Partial<AppSettings>, ok: string) {
     const next: AppSettings = { ...(settings.data ?? DEFAULTS), ...patch };
@@ -175,6 +180,13 @@ export default function Settings() {
           </p>
         </Collapsible>
       </Card>
+
+      {/* ------------------------------------------------ 国家白名单 */}
+      <CountryGate
+        list={settings.data?.country_allowlist ?? []}
+        busy={!!busy || settings.loading}
+        onSave={(next) => save('country', { country_allowlist: next }, '国家白名单已更新')}
+      />
 
       {/* ------------------------------------------------ 托管安装目录 */}
       <Card title="托管安装目录" icon={<FolderCog size={14} />} className="mb-3">
@@ -350,5 +362,115 @@ export default function Settings() {
         </p>
       </ConfirmDialog>
     </>
+  );
+}
+
+/**
+ * 国家白名单。
+ *
+ * 界面上最要紧的一句话是「空 = 这一层没启用」—— 使用者最容易犯的错就是
+ * 以为配了、其实是空的。所以空的时候给一条显眼的提示，而不是安静地留白。
+ */
+function CountryGate({
+  list,
+  busy,
+  onSave,
+}: {
+  list: string[];
+  busy: boolean;
+  onSave: (next: string[]) => void | Promise<void>;
+}) {
+  const [draft, setDraft] = useState('');
+  const [presets, setPresets] = useState<Array<[string, string[]]>>([]);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .countryPresets()
+      .then((p) => live && setPresets(p))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const add = () => {
+    const c = draft.trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(c) && !list.includes(c)) void onSave([...list, c].sort());
+    setDraft('');
+  };
+
+  return (
+    <Card title="国家白名单" icon={<Globe size={14} />} className="mb-3">
+      <p className="notice mb-2">
+        出口 IP 归属的国家不在这份名单里，门禁<strong>一律判不合格</strong>——
+        跟 IP 不在白名单一个待遇：看门狗收进程，会话内门禁拦请求，
+        「加入当前 IP」也会被拒。
+      </p>
+
+      {list.length === 0 ? (
+        <p className="notice notice--warn">
+          <strong>名单为空 = 这一层没有启用。</strong>
+          空名单不等于全拒 —— 那会在你还没来得及配置时就把你关在门外，
+          跟「白名单为空时不上锁」是同一条道理。要启用就往下面加国家。
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-1">
+          {list.map((c) => (
+            <Button
+              key={c}
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              title={`从名单移除 ${c}`}
+              onClick={() => void onSave(list.filter((x) => x !== c))}
+            >
+              {c} ✕
+            </Button>
+          ))}
+        </div>
+      )}
+
+      <Row className="mt-2">
+        <input
+          className="input w-24 font-mono"
+          placeholder="US"
+          maxLength={2}
+          value={draft}
+          disabled={busy}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && add()}
+        />
+        <Button size="sm" disabled={busy || draft.trim().length !== 2} onClick={add}>
+          加入
+        </Button>
+        {presets.map(([name, codes]) => (
+          <Button key={name} size="sm" variant="ghost" disabled={busy} onClick={() => void onSave(codes)}>
+            {name}
+          </Button>
+        ))}
+        {list.length > 0 && (
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void onSave([])}>
+            清空（关掉这一层）
+          </Button>
+        )}
+      </Row>
+
+      <Collapsible className="mt-1" summary="启用之前先知道这两件事">
+        <p className="notice">
+          <strong>GeoIP 不准会误杀。</strong>
+          面板问三家（ippure / Cloudflare / ipinfo），三家说的不一样时
+          <strong>按最严的算，判不合格</strong>，冲突原文会写进日志。
+          这是「宁可错杀不可放过」的直接后果 —— 正在跑的会话可能因为
+          一次 GeoIP 打架被收掉。日志里那一行会写清是哪家在胡说。
+        </p>
+        <p className="notice mt-2">
+          <strong>预设不是权威清单。</strong>
+          「常用支持地区」只是个省得手打的起手式，面板不知道也不假装知道
+          Anthropic 的官方完整清单，你应该自己核对后增删。
+          港澳与中国大陆刻意不在预设里。
+        </p>
+      </Collapsible>
+    </Card>
   );
 }
