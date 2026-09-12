@@ -348,7 +348,7 @@ const checkup: Checkup = {
       id: 'secrets',
       label: 'MCP / 配置里的明文密钥',
       state: 'fail',
-      detail: '在 2 处看到疑似明文密钥字段。面板**只报位置不报内容**，自己去看一眼。',
+      detail: '在 2 处看到疑似明文密钥字段。面板只报位置不报内容，自己去看一眼。',
       fixable: false,
       manual: '这些文件会被同步盘、备份、以及你随手贴出来的截图带走。',
     },

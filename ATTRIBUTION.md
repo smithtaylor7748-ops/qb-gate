@@ -161,12 +161,92 @@ QB Gate 自身的 GitHub Releases 更新在仓库创建和签名公钥配置前�
 站方注明接口尚在测试阶段、可能变动，所以代码里对缺字段的处理是
 **如实报「未知」，不猜成通过**。
 
+### claude-ip-guard — hook 的配置形态与自标记
+
+- 仓库：https://github.com/cso1z/claude-ip-guard
+- 许可：MIT
+
+抄的是**形态**，不是判定逻辑：
+
+| 参考点 | 说明 |
+|---|---|
+| 往 `settings.json` 挂 `SessionStart` + `UserPromptSubmit` | 两个事件缺一不可 —— 只挂前者，会话开着不关、中途换网就没人看了 |
+| 用一个自标记（那边是 `_ip_guard`，这里是 `_qb_gate`）认自己写的条目 | 卸载只删自己那几条，绝不整段覆盖使用者的 hooks |
+| 「受限国家直接拦截」这个层次 | 本项目做成了国家白名单（见 `gate/judge.rs`），口径相反：那边是黑名单挡受限国家，这里是白名单只放行指定国家 |
+
+**判定本身没有抄。** 那边每次请求现查一次 IP；这里的 hook 脚本里一行判定逻辑
+都没有，只读 Rust 落下的 `gate-verdict.json` —— 在 PowerShell 里再写一遍白名单
+比对，就是硬约束 10 明令禁止的「在别处再拼一份」。
+
+失败语义也不同：那边检测失败一律放行（不因网络问题阻断），这里是 fail-closed
+（判不过拦、查不到拦、裁决过期也拦），由使用者明确选定。
+
+### cc-proxy-detector — 中转站后端判定表
+
+- 仓库：https://github.com/zxc123aa/cc-proxy-detector
+- 许可：MIT
+
+原版是 Python，这里是 Rust 重写（`relay/backend.rs`）。抄的是判定思路：
+
+| 参考点 | 说明 |
+|---|---|
+| 三后端划分：Anthropic / AWS Bedrock / Google Vertex | 所有 Claude 访问最终都落到这三家之一 |
+| 响应头指纹（`x-amzn-*`、`x-goog-*`、`anthropic-ratelimit-*`） | 直接证据 |
+| **缺字段负证据** | 回的是 Claude 格式却一个 `anthropic-*` 头都没有 —— 转换层做得出响应体，造不出上游本来没有的头。这一招是原版最有价值的部分 |
+| 限流头动态验证 | 连发两次看计数动没动，写死的假头不会变 |
+| 逆向来源识别（Kiro / Antigravity 等） | 只在有把握时报，没把握就是「说不准」 |
+
+原版还做行为异常分析（`tool_use` 配对错误、间歇 500、多模态读图失败、
+写大文件失败），那些要真跑一轮会话才看得出来，不适合放在一个点一下就出结果的
+按钮里，**没有搬**。
+
+### check-cc / claude-antiban-macos — 体检项的划分
+
+- https://github.com/yacuo/check-cc（MIT）
+- https://github.com/xgq947-ship-it/claude-antiban-macos（MIT）
+
+参考的是「一份完整体检该查哪些项」这个清单（系统代理、IPv6、DoH、
+时区与语言一致性、容器痕迹）。Windows 侧的具体读法（注册表路径、
+`reg query` 的输出解析）是自己写的，两边的实现语言与平台都不同。
+
+**没有采纳的部分**：这两个项目都包含环境「加固 / 修复」动作。本项目只做
+诊断与如实报告，不做设备指纹改写 —— 理由见 DISCLAIMER 第 3 节与第 95 行。
+
+### cac — 版本库与回滚的形态
+
+- 仓库：https://github.com/nmhjklnm/cac
+- 许可：MIT
+
+只取了「把历史版本留在一个 `versions/<版本>/` 目录里、可以一键退回去」这个
+形态（`install/versions.rs`）。那边是 Shell + npm 包，实现用不上。
+
+**没有采纳的部分**：cac 的设备指纹伪装（UUID / 主机名 / MAC 改写）与
+强制流量绑定代理。前者与本项目「不为规避封禁而设计」的定位冲突
+（DISCLAIMER 第 95、98、101 行），后者会让本项目变成「内置代理功能」，
+与 DISCLAIMER 第 107 行直接矛盾。
+
+### clash-claude-fix — DoH / WebRTC 的判定点
+
+- 仓库：https://github.com/jack-peng12/clash-claude-fix
+- 许可：MIT
+
+参考了它对 Clash 系客户端 DoH 与 WebRTC 泄露的判定点位。
+
 ### 其他看过但未采用的
 
 - MyIP — https://github.com/jason5ng32/MyIP（MIT）。功能全面的 IP 工具箱，
   自建部署友好。本项目没有直接用它的代码，但它的检测项划分值得参考。
 - webrtc-privacy — https://github.com/ntblk/webrtc-privacy（MIT）。
   WebRTC 检测的思路与 `signals.ts` 里那段同源（STUN + 收 ICE 候选）。
+- **Agent-Guard** — https://github.com/dai-chao/Agent-Guard。检测面与本项目
+  重叠最多的一个（代理泄漏、时区指纹、MCP 密钥）。⛔ **仓库没有 license 文件，
+  等于保留全部权利** —— 看过，一行代码都没抄，MCP 密钥扫描是自己从零写的。
+- **iprisk-top** — https://github.com/iprisk-top/iprisk-top。聚合 16 个数据源的
+  IP 纯净度检测。⛔ 同样无 license，没抄。
+- **claude-code-ban-risk** — https://github.com/Trentct/claude-code-ban-risk。
+  ⛔ 无 license，没抄。
+- cc-switch / cockpit-tools 那条赛道（账号与供应商切换）本项目不正面做，
+  差异在执行锁那一层。cockpit-tools 的许可状况见上面单独那一节。
 
 ---
 

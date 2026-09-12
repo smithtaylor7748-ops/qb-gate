@@ -11,6 +11,7 @@
  */
 
 import { api } from './api';
+import { DEMO_ENABLED } from './demo';
 import { res } from './store';
 import { runScan } from './signals';
 
@@ -50,8 +51,11 @@ export const R = {
   /**
    * 本机环境体检。要跑几个 `reg query` 子进程、还要读一遍配置文件，
    * 跟 traces / dns 同一档：**用户点了才跑**。
+   *
+   * 演示模式下自动跑一次 —— 截图脚本点不了按钮，而一张「还没体检过」的空卡片
+   * 说明不了这个功能在查什么。正式构建里 `DEMO_ENABLED` 是编译期常量 false。
    */
-  checkup: res(() => api.checkupScan(), { auto: false }),
+  checkup: res(() => api.checkupScan(), { auto: DEMO_ENABLED }),
 
   /** 升级计划走 latest 渠道 —— 写死 stable 会降级，见档案 §4.5。 */
   upgrade: res(() => api.upgradePlan('latest'), { auto: false }),

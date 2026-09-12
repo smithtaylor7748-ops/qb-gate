@@ -42,6 +42,7 @@ const SHOTS = [
   ['iplock', 'iplock.png'],
   ['accounts', 'accounts.png'],
   ['environment', 'environment.png'],
+  ['signals', 'checkup.png'],
 ];
 
 const BROWSERS = [
