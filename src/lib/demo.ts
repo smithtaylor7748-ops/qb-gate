@@ -27,6 +27,7 @@ import type {
   CategoryListing,
   Checkup,
   CleanupReport,
+  EnvHit,
   DnsReport,
   GateStatus,
   HookStatus,
@@ -315,6 +316,18 @@ const hook: HookStatus = {
   ],
 };
 
+const demoEnv: EnvHit[] = [
+  {
+    name: 'ANTHROPIC_BASE_URL',
+    scope: '用户环境变量',
+    // 注意这里只剩 host —— 真实场景里这个变量的路径段可能带 token，
+    // 所以 Rust 侧 mask_env_value 只留 origin。演示数据要跟真实输出长得一样。
+    shown: 'https://relay.example.com',
+  },
+  { name: 'ANTHROPIC_API_KEY', scope: '用户环境变量', shown: '（已设置，值不显示）' },
+  { name: 'HTTPS_PROXY', scope: '当前进程', shown: 'http://127.0.0.1:7890' },
+];
+
 const checkup: Checkup = {
   items: [
     {
@@ -324,6 +337,15 @@ const checkup: Checkup = {
       detail: '系统代理没开 —— 出口由路由/TUN 决定，跟面板量到的是同一条路',
       fixable: false,
       manual: null,
+    },
+    {
+      id: 'egress_consistency',
+      label: '出口一致性',
+      state: 'fail',
+      detail:
+        '两条路出去的国家不一样：绕过代理是 US，跟随系统代理是 HK。有程序会从另一个国家出去。',
+      fixable: false,
+      manual: '常见原因是系统代理或某个环境变量里的代理只接管了一部分流量。',
     },
     {
       id: 'ipv6',
@@ -345,6 +367,15 @@ const checkup: Checkup = {
       manual: '判断不了就交给「DNS 泄露 → 高级通过」那条让 Codex 看一眼。',
     },
     {
+      id: 'env_residue',
+      label: '环境变量残留',
+      state: 'warn',
+      detail:
+        '找到 3 个相关的环境变量。设了 ANTHROPIC_BASE_URL —— Claude Code 会走它指的地方，而不是中转站页上显示的那条。两处说的不是一件事。设了代理变量 —— 面板测出口时是绕过系统代理的，所以面板量到的出口和请求实际走的路可能不一样。',
+      fixable: false,
+      manual: '改用户环境变量：设置 → 系统 → 系统信息 → 高级系统设置 → 环境变量。面板不替你删。',
+    },
+    {
       id: 'secrets',
       label: 'MCP / 配置里的明文密钥',
       state: 'fail',
@@ -357,6 +388,7 @@ const checkup: Checkup = {
     { file: `${HOME}\\.mcp.json`, field: 'api_key' },
     { file: `${HOME}\\.codex\\config.toml`, field: 'token' },
   ],
+  env: demoEnv,
 };
 
 const settings: Settings = {
@@ -365,6 +397,7 @@ const settings: Settings = {
   managed_apps_dir: null,
   country_allowlist: ['US'],
   hook_enabled: true,
+  disable_telemetry: false,
 };
 
 const managed: ManagedStatus = {
@@ -451,6 +484,7 @@ const relayMeta: ProviderMeta = {
   name: '演示中转站',
   base_url: 'https://api.example.com/v1',
   model: 'claude-sonnet-4-5',
+  small_fast_model: 'claude-haiku-4-5',
   wire_api: 'responses',
   auth_style: 'bearer_token',
   note: '示例数据，不是任何真实服务。',
@@ -470,6 +504,7 @@ const relay: ProviderView[] = [
     name: '演示中转站（Codex）',
     base_url: 'https://codex.example.com/v1',
     model: 'gpt-5-codex',
+    small_fast_model: null,
     auth_style: 'env_key',
     sort: 1,
     has_key: true,

@@ -43,6 +43,7 @@ const SHOTS = [
   ['accounts', 'accounts.png'],
   ['environment', 'environment.png'],
   ['signals', 'checkup.png'],
+  ['relay', 'relay.png'],
 ];
 
 const BROWSERS = [

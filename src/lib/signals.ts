@@ -182,9 +182,34 @@ export function scoreLanguages(langs: string[]): number {
   return 0;
 }
 
+/**
+ * 把语言变体的判定说出来。
+ *
+ * `scoreLanguages` 早就把 zh-CN / zh-HK·MO / zh-TW 分成三档了，但界面上只看得到
+ * 一串语言标签和一根进度条 —— 使用者不知道 zh-TW 是**被有意不计分**的，
+ * 只会觉得「我明明是中文却没扣分，这检测是不是坏了」。
+ *
+ * check-cc 把变体拆成一项独立信号（权重 12）。这里不拆：拆了要重摊权重，
+ * 而判定逻辑本来就在，缺的只是把结论写出来。
+ */
+function languageVerdict(langs: string[]): string {
+  const l = langs.map((x) => (x || '').toLowerCase());
+  if (l.some((x) => x.startsWith('zh-tw') || (x.includes('hant') && x.includes('tw')))) {
+    return '台湾（Anthropic 完整支持地区，不计分）';
+  }
+  if (l.some((x) => x.startsWith('zh-hk') || x.startsWith('zh-mo'))) {
+    return '港澳（受限地区，计部分风险分）';
+  }
+  if (l.some((x) => x.startsWith('zh-cn') || x.includes('hans') || x === 'zh')) {
+    return '简体中文（计满分风险）';
+  }
+  return '未检出中文';
+}
+
 function detectLanguage(): DetectOutcome {
   const langs = normLangs();
-  return { raw: langs.join(', ') || '未知', score: scoreLanguages(langs) };
+  const raw = langs.join(', ') || '未知';
+  return { raw: `${raw} · ${languageVerdict(langs)}`, score: scoreLanguages(langs) };
 }
 
 function detectIntlLocale(): DetectOutcome {

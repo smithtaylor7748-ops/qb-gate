@@ -200,6 +200,53 @@ QB Gate 自身的 GitHub Releases 更新在仓库创建和签名公钥配置前�
 写大文件失败），那些要真跑一轮会话才看得出来，不适合放在一个点一下就出结果的
 按钮里，**没有搬**。
 
+### check-cc — 出口一致性（v0.11.0 追加）
+
+check-cc 的信号表里有 `browserIpLocation` / `browserIpOrg`：服务端看到的出口
+与浏览器侧看到的出口分开列。本项目把这个思路做成了**出口一致性检查**
+（`sysenv/checkup.rs::compare_egress`）——
+
+面板测出口时是**绕过系统代理**的（量隧道），走系统代理的程序看到的可能是
+另一个出口。两边一比，就能回答那个最难查的问题：「面板说我在美国，
+为什么还是被当成国内」。
+
+⚠ 结果**不进门禁判定**。门禁的输入永远只来自绕过代理的那一份 ——
+让代理软件决定门禁看到的出口，随便一个本地代理就能伪造它。
+
+**没有采纳的**：check-cc 把语言变体（`languageVariant`）做成独立的加权信号。
+本项目的 `scoreLanguages` 早就把 zh-CN / zh-HK·MO / zh-TW 分成三档了
+（比它的二元标记还细），再拆一项只会重复逻辑并打乱「满分 100」的权重和。
+v0.11.0 只是把这个判定**写到界面上**，让使用者看得见 zh-TW 是被有意不计分的。
+
+### z-switch — 多档模型与 Base URL 推断（v0.11.0 追加）
+
+- 仓库：https://github.com/ZtestAi/z-switch
+- 许可：**MIT**（GitHub 的识别器认不出它的 LICENSE，但文件原文是标准 MIT，
+  版权归 真测 Ztest）
+
+| 参考点 | 本项目怎么做的 |
+|---|---|
+| 主模型与小模型分开配 | `ProviderMeta.small_fast_model` → `ANTHROPIC_SMALL_FAST_MODEL`。很多中转站两档不是同一个名字，只配主模型时后台请求会报一个跟你正在做的事无关的错 |
+| Base URL 智能推断 | `relay::probe::normalize_base_url`，把粘进来的完整端点归一成 base。归一放在 `upsert` 里而不是表单里 —— 手填、预设、导入三条路都经过它 |
+
+⛔ **不采纳「本地路由模式」**（起 localhost 代理热切换目标）——
+内置代理，与 DISCLAIMER 第 107 行冲突。
+
+### Agent-Guard — 只取了检测项的想法（v0.11.0）
+
+- 仓库：https://github.com/dai-chao/Agent-Guard
+- 许可：**无**
+
+⛔ 两重限制：**没有 license**（保留全部权利），而且**仓库里根本没有源码** ——
+它只是一个落地页（README + safeclaude.net 的下载链接），闭源商业产品
+（扫描免费、一键修复 Pro）。
+
+取的是它 README 开篇那句话点出的问题：「`.zshrc` 里还留着 `HTTPS_PROXY` 和
+`ANTHROPIC_BASE_URL`」。本项目据此做了**环境变量残留扫描**
+（`sysenv/checkup.rs::scan_env`），Windows 侧读 `HKCU\Environment` 与进程环境，
+实现从零写起。值的掩码规则是本项目自己的：Key 类只报「已设置」，
+URL 类只留 `scheme://host`（路径里可能带 token）。
+
 ### check-cc / claude-antiban-macos — 体检项的划分
 
 - https://github.com/yacuo/check-cc（MIT）
@@ -219,6 +266,13 @@ QB Gate 自身的 GitHub Releases 更新在仓库创建和签名公钥配置前�
 
 只取了「把历史版本留在一个 `versions/<版本>/` 目录里、可以一键退回去」这个
 形态（`install/versions.rs`）。那边是 Shell + npm 包，实现用不上。
+
+**v0.11.0 追加采纳**：第 2 层的遥测关闭思路 —— 但**没有照抄那 12 个变量**。
+只设 Claude Code 自己文档里有的四个，外加通用标准 `DO_NOT_TRACK`
+（见 `launch::TELEMETRY_OFF`，界面上原样列出供核对）。设一个不存在的变量
+等于什么都没关，而界面上却写着「已关闭」—— 那是在说谎。
+默认关，并在界面上写死「这跟封号风险无关」：cac 自己的 README 也说了
+设备层保护「无法影响账号层风险」。
 
 **没有采纳的部分**：cac 的设备指纹伪装（UUID / 主机名 / MAC 改写）与
 强制流量绑定代理。前者与本项目「不为规避封禁而设计」的定位冲突
@@ -245,6 +299,17 @@ QB Gate 自身的 GitHub Releases 更新在仓库创建和签名公钥配置前�
   IP 纯净度检测。⛔ 同样无 license，没抄。
 - **claude-code-ban-risk** — https://github.com/Trentct/claude-code-ban-risk。
   ⛔ 无 license，没抄。
+- **clash-claude-fix** — https://github.com/jack-peng12/clash-claude-fix（MIT）。
+  内容是两个 Clash Verge / FLClash 的 override 脚本，生成代理规则与 DNS 配置。
+  ⛔ **不采纳**：分发代理规则配置与 DISCLAIMER 第 107 行「不提供、不内置、
+  不分发任何代理、VPN」直接冲突。它的 DNS / WebRTC 判定点位本项目已经用
+  更强的办法覆盖了 —— bash.ws 的真实解析回显是实测，比读配置更可靠。
+- **claude-antiban-macos** 的加固动作部分（MIT）。它 8 点清单里的**检测项**
+  本项目已全覆盖（时区 / 语言 / WebRTC / IPv6 / 住宅 IP 一致性），
+  剩下的是 macOS 专属的**加固**动作 —— 平台不对，而且本项目只做诊断不做加固。
+- **awesome-ip-purity** — https://github.com/iprisk-top/awesome-ip-purity。
+  ⛔ 无 license。清单的**编排**受版权保护，没有复制；里面提到的公开站点是事实，
+  本项目自己挑了 ipinfo 与 Scamalytics 放进 `PurityCriteria.optional`。
 - cc-switch / cockpit-tools 那条赛道（账号与供应商切换）本项目不正面做，
   差异在执行锁那一层。cockpit-tools 的许可状况见上面单独那一节。
 

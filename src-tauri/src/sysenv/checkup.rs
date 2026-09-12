@@ -306,18 +306,289 @@ fn check_secrets() -> (CheckItem, Vec<SecretHit>) {
     (it, hits)
 }
 
+
+// ------------------------------------------------------ 环境变量残留扫描
+
+/// 会影响 Claude Code 行为、或者会让面板与实际请求走两条路的环境变量。
+///
+/// 想法来自 Agent-Guard（它的 README 开篇就是「`.zshrc` 里还留着 `HTTPS_PROXY`
+/// 和 `ANTHROPIC_BASE_URL`」）。那个项目**没有源码可抄**（仓库只是落地页），
+/// 所以这里从头写，Windows 侧看的是 `HKCU\Environment` 与当前进程环境。
+const WATCHED_ENV: &[&str] = &[
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_SMALL_FAST_MODEL",
+    "CLAUDE_CONFIG_DIR",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+];
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct EnvHit {
+    pub name: String,
+    /// 在哪儿设的：`用户环境变量`（注册表，重启也还在）或 `当前进程`。
+    pub scope: String,
+    /// **已经掩码过的**值。见 `mask_env_value`。
+    pub shown: String,
+}
+
+/// 值怎么显示 —— 与 `SecretHit` 同一条原则：结构里装不下的东西就别装。
+///
+/// | 变量 | 显示什么 |
+/// |---|---|
+/// | `*_API_KEY` / `*_AUTH_TOKEN` / `*SECRET*` | 只说「已设置」，值一个字都不出现 |
+/// | `*_BASE_URL` / `*_PROXY` | 只留 `scheme://host[:port]` |
+/// | 其余 | 原样 |
+///
+/// URL 只留 host 不是洁癖：有些中转站把 token 直接放在路径里
+/// （`https://x.com/v1/sk-xxxx`），也有人把凭证写成 `https://user:token@host`。
+/// 显示全量等于把 Key 印在界面上、截图里、issue 里。
+pub fn mask_env_value(name: &str, value: &str) -> String {
+    let n = name.to_uppercase();
+    if n.contains("KEY") || n.contains("TOKEN") || n.contains("SECRET") || n.contains("PASSWORD") {
+        return "（已设置，值不显示）".into();
+    }
+    if n.contains("URL") || n.contains("PROXY") {
+        return origin_only(value);
+    }
+    value.to_string()
+}
+
+/// 从一个 URL 里只取 `scheme://host[:port]`。认不出来就说认不出来，**不回退成原值**。
+fn origin_only(raw: &str) -> String {
+    let v = raw.trim();
+    let Some((scheme, rest)) = v.split_once("://") else {
+        // 没有 scheme 的（比如 `127.0.0.1:7890` 这种代理写法）只取到第一个 `/` 为止。
+        let host = v.split(['/', '?', '#']).next().unwrap_or("");
+        // 仍然要去掉可能的 user:pass@
+        let host = host.rsplit('@').next().unwrap_or(host);
+        return if host.is_empty() { "（认不出）".into() } else { host.to_string() };
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    // ⚠ `user:token@host` —— 凭证在 @ 前面，必须丢掉。
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    if host.is_empty() {
+        "（认不出）".into()
+    } else {
+        format!("{scheme}://{host}")
+    }
+}
+
+/// 解析 `reg query <key>` 的输出。返回 (名字, 值)。
+///
+/// 输出形如：`    ANTHROPIC_BASE_URL    REG_SZ    https://x.com/v1`
+/// 值里可以有空格，所以**按类型段切**，不能 `split_whitespace` 取最后一个。
+pub fn parse_reg_values(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let t = line.trim_start();
+        if t.is_empty() || t.starts_with("HKEY_") {
+            continue;
+        }
+        // 找 `REG_xxx` 这一段，它前面是名字，后面是值。
+        let Some(ti) = t.find("    REG_") else { continue };
+        let name = t[..ti].trim().to_string();
+        let after = &t[ti + 4..];
+        let Some(vi) = after.find("    ") else { continue };
+        let value = after[vi..].trim().to_string();
+        if !name.is_empty() {
+            out.push((name, value));
+        }
+    }
+    out
+}
+
+#[cfg(windows)]
+fn user_env_vars() -> Vec<(String, String)> {
+    let Ok(out) = crate::process::hidden_std(std::process::Command::new("reg"))
+        .args(["query", r"HKCU\Environment"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    parse_reg_values(&String::from_utf8_lossy(&out.stdout))
+}
+
+#[cfg(not(windows))]
+fn user_env_vars() -> Vec<(String, String)> {
+    Vec::new()
+}
+
+fn scan_env() -> (CheckItem, Vec<EnvHit>) {
+    let mut hits = Vec::new();
+
+    for (name, value) in user_env_vars() {
+        if WATCHED_ENV.iter().any(|w| w.eq_ignore_ascii_case(&name)) && !value.trim().is_empty() {
+            hits.push(EnvHit {
+                shown: mask_env_value(&name, &value),
+                name,
+                scope: "用户环境变量".into(),
+            });
+        }
+    }
+    for name in WATCHED_ENV {
+        if let Ok(v) = std::env::var(name) {
+            if v.trim().is_empty() {
+                continue;
+            }
+            // 注册表里已经报过同名的就不重复 —— 进程环境多半就是从那儿来的。
+            if hits.iter().any(|h| h.name.eq_ignore_ascii_case(name)) {
+                continue;
+            }
+            hits.push(EnvHit {
+                name: (*name).to_string(),
+                scope: "当前进程".into(),
+                shown: mask_env_value(name, &v),
+            });
+        }
+    }
+
+    let redirecting = hits
+        .iter()
+        .any(|h| h.name.eq_ignore_ascii_case("ANTHROPIC_BASE_URL"));
+    let proxied = hits.iter().any(|h| h.name.to_uppercase().contains("PROXY"));
+
+    let it = if hits.is_empty() {
+        item(
+            "env_residue",
+            "环境变量残留",
+            State::Pass,
+            "没有会影响 Claude Code 的环境变量残留。",
+        )
+    } else {
+        let mut why: Vec<&str> = Vec::new();
+        if redirecting {
+            why.push(
+                "设了 ANTHROPIC_BASE_URL —— Claude Code 会走它指的地方，\
+                 而不是中转站页上显示的那条。两处说的不是一件事。",
+            );
+        }
+        if proxied {
+            why.push(
+                "设了代理变量 —— 面板测出口时是绕过系统代理的，\
+                 所以面板量到的出口和请求实际走的路可能不一样。",
+            );
+        }
+        let mut it = item(
+            "env_residue",
+            "环境变量残留",
+            if redirecting || proxied { State::Warn } else { State::Pass },
+            format!("找到 {} 个相关的环境变量。{}", hits.len(), why.join("")),
+        );
+        if redirecting || proxied {
+            it.manual = Some(
+                "改用户环境变量：设置 → 系统 → 系统信息 → 高级系统设置 → 环境变量。\
+                 改完要重开终端 / 重开 Claude Code 才生效。\
+                 面板不替你删 —— 这些变量可能正是你别的工作要用的。"
+                    .into(),
+            );
+        }
+        it
+    };
+    (it, hits)
+}
+
+// ---------------------------------------------------------- 出口一致性
+
+/// 两条路出去的地方一样吗。
+///
+/// 面板测出口时**绕过系统代理**（量的是隧道），别的程序不一定 ——
+/// 走系统代理的那些看到的可能是另一个出口。这一项就是把这个差异摆出来，
+/// 专治那个最难查的问题：「面板说我在美国，为什么还是被当成国内」。
+///
+/// ⛔ 结果**不进门禁判定**。`gate::judge` 的输入永远只来自绕过代理的那一份 ——
+/// 让代理软件决定门禁看到的出口，随便一个本地代理就能把出口伪装成白名单里那个。
+pub fn compare_egress(
+    direct: &crate::probe::ip::Reading,
+    via_proxy: &crate::probe::ip::Reading,
+) -> CheckItem {
+    let (Some(a), Some(b)) = (direct.ip.as_deref(), via_proxy.ip.as_deref()) else {
+        return item(
+            "egress_consistency",
+            "出口一致性",
+            State::Unknown,
+            "两条路里至少一条没探到出口，比不了。这跟「一致」不是一回事。",
+        );
+    };
+    let ca = direct.distinct_countries();
+    let cb = via_proxy.distinct_countries();
+
+    if !ca.is_empty() && !cb.is_empty() && ca != cb {
+        let mut it = item(
+            "egress_consistency",
+            "出口一致性",
+            State::Fail,
+            format!(
+                "两条路出去的国家不一样：绕过代理是 {}，跟随系统代理是 {}。\
+                 有程序会从另一个国家出去。",
+                ca.join("/"),
+                cb.join("/")
+            ),
+        );
+        it.manual = Some(
+            "常见原因是系统代理或某个环境变量里的代理只接管了一部分流量。\
+             对照上面「环境变量残留」和「系统代理」两项一起看。"
+                .into(),
+        );
+        return it;
+    }
+    if a != b {
+        return item(
+            "egress_consistency",
+            "出口一致性",
+            State::Warn,
+            format!(
+                "国家一致但 IP 不同（绕过代理 {a}，跟随系统代理 {b}）。\
+                 双栈机器上很常见（一边 v4 一边 v6），通常不是问题。"
+            ),
+        );
+    }
+    item(
+        "egress_consistency",
+        "出口一致性",
+        State::Pass,
+        "绕过系统代理和跟随系统代理，两条路出去的是同一个地方。",
+    )
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Checkup {
     pub items: Vec<CheckItem>,
     /// 明文密钥的位置清单。**没有任何密钥内容。**
     pub secrets: Vec<SecretHit>,
+    /// 相关环境变量的清单。值都掩码过，见 `mask_env_value`。
+    pub env: Vec<EnvHit>,
 }
 
-pub fn scan() -> Checkup {
+/// 跑一轮体检。
+///
+/// 是 `async` 的唯一原因是出口一致性那一项要真发两轮请求（绕过代理 / 跟随代理）。
+/// 其余几项全是本地读取，不联网。
+pub async fn scan() -> Checkup {
     let (sec_item, secrets) = check_secrets();
+    let (env_item, env) = scan_env();
+
+    // 两条路并发问，省一半时间。
+    let (direct, via_proxy) = tokio::join!(
+        crate::probe::ip::reading(),
+        crate::probe::ip::reading_via_system_proxy()
+    );
+
     Checkup {
-        items: vec![check_proxy(), check_ipv6(), check_doh(), sec_item],
+        items: vec![
+            check_proxy(),
+            compare_egress(&direct, &via_proxy),
+            check_ipv6(),
+            check_doh(),
+            env_item,
+            sec_item,
+        ],
         secrets,
+        env,
     }
 }
 
@@ -370,6 +641,122 @@ mod tests {
         let json = serde_json::to_string(&h).unwrap();
         assert!(json.contains("api_key"));
         assert!(!json.contains("value"), "SecretHit 不许带密钥内容：{json}");
+    }
+
+    // -------------------------------------------------- 环境变量掩码
+
+    /// 核心不变量：**Key 的值一个字符都不许出现在输出里。**
+    #[test]
+    fn secret_env_values_never_appear() {
+        for name in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "MY_SECRET", "X_PASSWORD"] {
+            let out = mask_env_value(name, "sk-ant-super-secret-123");
+            assert!(!out.contains("sk-ant"), "{name} 把值漏出来了：{out}");
+            assert!(!out.contains("123"), "{name} 把值漏出来了：{out}");
+        }
+    }
+
+    /// BASE_URL 的**路径段里可能带 token**，所以只留 host。
+    /// 这条挂了，Key 会被印在界面上、截图里、issue 里。
+    #[test]
+    fn base_url_keeps_only_the_origin() {
+        assert_eq!(
+            mask_env_value("ANTHROPIC_BASE_URL", "https://relay.example.com/v1/sk-tok-abcd1234"),
+            "https://relay.example.com"
+        );
+        assert_eq!(
+            mask_env_value("ANTHROPIC_BASE_URL", "https://x.example.com:8443/v1?key=abc"),
+            "https://x.example.com:8443"
+        );
+    }
+
+    /// `https://user:token@host` —— 凭证在 @ 前面，必须丢掉。
+    #[test]
+    fn credentials_in_the_authority_are_dropped() {
+        let out = mask_env_value("HTTPS_PROXY", "http://alice:hunter2@proxy.example.com:7890");
+        assert_eq!(out, "http://proxy.example.com:7890");
+        assert!(!out.contains("hunter2"));
+        assert!(!out.contains("alice"));
+    }
+
+    #[test]
+    fn proxy_without_a_scheme_still_loses_the_path() {
+        assert_eq!(mask_env_value("HTTP_PROXY", "127.0.0.1:7890"), "127.0.0.1:7890");
+        assert_eq!(mask_env_value("HTTP_PROXY", "user:pw@127.0.0.1:7890"), "127.0.0.1:7890");
+    }
+
+    /// 模型名、配置目录不是秘密，原样显示才有用。
+    #[test]
+    fn harmless_values_are_shown_as_is() {
+        assert_eq!(
+            mask_env_value("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
+            "claude-sonnet-4-5"
+        );
+    }
+
+    // -------------------------------------------------- reg query 解析
+
+    /// 值里有空格 —— 所以不能 `split_whitespace` 取最后一段。
+    #[test]
+    fn reg_values_with_spaces_survive() {
+        let text = concat!(
+            r"HKEY_CURRENT_USER\Environment", "\n",
+            r"    ANTHROPIC_BASE_URL    REG_SZ    https://x.com/v1", "\n",
+            r"    FOO    REG_EXPAND_SZ    C:\Program Files\a b", "\n",
+        );
+        let got = parse_reg_values(text);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].0, "ANTHROPIC_BASE_URL");
+        assert_eq!(got[0].1, "https://x.com/v1");
+        assert_eq!(got[1].1, r"C:\Program Files\a b");
+    }
+
+    #[test]
+    fn reg_header_line_is_not_a_value() {
+        assert!(parse_reg_values(r"HKEY_CURRENT_USER\Environment").is_empty());
+        assert!(parse_reg_values("").is_empty());
+    }
+
+    // -------------------------------------------------- 出口一致性
+
+    fn reading(ip: Option<&str>, countries: &[(&str, &str)]) -> crate::probe::ip::Reading {
+        crate::probe::ip::Reading {
+            ip: ip.map(String::from),
+            countries: countries.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
+        }
+    }
+
+    #[test]
+    fn same_egress_both_ways_passes() {
+        let a = reading(Some("203.0.113.7"), &[("ippure", "US")]);
+        assert_eq!(compare_egress(&a, &a).state, State::Pass);
+    }
+
+    /// 两条路出去的国家不一样 —— 这正是「面板说我在美国却被当成国内」的成因。
+    #[test]
+    fn different_country_is_a_failure_and_names_both() {
+        let direct = reading(Some("203.0.113.7"), &[("ippure", "US")]);
+        let proxied = reading(Some("198.51.100.9"), &[("ippure", "HK")]);
+        let it = compare_egress(&direct, &proxied);
+        assert_eq!(it.state, State::Fail);
+        assert!(it.detail.contains("US") && it.detail.contains("HK"), "两个都要列出来：{}", it.detail);
+    }
+
+    /// 双栈机器常见：国家一样、IP 不同。是提醒，不是错误。
+    #[test]
+    fn same_country_different_ip_is_only_a_warning() {
+        let direct = reading(Some("203.0.113.7"), &[("ippure", "US")]);
+        let proxied = reading(Some("203.0.113.8"), &[("ippure", "US")]);
+        assert_eq!(compare_egress(&direct, &proxied).state, State::Warn);
+    }
+
+    /// 有一条路探不到 → Unknown，**不是 Pass**。
+    /// 「比不了」和「一致」是两回事，合并了就会在真有问题时报绿灯。
+    #[test]
+    fn missing_one_side_is_unknown_not_pass() {
+        let direct = reading(Some("203.0.113.7"), &[("ippure", "US")]);
+        let nothing = reading(None, &[]);
+        assert_eq!(compare_egress(&direct, &nothing).state, State::Unknown);
+        assert_eq!(compare_egress(&nothing, &direct).state, State::Unknown);
     }
 
     #[test]

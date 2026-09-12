@@ -7,6 +7,7 @@ import {
   Download,
   ExternalLink as ExternalIcon,
   Gauge,
+  MoreHorizontal,
   Pencil,
   Plus,
   RotateCw,
@@ -67,6 +68,7 @@ interface Form {
   name: string;
   base_url: string;
   model: string;
+  small_fast_model: string;
   wire_api: WireApi;
   auth_style: AuthStyle;
   note: string;
@@ -82,6 +84,7 @@ function blank(target: RelayTarget): Form {
     name: '',
     base_url: '',
     model: '',
+    small_fast_model: '',
     wire_api: 'responses',
     auth_style: target === 'codex' ? 'env_key' : 'bearer_token',
     note: '',
@@ -98,6 +101,7 @@ function toForm(p: ProviderView): Form {
     name: p.name,
     base_url: p.base_url,
     model: p.model ?? '',
+    small_fast_model: p.small_fast_model ?? '',
     wire_api: p.wire_api,
     auth_style: p.auth_style,
     note: p.note ?? '',
@@ -118,6 +122,8 @@ export default function Relay() {
   const [models, setModels] = useState<string[] | null>(null);
   const [latency, setLatency] = useState<Record<string, LatencyResult>>({});
   const [backends, setBackends] = useState<Record<string, BackendReport>>({});
+  /** 哪张卡展开了「更多」。低频操作收起来，常用的三个才留在外面。 */
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const rows = useMemo(
     () => (list.data ?? []).filter((p) => p.target === tab),
@@ -168,6 +174,7 @@ export default function Relay() {
           name: form.name.trim(),
           base_url: form.base_url.trim(),
           model: form.model.trim() || null,
+          small_fast_model: form.small_fast_model.trim() || null,
           wire_api: form.wire_api,
           auth_style: form.auth_style,
           note: form.note.trim() || null,
@@ -361,119 +368,176 @@ export default function Relay() {
             也可以点上面的「从当前配置导入」，把这个工具现在用的端点读进来。
           </EmptyState>
         ) : (
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="space-y-2">
             {rows.map((p, i) => {
               const ping = latency[p.id];
+              const be = backends[p.id];
+              const open = expanded === p.id;
               return (
                 <div
                   key={p.id}
-                  className={`rounded-md border p-3 ${
+                  className={`relative overflow-hidden rounded-md border pl-3 ${
                     p.active ? 'border-accent-line bg-accent-bg' : 'border-line'
                   }`}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate font-medium">{p.name}</span>
-                    {p.active ? (
-                      <Pill tone="accent" icon={<Check size={11} />}>
-                        当前启用
-                      </Pill>
-                    ) : (
-                      <Button
-                        size="sm"
-                        loading={busy === `on-${p.id}`}
-                        disabled={!!busy}
-                        onClick={() =>
-                          void act(`on-${p.id}`, () => api.relayActivate(tab, p.id), `已切换到 ${p.name}`)
-                        }
-                      >
-                        启用
-                      </Button>
-                    )}
-                  </div>
-
-                  <div className="notice mt-1 break-all font-mono">{p.base_url}</div>
-
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    {p.target === 'codex' && <Pill tone="default">{p.wire_api}</Pill>}
-                    {p.has_key ? (
-                      <Pill tone={p.key_encrypted ? 'ok' : 'warn'}>
-                        {p.key_masked ?? '已配 Key'}
-                      </Pill>
-                    ) : (
-                      <Pill tone="default">未配 Key</Pill>
-                    )}
-                    {p.model && <span className="notice">{p.model}</span>}
-                    {ping && (
-                      <Pill tone={ping.ok ? 'ok' : 'danger'} title={ping.detail}>
-                        {ping.ms != null ? `${ping.ms} ms` : '连不上'}
-                      </Pill>
-                    )}
-                    {backends[p.id] && <BackendPill r={backends[p.id]} />}
-                  </div>
-
-                  {backends[p.id] && <BackendEvidence r={backends[p.id]} />}
-                  {p.note && <p className="notice mt-1">{p.note}</p>}
-                  {p.has_key && !p.key_encrypted && (
-                    <p className="notice notice--warn mt-1">
-                      这条的 Key 是明文存的（早期版本或手改留下的）。保存一次就会转成加密。
-                    </p>
+                  {/* 当前启用的那条左边挂一条高亮竖条 —— 一眼就能扫到，
+                      不用去读每张卡上的小 pill。 */}
+                  {p.active && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute left-0 top-0 h-full w-1 bg-[var(--accent)]"
+                    />
                   )}
 
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    <Button size="sm" icon={<Pencil size={11} />} onClick={() => setForm(toForm(p))}>
-                      编辑
-                    </Button>
-                    <Button
-                      size="sm"
-                      icon={<Gauge size={11} />}
-                      loading={busy === `ping-${p.id}`}
-                      disabled={!!busy}
-                      onClick={() => void testOne(p)}
-                    >
-                      测速
-                    </Button>
-                    <Button
-                      size="sm"
-                      icon={<Search size={11} />}
-                      loading={busy === `be-${p.id}`}
-                      disabled={!!busy}
-                      title="真发一次请求看响应头，会消耗一点点额度"
-                      onClick={() => void detectBackend(p)}
-                    >
-                      验后端
-                    </Button>
-                    <Button
-                      size="sm"
-                      icon={<Copy size={11} />}
-                      disabled={!!busy}
-                      onClick={() =>
-                        void act('dup', () => api.relayDuplicate(p.id), `已复制 ${p.name}`)
-                      }
-                    >
-                      复制
-                    </Button>
-                    <Button
-                      size="sm"
-                      icon={<ChevronUp size={11} />}
-                      aria-label="上移"
-                      disabled={!!busy || i === 0}
-                      onClick={() => void move(p, -1)}
-                    />
-                    <Button
-                      size="sm"
-                      icon={<ChevronDown size={11} />}
-                      aria-label="下移"
-                      disabled={!!busy || i === rows.length - 1}
-                      onClick={() => void move(p, 1)}
-                    />
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      icon={<Trash2 size={11} />}
-                      aria-label="删除"
-                      disabled={!!busy}
-                      onClick={() => setAskDelete(p)}
-                    />
+                  <div className="p-3">
+                    {/* ---- 第一行：名字 + 主操作。其余一概往下放 ---- */}
+                    <div className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-md font-medium">{p.name}</span>
+                      {p.active ? (
+                        <Pill tone="accent" icon={<Check size={11} />}>
+                          当前启用
+                        </Pill>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          loading={busy === `on-${p.id}`}
+                          disabled={!!busy}
+                          onClick={() =>
+                            void act(`on-${p.id}`, () => api.relayActivate(tab, p.id), `已切换到 ${p.name}`)
+                          }
+                        >
+                          启用
+                        </Button>
+                      )}
+                    </div>
+
+                    {/* ---- 第二行：地址占左边，凭证靠右 —— 用上宽度，别让右半边空着 ---- */}
+                    <div className="mt-1.5 flex items-start gap-3">
+                      <span className="min-w-0 flex-1 break-all font-mono text-xs text-[var(--text-2)]">
+                        {p.base_url}
+                      </span>
+                      <span className="flex flex-shrink-0 items-center gap-1">
+                        {p.target === 'codex' && <Pill tone="default">{p.wire_api}</Pill>}
+                        {p.has_key ? (
+                          <Pill tone={p.key_encrypted ? 'ok' : 'warn'}>
+                            {p.key_masked ?? '已配 Key'}
+                          </Pill>
+                        ) : (
+                          <Pill tone="default">未配 Key</Pill>
+                        )}
+                      </span>
+                    </div>
+
+                    {p.has_key && !p.key_encrypted && (
+                      <p className="notice notice--warn mt-1">
+                        这条的 Key 是明文存的（早期版本或手改留下的）。保存一次就会转成加密。
+                      </p>
+                    )}
+                    {p.note && <p className="notice mt-1">{p.note}</p>}
+
+                    {/* ---- 实测结果单独一栏：这些是**跑出来的**，不是你填的 ---- */}
+                    {(ping || be) && (
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-[var(--border)] pt-2">
+                        <span className="text-xs text-[var(--text-3)]">实测</span>
+                        {ping && (
+                          <Pill tone={ping.ok ? 'ok' : 'danger'} title={ping.detail}>
+                            {ping.ms != null ? `${ping.ms} ms` : '连不上'}
+                          </Pill>
+                        )}
+                        {be && <BackendPill r={be} />}
+                      </div>
+                    )}
+                    {be && <BackendEvidence r={be} />}
+
+                    {/* ---- 第三行：模型配置在左，操作在右。常用的三个留在外面，
+                         低频的（复制 / 排序 / 删除）收进「更多」—— 原来七个按钮
+                         挤一排，而每天真正会点的只有「启用」和「编辑」。 ---- */}
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                        <span className="text-[var(--text-3)]">
+                          主模型{' '}
+                          <span className="font-mono text-[var(--text)]">{p.model || '未设'}</span>
+                        </span>
+                        <span className="text-[var(--text-3)]">
+                          小模型{' '}
+                          <span className="font-mono text-[var(--text)]">
+                            {p.small_fast_model || '未设'}
+                          </span>
+                        </span>
+                      </span>
+                      <span className="flex flex-wrap items-center gap-1">
+                      <Button size="sm" icon={<Pencil size={11} />} onClick={() => setForm(toForm(p))}>
+                        编辑
+                      </Button>
+                      <Button
+                        size="sm"
+                        icon={<Gauge size={11} />}
+                        loading={busy === `ping-${p.id}`}
+                        disabled={!!busy}
+                        onClick={() => void testOne(p)}
+                      >
+                        测速
+                      </Button>
+                      <Button
+                        size="sm"
+                        icon={<Search size={11} />}
+                        loading={busy === `be-${p.id}`}
+                        disabled={!!busy}
+                        title="真发一次请求看响应头，会消耗一点点额度"
+                        onClick={() => void detectBackend(p)}
+                      >
+                        验后端
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={<MoreHorizontal size={11} />}
+                        aria-expanded={open}
+                        onClick={() => setExpanded(open ? null : p.id)}
+                      >
+                        更多
+                      </Button>
+                      </span>
+                    </div>
+
+                    {open && (
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        <Button
+                          size="sm"
+                          icon={<Copy size={11} />}
+                          disabled={!!busy}
+                          onClick={() =>
+                            void act('dup', () => api.relayDuplicate(p.id), `已复制 ${p.name}`)
+                          }
+                        >
+                          复制
+                        </Button>
+                        <Button
+                          size="sm"
+                          icon={<ChevronUp size={11} />}
+                          aria-label="上移"
+                          disabled={!!busy || i === 0}
+                          onClick={() => void move(p, -1)}
+                        />
+                        <Button
+                          size="sm"
+                          icon={<ChevronDown size={11} />}
+                          aria-label="下移"
+                          disabled={!!busy || i === rows.length - 1}
+                          onClick={() => void move(p, 1)}
+                        />
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          icon={<Trash2 size={11} />}
+                          disabled={!!busy}
+                          onClick={() => setAskDelete(p)}
+                        >
+                          删除
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -627,6 +691,15 @@ export default function Relay() {
                   从端点获取模型
                 </Button>
               </div>
+              <TextField
+                label="小模型 / 快模型"
+                hint="落到 ANTHROPIC_SMALL_FAST_MODEL。留空 = 不设，用目标工具的默认值"
+                value={form.small_fast_model}
+                onChange={(v) => set({ small_fast_model: v })}
+              />
+            </div>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <TextField
                 label="API Key"
                 type="password"

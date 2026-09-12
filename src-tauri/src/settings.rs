@@ -71,6 +71,15 @@ pub struct Settings {
     /// 装没装才是现状。切换账户后 `gate::hook::follow_active_slot`
     /// 拿它把现状对齐回来。
     pub hook_enabled: bool,
+
+    /// 启动 Claude Code 时关掉非必要遥测（崩溃报告、使用统计）。
+    ///
+    /// **默认 false。** 两个理由：一是它会改变现有使用者升级后的行为，
+    /// 二是它放在 IP 锁和国家白名单旁边，极容易被读成「防封的一环」——
+    /// **它跟封号风险无关**，让人对一件不保护他的事感到安全，比不做更糟。
+    ///
+    /// 具体设哪几个变量见 `launch::TELEMETRY_OFF`，界面上原样列出来供核对。
+    pub disable_telemetry: bool,
 }
 
 impl Default for Settings {
@@ -81,6 +90,7 @@ impl Default for Settings {
             managed_apps_dir: None,
             country_allowlist: Vec::new(),
             hook_enabled: false,
+            disable_telemetry: false,
         }
     }
 }
@@ -222,6 +232,17 @@ mod tests {
             "1".into(),
         ]);
         assert_eq!(got, vec!["TW".to_string(), "US".to_string()]);
+    }
+
+    /// 遥测开关默认必须是**关**的。
+    ///
+    /// 它会改变现有使用者升级后的行为；而且它跟封号风险无关，
+    /// 默认打开等于替他做了一个不保护他的决定。
+    #[test]
+    fn telemetry_switch_defaults_to_off() {
+        assert!(!Settings::default().disable_telemetry);
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!s.disable_telemetry, "旧配置文件没有这个字段，不能默成开");
     }
 
     #[test]

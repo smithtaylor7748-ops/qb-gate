@@ -328,6 +328,20 @@ pub fn claude_settings_json(existing: &str, m: &ProviderMeta, key: Option<&str>)
             serde_json::Value::String(model.clone()),
         );
     }
+    // 留空 = 把这个变量**删掉**，而不是留着上一家的值。
+    // 不删的话切换中转站之后，小模型还指着上一家的名字，后台请求会报一个
+    // 跟你正在做的事毫无关系的错。
+    match &m.small_fast_model {
+        Some(sm) if !sm.trim().is_empty() => {
+            env.insert(
+                "ANTHROPIC_SMALL_FAST_MODEL".into(),
+                serde_json::Value::String(sm.trim().to_string()),
+            );
+        }
+        _ => {
+            env.remove("ANTHROPIC_SMALL_FAST_MODEL");
+        }
+    }
 
     match m.auth_style {
         AuthStyle::EnvKey => {
@@ -444,6 +458,7 @@ fn blank_meta(target: RelayTarget) -> ProviderMeta {
         name: String::new(),
         base_url: String::new(),
         model: None,
+        small_fast_model: None,
         wire_api: WireApi::default(),
         auth_style: AuthStyle::default(),
         note: None,
@@ -474,6 +489,10 @@ fn current_claude_provider() -> Option<ProviderMeta> {
         base_url: base.into(),
         model: env
             .get("ANTHROPIC_MODEL")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        small_fast_model: env
+            .get("ANTHROPIC_SMALL_FAST_MODEL")
             .and_then(|v| v.as_str())
             .map(String::from),
         auth_style,

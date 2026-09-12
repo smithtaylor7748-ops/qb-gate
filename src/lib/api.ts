@@ -237,6 +237,14 @@ export interface ProviderMeta {
   name: string;
   base_url: string;
   model?: string | null;
+  /**
+   * 小模型 / 快模型那一档，落到 `ANTHROPIC_SMALL_FAST_MODEL`。
+   *
+   * Claude Code 拿它跑后台轻活（补会话标题之类）。**很多中转站的小模型跟主模型
+   * 不是同一个名字**，只配主模型的话那些后台请求会报一个跟你正在做的事
+   * 完全无关的错。留空 = 不设这个变量。
+   */
+  small_fast_model?: string | null;
   wire_api: WireApi;
   auth_style: AuthStyle;
   note?: string | null;
@@ -346,6 +354,14 @@ export interface Settings {
    * `settingsSave` 会忽略这个字段（它们还要写脚本、改槽位的 settings.json）。
    */
   hook_enabled: boolean;
+
+  /**
+   * 启动 Claude Code 时关掉非必要遥测。**默认 false。**
+   *
+   * ⚠ 这跟封号风险无关 —— API 请求照样带着账号凭证发出去，出口 IP 照样是那个。
+   * 它关掉的只是崩溃报告与使用统计。
+   */
+  disable_telemetry: boolean;
 }
 
 /** 会话内门禁的现状。 */
@@ -401,9 +417,18 @@ export interface SecretHit {
   field: string;
 }
 
+/** 一个相关环境变量。值已经掩码过 —— Key 类的只说「已设置」，URL 类的只剩 host。 */
+export interface EnvHit {
+  name: string;
+  /** `用户环境变量`（注册表，重启还在）或 `当前进程`。 */
+  scope: string;
+  shown: string;
+}
+
 export interface Checkup {
   items: CheckItem[];
   secrets: SecretHit[];
+  env: EnvHit[];
 }
 
 /** 版本库里的一版。 */

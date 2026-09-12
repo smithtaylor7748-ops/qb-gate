@@ -60,6 +60,7 @@ export default function Settings() {
     gate_auto_rearm: true,
     country_allowlist: [],
     hook_enabled: false,
+    disable_telemetry: false,
   };
 
   async function save(name: string, patch: Partial<AppSettings>, ok: string) {
@@ -177,6 +178,51 @@ export default function Settings() {
             关掉这个开关时，面板会<strong>主动把 Codex 身上的锁摘掉</strong>。
             不摘的话它已经不在门禁清单里了，往后谁都不会再碰它，
             你会得到一个永远跑不起来的 codex。
+          </p>
+        </Collapsible>
+      </Card>
+
+      {/* -------------------------------------------------- 遥测 */}
+      <Card title="遥测" icon={<Info size={14} />} className="mb-3">
+        <Row
+          side={
+            <Checkbox
+              checked={settings.data?.disable_telemetry ?? false}
+              disabled={!!busy || settings.loading}
+              onChange={(on) =>
+                void save(
+                  'telemetry',
+                  { disable_telemetry: on },
+                  on ? '启动 Claude Code 时会关掉非必要遥测。' : '已恢复默认（不干预遥测）。'
+                )
+              }
+            >
+              {settings.data?.disable_telemetry ? '已关闭' : '不干预'}
+            </Checkbox>
+          }
+        >
+          <span>启动 Claude Code 时关掉非必要遥测</span>
+          <span className="notice">
+            <strong>这跟封号风险无关。</strong>
+            你的 API 请求照样带着账号凭证发给 Anthropic，出口 IP 照样是那个 IP。
+            它关掉的只是崩溃报告和使用统计 —— 跟在编辑器里关遥测是同一件事。
+          </span>
+        </Row>
+
+        <Collapsible className="mt-1" summary="具体设了哪几个环境变量">
+          <p className="notice">
+            只设 Claude Code 自己文档里有的，外加一个通用标准。
+            <strong>不照着别的项目抄一长串</strong> —— 设一个不存在的变量等于什么都没关，
+            而界面上却写着「已关闭」，那是在说谎。
+          </p>
+          <pre className="logview mt-1 whitespace-pre-wrap">{`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+DISABLE_TELEMETRY=1
+DISABLE_ERROR_REPORTING=1
+DISABLE_BUG_COMMAND=1
+DO_NOT_TRACK=1`}</pre>
+          <p className="notice mt-1">
+            只在<strong>面板启动的 Claude Code</strong> 上生效（它们是进程环境变量）。
+            你自己在终端里敲 <code>claude</code> 不受影响。
           </p>
         </Collapsible>
       </Card>

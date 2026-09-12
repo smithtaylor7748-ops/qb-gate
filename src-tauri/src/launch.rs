@@ -105,11 +105,41 @@ pub struct LaunchResult {
     pub slot: Option<String>,
 }
 
+/// 关掉非必要遥测的那几个变量。
+///
+/// **只列 Claude Code 自己文档里有的，外加一个通用标准 `DO_NOT_TRACK`。**
+/// 不照着别的项目抄一长串：设一个不存在的变量等于什么都没关，
+/// 而界面上却写着「已关闭」—— 那是在说谎。界面上会把这几个原样列出来，
+/// 使用者自己就能核。
+///
+/// ⚠ **这跟封号风险无关。** 你的 API 请求照样带着账号凭证发给 Anthropic，
+/// 出口 IP 照样是那个 IP。它关掉的只是崩溃报告与使用统计这类非必要流量，
+/// 跟在编辑器里关遥测是同一件事。
+pub const TELEMETRY_OFF: &[(&str, &str)] = &[
+    ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1"),
+    ("DISABLE_TELEMETRY", "1"),
+    ("DISABLE_ERROR_REPORTING", "1"),
+    ("DISABLE_BUG_COMMAND", "1"),
+    ("DO_NOT_TRACK", "1"),
+];
+
 /// Claude Code 的启动环境。纯函数，可单测 —— 两个变量为什么必须有，见文件头。
 pub fn claude_code_env(slot_dir: Option<&Path>) -> Vec<(&'static str, OsString)> {
+    claude_code_env_with(slot_dir, crate::settings::load().disable_telemetry)
+}
+
+pub fn claude_code_env_with(
+    slot_dir: Option<&Path>,
+    disable_telemetry: bool,
+) -> Vec<(&'static str, OsString)> {
     let mut v: Vec<(&'static str, OsString)> = vec![("DISABLE_AUTOUPDATER", "1".into())];
     if let Some(d) = slot_dir {
         v.push(("CLAUDE_CONFIG_DIR", d.as_os_str().to_owned()));
+    }
+    if disable_telemetry {
+        for (k, val) in TELEMETRY_OFF {
+            v.push((k, (*val).into()));
+        }
     }
     v
 }
@@ -292,6 +322,33 @@ pub async fn launch(target: LaunchTarget, gate: &crate::gate::GateState) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 遥测开关**默认不设任何变量** —— 关掉的开关就该什么都不做。
+    #[test]
+    fn telemetry_vars_are_absent_by_default() {
+        let env = claude_code_env_with(None, false);
+        for (k, _) in TELEMETRY_OFF {
+            assert!(!env.iter().any(|(n, _)| n == k), "{k} 不该在默认环境里");
+        }
+    }
+
+    /// 打开之后这几个必须都在，而且值要对得上界面上列的那份。
+    ///
+    /// 界面上把变量名原样印出来供使用者核对 —— 两边对不上就是在骗他。
+    #[test]
+    fn telemetry_vars_match_what_the_ui_lists() {
+        let env = claude_code_env_with(None, true);
+        for (k, want) in TELEMETRY_OFF {
+            let got = env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+            assert_eq!(
+                got.as_deref().and_then(|o| o.to_str()),
+                Some(*want),
+                "{k} 没设或者值不对"
+            );
+        }
+        // 原有的两个变量不能因为加了遥测就丢了。
+        assert!(env.iter().any(|(n, _)| *n == "DISABLE_AUTOUPDATER"));
+    }
 
     #[test]
     fn desktop_gets_the_no_grace_watchdog() {

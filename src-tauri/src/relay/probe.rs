@@ -28,6 +28,37 @@ fn join(base: &str, path: &str) -> String {
     format!("{}/{}", base.trim_end_matches('/'), path.trim_start_matches('/'))
 }
 
+/// 把使用者粘进来的地址归一成 base_url。
+///
+/// 中转站给的地址五花八门：有的发完整端点 `https://x.com/v1/messages`，
+/// 有的发 OpenAI 风格的 `https://x.com/v1/chat/completions`，有的就发个域名。
+/// 直接存进去，`join` 拼出来就是 `https://x.com/v1/messages/models` —— 404，
+/// 而使用者会先去怀疑 Key，不会怀疑地址。
+///
+/// 形态参考 z-switch（MIT）的「Base URL 智能推断」。纯函数，可单测。
+///
+/// **认不出的一律原样返回**，不猜：地址里少一段总比多一段容易发现。
+pub fn normalize_base_url(raw: &str) -> String {
+    let v = raw.trim().trim_end_matches('/');
+    if v.is_empty() {
+        return String::new();
+    }
+    // 已知的端点后缀，从长到短剥 —— `/v1/chat/completions` 要先于 `/completions` 命中。
+    const ENDPOINTS: &[&str] = &[
+        "/chat/completions",
+        "/messages",
+        "/completions",
+        "/responses",
+        "/models",
+    ];
+    for e in ENDPOINTS {
+        if let Some(base) = v.strip_suffix(e) {
+            return base.trim_end_matches('/').to_string();
+        }
+    }
+    v.to_string()
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelList {
     pub models: Vec<String>,
@@ -165,5 +196,34 @@ mod tests {
         assert_eq!(join("https://a.com/v1", "models"), "https://a.com/v1/models");
         assert_eq!(join("https://a.com/v1/", "models"), "https://a.com/v1/models");
         assert_eq!(join("https://a.com/v1//", "/models"), "https://a.com/v1/models");
+    }
+}
+
+#[cfg(test)]
+mod base_url_tests {
+    use super::normalize_base_url;
+
+    #[test]
+    fn strips_known_endpoints() {
+        assert_eq!(normalize_base_url("https://x.com/v1/messages"), "https://x.com/v1");
+        assert_eq!(
+            normalize_base_url("https://x.com/v1/chat/completions"),
+            "https://x.com/v1"
+        );
+        assert_eq!(normalize_base_url("https://x.com/v1/models"), "https://x.com/v1");
+    }
+
+    #[test]
+    fn trailing_slash_and_spaces_are_harmless() {
+        assert_eq!(normalize_base_url("  https://x.com/v1/  "), "https://x.com/v1");
+        assert_eq!(normalize_base_url("https://x.com/v1"), "https://x.com/v1");
+    }
+
+    /// 认不出的原样返回 —— 不猜。地址少一段比多一段容易发现。
+    #[test]
+    fn unknown_shapes_are_left_alone() {
+        assert_eq!(normalize_base_url("https://x.com/custom/path"), "https://x.com/custom/path");
+        assert_eq!(normalize_base_url("https://x.com"), "https://x.com");
+        assert_eq!(normalize_base_url("   "), "");
     }
 }

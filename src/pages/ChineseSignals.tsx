@@ -249,6 +249,22 @@ function LocalCheckup() {
         </Row>
       ))}
 
+      {!!c?.env.length && (
+        <div className="mt-2">
+          <p className="notice">
+            <strong>这些环境变量会影响 Claude Code 的行为。</strong>
+            值是掩码过的：Key 类只说「已设置」，地址类<strong>只留 host</strong> ——
+            有些中转站把 token 放在路径里，显示全量等于把它印在截图上。
+          </p>
+          {c.env.map((e) => (
+            <Row key={`${e.scope}-${e.name}`} side={<Pill>{e.scope}</Pill>}>
+              <span className="font-mono">{e.name}</span>
+              <span className="notice font-mono">{e.shown}</span>
+            </Row>
+          ))}
+        </div>
+      )}
+
       {!!c?.secrets.length && (
         <div className="mt-2">
           <p className="notice notice--danger">

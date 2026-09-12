@@ -37,6 +37,16 @@ pub struct ProviderMeta {
     pub base_url: String,
     #[serde(default)]
     pub model: Option<String>,
+    /// 小模型 / 快模型那一档（落到 `ANTHROPIC_SMALL_FAST_MODEL`）。
+    ///
+    /// Claude Code 会拿它跑后台的轻活（补全会话标题之类）。**很多中转站的
+    /// 小模型跟主模型不是同一个名字**，只配主模型的话那些后台请求会直接报错，
+    /// 而报错信息跟你正在做的事完全无关，极难联想。
+    ///
+    /// `None` = 不设这个变量，交给 Claude Code 用它自己的默认值。
+    /// 形态参考 z-switch（MIT）的多档模型配置。
+    #[serde(default)]
+    pub small_fast_model: Option<String>,
     #[serde(default)]
     pub wire_api: WireApi,
     #[serde(default)]
@@ -167,6 +177,9 @@ impl RelayStore {
     /// 「改个显示名把 Key 改没了」。
     pub fn upsert(&mut self, input: ProviderInput) -> Result<String> {
         let mut meta = input.meta;
+        // 地址归一放在这里，不在前端 —— 手填、预设、从当前配置导入三条路都经过
+        // upsert，只在表单里做的话另外两条就漏了。见 `probe::normalize_base_url`。
+        meta.base_url = super::probe::normalize_base_url(&meta.base_url);
         if meta.slug.trim().is_empty() {
             meta.slug = slugify(&meta.name);
         }
@@ -296,6 +309,17 @@ fn now_stamp() -> String {
 mod tests {
     use super::*;
 
+    /// 粘进来的是完整端点时，存下来的必须是 base —— 否则 `join` 会拼出
+    /// `…/v1/messages/models`，404，而使用者会先去怀疑 Key 不怀疑地址。
+    #[test]
+    fn upsert_normalizes_a_pasted_endpoint() {
+        let mut st = RelayStore::default();
+        let mut i = input("x", RelayTarget::ClaudeCode, Some("k"));
+        i.meta.base_url = "https://api.example.com/v1/messages".into();
+        let id = st.upsert(i).unwrap();
+        assert_eq!(st.get(&id).unwrap().meta.base_url, "https://api.example.com/v1");
+    }
+
     fn input(name: &str, target: RelayTarget, key: Option<&str>) -> ProviderInput {
         ProviderInput {
             meta: ProviderMeta {
@@ -305,6 +329,7 @@ mod tests {
                 name: name.into(),
                 base_url: "https://api.example.com".into(),
                 model: None,
+                small_fast_model: None,
                 wire_api: WireApi::Responses,
                 auth_style: AuthStyle::EnvKey,
                 note: None,

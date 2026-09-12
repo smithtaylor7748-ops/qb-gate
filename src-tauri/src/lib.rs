@@ -197,8 +197,8 @@ fn hook_uninstall() -> Result<gate::hook::HookStatus> {
 ///
 /// 读注册表和本地配置文件，**不联网、不改任何东西**。
 #[tauri::command]
-fn checkup_scan() -> sysenv::checkup::Checkup {
-    sysenv::checkup::scan()
+async fn checkup_scan() -> sysenv::checkup::Checkup {
+    sysenv::checkup::scan().await
 }
 
 // -------------------------------------------------------------- 版本库

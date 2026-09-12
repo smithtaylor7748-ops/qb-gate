@@ -126,12 +126,20 @@ fn normalize_country(raw: &str) -> Option<String> {
 /// **哪天换成系统代理模式的机场，这句话会让门禁量到你真实的 ISP 出口**，
 /// 到那时必须回来改这里。
 fn client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .no_proxy()
+    build_client(true)
+}
+
+/// `bypass_proxy = false` 的那份**跟随系统代理**，只给体检的「出口一致性」用。
+///
+/// ⛔ **门禁判定永远不许用它。** 让代理软件决定门禁看到的出口，等于把门禁的地基
+/// 拆掉 —— 随便一个本地代理就能把出口伪装成白名单里那个。这份客户端的唯一用途是
+/// 跟 `client()` 的结果**对比**，把「两条路出去的地方不一样」这件事告诉使用者。
+fn build_client(bypass_proxy: bool) -> Result<reqwest::Client> {
+    let b = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
-        .user_agent("QB Gate/0.1")
-        .build()
-        .map_err(GateError::from)
+        .user_agent("QB Gate/0.1");
+    let b = if bypass_proxy { b.no_proxy() } else { b };
+    b.build().map_err(GateError::from)
 }
 
 /// 完整纯净度信息。失败时返回 Err，调用方自己决定要不要降级。
@@ -188,11 +196,22 @@ async fn ipinfo(c: &reqwest::Client) -> Option<(Option<String>, Option<String>)>
 /// ippure 回 IPv4，两者都对 —— 拿它当冲突会让门禁一直误杀。
 /// 国家不一样才是真信号，那个交给 `judge`。
 pub async fn reading() -> Reading {
-    let Ok(c) = client() else {
-        return Reading::default();
-    };
+    match client() {
+        Ok(c) => reading_with(&c).await,
+        Err(_) => Reading::default(),
+    }
+}
 
-    let (pure, cf, info) = tokio::join!(ip_info_with(&c), cf_trace(&c), ipinfo(&c));
+/// 同样一轮探测，但**跟随系统代理**。只给体检的出口一致性用，见 `build_client`。
+pub async fn reading_via_system_proxy() -> Reading {
+    match build_client(false) {
+        Ok(c) => reading_with(&c).await,
+        Err(_) => Reading::default(),
+    }
+}
+
+async fn reading_with(c: &reqwest::Client) -> Reading {
+    let (pure, cf, info) = tokio::join!(ip_info_with(c), cf_trace(c), ipinfo(c));
 
     let mut out = Reading::default();
     let mut push = |src: &str, ip: Option<String>, country: Option<String>| {
@@ -217,7 +236,7 @@ pub async fn reading() -> Reading {
     }
 
     if out.ip.is_none() {
-        out.ip = fallback_ip(&c).await;
+        out.ip = fallback_ip(c).await;
     }
     out
 }
