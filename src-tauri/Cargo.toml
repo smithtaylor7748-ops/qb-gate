@@ -1,6 +1,6 @@
 [package]
 name = "qb-gate"
-version = "0.9.0"
+version = "0.10.0"
 description = "Claude 环境控制面板"
 authors = ["QB Gate contributors"]
 license = "GPL-3.0-or-later"

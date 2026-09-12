@@ -26,7 +26,7 @@
 //! 把它打进日志、截图、或者贴进 issue 里。
 
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::error::Result;
 
