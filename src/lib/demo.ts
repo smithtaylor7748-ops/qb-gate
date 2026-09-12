@@ -22,6 +22,7 @@
 
 import type {
   AccountsReport,
+  BackendReport,
   BackupEntry,
   CategoryListing,
   CleanupReport,
@@ -405,6 +406,20 @@ const relay: ProviderView[] = [
   },
 ];
 
+/** 演示里那条中转站是「像官方但证据不够硬」—— 最能说明这个功能在查什么。 */
+const backend: BackendReport = {
+  backend: 'anthropic',
+  confidence: 'weak',
+  source: null,
+  evidence: [
+    '带 `anthropic-ratelimit-*` 限流头',
+    '`request-id` 是 Anthropic 的 `req_` 形状',
+    '限流计数两次请求之间**一动不动** —— 像是写死的假头',
+  ],
+  ratelimit_real: false,
+  detail: '有 Anthropic 的痕迹，但限流头疑似伪造。',
+};
+
 const presets: Preset[] = [
   {
     id: 'demo-preset',
@@ -613,6 +628,7 @@ const FIXTURES: Record<string, () => unknown> = {
   relay_list: () => relay,
   relay_current: () => [relayMeta],
   relay_presets: () => presets,
+  relay_detect_backend: () => backend,
   tz_current: () => 'America/New_York',
   snapshot_list: () => snapshots,
   profile_list: () => profileStore,

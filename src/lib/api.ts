@@ -280,6 +280,22 @@ export interface ModelList {
   detail: string;
 }
 
+/** 中转站背后到底是谁。 */
+export type Backend = 'anthropic' | 'bedrock' | 'vertex' | 'unsure';
+
+export interface BackendReport {
+  backend: Backend;
+  /** `strong` = 有直接指纹；`weak` = 只有负证据或弱信号。 */
+  confidence: 'strong' | 'weak';
+  /** 逆向来源，比如 Kiro。没把握就是 null —— **不硬猜**。 */
+  source?: string | null;
+  /** 逐条人话证据，界面上原样列出来让使用者自己复核。 */
+  evidence: string[];
+  /** 限流头真伪（连发两次看计数动没动）。null = 对方压根没给限流头。 */
+  ratelimit_real?: boolean | null;
+  detail: string;
+}
+
 export interface LatencyResult {
   base_url: string;
   /** 毫秒。null = 没连上。 */
@@ -761,6 +777,14 @@ export const api = {
     call<ModelList>('relay_fetch_models', { baseUrl, id }),
   relayTestLatency: (baseUrl: string, id?: string) =>
     call<LatencyResult>('relay_test_latency', { baseUrl, id }),
+  /**
+   * 查这家的**真实后端**：Anthropic / Bedrock(Kiro) / Vertex(Antigravity)。
+   *
+   * 跟上面两个一样会把 Key 发出去，而且它要真发一次 `/v1/messages`，
+   * **会消耗一点点额度**。只在用户点了才调。
+   */
+  relayDetectBackend: (baseUrl: string, id?: string, model?: string) =>
+    call<BackendReport>('relay_detect_backend', { baseUrl, id, model }),
 
   // 时区
   tzCurrent: () => call<string>('tz_current'),

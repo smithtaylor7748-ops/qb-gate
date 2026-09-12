@@ -821,6 +821,21 @@ async fn relay_fetch_models(
     relay::probe::fetch_models(&base_url, key.as_deref()).await
 }
 
+/// 查这家中转站的**真实后端**是 Anthropic、Bedrock 还是 Vertex。
+///
+/// 同 `relay_fetch_models`：会把 Key 发到用户填的地址上，**只在用户点了才跑**。
+/// 它要真发一次 `/v1/messages`（max_tokens=1），所以也会**消耗一点点额度**——
+/// 界面上得说清楚，别让人以为是免费的只读查询。
+#[tauri::command]
+async fn relay_detect_backend(
+    base_url: String,
+    id: Option<String>,
+    model: Option<String>,
+) -> Result<relay::backend::BackendReport> {
+    let key = key_of(id.as_deref());
+    relay::backend::detect(&base_url, key.as_deref(), model.as_deref()).await
+}
+
 /// 测端点延迟。同上，只在用户点了才跑。
 #[tauri::command]
 async fn relay_test_latency(base_url: String, id: Option<String>) -> relay::probe::LatencyResult {
@@ -1297,6 +1312,7 @@ pub fn run() {
             relay_presets,
             relay_fetch_models,
             relay_test_latency,
+            relay_detect_backend,
             settings_load,
             settings_save,
             snapshot_list,

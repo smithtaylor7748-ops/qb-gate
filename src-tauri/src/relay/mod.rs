@@ -30,6 +30,7 @@
 //!
 //! 三条都有单测钉着，见文件末尾。
 
+pub mod backend;
 pub mod presets;
 pub mod probe;
 pub mod secret;

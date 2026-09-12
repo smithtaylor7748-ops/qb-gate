@@ -11,12 +11,14 @@ import {
   Plus,
   RotateCw,
   Save,
+  Search,
   Trash2,
 } from 'lucide-react';
 
 import {
   api,
   type AuthStyle,
+  type BackendReport,
   type LatencyResult,
   type Preset,
   type ProviderView,
@@ -115,6 +117,7 @@ export default function Relay() {
   const [presets, setPresets] = useState<Preset[]>([]);
   const [models, setModels] = useState<string[] | null>(null);
   const [latency, setLatency] = useState<Record<string, LatencyResult>>({});
+  const [backends, setBackends] = useState<Record<string, BackendReport>>({});
 
   const rows = useMemo(
     () => (list.data ?? []).filter((p) => p.target === tab),
@@ -201,6 +204,22 @@ export default function Relay() {
     try {
       const r = await api.relayTestLatency(p.base_url, p.id);
       setLatency((m) => ({ ...m, [p.id]: r }));
+    } finally {
+      setBusy('');
+    }
+  }
+
+  /**
+   * 查真实后端。**会真发一次请求、消耗一点点额度**，所以只有点了才跑，
+   * 也没有「全部检测」那种批量入口 —— 批量意味着一次点击烧掉 N 次调用。
+   */
+  async function detectBackend(p: ProviderView) {
+    setBusy(`be-${p.id}`);
+    try {
+      const r = await api.relayDetectBackend(p.base_url, p.id, p.model ?? undefined);
+      setBackends((m) => ({ ...m, [p.id]: r }));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy('');
     }
@@ -389,8 +408,10 @@ export default function Relay() {
                         {ping.ms != null ? `${ping.ms} ms` : '连不上'}
                       </Pill>
                     )}
+                    {backends[p.id] && <BackendPill r={backends[p.id]} />}
                   </div>
 
+                  {backends[p.id] && <BackendEvidence r={backends[p.id]} />}
                   {p.note && <p className="notice mt-1">{p.note}</p>}
                   {p.has_key && !p.key_encrypted && (
                     <p className="notice notice--warn mt-1">
@@ -410,6 +431,16 @@ export default function Relay() {
                       onClick={() => void testOne(p)}
                     >
                       测速
+                    </Button>
+                    <Button
+                      size="sm"
+                      icon={<Search size={11} />}
+                      loading={busy === `be-${p.id}`}
+                      disabled={!!busy}
+                      title="真发一次请求看响应头，会消耗一点点额度"
+                      onClick={() => void detectBackend(p)}
+                    >
+                      验后端
                     </Button>
                     <Button
                       size="sm"
@@ -716,5 +747,58 @@ export default function Relay() {
         )}
       </ConfirmDialog>
     </>
+  );
+}
+
+const BACKEND_LABEL: Record<BackendReport['backend'], string> = {
+  anthropic: 'Anthropic 官方',
+  bedrock: 'AWS Bedrock',
+  vertex: 'Google Vertex',
+  unsure: '说不准',
+};
+
+/**
+ * 后端徽章。
+ *
+ * 「说不准」是一等结论，不是加载失败 —— 证据不够就得这么显示，
+ * 跟纯净度那套「拿不到的字段如实报未知，不猜成通过」是同一条。
+ */
+function BackendPill({ r }: { r: BackendReport }) {
+  const tone =
+    r.backend === 'anthropic' ? (r.confidence === 'strong' ? 'ok' : 'warn') :
+    r.backend === 'unsure' ? 'default' : 'danger';
+  return (
+    <Pill tone={tone} title={r.detail}>
+      {BACKEND_LABEL[r.backend]}
+      {r.source ? ` · ${r.source}` : ''}
+      {r.confidence === 'weak' && r.backend !== 'unsure' ? '（存疑）' : ''}
+    </Pill>
+  );
+}
+
+/** 证据逐条列出来 —— 只给结论的话，使用者没法自己复核，也就没法反驳。 */
+function BackendEvidence({ r }: { r: BackendReport }) {
+  return (
+    <Collapsible className="mt-1" summary={`后端判定依据（${r.evidence.length} 条）`}>
+      <p className="notice">{r.detail}</p>
+      <ul className="mt-1">
+        {r.evidence.map((e, i) => (
+          <li key={i} className="notice">
+            · {e}
+          </li>
+        ))}
+      </ul>
+      {r.ratelimit_real === false && (
+        <p className="notice notice--warn mt-1">
+          限流头两次请求之间一动不动，<strong>疑似写死的假头</strong>。
+          真的官方直连不会这样。
+        </p>
+      )}
+      <p className="notice mt-1">
+        判定看的是响应头指纹与「该有却没有」的负证据。
+        中转站换一层实现就可能变，<strong>这不是权威结论</strong>，
+        只是给你一个自己去问对方的由头。
+      </p>
+    </Collapsible>
   );
 }
