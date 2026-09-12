@@ -193,6 +193,33 @@ fn hook_uninstall() -> Result<gate::hook::HookStatus> {
     gate::hook::uninstall()
 }
 
+// -------------------------------------------------------------- 版本库
+
+/// 托管目录的版本库里有哪几版可以退回去。
+#[tauri::command]
+fn managed_history(which: install::managed::App) -> Vec<install::versions::VersionEntry> {
+    let root = settings::managed_apps_dir();
+    let dir = install::managed::app_dir(&root, which);
+    let current = install::managed::record_of(&root, which).map(|r| r.version);
+    install::versions::history(&dir, which, current.as_deref())
+}
+
+/// 回滚到版本库里的某一版。
+///
+/// **会先把当前这份收进版本库再换** —— 反过来的话中间那一刻当前版本已经没了，
+/// 换不上去就两头空。换完要重新上锁（调用方负责，跟安装走同一条路）。
+#[tauri::command]
+async fn managed_rollback(which: install::managed::App, version: String) -> Result<String> {
+    let root = settings::managed_apps_dir();
+    let dir = install::managed::app_dir(&root, which);
+    let current = install::managed::record_of(&root, which);
+    let msg = install::versions::rollback(&dir, which, &version, current.as_ref())?;
+    // 换上来的那份此刻是从版本库拷过来的，ACL 跟着源文件走 —— 必须重锁一遍，
+    // 否则回滚等于顺手把门禁摘了。
+    let n = gate::lock_all().unwrap_or(0);
+    Ok(format!("{msg}，已重新上锁 {n} 个副本"))
+}
+
 /// 国家白名单的两个起手式。**面板不替你选**，只是省得手打。
 #[tauri::command]
 fn country_presets() -> Vec<(String, Vec<String>)> {
@@ -1278,6 +1305,8 @@ pub fn run() {
             allowlist_write,
             allowlist_add_current,
             country_presets,
+            managed_history,
+            managed_rollback,
             hook_status,
             hook_install,
             hook_uninstall,

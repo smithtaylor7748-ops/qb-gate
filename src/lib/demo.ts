@@ -51,6 +51,7 @@ import type {
   TraceReport,
   UpdateStatus,
   UpgradePlan,
+  VersionEntry,
 } from './api';
 
 export const DEMO_ENABLED = import.meta.env.VITE_DEMO === '1';
@@ -343,6 +344,33 @@ const managed: ManagedStatus = {
   ],
 };
 
+const versionHistory: VersionEntry[] = [
+  {
+    version: '2.0.14',
+    path: `${APPS}\\claude-code\\versions\\2.0.14\\claude.exe`,
+    sha256: 'a1b2c3d4e5f6',
+    archived_at: '2026-09-11 17:22',
+    is_current: true,
+    locked: true,
+  },
+  {
+    version: '2.0.11',
+    path: `${APPS}\\claude-code\\versions\\2.0.11\\claude.exe`,
+    sha256: 'f6e5d4c3b2a1',
+    archived_at: '2026-09-02 10:05',
+    is_current: false,
+    locked: true,
+  },
+  {
+    version: '2.0.9',
+    path: `${APPS}\\claude-code\\versions\\2.0.9\\claude.exe`,
+    sha256: '0f1e2d3c4b5a',
+    archived_at: '2026-08-24 08:41',
+    is_current: false,
+    locked: true,
+  },
+];
+
 const installProbe: InstallProbe = {
   winget_available: true,
   winget_version: 'v1.9.25200',
@@ -624,6 +652,8 @@ const FIXTURES: Record<string, () => unknown> = {
   accounts_list: () => accounts,
   managed_status: () => managed,
   managed_externals: () => externals,
+  managed_history: () => versionHistory,
+  managed_rollback: () => '已回滚到 2.0.11，已重新上锁 5 个副本',
   managed_cleanup: () => cleanup,
   relay_list: () => relay,
   relay_current: () => [relayMeta],

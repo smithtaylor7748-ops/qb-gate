@@ -112,6 +112,9 @@ impl Roots {
 pub enum Kind {
     /// 面板自己装的那份：`<托管根目录>\claude-code\claude.exe`（v0.9.0）。启动优先级最高。
     Managed,
+    /// 面板版本库里的旧版本（`<托管根>\claude-codeersions\<版本>\claude.exe`）。
+    /// 只锁不启动 —— 它是留给回滚用的，不该被当成启动候选。
+    ManagedVersion,
     Native,
     NativeVersion,
     Winget,
@@ -160,6 +163,7 @@ impl Kind {
         use crate::gate::targets::TargetKind as T;
         match self {
             Kind::Managed => T::Managed,
+            Kind::ManagedVersion => T::ManagedVersion,
             Kind::NativeVersion => T::NativeVersion,
             Kind::DesktopManaged | Kind::MsixManaged => T::CliVersioned,
             Kind::Editor => T::EditorExtension,
@@ -370,9 +374,20 @@ pub fn scan(r: &Roots) -> Vec<Install> {
 
     // 面板托管的那份放最前面：去重时先扫到的留下，它得保住 `Managed` 这个身份。
     if let Some(m) = &r.managed {
-        let exe = m.join("claude-code").join("claude.exe");
+        let dir = m.join("claude-code");
+        let exe = dir.join("claude.exe");
         if exe.is_file() {
             found.push((Kind::Managed, exe));
+        }
+        // 版本库里每一份都是完整可执行的 claude.exe，一个都不能漏（硬约束 1）。
+        // 这里是全项目唯一知道这个位置的地方（硬约束 10）。
+        if let Ok(rd) = std::fs::read_dir(dir.join("versions")) {
+            for e in rd.flatten() {
+                let p = e.path().join("claude.exe");
+                if p.is_file() {
+                    found.push((Kind::ManagedVersion, p));
+                }
+            }
         }
     }
 

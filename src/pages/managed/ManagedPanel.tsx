@@ -11,15 +11,22 @@
  */
 
 import { useEffect, useState } from 'react';
-import { FolderCog, Trash2 } from 'lucide-react';
+import { FolderCog, Trash2, Undo2 } from 'lucide-react';
 
-import { api, type ManagedApp, type ManagedExternal, type ManagedProbe } from '../../lib/api';
+import {
+  api,
+  type ManagedApp,
+  type ManagedExternal,
+  type ManagedProbe,
+  type VersionEntry,
+} from '../../lib/api';
 import { AFTER, R } from '../../lib/resources';
 import { invalidate, useResource, useSession } from '../../lib/store';
 import {
   Bullet,
   Button,
   ConfirmDialog,
+  EmptyState,
   Modal,
   PathField,
   Pill,
@@ -278,5 +285,113 @@ export function ExternalsBlock() {
         </p>
       </ConfirmDialog>
     </div>
+  );
+}
+
+/**
+ * 版本库与一键回滚。
+ *
+ * 在这之前，升级只留一个 `claude.exe.old.<时间戳>`，下次安装就删 ——
+ * 名字里没有版本号，装第二次上一版就永远没了。能往前走却退不回来，
+ * 等于每次升级都是单程票。
+ *
+ * 界面上要说清两件容易误解的事：回滚**不影响正在跑的会话**（Windows 不卸
+ * 已加载的映像，下次启动才生效），以及版本库里的每一份**照样是锁着的**。
+ */
+export function VersionHistoryBlock() {
+  const toast = useToast();
+  const [app] = useState<ManagedApp>('claude-code');
+  const [rows, setRows] = useState<VersionEntry[] | null>(null);
+  const [busy, setBusy] = useState('');
+  const [ask, setAsk] = useState<VersionEntry | null>(null);
+
+  async function load() {
+    try {
+      setRows(await api.managedHistory(app));
+    } catch {
+      setRows([]);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app]);
+
+  async function rollback(v: VersionEntry) {
+    setBusy(v.version);
+    try {
+      toast.ok(await api.managedRollback(app, v.version));
+      invalidate(...AFTER.install);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy('');
+      setAsk(null);
+    }
+  }
+
+  return (
+    <>
+      <p className="notice mb-2">
+        每次升级都会把旧版本收进版本库，最多留 3 份。新版本有问题时可以退回去 ——
+        <strong>回滚不影响正在跑的会话</strong>，Windows 不会卸掉已加载的映像，
+        下次启动才生效。
+      </p>
+
+      {rows === null ? (
+        <p className="notice">读取中…</p>
+      ) : rows.length === 0 ? (
+        <EmptyState title="版本库是空的">
+          面板托管安装升级过一次之后，这里才会有东西。
+        </EmptyState>
+      ) : (
+        rows.map((v) => (
+          <Row
+            key={v.version}
+            side={
+              v.is_current ? (
+                <Pill tone="ok">在用</Pill>
+              ) : (
+                <Button
+                  size="sm"
+                  icon={<Undo2 size={12} />}
+                  loading={busy === v.version}
+                  disabled={!!busy}
+                  onClick={() => setAsk(v)}
+                >
+                  回滚
+                </Button>
+              )
+            }
+          >
+            <span className="font-mono">{v.version}</span>
+            <span className="notice">{v.archived_at || '归档时间未知'}</span>
+            {/* 版本库里的每一份都是完整可执行的 claude.exe。没锁上就是
+                现成的绕过入口，必须显眼 —— 不能只在日志里提一句。 */}
+            {!v.locked && <Pill tone="danger">未上锁</Pill>}
+          </Row>
+        ))
+      )}
+
+      <ConfirmDialog
+        open={!!ask}
+        onCancel={() => setAsk(null)}
+        onConfirm={() => ask && void rollback(ask)}
+        title={`回滚到 ${ask?.version ?? ''}？`}
+        confirmLabel="确认回滚"
+        loading={!!busy}
+      >
+        <p>
+          当前这份会<strong>先收进版本库</strong>再把 {ask?.version} 换上来，
+          所以随时可以再换回去。
+        </p>
+        <p className="notice notice--warn mt-2">
+          正在跑的 Claude Code 会话<strong>不受影响</strong>，
+          换的是下一次启动用的那个文件。换完面板会重新上锁。
+        </p>
+      </ConfirmDialog>
+    </>
   );
 }

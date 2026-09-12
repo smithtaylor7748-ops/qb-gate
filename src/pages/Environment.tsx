@@ -45,7 +45,7 @@ import {
   UPGRADE_ACTION_LABEL,
   UPGRADE_ACTION_TONE,
 } from '../ui';
-import { ExternalsBlock, ManagedDirControl } from './managed/ManagedPanel';
+import { ExternalsBlock, ManagedDirControl, VersionHistoryBlock } from './managed/ManagedPanel';
 
 const DOWNLOAD_PAGE = 'https://claude.ai/download';
 const CHROME_PAGE = 'https://www.google.com/chrome/';
@@ -399,6 +399,11 @@ export default function Environment() {
         </div>
 
         <ExternalsBlock />
+      </Card>
+
+      {/* ---------------------------------------------------- 版本库 */}
+      <Card title="版本库与回滚" icon={<HistoryIcon size={14} />} className="mb-3">
+        <VersionHistoryBlock />
 
         {(installTask.running || installTask.log.length > 0) && (
           <div className="mt-4">

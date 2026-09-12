@@ -801,10 +801,23 @@ pub async fn install(app: App, channel: &str, rep: &Reporter) -> Result<InstallO
 
     rep.phase(6, "放进托管目录");
     let target = exe_in(&root, app);
+    // 旧版本的记录要在 place 之前读 —— place 之后 installs.json 就要被新版本覆盖了。
+    let previous = record_of(&root, app);
     let backup = place(app, &bin, &target, &bin_sha)?;
     if let Some(b) = &backup {
-        log.push(format!("旧版本留底为 {}（下次安装时清掉）", b.display()));
         lock_backup(b, &mut log);
+        // 收进版本库，留着给回滚用。收不进去不算安装失败 ——
+        // 那一份还在原地当留底，锁也加了，只是退不回去而已。
+        match previous.as_ref() {
+            Some(prev) => match crate::install::versions::archive(&dir, app, b, prev) {
+                Ok(p) => log.push(format!("旧版本 {} 已收进版本库（{}）", prev.version, p.display())),
+                Err(e) => log.push(format!("旧版本没能收进版本库：{e}。留底仍在 {}", b.display())),
+            },
+            None => log.push(format!(
+                "旧版本留底为 {}，但读不出它是哪一版，没收进版本库",
+                b.display()
+            )),
+        }
     }
     // Codex 的辅助程序跟主程序放在一起，名字不改。每一个都先验签名 ——
     // GitHub 没给 zip 的 SHA-256 时，这是唯一的来源证明。
@@ -837,6 +850,15 @@ pub async fn install(app: App, channel: &str, rep: &Reporter) -> Result<InstallO
             installed_at: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
         },
     )?;
+
+    for n in crate::install::versions::prune(
+        &dir,
+        app,
+        Some(rel.version.as_str()),
+        crate::install::versions::KEEP,
+    ) {
+        log.push(n);
+    }
 
     rep.phase(7, "重新上锁");
     Ok(InstallOutcome {
@@ -1127,8 +1149,15 @@ pub fn plan_claude_externals(
                 target: i.path.display().to_string(),
                 action: format!("删除 {}", i.path.display()),
             }),
-            // 别的程序的，或者就是托管那份。
-            Kind::Managed | Kind::DesktopManaged | Kind::MsixManaged | Kind::Editor | Kind::DesktopStub => {}
+            // 别的程序的，或者就是托管那份（含版本库里留给回滚用的旧版本 ——
+            // 它们在托管根下面，上面那个 is_inside 已经跳过了，这里只是把
+            // 这个分支写明白：**清外部副本永远不碰版本库**，碰了回滚就没了）。
+            Kind::Managed
+            | Kind::ManagedVersion
+            | Kind::DesktopManaged
+            | Kind::MsixManaged
+            | Kind::Editor
+            | Kind::DesktopStub => {}
         }
     }
     for s in stale {

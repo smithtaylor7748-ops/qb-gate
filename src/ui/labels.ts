@@ -26,6 +26,7 @@ import type {
 
 export const TARGET_KIND_LABEL: Record<string, string> = {
   Managed: '面板托管',
+  ManagedVersion: '版本库留存',
   Cli: 'CLI 主副本',
   CliVersioned: '桌面端带的副本',
   NativeVersion: '安装器版本库',
@@ -38,6 +39,7 @@ export const TARGET_KIND_LABEL: Record<string, string> = {
 /** 每类副本一句话说明，鼠标停上去显示。 */
 export const TARGET_KIND_HINT: Record<string, string> = {
   Managed: '面板自己从官方源装进托管目录的那份。启动时优先用它',
+  ManagedVersion: '版本库里留着给回滚用的旧版本。只锁不启动 —— 它照样是完整可执行的',
   Cli: '官方安装器、winget、Scoop 或 PATH 上的 Claude Code',
   CliVersioned:
     '%APPDATA%\\Claude*\\claude-code\\<版本>\\ 下的副本，每个桌面端资料目录、每个版本各一份，全都要锁。⚠ Claude 桌面端的 Code 页每开一个新会话都要拉起它 —— 上锁之后那句 Claude Code couldn’t start 就是这么来的',
@@ -52,6 +54,7 @@ export const TARGET_KIND_HINT: Record<string, string> = {
 /** Claude Code 副本的来源。与 Rust `install::inventory::Kind` 一一对应。 */
 export const INSTALL_KIND_LABEL: Record<InstallKind, string> = {
   managed: '面板托管',
+  managed_version: '面板版本库',
   native: '官方安装器',
   native_version: '安装器版本库',
   winget: 'winget',

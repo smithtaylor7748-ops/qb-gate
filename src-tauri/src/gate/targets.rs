@@ -34,6 +34,9 @@ pub struct Target {
 pub enum TargetKind {
     /// 面板托管安装的那份（`<托管根目录>\claude-code\claude.exe`，v0.9.0）
     Managed,
+    /// 面板版本库里留着给回滚用的旧版本 `<托管根>\claude-codeersions\<版本>\`。
+    /// **每一份都是完整可执行的**，所以照样要锁 —— 漏一个就是现成的绕过入口。
+    ManagedVersion,
     /// Claude Code CLI（`.local\bin`、winget、Scoop、PATH 上的、npm 包里的 exe）
     Cli,
     /// 桌面端带的版本化 CLI 副本：`%APPDATA%\Claude*\claude-code\<版本>\`

@@ -72,6 +72,7 @@ export interface GateTarget {
    */
   kind:
     | 'Managed'
+    | 'ManagedVersion'
     | 'Cli'
     | 'CliVersioned'
     | 'NativeVersion'
@@ -123,6 +124,7 @@ export interface Software {
  */
 export type InstallKind =
   | 'managed'
+  | 'managed_version'
   | 'native'
   | 'native_version'
   | 'winget'
@@ -376,6 +378,18 @@ export interface ManagedStatus {
   default_root: string;
   is_default: boolean;
   apps: ManagedAppStatus[];
+}
+
+/** 版本库里的一版。 */
+export interface VersionEntry {
+  version: string;
+  path: string;
+  sha256: string;
+  archived_at: string;
+  /** 这一份现在就是在用的那个版本。 */
+  is_current: boolean;
+  /** 版本库里每一份都是完整可执行的，所以照样要上锁。没锁上要显眼。 */
+  locked: boolean;
 }
 
 /** 「这个目录能不能当托管根目录」的当场实测结果。 */
@@ -757,6 +771,14 @@ export const api = {
   managedExternals: () => call<ManagedExternal[]>('managed_externals'),
   /** **彻底清除**一个软件的外部副本。托管那份必须已经装好。 */
   managedCleanup: (which: ManagedApp) => call<CleanupReport>('managed_cleanup', { which }),
+  /** 版本库里有哪几版可以退回去。最新的在前。 */
+  managedHistory: (which: ManagedApp) => call<VersionEntry[]>('managed_history', { which }),
+  /**
+   * 回滚到某一版。会**先把当前这份收进版本库再换**，换完重新上锁。
+   * 正在跑的 Claude Code 不受影响（Windows 不卸已加载的映像），下次启动才生效。
+   */
+  managedRollback: (which: ManagedApp, version: string) =>
+    call<string>('managed_rollback', { which, version }),
 
   // 中转站
   relayList: () => call<ProviderView[]>('relay_list'),
