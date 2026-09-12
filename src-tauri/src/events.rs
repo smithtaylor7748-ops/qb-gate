@@ -23,6 +23,7 @@ pub const TASK_LAUNCH_DESKTOP: &str = "launch-claude-desktop";
 pub const TASK_LAUNCH_CODEX: &str = "launch-codex";
 pub const TASK_KILL_PREVIEW: &str = "killswitch-preview";
 pub const TASK_KILL_EXECUTE: &str = "killswitch-execute";
+pub const TASK_CHROME: &str = "chrome-reinstall";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskProgress {
@@ -195,6 +196,7 @@ mod tests {
                 TASK_LAUNCH_CODEX,
                 TASK_KILL_PREVIEW,
                 TASK_KILL_EXECUTE,
+                TASK_CHROME,
             ],
             [
                 "install",
@@ -206,6 +208,7 @@ mod tests {
                 "launch-codex",
                 "killswitch-preview",
                 "killswitch-execute",
+                "chrome-reinstall",
             ]
         );
     }

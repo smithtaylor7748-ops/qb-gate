@@ -1,0 +1,48 @@
+name: CI
+
+# 每次推送、每个 PR 都在一台**全新的 Windows 机器**上跑一遍类型检查和单测。
+#
+# 为什么值得：这个面板要找「Claude 装在哪」，而作者那台机器上什么都有 ——
+# 只在那台机器上测，永远测不出「别人的机器上什么都没有 / 只装了 winget 那份」
+# 会怎样。`install::inventory` 与 `accounts` 的单测是在临时目录里搭假机器跑的，
+# 放到 GitHub 的干净 runner 上，正好顺带证明它们不依赖作者本机的任何状态
+# （档案 §1 第 8 条：单测不许碰真实的运行期状态）。
+#
+# 出安装包仍然走 release.yml（打 tag 才跑）。
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Typecheck and build frontend
+        run: npm run build
+
+      # 单测全部打桩：不联网、不动真 ACL、不碰真进程、不写运行期状态文件。
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --locked

@@ -20,11 +20,28 @@
 //!
 //! 桌面端起的是 `%LOCALAPPDATA%\AnthropicClaude\claude.exe` 这个 Squirrel 存根，
 //! **不是** `app-*` 下那份 —— 那份不能加 Deny ACE，也不该由我们直接拉起。
+//!
+//! # Claude Code 的启动环境（v0.8.0 补回来的两个变量）★
+//!
+//! 旧脚本 `ClaudeIpGate.ps1` 的 `Open-Authorized` 在启动前设了两个变量，
+//! 移植成 Rust 时**两个都丢了**：
+//!
+//! | 变量 | 值 | 丢了的后果 |
+//! |---|---|---|
+//! | `CLAUDE_CONFIG_DIR` | 当前槽位的**具体目录** | 切换账户只改了一个没人读的联结点；Claude Code 读默认的 `~\.claude`，那里从没登录过 —— 切到哪个槽位都弹登录界面 |
+//! | `DISABLE_AUTOUPDATER` | `1` | 自动更新写一份全新的 exe，新文件继承干净 ACL，门禁那条 Deny 跟着旧文件没了（档案 §7.9） |
+//!
+//! 设成具体目录而不是 `claude-profile` 联结点，理由见 `accounts/mod.rs` 文件头：
+//! 联结点换了指向之后，没收掉的旧会话刷新 token 会穿过它写进新槽位。
+//!
+//! 没有激活槽位（新装、还没建过）时不设 `CLAUDE_CONFIG_DIR`，Claude Code 用它自己的
+//! 默认目录 —— 那是使用者原本就在用的，不该由面板替他换掉。
 
 use crate::error::{GateError, Result};
 use crate::gate::watchdog::WatchMode;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -84,6 +101,17 @@ pub struct LaunchResult {
     pub pid: Option<u32>,
     pub watchdog: WatchMode,
     pub detail: String,
+    /// Claude Code 用的是哪个账户槽位。`None` = 没有激活槽位，用的是默认目录。
+    pub slot: Option<String>,
+}
+
+/// Claude Code 的启动环境。纯函数，可单测 —— 两个变量为什么必须有，见文件头。
+pub fn claude_code_env(slot_dir: Option<&Path>) -> Vec<(&'static str, OsString)> {
+    let mut v: Vec<(&'static str, OsString)> = vec![("DISABLE_AUTOUPDATER", "1".into())];
+    if let Some(d) = slot_dir {
+        v.push(("CLAUDE_CONFIG_DIR", d.as_os_str().to_owned()));
+    }
+    v
 }
 
 /// 桌面端存根路径。
@@ -99,11 +127,22 @@ pub fn desktop_stub() -> Option<PathBuf> {
 /// 决定要起哪个文件。
 pub fn resolve(target: LaunchTarget) -> Result<PathBuf> {
     match target {
-        // 与升级流程共用同一套查找，免得「升级的那份」和「启动的那份」不是同一个。
-        LaunchTarget::ClaudeCode => crate::plugins::sillytavern::find_official_claude(),
+        // 与检测、上锁共用同一张位置表（install::inventory），
+        // 免得「检测到的那份」「锁住的那份」「启动的那份」各是各的。
+        // npm 装的 claude.cmd 也在候选里（排最后）—— 它锁不上，但照样要先验 IP 再起。
+        LaunchTarget::ClaudeCode => {
+            crate::install::inventory::preferred_cli(&crate::install::inventory::Roots::current())
+                .map(|i| i.path)
+                .ok_or_else(|| {
+                    GateError::Other("找不到 Claude Code，请先在「环境与安装」里装好。".into())
+                })
+        }
         LaunchTarget::ClaudeDesktop => desktop_stub().ok_or_else(|| {
             GateError::Other(
-                "找不到 Claude 桌面端的启动存根，请先在「环境与安装」里装好桌面端。".into(),
+                "找不到 Claude 桌面端的启动存根（%LOCALAPPDATA%\\AnthropicClaude\\claude.exe）。\
+                 没装的话先在「环境与安装」里装好；如果是 MSIX 方式装的，请从开始菜单打开 ——\
+                 面板没法替 MSIX 版上锁或启动。"
+                    .into(),
             )
         }),
         // 与检测共用同一份候选路径表，免得「检测到的那份」和「启动的那份」
@@ -118,24 +157,33 @@ pub fn resolve(target: LaunchTarget) -> Result<PathBuf> {
 }
 
 #[cfg(windows)]
-fn spawn(target: LaunchTarget, exe: &std::path::Path) -> Result<Option<u32>> {
+fn spawn(
+    target: LaunchTarget,
+    exe: &std::path::Path,
+    envs: &[(&'static str, OsString)],
+) -> Result<Option<u32>> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
 
     match target {
         // Codex 也是控制台程序，跟 Claude Code 走同一条路。
-        // npm 装的是 codex.cmd 批处理，`start` 一样能起。
+        // npm 装的是 codex.cmd / claude.cmd 批处理，`start` 一样能起。
         LaunchTarget::ClaudeCode | LaunchTarget::Codex => {
             // 控制台程序：借 `start` 让 Windows 给它开一个新控制台窗口。
             // 第一个空引号是窗口标题占位 —— 少了它，带空格的路径会被 start
             // 当成标题，然后什么都不启动。
+            //
+            // 路径自己加引号，不交给标准库：不含空格、但含 & 的用户名（Tom&Jerry），
+            // 标准库不会替它加引号，cmd 就会在 & 处把命令截成两条。
+            // Windows 路径里不可能出现双引号，所以这样拼是安全的。
             let mut cmd = std::process::Command::new("cmd");
-            cmd.arg("/c")
-                .arg("start")
-                .arg("")
-                .arg(exe)
+            cmd.raw_arg(format!("/D /c start \"\" \"{}\"", exe.display()))
                 .creation_flags(CREATE_NO_WINDOW);
+            // `start` 起的新进程继承 cmd 的环境，所以变量设在 cmd 上就够了。
+            for (k, v) in envs {
+                cmd.env(k, v);
+            }
             if let Some(home) = dirs::home_dir() {
                 cmd.current_dir(home);
             }
@@ -160,7 +208,11 @@ fn spawn(target: LaunchTarget, exe: &std::path::Path) -> Result<Option<u32>> {
 }
 
 #[cfg(not(windows))]
-fn spawn(_target: LaunchTarget, _exe: &std::path::Path) -> Result<Option<u32>> {
+fn spawn(
+    _target: LaunchTarget,
+    _exe: &std::path::Path,
+    _envs: &[(&'static str, OsString)],
+) -> Result<Option<u32>> {
     Err(GateError::Other("启动功能只在 Windows 上可用".into()))
 }
 
@@ -172,6 +224,20 @@ pub async fn launch(target: LaunchTarget, gate: &crate::gate::GateState) -> Resu
     // 先把 exe 找出来。找不到就直接失败，**不要先解锁再发现没东西可起**。
     let exe = resolve(target)?;
 
+    // Claude Code 用哪个槽位，启动之前就定下来（见文件头那张表）。
+    let accounts = crate::accounts::AccountRoots::current();
+    let (slot_label, slot_dir) = match target {
+        LaunchTarget::ClaudeCode => (
+            crate::accounts::active_label(&accounts),
+            crate::accounts::active_slot_dir(&accounts),
+        ),
+        _ => (None, None),
+    };
+    let envs = match target {
+        LaunchTarget::ClaudeCode => claude_code_env(slot_dir.as_deref()),
+        _ => Vec::new(),
+    };
+
     // 不归门禁管的目标（默认状态的 Codex）：直接起，不验 IP、不动任何 ACL。
     // **别在这里偷偷验一下 IP** —— 开关关着就是关着，
     // 「顺手挡一下」等于一个用户没打开却生效了的功能。
@@ -180,7 +246,7 @@ pub async fn launch(target: LaunchTarget, gate: &crate::gate::GateState) -> Resu
         crate::gate::open_authorized(target.holder(), gate).await?;
     }
 
-    let pid = match spawn(target, &exe) {
+    let pid = match spawn(target, &exe, &envs) {
         Ok(pid) => pid,
         Err(e) => {
             if gated {
@@ -190,9 +256,16 @@ pub async fn launch(target: LaunchTarget, gate: &crate::gate::GateState) -> Resu
         }
     };
 
+    let which = match (target, &slot_label) {
+        (LaunchTarget::ClaudeCode, Some(l)) => format!("，账户槽位 {l}"),
+        (LaunchTarget::ClaudeCode, None) => {
+            "，没有激活的账户槽位，用的是 Claude Code 自己的默认目录 ~\\.claude".to_string()
+        }
+        _ => String::new(),
+    };
     let detail = if gated {
         format!(
-            "{} 已放行并启动（{}）。看门狗每 {} 秒核一次出口 IP。",
+            "{} 已放行并启动（{}{which}）。看门狗每 {} 秒核一次出口 IP。",
             target.label(),
             exe.display(),
             target.watch_mode().interval().as_secs()
@@ -212,6 +285,7 @@ pub async fn launch(target: LaunchTarget, gate: &crate::gate::GateState) -> Resu
         pid,
         watchdog: target.watch_mode(),
         detail,
+        slot: slot_label,
     })
 }
 
@@ -248,6 +322,31 @@ mod tests {
         );
         let back: LaunchTarget = serde_json::from_str("\"claude-desktop\"").unwrap();
         assert_eq!(back, LaunchTarget::ClaudeDesktop);
+    }
+
+    #[test]
+    fn claude_code_gets_the_slot_dir_and_no_autoupdate() {
+        // 回归：移植时这两个变量都丢了。丢了 CLAUDE_CONFIG_DIR，切到哪个槽位
+        // Claude Code 都读默认目录、弹登录界面；丢了 DISABLE_AUTOUPDATER，
+        // 自动更新写的新 exe 没有 Deny，门禁跟着旧文件没了。
+        let dir = std::path::Path::new(r"C:\Users\me\AppData\Local\ClaudeIpGate\claude-profile-main");
+        let env = claude_code_env(Some(dir));
+        let get = |k: &str| env.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone());
+        assert_eq!(get("CLAUDE_CONFIG_DIR"), Some(dir.as_os_str().to_owned()));
+        assert_eq!(get("DISABLE_AUTOUPDATER"), Some("1".into()));
+        // 必须是具体槽位目录，不能是 claude-profile 联结点本身 ——
+        // 联结点换指向之后旧会话会穿过它把 token 写进别的槽位。
+        assert!(!get("CLAUDE_CONFIG_DIR")
+            .unwrap()
+            .to_string_lossy()
+            .ends_with(r"\claude-profile"));
+    }
+
+    #[test]
+    fn without_a_slot_claude_code_keeps_its_own_default_dir() {
+        let env = claude_code_env(None);
+        assert!(env.iter().all(|(k, _)| *k != "CLAUDE_CONFIG_DIR"));
+        assert!(env.iter().any(|(k, v)| *k == "DISABLE_AUTOUPDATER" && v == "1"));
     }
 
     #[test]

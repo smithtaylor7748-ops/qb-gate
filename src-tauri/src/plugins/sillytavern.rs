@@ -90,56 +90,44 @@ fn port_in_use(port: u16) -> bool {
 
 // ------------------------------------------------------------------ 定位
 
-/// 定位官方 claude.exe。
+/// 定位官方 claude.exe（给桥接的 `--claude` 用，所以必须是 exe）。
+///
+/// v0.8.0 起跟检测、启动、上锁用同一张表（`install::inventory`）。
+/// 原来这里自己拼一份候选，**而且把 `claude-path.txt` 里记住的路径排第一** ——
+/// 记住的是哪份就一直用哪份，装了新的也不换。现在记住的路径只当最后的兜底：
+/// 表里一份都找不到时，才看使用者是不是手动指过一个表外的位置。
 ///
 /// 排除 `claude-code-cli\` 下的副本 —— 那是项目自带的 vendored 版本，
-/// 不是官方二进制，桥接明确拒绝它。
+/// 不是官方二进制，桥接明确拒绝它（inventory 里也排除了）。
 pub fn find_official_claude() -> Result<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-
     let saved = bridge_data_dir().join("claude-path.txt");
-    if let Ok(t) = std::fs::read_to_string(&saved) {
-        candidates.push(PathBuf::from(t.trim()));
-    }
-    if let Some(h) = dirs::home_dir() {
-        candidates.push(h.join(".local").join("bin").join("claude.exe"));
-    }
-    // 新布局：%APPDATA%\Claude\claude-code\<版本>\claude.exe。
-    // 版本目录名按字符串倒序，优先拿看起来最新的那个 —— 这里只是「挑一个来跑」，
-    // 上锁那边（targets.rs）是**每一个版本都锁**，两者目的不同，别混。
-    if let Some(r) = dirs::config_dir() {
-        let cc = r.join("Claude").join("claude-code");
-        if let Ok(rd) = std::fs::read_dir(&cc) {
-            let mut vers: Vec<PathBuf> = rd
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().is_dir())
-                .map(|e| e.path())
-                .collect();
-            vers.sort();
-            vers.reverse();
-            candidates.extend(vers.into_iter().map(|v| v.join("claude.exe")));
-        }
-    }
-    if let Some(l) = dirs::data_local_dir() {
-        candidates.push(l.join("Programs").join("Claude").join("claude.exe"));
-    }
+    let from_inventory =
+        crate::install::inventory::preferred_exe(&crate::install::inventory::Roots::current());
 
-    for c in candidates {
-        if c.as_os_str().is_empty() || !c.is_file() {
-            continue;
+    let chosen = from_inventory.or_else(|| {
+        let t = std::fs::read_to_string(&saved).ok()?;
+        let c = PathBuf::from(t.trim());
+        let ok = !c.as_os_str().is_empty()
+            && c.is_file()
+            && c.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+            && !c.to_string_lossy().to_lowercase().contains(r"\claude-code-cli\")
+            && !crate::install::inventory::is_desktop_runtime_copy(&c);
+        ok.then_some(c)
+    });
+
+    match chosen {
+        Some(c) => {
+            // 桥接那边的旧脚本会读这个文件。桥接的数据目录不在就别替它建 ——
+            // 没装酒馆的人不该平白多出一个 ClaudeTavernBridge 目录。
+            if bridge_data_dir().is_dir() {
+                let _ = std::fs::write(&saved, c.to_string_lossy().as_bytes());
+            }
+            Ok(c)
         }
-        if c.extension().and_then(|e| e.to_str()) != Some("exe") {
-            continue;
-        }
-        if c.to_string_lossy().to_lowercase().contains(r"\claude-code-cli\") {
-            continue;
-        }
-        let _ = std::fs::write(&saved, c.to_string_lossy().as_bytes());
-        return Ok(c);
+        None => Err(GateError::Other(
+            "找不到官方 Claude Code 程序，请先在「环境与安装」里装好。".into(),
+        )),
     }
-    Err(GateError::Other(
-        "找不到官方 Claude Code 程序，请先在「环境与安装」里装好。".into(),
-    ))
 }
 
 fn find_python() -> Result<PathBuf> {

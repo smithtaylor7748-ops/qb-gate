@@ -36,6 +36,26 @@
   }
 }
 
+/**
+ * 订阅引导页专用的宽栏。
+ *
+ * 只有这一页用得上：`src/subscription-guide/` 是外来模块（MIT，原样引入，
+ * 见 ATTRIBUTION.md），自带一套按 1460px 设计的三栏布局和自己的内外边距。
+ * 边距归零是**故意的** —— 让模块的 `.cg-guide` 自己那份 `padding` 生效，
+ * 两边都加就变成 64px 的空白。这条规则写在宿主这边而不是改模块，
+ * 是为了下次上游出新版能整目录直接换掉。
+ */
+.main-inner--wide {
+  max-width: 1460px;
+  padding: 0;
+}
+
+@media (max-width: 700px) {
+  .main-inner--wide {
+    padding: 0;
+  }
+}
+
 /* ================================================================ 侧栏 */
 
 .sidebar {
@@ -858,10 +878,389 @@
   min-width: 0;
 }
 
+/* ================================================================ 总览页签
+
+   总览的 Claude / GPT 两侧。v0.7.0 新增。
+
+   不用 `.tile` 那套：磁贴是「点了会发生一件事」，页签是「换个视角」，
+   长得一样会让人以为点上去就启动了 —— 总览上恰好两者相邻，更容易混。
+
+   选中态**同时**用底边和背景标：只靠颜色的话，深浅主题里对比度差异很大，
+   而这个组件的整个作用就是「让人一眼知道现在看的是哪一边」。 */
+
+.sidetabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.sidetab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+  padding: 8px 12px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.sidetab:hover {
+  border-color: var(--text-3);
+  color: var(--text);
+}
+
+.sidetab--on {
+  border-color: var(--accent-border);
+  border-bottom-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--text);
+}
+
+.sidetab-name {
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+
+/* 说明常驻，不塞进 title 属性 —— 跟磁贴那条是同一个理由：
+   要让人在点之前就知道那一边有什么。 */
+.sidetab-hint {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* 窄屏竖排：两个页签横着挤会把 hint 截成没用的两三个字。 */
+@media (max-width: 560px) {
+  .sidetabs {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ================================================================ 错误边界 */
 
 .crash {
   margin: 40px auto;
   max-width: 560px;
   text-align: center;
+}
+
+/* ================================================================ 总览
+
+   只给总览页用的原语。放在这里而不是各自组件里内联，理由跟这个文件开头
+   写的一样：一次性排版走 Tailwind 工具类，有名字、有状态的形状走 class。 */
+
+/* ---------------------------------------------------------- 评分权重条
+
+   四段的宽度就是各项权重（35/25/20/20），段内填充是得分比例。
+   替掉原来那条单色进度条 —— 那个只能表达总分，看不出分数被谁拖着、
+   也看不出哪一项还是空的。 */
+
+.wbar {
+  display: flex;
+  gap: 2px;
+  height: 14px;
+  min-width: 0;
+}
+.wseg {
+  background: var(--surface-2);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 0;
+}
+/* 没检测过的段：留空 + 一道斜纹，跟「得了 0 分」区分开。 */
+.wseg--none {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--surface-2) 0 4px,
+    var(--border) 4px 5px
+  );
+}
+.wseg-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--duration-base) var(--ease-out);
+}
+.wseg-fill--ok {
+  background: var(--ok);
+}
+.wseg-fill--warn {
+  background: var(--warn);
+}
+.wseg-fill--danger {
+  background: var(--danger);
+}
+
+/* ---------------------------------------------------------- 评分明细格 */
+
+.scorecell {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  min-width: 0;
+  flex: 1;
+}
+/* 未检测：虚线 + 压暗，不跟已测项混在一起看。 */
+.scorecell--none {
+  border-style: dashed;
+  background: var(--surface-2);
+}
+.scorecell-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--text-xs);
+  min-width: 0;
+}
+.scorecell-name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scorecell-weight {
+  margin-left: auto;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.scorecell-value {
+  font-size: var(--text-xl);
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+.scorecell-value--none {
+  color: var(--text-3);
+}
+
+/* ---------------------------------------------------------- 账户槽位行 */
+
+.slotrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 5px 9px;
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+.slotrow--active {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+.slotrow-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.slotrow-plan {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.slotrow-side {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pager-btn {
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  padding: 2px 8px;
+  font-variant-numeric: tabular-nums;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.pager-btn:hover {
+  border-color: var(--text-3);
+}
+.pager-btn[aria-current='true'] {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+/* ---------------------------------------------------------- 启动磁贴
+
+   替掉原来五个 `.btn--launch` 大按钮。说明文字压成贴内一到两行常驻小字，
+   完整代价留在强制确认框里 —— 见档案 §7 与 Home 里那段注释。 */
+
+.tilegrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  text-align: center;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  border-radius: var(--radius-md);
+  padding: 10px 7px 8px;
+  color: var(--text);
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
+}
+.tile:hover:not(:disabled) {
+  border-color: var(--text-3);
+}
+.tile:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.tile--accent {
+  border-color: var(--accent-border);
+}
+.tile--accent .tile-icon {
+  color: var(--accent);
+}
+/* 桌面端那一贴常驻黄框 —— 「查不到 IP 立即关闭」不是异常态，是它的常态。 */
+.tile--warn {
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+}
+.tile--warn .tile-icon,
+.tile--warn .tile-name,
+.tile--warn .tile-note {
+  color: var(--warn);
+}
+.tile--danger {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+.tile--danger .tile-icon,
+.tile--danger .tile-name,
+.tile--danger .tile-note {
+  color: var(--danger);
+}
+.tile-icon {
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+.tile-name {
+  font-size: var(--text-sm);
+}
+.tile-note {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  line-height: 1.45;
+}
+/* 启动中：贴底一条进度线，阶段文字顶掉那行说明。不再在贴外另挂进度条。 */
+.tile-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent);
+  transition: width var(--duration-base) var(--ease-out);
+}
+.tile-progress--indeterminate {
+  width: 35%;
+  animation: cg-slide 1.2s var(--ease-out) infinite;
+}
+.tile-progress--danger {
+  background: var(--danger);
+}
+
+/* 一键关闭：宫格下面单独一条，用间距和红框跟启动区隔开。 */
+.killbar {
+  width: 100%;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-radius: var(--radius-md);
+  padding: 8px;
+  font-size: var(--text-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.killbar:hover:not(:disabled) {
+  border-color: var(--danger);
+}
+.killbar:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------- 日志时间线 */
+
+.timeline {
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.tl-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 0;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  min-width: 0;
+}
+.tl-stamp {
+  font-family: var(--mono);
+  color: var(--text-3);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.tl-icon {
+  flex-shrink: 0;
+  color: var(--text-3);
+  display: flex;
+}
+.tl-text {
+  min-width: 0;
+  word-break: break-word;
+}
+.tl-side {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.tl-row--ok .tl-icon {
+  color: var(--ok);
+}
+.tl-row--warn .tl-icon,
+.tl-row--warn .tl-text {
+  color: var(--warn);
+}
+.tl-row--danger .tl-icon,
+.tl-row--danger .tl-text {
+  color: var(--danger);
 }

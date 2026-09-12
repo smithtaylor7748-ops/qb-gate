@@ -107,6 +107,17 @@ pub fn remove(id: &str) -> Result<()> {
     save(&s)
 }
 
+/// 这个档案要切到哪个账户（没指定就是 `None`）。
+///
+/// 命令层用它判断「应用之前要不要先清场」—— 换号就得先关掉全部 Claude。
+pub fn account_of(id: &str) -> Option<String> {
+    load()
+        .profiles
+        .into_iter()
+        .find(|p| p.id == id)
+        .and_then(|p| p.account)
+}
+
 /// 从当前状态生成一个档案，省得手填。
 pub fn capture(name: &str) -> Profile {
     let mut relays = std::collections::BTreeMap::new();
@@ -170,7 +181,7 @@ pub fn apply(id: &str) -> Result<ApplyReport> {
     // ---- 账户 ----
     match &p.account {
         Some(label) => match crate::accounts::switch(label) {
-            Ok(()) => applied.push(format!("账户切到 {label}")),
+            Ok(out) => applied.push(format!("账户切到 {label}（{}）", out.switched.join("，"))),
             Err(e) => failed.push(format!("账户切到 {label} 失败：{e}")),
         },
         None => skipped.push("账户（档案没指定，保持原样）".into()),

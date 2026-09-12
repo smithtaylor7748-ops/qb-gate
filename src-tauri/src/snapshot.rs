@@ -91,6 +91,17 @@ fn valid_id(id: &str) -> bool {
             .all(|(i, b)| if i == 8 { b == b'-' } else { b.is_ascii_digit() })
 }
 
+/// 这份快照当时激活的账户。id 不合规或读不到清单就是 `None`。
+///
+/// 命令层用它判断「回滚之前要不要先清场」—— 换号就得先关掉全部 Claude。
+pub fn account_of(id: &str) -> Option<String> {
+    if !valid_id(id) {
+        return None;
+    }
+    let text = std::fs::read_to_string(root().join(id).join("manifest.json")).ok()?;
+    serde_json::from_str::<Manifest>(&text).ok()?.active_account
+}
+
 pub fn create(note: &str) -> Result<SnapshotEntry> {
     let id = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let dir = root().join(&id);
@@ -211,7 +222,7 @@ pub fn restore(id: &str) -> Result<String> {
     let mut extra = String::new();
     if let Some(label) = &manifest.active_account {
         match crate::accounts::switch(label) {
-            Ok(()) => extra.push_str(&format!("，账户已切回 {label}")),
+            Ok(_) => extra.push_str(&format!("，账户已切回 {label}")),
             Err(e) => extra.push_str(&format!("，账户切回 {label} 失败：{e}")),
         }
     }

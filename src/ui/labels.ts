@@ -13,6 +13,10 @@ import type {
   Channel,
   Check,
   Evidence,
+  ExternalMethod,
+  InstallKind,
+  KillRole,
+  ManagedApp,
   PluginState,
   Risk,
   StepState,
@@ -21,8 +25,11 @@ import type {
 } from '../lib/api';
 
 export const TARGET_KIND_LABEL: Record<string, string> = {
+  Managed: '面板托管',
   Cli: 'CLI 主副本',
-  CliVersioned: '版本化副本',
+  CliVersioned: '桌面端带的副本',
+  NativeVersion: '安装器版本库',
+  EditorExtension: '编辑器扩展自带',
   DesktopStub: '桌面端存根',
   StaleCopy: '升级残留',
   CodexCli: 'Codex CLI',
@@ -30,11 +37,53 @@ export const TARGET_KIND_LABEL: Record<string, string> = {
 
 /** 每类副本一句话说明，鼠标停上去显示。 */
 export const TARGET_KIND_HINT: Record<string, string> = {
-  Cli: '官方安装脚本或 winget 落下的主副本',
-  CliVersioned: '%APPDATA%\\Claude\\claude-code\\<版本>\\ 下的副本，每个版本一份，全都要锁',
+  Managed: '面板自己从官方源装进托管目录的那份。启动时优先用它',
+  Cli: '官方安装器、winget、Scoop 或 PATH 上的 Claude Code',
+  CliVersioned:
+    '%APPDATA%\\Claude*\\claude-code\\<版本>\\ 下的副本，每个桌面端资料目录、每个版本各一份，全都要锁。⚠ Claude 桌面端的 Code 页每开一个新会话都要拉起它 —— 上锁之后那句 Claude Code couldn’t start 就是这么来的',
+  NativeVersion:
+    '~\\.local\\share\\claude\\versions\\<版本> —— 官方安装器存的每个版本都是一份完整的二进制，漏锁一份就是一个绕过入口',
+  EditorExtension: 'VS Code / Cursor 等编辑器里 Claude Code 扩展自带的那份',
   DesktopStub: '桌面端的 Squirrel 存根，开始菜单的快捷方式指向它',
   StaleCopy: '升级留下的旧副本，没有执行锁，是能绕过门禁的入口',
   CodexCli: 'Codex CLI。只有在设置里打开「Codex 也归门禁管」之后才会出现在这里',
+};
+
+/** Claude Code 副本的来源。与 Rust `install::inventory::Kind` 一一对应。 */
+export const INSTALL_KIND_LABEL: Record<InstallKind, string> = {
+  managed: '面板托管',
+  native: '官方安装器',
+  native_version: '安装器版本库',
+  winget: 'winget',
+  scoop: 'Scoop',
+  programs: 'Programs\\Claude',
+  path: 'PATH 上的',
+  desktop_managed: '桌面端带的',
+  msix_managed: 'MSIX 桌面端带的',
+  npm: 'npm',
+  npm_native: 'npm 包内',
+  editor: '编辑器扩展',
+  desktop_stub: '桌面端存根',
+};
+
+/** 外部副本的清法。 */
+export const EXTERNAL_METHOD_LABEL: Record<ExternalMethod, string> = {
+  npm: 'npm 卸载',
+  winget: 'winget 卸载',
+  scoop: 'scoop 卸载',
+  delete: '删除文件',
+  registry: '删登记项',
+};
+
+export const MANAGED_APP_LABEL: Record<ManagedApp, string> = {
+  'claude-code': 'Claude Code',
+  codex: 'Codex CLI',
+};
+
+export const KILL_ROLE_LABEL: Record<KillRole, string> = {
+  desktop: '桌面端',
+  code: 'Claude Code',
+  bridge: '酒馆桥接',
 };
 
 export const CHECK_LABEL: Record<Check, string> = {
@@ -51,6 +100,7 @@ export const CHANNEL_LABEL: Record<Channel, string> = {
 export const EVIDENCE_LABEL: Record<Evidence, string> = {
   AnthropicSigned: 'Anthropic 签名',
   BridgeAndDataDir: '桥接 + 数据目录',
+  NpmPackage: 'node + claude-code 包',
 };
 
 export const UPGRADE_ACTION_LABEL: Record<UpgradeAction, string> = {
@@ -59,6 +109,7 @@ export const UPGRADE_ACTION_LABEL: Record<UpgradeAction, string> = {
   up_to_date: '已是最新',
   would_downgrade: '渠道版本更旧',
   unknown: '判断不了',
+  version_unreadable: '读不出版本',
 };
 
 export const PLUGIN_STATE_LABEL: Record<PluginState, string> = {
@@ -123,6 +174,8 @@ export const UPGRADE_ACTION_TONE: Record<UpgradeAction, Tone> = {
   upgrade: 'warn',
   up_to_date: 'ok',
   would_downgrade: 'danger',
+  // 装是装着的，但面板现在瞎着 —— 不能显示成中性状态。
+  version_unreadable: 'warn',
   unknown: 'default',
 };
 

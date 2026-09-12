@@ -50,6 +50,23 @@ export const R = {
   /** winget 安装能力探测。 */
   install: res(() => api.installProbe()),
 
+  /** 托管安装的现状（根目录、两个软件装没装、版本）。本地文件读取，便宜。 */
+  managed: res(() => api.managedStatus()),
+
+  /**
+   * 面板没装的外部副本。每一份要删的文件都要先验签名（PowerShell，几百毫秒一个），
+   * 所以**不自动跑**，用户点了才扫。
+   */
+  externals: res(() => api.managedExternals(), { auto: false }),
+
+  /**
+   * Claude 痕迹与 Chrome 状态。
+   *
+   * 要扫 Chrome 的 Cookie / History（可能几十 MB），所以**不自动跑** ——
+   * 跟 dns / signals 同一档，用户点了才扫。
+   */
+  traces: res(() => api.claudeTraces(), { auto: false }),
+
   tavernConfig: res(() => api.tavernConfig()),
   tavernAssets: res(() => api.tavernAssets()),
   tavernBackups: res(() => api.tavernBackups()),
@@ -62,7 +79,9 @@ export const AFTER = {
   /** 放行或收回租约：门禁变了，账户的登录态也可能跟着变。 */
   lease: ['gate', 'accounts'] as const,
   /** 装完 / 升完：软件版本、门禁目标、升级计划全都要重算。 */
-  install: ['software', 'gate', 'upgrade', 'install'] as const,
+  install: ['software', 'gate', 'upgrade', 'install', 'managed', 'externals'] as const,
+  /** 重装浏览器：软件清单变了，痕迹也该重扫。 */
+  browser: ['software', 'traces'] as const,
   /** 酒馆启停。 */
   tavern: ['plugins', 'gate'] as const,
   /** 应用档案 / 回滚快照：账户、中转站、门禁、快照列表全都可能变了。 */

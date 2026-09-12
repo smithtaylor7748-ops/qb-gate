@@ -27,11 +27,25 @@ use crate::relay::RelayTarget;
 
 pub const TRAY_ID: &str = "claudegate";
 
+/// 托盘图标到底建起来没有。
+///
+/// 「关窗口 = 收进托盘」只有在托盘真的存在时才成立。有些精简版 Windows
+/// 没有通知区域，`init()` 会失败 —— 那时候再把窗口藏起来，程序就变成了
+/// 一个看不见、也叫不回来的进程，只能去任务管理器里结束它。
+/// 所以那条路径要先问一句这里。
+static TRAY_UP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 托盘可用吗？没建起来就别把主窗口藏掉。
+pub fn available() -> bool {
+    TRAY_UP.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// 菜单项 id 的前缀。用 `:` 分段，解析时按第一段分发。
 const ID_OPEN: &str = "open";
 const ID_QUIT: &str = "quit";
 const ID_ACCOUNT: &str = "acct";
 const ID_RELAY: &str = "relay";
+const ID_REOPEN: &str = "reopen";
 
 /// 建托盘。只在 `setup()` 里调一次。
 pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
@@ -56,6 +70,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         builder = builder.icon(icon.clone());
     }
     builder.build(app)?;
+    TRAY_UP.store(true, std::sync::atomic::Ordering::Relaxed);
     Ok(())
 }
 
@@ -75,13 +90,41 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let sep2 = PredefinedMenuItem::separator(app)?;
 
     // ---- 状态行。不可点，只是让人扫一眼就知道现在什么情况。
+    //
+    // 这里必须**同时**显示租约，不能只显示锁了几个。
+    // 「4/4 已锁」在使用者眼里是「一切正常」，可它恰恰是
+    // 「Claude 桌面端现在开不了新会话」的样子 —— 门关着、没有租约。
     let targets = crate::gate::collect_targets();
     let locked = targets.iter().filter(|t| t.locked).count();
+    let holder = {
+        let st = app.state::<crate::AppState>();
+        let h = st.gate.lease.lock().unwrap().holder.clone();
+        h
+    };
     let status = MenuItem::with_id(
         app,
         "status",
-        format!("执行锁 {} / {}", locked, targets.len()),
+        match &holder {
+            Some(h) => format!("执行锁 {} / {} · 已放行给 {h}", locked, targets.len()),
+            None => format!("执行锁 {} / {} · 门禁关闭中", locked, targets.len()),
+        },
         false,
+        None::<&str>,
+    )?;
+
+    // ---- 重新放行。门被面板自己关上时，这是最快的一条出路。
+    //
+    // 常驻而不是「按需出现」：菜单是每次打开前重建的，一个时有时无的
+    // 菜单项会让人记不住它在哪 —— 而需要它的时刻恰恰是最慌的时刻。
+    let reopen = MenuItem::with_id(
+        app,
+        ID_REOPEN,
+        if holder.is_some() {
+            "重新放行（验一次出口 IP）"
+        } else {
+            "重新放行（门禁关闭中）"
+        },
+        true,
         None::<&str>,
     )?;
 
@@ -105,10 +148,22 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         })
         .collect::<tauri::Result<_>>()?;
 
-    let account_refs: Vec<&dyn tauri::menu::IsMenuItem<R>> = account_items
-        .iter()
-        .map(|i| i as &dyn tauri::menu::IsMenuItem<R>)
-        .collect();
+    // 托盘弹不了确认框，所以代价直接写在菜单里：点一下就先关掉全部 Claude（v0.9.0）。
+    let account_warn = MenuItem::with_id(
+        app,
+        "acct-warn",
+        "点了会先关闭全部 Claude，未保存的对话会丢",
+        false,
+        None::<&str>,
+    )?;
+    let account_sep = PredefinedMenuItem::separator(app)?;
+
+    let mut account_refs: Vec<&dyn tauri::menu::IsMenuItem<R>> = Vec::new();
+    if !account_items.is_empty() {
+        account_refs.push(&account_warn);
+        account_refs.push(&account_sep);
+    }
+    account_refs.extend(account_items.iter().map(|i| i as &dyn tauri::menu::IsMenuItem<R>));
 
     let active_label = slots
         .iter()
@@ -118,7 +173,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let accounts_menu = Submenu::with_items(
         app,
         format!("账户 · {active_label}"),
-        !account_refs.is_empty(),
+        !account_items.is_empty(),
         &account_refs,
     )?;
 
@@ -158,7 +213,8 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         )?);
     }
 
-    let mut items: Vec<&dyn tauri::menu::IsMenuItem<R>> = vec![&open, &status, &sep1, &accounts_menu];
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<R>> =
+        vec![&open, &status, &reopen, &sep1, &accounts_menu];
     for m in &relay_menus {
         items.push(m);
     }
@@ -175,14 +231,54 @@ fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEvent) 
         [ID_OPEN] => show_main(app),
         [ID_QUIT] => app.exit(0),
 
-        // 跟面板里走的是同一个函数。**纯人工触发** —— 点一下切一次。
+        // 重新放行。**只恢复租约，不启动任何进程** ——
+        // 跟面板里那个横幅走的是同一个函数。
+        [ID_REOPEN] => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let st = app.state::<crate::AppState>();
+                match crate::reopen_and_rewatch(&st, None).await {
+                    Ok(d) => crate::gate::log::write(&format!("托盘：{d}")),
+                    Err(e) => crate::gate::log::write(&format!("托盘：重新放行失败：{e}")),
+                }
+                refresh(&app);
+            });
+        }
+
+        // **纯人工触发** —— 点一下切一次。跟面板里同一个语义（v0.9.0）：
+        // 先清场（关掉全部 Claude），再换指向（Claude Code、酒馆桥接，桌面端见下），**不自动启动**。
+        //
+        // 托盘弹不了确认框，但也不需要：清场之后没有任何需要确认的冲突
+        // （桌面端也被关了），直接切即可。风险（未保存的对话会丢）写在账户子菜单顶上。
+        // 收进程要 await，所以放进异步任务里跑。
+        //
+        // 两条跟对话框对齐的规矩：
+        //   * **清场失败就不切** —— `switch_in` 不再自己查桌面端，信的是调用方清过场；
+        //   * 桌面端用 `Auto`（这个槽位有自己的桌面端资料才跟，没有就不动）——
+        //     对话框里那个复选框的默认值就是它。用 `Follow` 会给没有桌面端资料的槽位
+        //     建一份空白的，桌面端莫名其妙就被登出了。
         [ID_ACCOUNT, label] => {
             let label = (*label).to_string();
-            match crate::accounts::switch(&label) {
-                Ok(()) => crate::gate::log::write(&format!("托盘：账户切换到 {label}")),
-                Err(e) => crate::gate::log::write(&format!("托盘：账户切换失败：{e}")),
-            }
-            refresh(app);
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let st = app.state::<crate::AppState>();
+                match crate::clear_for_switch(&st, true).await {
+                    Ok(r) => crate::gate::log::write(&format!(
+                        "托盘：切账户前清场，关掉 {} 个 Claude 进程",
+                        r.killed.len()
+                    )),
+                    Err(e) => {
+                        crate::gate::log::write(&format!("托盘：清场失败，没有切换（槽位没动）：{e}"));
+                        refresh(&app);
+                        return;
+                    }
+                }
+                match crate::accounts::switch_with(&label, crate::accounts::DesktopMode::Auto) {
+                    Ok(_) => crate::gate::log::write(&format!("托盘：账户切换到 {label}")),
+                    Err(e) => crate::gate::log::write(&format!("托盘：账户切换失败：{e}")),
+                }
+                refresh(&app);
+            });
         }
 
         [ID_RELAY, target, pid] => {
@@ -226,6 +322,7 @@ mod tests {
             assert!(!t.as_str().contains(':'), "{}", t.as_str());
         }
         assert!(!ID_ACCOUNT.contains(':'));
+        assert!(!ID_REOPEN.contains(':'));
         assert!(!ID_RELAY.contains(':'));
         assert!(!ID_OPEN.contains(':'));
         assert!(!ID_QUIT.contains(':'));

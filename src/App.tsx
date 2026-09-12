@@ -1,6 +1,7 @@
 import { Component, useCallback, useMemo, useState, type ReactNode } from 'react';
 import {
   Blocks,
+  BookOpen,
   Fingerprint,
   Globe,
   KeyRound,
@@ -29,10 +30,12 @@ import ChineseSignals from './pages/ChineseSignals';
 import IpLock from './pages/IpLock';
 import Accounts from './pages/Accounts';
 import Environment from './pages/Environment';
+import SubscriptionGuidePage from './pages/SubscriptionGuidePage';
 import Plugins from './pages/Plugins';
 import Relay from './pages/Relay';
 import Profiles from './pages/Profiles';
 import Settings from './pages/Settings';
+import AccountDialogs from './pages/accounts/AccountDialogs';
 
 const EMPTY_PROGRESS: Progress = { steps: {}, completed_once: false };
 
@@ -80,6 +83,7 @@ const GROUPS: NavGroup[] = [
     title: '其它',
     items: [
       { id: 'environment', label: '环境与安装', icon: <Package size={15} /> },
+      { id: 'subscription-guide', label: '订阅引导', icon: <BookOpen size={15} /> },
       { id: 'plugins', label: '插件商店', icon: <Blocks size={15} /> },
       { id: 'relay', label: '中转站', icon: <Waypoints size={15} /> },
       { id: 'profiles', label: '档案与快照', icon: <Layers size={15} /> },
@@ -267,6 +271,8 @@ function Pages() {
       return <Accounts />;
     case 'environment':
       return <Environment />;
+    case 'subscription-guide':
+      return <SubscriptionGuidePage />;
     case 'plugins':
       return <Plugins />;
     case 'relay':
@@ -309,13 +315,22 @@ export default function App() {
         <div className="app">
           <Sidebar />
           <main className="main">
-            <div className="main-inner">
+            {/* 订阅引导是外来模块，自带一套按 1460px 设计的三栏布局（步骤导航 ·
+                正文 · 手机示意图），也自带内外边距。套在 980px 的 `.main-inner`
+                里会被压成一条窄缝 —— 它的断点看的是**视口宽度**不是容器宽度，
+                窗口开得越大反而挤得越狠。所以这一页单独放宽，边距交给模块自己。 */}
+            <div className={page === 'subscription-guide' ? 'main-inner main-inner--wide' : 'main-inner'}>
               <ErrorBoundary key={page}>
                 <Pages />
               </ErrorBoundary>
             </div>
           </main>
         </div>
+        {/* 账户切换 / 新建槽位的对话框全局只挂一份：总览、账户页都往这里喊。
+            挂在页面外面，切页不会把一个正在进行的切换对话框卸掉。 */}
+        <ErrorBoundary>
+          <AccountDialogs />
+        </ErrorBoundary>
       </NavCtx.Provider>
     </ToastProvider>
   );

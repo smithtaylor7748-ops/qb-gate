@@ -61,13 +61,22 @@ export interface DnsReport {
 export interface GateTarget {
   path: string;
   /**
-   * 必须与 Rust `gate::targets::TargetKind` 的四个变体一一对应。
+   * 必须与 Rust `gate::targets::TargetKind` 的变体一一对应。
    *
    * `CliVersioned` 一度漏在这里 —— commit 14e1b80 给 `targets.rs` 加了
    * `%APPDATA%\Claude\claude-code\<版本>\` 这个布局却没同步前端类型，
    * 而它恰恰是本机最常见的一种副本。中文名在 `ui/labels.ts`。
+   * v0.8.0 加了 `NativeVersion`（安装器版本库）与 `EditorExtension`（编辑器扩展自带）。
    */
-  kind: 'Cli' | 'CliVersioned' | 'DesktopStub' | 'StaleCopy' | 'CodexCli';
+  kind:
+    | 'Managed'
+    | 'Cli'
+    | 'CliVersioned'
+    | 'NativeVersion'
+    | 'EditorExtension'
+    | 'DesktopStub'
+    | 'StaleCopy'
+    | 'CodexCli';
   exists: boolean;
   locked: boolean;
 }
@@ -78,10 +87,23 @@ export interface GateStatus {
   ip_allowed: boolean;
   targets: GateTarget[];
   all_locked: boolean;
-  lease: { holder?: string | null; granted: string[] };
+  lease: {
+    holder?: string | null;
+    granted: string[];
+    /** 这个租约挂的是哪一档看门狗。面板重启后要按原样接回去。 */
+    mode?: 'Cli' | 'Desktop' | null;
+  };
   watchdog_running: boolean;
   stale_copies: string[];
   recent_log: string[];
+  /**
+   * 门是在使用者没要求的情况下关上的，而且还没能自己开回来。
+   *
+   * 非空时总览要挂常驻横幅。这是唯一一个使用者**必须知道**却完全看不见的
+   * 状态：面板收在托盘里，`ip-gate.log` 等于没写，而症状要等他下次在
+   * Claude 桌面端开新会话时才出现 —— 那时候他不会把两件事联系起来。
+   */
+  needs_reopen?: string | null;
 }
 
 export interface Software {
@@ -93,8 +115,40 @@ export interface Software {
   advisory?: string | null;
 }
 
+/**
+ * 一份 Claude Code 副本在哪、属于哪一类。与 Rust `install::inventory::Kind` 一一对应，
+ * 中文名在 `ui/labels.ts`。
+ */
+export type InstallKind =
+  | 'managed'
+  | 'native'
+  | 'native_version'
+  | 'winget'
+  | 'scoop'
+  | 'programs'
+  | 'path'
+  | 'desktop_managed'
+  | 'msix_managed'
+  | 'npm'
+  | 'npm_native'
+  | 'editor'
+  | 'desktop_stub';
+
+export interface ClaudeInstall {
+  kind: InstallKind;
+  path: string;
+  /** 能不能加执行锁。npm 的批处理不能 —— 界面要如实说。 */
+  lockable: boolean;
+  /** 面板会不会拿它来启动 Claude Code。 */
+  launchable: boolean;
+  /** 「启动 Claude Code」此刻会用的就是这一份。 */
+  preferred: boolean;
+}
+
 export interface SoftwareReport {
   claudeCode: Software;
+  /** 本机全部 Claude Code 副本（不含桌面端存根）。 */
+  claudeCodeInstalls: ClaudeInstall[];
   claudeDesktop: Software;
   codex: Software;
   browsers: Software[];
@@ -112,11 +166,22 @@ export interface Slot {
   billing?: string | null;
   /** 官方客户端上次刷新这份档案的时间。这是缓存，可能过期。 */
   plan_fetched_at?: string | null;
+  /** 桌面端有没有这个槽位自己的资料目录 `%APPDATA%\Claude-<标签>`。 */
+  desktop_profile: boolean;
 }
 
-export interface AccountMigration {
-  migrated: string[];
-  backup?: string | null;
+/** 酒馆桥接那边重复的凭证合并成一份时，这次做了什么。 */
+export interface SyncReport {
+  done: string[];
+  /** 没做成的（通常是桥接正在用），下次列槽位会再试。 */
+  failed: string[];
+}
+
+export interface DesktopState {
+  /** `%APPDATA%\Claude` 已经交给面板管（是联结点）。 */
+  managed: boolean;
+  /** 桌面端现在用的是哪个槽位的资料。 */
+  active?: string | null;
 }
 
 export interface AccountsReport {
@@ -124,7 +189,25 @@ export interface AccountsReport {
   caveat: string;
   /** 套餐是怎么读出来的 —— 界面上要如实说明，不能让人以为是查了接口。 */
   planCaveat: string;
-  migration?: AccountMigration | null;
+  sync: SyncReport;
+  desktop: DesktopState;
+  /** 本机有酒馆桥接的数据目录 —— 有的话切换会一起切它。 */
+  bridgePresent: boolean;
+}
+
+export interface CreateOutcome {
+  label: string;
+  /** 原来没有激活槽位，新槽位直接成了当前的。 */
+  activated: boolean;
+  notes: string[];
+}
+
+export interface SwitchReport {
+  /** 切换前清场（关闭全部 Claude）的报告。 */
+  closed: KillReport;
+  /** 这次换了哪几处指向：Claude Code / 酒馆桥接 / 桌面端。 */
+  switched: string[];
+  notes: string[];
 }
 
 /** 上游协议。**默认 `responses`** —— 写死成 `chat` 会把中转站配置改坏。 */
@@ -212,6 +295,101 @@ export interface Settings {
    * ExecuteFile —— 出口 IP 不在白名单时命令直接被系统拒绝执行。
    */
   codex_under_gate: boolean;
+
+  /**
+   * 门禁被动关上之后，出口 IP 回到白名单时要不要自动重新放行。
+   *
+   * **默认 true。** 它只恢复租约、**不启动任何进程**，而且仍然要求
+   * 出口 IP 已核实且在白名单里 —— 跟看门狗的 `ReclaimLease` 是同一条不变量。
+   */
+  gate_auto_rearm: boolean;
+
+  /**
+   * 面板托管安装的根目录。`null` = 默认位置 `%LOCALAPPDATA%\ClaudeIpGate\apps`。
+   *
+   * **只读**：只能经 `managedSetDir` 改（它会先实测新目录锁不锁得住、再把已装的搬过去），
+   * `settingsSave` 会忽略这个字段。
+   */
+  managed_apps_dir?: string | null;
+}
+
+// ------------------------------------------------------------ 托管安装
+
+/** 面板托管安装的两个软件。与 Rust `install::managed::App` 一致。 */
+export type ManagedApp = 'claude-code' | 'codex';
+
+export interface ManagedAppStatus {
+  app: ManagedApp;
+  /** 托管那份的 exe 路径（在不在都给）。 */
+  path: string;
+  installed: boolean;
+  version?: string | null;
+  installed_at?: string | null;
+}
+
+export interface ManagedStatus {
+  root: string;
+  default_root: string;
+  is_default: boolean;
+  apps: ManagedAppStatus[];
+}
+
+/** 「这个目录能不能当托管根目录」的当场实测结果。 */
+export interface ManagedProbe {
+  ok: boolean;
+  path: string;
+  filesystem?: string | null;
+  /** 不行时的原因，直接显示。 */
+  reason?: string | null;
+}
+
+export interface MigrateReport {
+  from: string;
+  to: string;
+  moved: string[];
+  /** 为了搬走正在运行的 Claude Code 先关掉的 Claude 进程数。 */
+  closed: number;
+}
+
+export type ExternalMethod = 'npm' | 'winget' | 'scoop' | 'delete' | 'registry';
+
+/** 一份面板没装的外部副本，以及准备怎么清它。 */
+export interface ManagedExternal {
+  app: ManagedApp;
+  method: ExternalMethod;
+  target: string;
+  action: string;
+}
+
+export interface CleanupReport {
+  done: string[];
+  failed: string[];
+  notes: string[];
+}
+
+// -------------------------------------------------- Claude 痕迹与 Chrome
+
+export interface Trace {
+  kind: 'credential' | 'config' | 'install' | 'registry' | 'browser';
+  label: string;
+  path: string;
+  detail: string;
+}
+
+export interface TraceReport {
+  traces: Trace[];
+  chrome_installed: boolean;
+  chrome_path?: string | null;
+  chrome_running: boolean;
+  /**
+   * Chrome 的资料文件扫过了吗。
+   *
+   * Chrome 正在跑时那些文件被占着打不开，这时候是 `false` ——
+   * 界面必须说「先关掉 Chrome 再检测」，**不能显示成「没找到痕迹」**。
+   * 那是两回事，而一个说谎的否定结论最难查。
+   */
+  chrome_scanned: boolean;
+  winget_available: boolean;
 }
 
 export interface SnapshotManifest {
@@ -291,6 +469,8 @@ export interface LaunchResult {
   /** 挂上了哪一档看门狗。桌面端那档查不到 IP 会立即关闭，不给宽限。 */
   watchdog: 'Cli' | 'Desktop';
   detail: string;
+  /** Claude Code 用的是哪个账户槽位。`null` = 没有激活槽位，用的是它自己的默认目录。 */
+  slot?: string | null;
 }
 
 export interface InstallProbe {
@@ -312,7 +492,7 @@ export interface InstallResult {
   target: InstallTarget;
   ok: boolean;
   /** 实际走的是哪条路：winget，还是官方脚本 / npm 兜底。 */
-  method: 'winget' | 'official_script' | 'npm_global' | 'manual_download';
+  method: 'winget' | 'managed' | 'official_script' | 'npm_global' | 'manual_download';
   /** 装完重新上锁了几个副本。 */
   relocked: number;
   /** Authenticode 主体里有没有对应的签名方（Claude 看 Anthropic，Codex 看 OpenAI）。查不到不阻断，只是警告。 */
@@ -382,7 +562,9 @@ export type UpgradeAction =
   | 'upgrade'
   | 'up_to_date'
   | 'would_downgrade'
-  | 'unknown';
+  | 'unknown'
+  // 文件在，版本号读不出来。跟 fresh_install 是两回事，别合并。
+  | 'version_unreadable';
 
 export interface UpgradePlan {
   installed?: string | null;
@@ -391,13 +573,17 @@ export interface UpgradePlan {
   detail: string;
 }
 
-export type Evidence = 'AnthropicSigned' | 'BridgeAndDataDir';
+export type Evidence = 'AnthropicSigned' | 'BridgeAndDataDir' | 'NpmPackage';
+
+/** 进程属于哪一边。只用来告诉用户「关掉了什么」，不参与判定。 */
+export type KillRole = 'desktop' | 'code' | 'bridge';
 
 export interface KillTarget {
   pid: number;
   name: string;
   path?: string | null;
   evidence: Evidence;
+  role: KillRole;
 }
 
 export interface KillReport {
@@ -425,6 +611,14 @@ export const api = {
   gateLockAll: () => call<number>('gate_lock_all'),
   gateUnlockAll: () => call<number>('gate_unlock_all'),
   gateOpen: (holder: string) => call<void>('gate_open', { holder }),
+  /**
+   * 重新放行：验一次出口 IP，过了就把门重新打开并接回看门狗。
+   *
+   * 跟 `gateOpen` 的区别是**不需要说出 holder** —— 沿用上一次那个，
+   * 因为点它的场景永远是「门被面板自己关上了，我要开回来」。
+   * 它**不启动任何进程**。
+   */
+  gateReopen: () => call<string>('gate_reopen'),
   gateRelease: () => call<void>('gate_release'),
   gateCleanStale: () => call<Array<[string, boolean]>>('gate_clean_stale'),
   /**
@@ -467,9 +661,41 @@ export const api = {
   installProbe: () => call<InstallProbe>('install_probe'),
   installRun: (target: InstallTarget) => call<InstallResult>('install_run', { target }),
 
+  /** 这台机器以前装过 / 登录过 Claude 吗。只读，不改任何东西。 */
+  claudeTraces: () => call<TraceReport>('claude_traces'),
+  /**
+   * 卸掉 Chrome、删干净用户资料、再装回来。没装过就只装。
+   *
+   * ⚠ **会毁掉数据**：书签、密码、扩展、全部站点数据一起没，不可恢复。
+   * 调用之前必须已经拿到使用者的确认 —— 后端不会再问第二次。
+   * 只碰 Chrome，Edge / Firefox 一概不动。
+   */
+  chromeReinstall: () => call<string>('chrome_reinstall'),
+
   // 账户
   accountsList: () => call<AccountsReport>('accounts_list'),
-  accountsSwitch: (label: string) => call<void>('accounts_switch', { label }),
+  /** 新建一个空槽位（不复制任何凭证）。原来没有激活槽位时它直接成为当前的。 */
+  accountsCreate: (label: string) => call<CreateOutcome>('accounts_create', { label }),
+  /**
+   * 切换槽位（v0.9.0）：**先关闭全部 Claude**（桌面端、所有 Claude Code 会话、酒馆桥接），
+   * 再把 Claude Code、酒馆桥接、（可选）桌面端三处指向一起换过去。**不自动启动任何东西**。
+   *
+   * - `desktop`：桌面端跟不跟着切（没有这个槽位的桌面端资料时，跟 = 新建一份空白的）。
+   */
+  accountsSwitch: (label: string, desktop: boolean) =>
+    call<SwitchReport>('accounts_switch', { label, desktop }),
+
+  // 托管安装（v0.9.0）
+  /** 托管根目录在哪、Claude Code 与 Codex 装没装、什么版本。 */
+  managedStatus: () => call<ManagedStatus>('managed_status'),
+  /** **当场实测**一个目录能不能当托管根目录（建得出、写得进、锁得上也解得开）。 */
+  managedProbeDir: (path: string) => call<ManagedProbe>('managed_probe_dir', { path }),
+  /** 换托管根目录：已装了东西就一键迁移过去（托管的 Claude Code 在跑会先关掉全部 Claude）。 */
+  managedSetDir: (path: string) => call<MigrateReport>('managed_set_dir', { path }),
+  /** 面板没装的多余副本与准备怎么清。只看不动（要验签名，慢）。 */
+  managedExternals: () => call<ManagedExternal[]>('managed_externals'),
+  /** **彻底清除**一个软件的外部副本。托管那份必须已经装好。 */
+  managedCleanup: (which: ManagedApp) => call<CleanupReport>('managed_cleanup', { which }),
 
   // 中转站
   relayList: () => call<ProviderView[]>('relay_list'),

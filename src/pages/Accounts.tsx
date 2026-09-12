@@ -4,6 +4,7 @@ import {
   KeyRound,
   LockKeyhole,
   MonitorSmartphone,
+  Plus,
   RotateCw,
   SkipForward,
   Terminal,
@@ -14,6 +15,7 @@ import { useNav } from '../lib/nav';
 import { AFTER, R } from '../lib/resources';
 import { invalidate, useResource } from '../lib/store';
 import {
+  Bullet,
   Button,
   Card,
   Collapsible,
@@ -27,10 +29,12 @@ import {
   fmtDaysLeft,
 } from '../ui';
 
-type Dialog = null | { kind: 'switch'; label: string } | { kind: 'release' };
+import { requestNewSlot, requestSwitch } from './accounts/AccountDialogs';
+
+type Dialog = null | { kind: 'release' };
 
 export default function Accounts() {
-  const { mark, go } = useNav();
+  const { mark } = useNav();
   const toast = useToast();
 
   const accounts = useResource('accounts', R.accounts);
@@ -39,7 +43,8 @@ export default function Accounts() {
   const [busy, setBusy] = useState('');
   const [dialog, setDialog] = useState<Dialog>(null);
 
-  const slots = accounts.data?.slots ?? [];
+  const data = accounts.data;
+  const slots = data?.slots ?? [];
   const active = slots.find((s) => s.active);
   const holder = gate.data?.lease.holder;
 
@@ -88,23 +93,36 @@ export default function Accounts() {
       />
 
       {accounts.error && <p className="notice notice--danger mb-3">{accounts.error}</p>}
-      {accounts.data?.migration?.migrated?.length ? (
-        <p className="notice notice--warn mb-3">
-          已发现并迁移 {accounts.data.migration.migrated.length} 个旧配置。迁移前备份：{' '}
-          <code>{accounts.data.migration.backup ?? '未创建'}</code>
-        </p>
-      ) : null}
+
+      {/* 酒馆桥接那边重复的凭证刚刚被合成一份 —— 这件事会动到使用者的目录，要让他看见。 */}
+      {!!data?.sync.done.length && (
+        <div className="notice notice--warn mb-3">
+          <p>账户整理（酒馆桥接与面板原来各有一份凭证，已合成一份）：</p>
+          {data.sync.done.map((d) => (
+            <Bullet key={d}>{d}</Bullet>
+          ))}
+        </div>
+      )}
+      {!!data?.sync.failed.length && (
+        <div className="notice notice--danger mb-3">
+          {data.sync.failed.map((d) => (
+            <Bullet key={d} tone="danger">
+              {d}
+            </Bullet>
+          ))}
+        </div>
+      )}
 
       <div className="mb-3 grid gap-2 sm:grid-cols-3">
         <Metric
           label="当前槽位"
-          loading={accounts.loading && !accounts.data}
+          loading={accounts.loading && !data}
           error={accounts.error}
           onRetry={() => void accounts.refresh()}
         >
           {active?.label}
         </Metric>
-        <Metric label="登录态" loading={accounts.loading && !accounts.data}>
+        <Metric label="登录态" loading={accounts.loading && !data}>
           {active ? (
             active.logged_in ? (
               <Pill tone="ok">已登录</Pill>
@@ -115,7 +133,7 @@ export default function Accounts() {
         </Metric>
         <Metric
           label="凭证剩余"
-          loading={accounts.loading && !accounts.data}
+          loading={accounts.loading && !data}
           hint="只读本地时间戳，查不出被风控下线"
         >
           {active ? fmtDaysLeft(active.cli_days_left) : undefined}
@@ -123,7 +141,15 @@ export default function Accounts() {
       </div>
 
       {/* ------------------------------------------------------ 槽位 */}
-      <Card title="账户槽位" className="mb-3">
+      <Card
+        title="账户槽位"
+        className="mb-3"
+        actions={
+          <Button size="sm" icon={<Plus size={12} />} onClick={requestNewSlot}>
+            新建槽位
+          </Button>
+        }
+      >
         {slots.length ? (
           slots.map((s) => (
             <Row
@@ -133,7 +159,7 @@ export default function Accounts() {
                   size="sm"
                   icon={<ArrowLeftRight size={12} />}
                   disabled={!!busy || s.active}
-                  onClick={() => setDialog({ kind: 'switch', label: s.label })}
+                  onClick={() => requestSwitch(s.label)}
                 >
                   {s.active ? '当前' : '切换'}
                 </Button>
@@ -149,6 +175,11 @@ export default function Accounts() {
                   {fmtDaysLeft(s.cli_days_left)}
                 </Pill>
               )}
+              {s.desktop_profile && (
+                <Pill tone="default" title={`%APPDATA%\\Claude-${s.label}`}>
+                  有桌面端资料
+                </Pill>
+              )}
             </Row>
           ))
         ) : (
@@ -156,28 +187,35 @@ export default function Accounts() {
             icon={<KeyRound size={22} />}
             title="还没有账户槽位"
             action={
-              <Button variant="primary" icon={<Terminal size={13} />} onClick={() => go('home')}>
-                去总览启动 Claude Code 登录
+              <Button variant="primary" icon={<Plus size={13} />} onClick={requestNewSlot}>
+                新建槽位
               </Button>
             }
           >
-            槽位是在你第一次登录之后建立的。先启动一次 Claude Code 并完成登录，
-            这里就会出现对应的槽位。
+            槽位是一个独立的登录目录。新建一个、在里面登录一次，之后从面板启动的
+            Claude Code 就用它。没有槽位时，Claude Code 用的是它自己的默认目录
+            <code>~\.claude</code>。
           </EmptyState>
         )}
 
+        {data && (
+          <p className="notice mt-2">
+            {data.desktop.managed
+              ? `桌面端现在用的是 ${data.desktop.active ?? '（认不出的目录）'} 的资料。`
+              : '桌面端还没按槽位分开 —— 切换时可以选择让它一起分开。'}
+            {data.bridgePresent && ' 酒馆桥接跟 Claude Code 永远用同一个槽位。'}
+          </p>
+        )}
+
         {!!slots.length && (
-          <Collapsible
-            className="mt-2"
-            summary="为什么过期的账户还能切？"
-          >
+          <Collapsible className="mt-2" summary="为什么过期的账户还能切？">
             <p className="notice">
               <strong>「已登录」和「没过期」是两件事。</strong>
               凭证过期的账户<strong>必须仍然可切</strong> ——
               你得先切过去，才能在那个槽里重新登录。把这两件事合并，
               就等于把自己锁在门外。
             </p>
-            <p className="notice mt-2">{accounts.data?.caveat}</p>
+            <p className="notice mt-2">{data?.caveat}</p>
             <p className="notice mt-2">
               剩余天数只读 <code>refreshTokenExpiresAt</code> 这个本地时间戳，
               <strong>查不出「被风控下线」</strong>——
@@ -195,6 +233,8 @@ export default function Accounts() {
           <code>claude.exe</code> 上常驻一条 Deny ExecuteFile，
           <strong>双击它会被系统拒绝执行，这是设计如此</strong>。
           登录必须走下面这两个受控入口 —— 它们会先验 IP 再放行并启动。
+          Claude Code 会用<strong>当前槽位</strong>
+          {active ? `（${active.label}）` : '（没有槽位时是它自己的默认目录）'}。
         </p>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -260,35 +300,7 @@ export default function Accounts() {
       </div>
 
       {/* ---------------------------------------------------- 确认框 */}
-
-      <ConfirmDialog
-        open={dialog?.kind === 'switch'}
-        onCancel={() => setDialog(null)}
-        onConfirm={() =>
-          dialog?.kind === 'switch' &&
-          act('switch', () => api.accountsSwitch(dialog.label), `已切换到 ${dialog.label}`)
-        }
-        title={`切换到 ${dialog?.kind === 'switch' ? dialog.label : ''}？`}
-        confirmLabel="确认切换"
-        loading={busy === 'switch'}
-        danger={!!holder}
-      >
-        <p>
-          切换会改动目录联结点，把 Claude 的配置目录指到另一个槽位。
-          任意时刻只有一个账户是激活的。
-        </p>
-        {holder && (
-          <p className="notice notice--danger mt-2">
-            <strong>现在有一个在外的租约（{holder}）。</strong>
-            正在跑的 Claude 会话仍然指着旧槽位，切换之后它的行为会变得不可预期。
-            建议先收回租约再切。
-          </p>
-        )}
-        <p className="notice mt-2">
-          账户切换只能由你手动触发，面板没有定时器也没有自动调用点。
-          <strong>所有账户必须是你本人拥有的。</strong>
-        </p>
-      </ConfirmDialog>
+      {/* 切换与新建的对话框全局只有一份，在 pages/accounts/AccountDialogs.tsx。 */}
 
       <ConfirmDialog
         open={dialog?.kind === 'release'}

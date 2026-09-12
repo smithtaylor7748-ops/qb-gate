@@ -1,6 +1,6 @@
 [package]
 name = "claude-gate"
-version = "0.3.0"
+version = "0.9.0"
 description = "Claude 环境控制面板"
 authors = ["ClaudeGate contributors"]
 license = "MIT"

@@ -262,7 +262,7 @@ pub async fn probe() -> InstallProbe {
 async fn installed_version_of(t: InstallTarget) -> Option<String> {
     match t {
         InstallTarget::ClaudeCode => crate::install::detect::claude_code().await.version,
-        InstallTarget::ClaudeDesktop => crate::install::detect::claude_desktop().version,
+        InstallTarget::ClaudeDesktop => crate::install::detect::claude_desktop().await.version,
         InstallTarget::Codex => crate::install::detect::codex().await.version,
     }
 }
@@ -273,6 +273,8 @@ async fn installed_version_of(t: InstallTarget) -> Option<String> {
 #[serde(rename_all = "snake_case")]
 pub enum Method {
     Winget,
+    /// 面板托管安装：官方源直下，放进托管目录（v0.9.0，`install::managed`）。
+    Managed,
     OfficialScript,
     NpmGlobal,
     ManualDownload,
@@ -489,6 +491,19 @@ pub async fn install(target: InstallTarget, rep: &Reporter) -> Result<InstallRes
     let targets = crate::gate::collect_targets();
     log.push(format!("枚举到 {} 个 claude.exe 副本", targets.len()));
 
+    // 桌面端的位置是官方安装器定的（Squirrel 写死在 %LOCALAPPDATA%\AnthropicClaude），
+    // 面板接管不了它的目录 —— 那就把实际装在哪从卸载登记里读出来记下，不靠猜。
+    if target == InstallTarget::ClaudeDesktop {
+        match desktop_install_location().await {
+            Some(loc) => {
+                let line = format!("桌面端装在 {loc}（官方安装器定的位置，面板接管不了，已记下）");
+                crate::gate::log::write(&line);
+                log.push(line);
+            }
+            None => log.push("注册表里没读到桌面端的卸载登记，按默认位置 %LOCALAPPDATA%\\AnthropicClaude 认".into()),
+        }
+    }
+
     // ---- 5 ----
     rep.phase(5, "核对 Authenticode 签名");
     let signature_ok = verify_signature(target, &targets).await;
@@ -525,6 +540,7 @@ pub async fn install(target: InstallTarget, rep: &Reporter) -> Result<InstallRes
             Method::OfficialScript => "官方安装脚本",
             Method::NpmGlobal => "npm 全局",
             Method::ManualDownload => "手动",
+            Method::Managed => "面板托管",
         },
         relocked
     );
@@ -542,6 +558,25 @@ pub async fn install(target: InstallTarget, rep: &Reporter) -> Result<InstallRes
     })
 }
 
+/// 桌面端卸载登记里写的安装位置（`HKCU\…\Uninstall\AnthropicClaude` 的 `InstallLocation`）。
+/// 脚本里只有常量，没有拼进任何外部输入。
+#[cfg(windows)]
+async fn desktop_install_location() -> Option<String> {
+    const SCRIPT: &str = "(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\AnthropicClaude' -ErrorAction SilentlyContinue).InstallLocation";
+    let o = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
+        .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+        .output()
+        .await
+        .ok()?;
+    let s = String::from_utf8_lossy(&o.stdout).trim().trim_matches('"').to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+#[cfg(not(windows))]
+async fn desktop_install_location() -> Option<String> {
+    None
+}
+
 /// 找到本目标对应的那个 exe，核对签名主体。
 ///
 /// ⚠ **Codex 必须走自己的路径。** `targets` 来自 `gate::collect_targets()`，
@@ -554,18 +589,16 @@ async fn verify_signature(
 ) -> Option<bool> {
     let path = match target {
         InstallTarget::Codex => crate::install::detect::codex().await.path?,
-        _ => {
-            let want_desktop = matches!(target, InstallTarget::ClaudeDesktop);
-            targets
-                .iter()
-                .find(|t| {
-                    let is_desktop =
-                        matches!(t.kind, crate::gate::targets::TargetKind::DesktopStub);
-                    is_desktop == want_desktop
-                })?
-                .path
-                .clone()
-        }
+        // 验「启动时会用的那一份」。原来取的是清单里第一个非存根的副本 ——
+        // 清单按路径排序，现在里面还有版本库、编辑器扩展，第一个未必是刚装的那份。
+        InstallTarget::ClaudeCode => crate::install::inventory::preferred_exe(
+            &crate::install::inventory::Roots::current(),
+        )?,
+        InstallTarget::ClaudeDesktop => targets
+            .iter()
+            .find(|t| matches!(t.kind, crate::gate::targets::TargetKind::DesktopStub))?
+            .path
+            .clone(),
     };
     // 复用一键关闭那边现成的签名查询，不再写第二份。
     let subject = crate::killswitch::signer_of(&path).await;

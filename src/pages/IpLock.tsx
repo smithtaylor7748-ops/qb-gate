@@ -194,6 +194,18 @@ export default function IpLock() {
 
       {/* -------------------------------------------------- 受管文件 */}
       <Card title="受管可执行文件" className="mb-3">
+        {/* 这段说明原来只写在项目档案里（§7.22），软件里一个字都没有。
+            结果是使用者反复撞见同一个现象却完全无从联想 —— 他只是关了个窗口、
+            或者点了一次一键关闭，半小时后桌面端开不了新会话。
+            机制要写在看得见的地方。 */}
+        <p className="notice notice--warn mb-2">
+          <strong>「版本化副本」就是 Claude 桌面端 Code 页开新会话时要拉起的那个。</strong>
+          上锁<strong>不会</strong>影响已经在跑的会话（Windows 不会卸掉已加载的映像），
+          挡住的是<strong>下一次启动</strong>—— 症状就是桌面端弹{' '}
+          <code>Claude Code couldn&apos;t start</code>。
+          从 v0.7.0 起，面板自己触发的重锁（升级、装包、一键关闭、切账户、面板重启）
+          会在出口 IP 仍然合格时<strong>把租约还给你</strong>，不再需要手动补一次。
+        </p>
         {st?.targets.length ? (
           st.targets.map((t) => (
             <Row

@@ -4,19 +4,21 @@
 //! 绕过 IP 门禁的现成入口 —— 这是原档案 K1 记下的教训（升级残留的
 //! `claude.exe.old.*` 没有 Deny ACL，等于一条敞开的路）。
 //!
-//! 2026-09-08 实测本机的实际布局，比原档案记的多两处：
+//! # v0.8.0：位置表搬去了 `install::inventory`
 //!
-//! | 路径 | 锁? | 说明 |
-//! |---|---|---|
-//! | `~\.local\bin\claude.exe` | 锁 | 官方安装脚本的落点 |
-//! | `%APPDATA%\Claude\claude-code\<版本>\claude.exe` | 锁 | **新布局**，每个版本一份，全都要锁 |
-//! | `%LOCALAPPDATA%\Microsoft\WinGet\Packages\Anthropic.ClaudeCode*\claude.exe` | 锁 | winget 装的那份 |
-//! | `%LOCALAPPDATA%\AnthropicClaude\claude.exe` | 锁 | 桌面端 Squirrel 存根（本机当前没有） |
-//! | `%LOCALAPPDATA%\AnthropicClaude\app-<版本>\claude.exe` | **不锁** | 一加 Deny，桌面端开新窗口就崩 |
+//! 这个文件原来自己拼一份路径表，检测、启动、升级又各拼一份，四份已经对不上
+//! （只用 winget 装的人：这里锁住了，启动那边找不到）。现在**只有**
+//! `install::inventory` 知道 Claude 装在哪，这里只负责「哪些要锁」与显示分类。
+//! 表格也在那个文件头上。
 //!
-//! `app-*` 那份只能靠 watchdog 的 taskkill 收。这是已知残留缺口：
-//! 刻意翻进 app-* 目录直接双击能绕开**启动**门禁，20 秒内会被看门狗收掉，
-//! 前提是当时有看门狗在跑。要彻底堵死需要 AppLocker / WDAC，不在本项目范围。
+//! 仍然成立的两条：
+//!
+//! * `%LOCALAPPDATA%\AnthropicClaude\app-<版本>\claude.exe` **不锁** ——
+//!   一加 Deny，桌面端开新窗口就崩。那份只能靠看门狗收。这是已知残留缺口：
+//!   刻意翻进 app-* 目录直接双击能绕开**启动**门禁，20 秒内会被看门狗收掉，
+//!   前提是当时有看门狗在跑。要彻底堵死需要 AppLocker / WDAC，不在本项目范围。
+//! * npm 装的 `claude.cmd` 锁不了（批处理由 cmd.exe 读进去执行），
+//!   不进这张清单，界面上如实说明。
 
 use std::path::{Path, PathBuf};
 
@@ -30,10 +32,16 @@ pub struct Target {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum TargetKind {
-    /// Claude Code CLI（`.local\bin` 或 winget）
+    /// 面板托管安装的那份（`<托管根目录>\claude-code\claude.exe`，v0.9.0）
+    Managed,
+    /// Claude Code CLI（`.local\bin`、winget、Scoop、PATH 上的、npm 包里的 exe）
     Cli,
-    /// `%APPDATA%\Claude\claude-code\<版本>\` 下的版本化 CLI 副本
+    /// 桌面端带的版本化 CLI 副本：`%APPDATA%\Claude*\claude-code\<版本>\`
     CliVersioned,
+    /// 官方原生安装器的版本库 `~\.local\share\claude\versions\<版本>` —— 每个都是完整二进制
+    NativeVersion,
+    /// 编辑器扩展自带的 `claude.exe`（VS Code / Cursor / Windsurf …）
+    EditorExtension,
     /// 桌面端 Squirrel 存根 —— 开始菜单与桌面的 Claude.lnk 指向它
     DesktopStub,
     /// 升级残留的旧副本，**没有 Deny ACL，是可绕过的执行副本**
@@ -42,87 +50,30 @@ pub enum TargetKind {
     CodexCli,
 }
 
-fn home() -> Option<PathBuf> {
-    dirs::home_dir()
-}
-
-/// `%APPDATA%`（Roaming）。Claude Code 的新布局放在这下面。
-fn roaming() -> Option<PathBuf> {
-    dirs::config_dir()
-}
-
-fn local_appdata() -> Option<PathBuf> {
-    dirs::data_local_dir()
-}
-
-/// 枚举一个目录下所有子目录里的 `claude.exe`。
-///
-/// 用于 `%APPDATA%\Claude\claude-code\<版本>\` 与 winget 的 `Packages\<包名>\`：
-/// 两者都是「一个版本／包一个子目录」，**每一份都是完整可执行的**，
-/// 所以要全部收进来，不能只挑最新那个。
-fn claude_exes_in_subdirs(parent: &Path) -> Vec<PathBuf> {
-    let Ok(rd) = std::fs::read_dir(parent) else {
-        return Vec::new();
-    };
-    rd.filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
-        .map(|e| e.path().join("claude.exe"))
-        .filter(|p| p.is_file())
-        .collect()
-}
-
-/// 可锁目标清单。**不含** `AnthropicClaude\app-*`。
-pub fn lockable() -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = Vec::new();
-
-    if let Some(h) = home() {
-        out.push(h.join(".local").join("bin").join("claude.exe"));
-    }
-
-    // 新布局：%APPDATA%\Claude\claude-code\<版本>\claude.exe，每个版本都锁。
-    if let Some(r) = roaming() {
-        out.extend(claude_exes_in_subdirs(
-            &r.join("Claude").join("claude-code"),
-        ));
-    }
-
-    if let Some(la) = local_appdata() {
-        // 桌面端存根（不是 app-* 里那份）
-        out.push(la.join("AnthropicClaude").join("claude.exe"));
-
-        // winget：老的 Links shim 与新的 Packages 实体，两处都看
-        out.push(
-            la.join("Microsoft")
-                .join("WinGet")
-                .join("Links")
-                .join("claude.exe"),
-        );
-        let pkgs = la.join("Microsoft").join("WinGet").join("Packages");
-        if let Ok(rd) = std::fs::read_dir(&pkgs) {
-            for e in rd.filter_map(|e| e.ok()) {
-                let name = e.file_name().to_string_lossy().to_lowercase();
-                if name.contains("claudecode") || name.contains("claude.code") {
-                    let exe = e.path().join("claude.exe");
-                    if exe.is_file() {
-                        out.push(exe);
-                    }
-                }
-            }
-        }
-    }
+/// 可锁目标清单，带分类。**不含** `AnthropicClaude\app-*`。
+pub fn lockable_with_kinds() -> Vec<(PathBuf, TargetKind)> {
+    let roots = crate::install::inventory::Roots::current();
+    let mut out: Vec<(PathBuf, TargetKind)> = crate::install::inventory::lockable_paths(&roots)
+        .into_iter()
+        .map(|(p, k)| (p, k.target_kind()))
+        .collect();
 
     // Codex **默认不在门禁管辖内**。打开这个开关之后 `codex` 会跟
     // claude.exe 一样被 Deny ExecuteFile 挡住 —— 这对「请求不能从没核实过的
     // IP 出去」是对的，但对正在用 Codex 干活的人是个突然的变化，
     // 所以只能由他自己在设置里打开。见 `settings.rs`。
     if crate::settings::codex_under_gate() {
-        out.extend(codex_lockable());
+        out.extend(codex_lockable().into_iter().map(|p| (p, TargetKind::CodexCli)));
     }
 
-    out.retain(|p| p.is_file());
-    out.sort();
-    out.dedup();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out.dedup_by(|a, b| a.0 == b.0);
     out
+}
+
+/// 可锁目标清单。**不含** `AnthropicClaude\app-*`。
+pub fn lockable() -> Vec<PathBuf> {
+    lockable_with_kinds().into_iter().map(|(p, _)| p).collect()
 }
 
 /// Codex 侧可锁的副本。
@@ -138,18 +89,11 @@ pub fn codex_lockable() -> Vec<PathBuf> {
         .collect()
 }
 
-/// 桌面端真正在跑的那些 exe 所在目录（`app-*` 与 `Update.exe`）。
-/// 只用于看门狗识别进程，**不要**拿去上锁。
-pub fn desktop_runtime_dir() -> Option<PathBuf> {
-    local_appdata().map(|la| la.join("AnthropicClaude"))
-}
-
 /// 判断一个路径是不是「不能加 Deny ACE」的桌面端运行时副本。
 ///
-/// 这条判断是把 `app-*` 排除在外的那道闸。改它之前先读文件头的表格。
+/// 这条判断是把 `app-*` 排除在外的那道闸，本体在 `install::inventory`。
 pub fn is_desktop_runtime_copy(p: &Path) -> bool {
-    let s = p.to_string_lossy().to_lowercase().replace('/', "\\");
-    s.contains("\\anthropicclaude\\app-")
+    crate::install::inventory::is_desktop_runtime_copy(p)
 }
 
 /// 升级残留：`claude.exe.old.<时间戳>`。
@@ -157,37 +101,11 @@ pub fn is_desktop_runtime_copy(p: &Path) -> bool {
 /// 这些副本没有 Deny ACL，是能绕过门禁的执行副本，必须清掉。但注意：
 /// **发起升级的那个会话自己占着最新的一份，删不掉**（Windows 允许改名正在
 /// 运行的 exe，不允许删除）。所以清理放在**下一次**升级的开头。
+///
+/// 扫的是每一份副本所在的目录，不再只看 `.local\bin` 与当前桌面端资料 ——
+/// winget、Scoop、别的桌面端资料目录下的残留原来都扫不到。
 pub fn stale_copies() -> Vec<PathBuf> {
-    let mut dirs_to_scan: Vec<PathBuf> = Vec::new();
-    if let Some(h) = home() {
-        dirs_to_scan.push(h.join(".local").join("bin"));
-    }
-    if let Some(r) = roaming() {
-        let cc = r.join("Claude").join("claude-code");
-        if let Ok(rd) = std::fs::read_dir(&cc) {
-            dirs_to_scan.extend(rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()));
-        }
-        dirs_to_scan.push(cc);
-    }
-
-    let mut out = Vec::new();
-    for dir in dirs_to_scan {
-        let Ok(rd) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        out.extend(
-            rd.filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with("claude.exe.old."))
-                }),
-        );
-    }
-    out.sort();
-    out.dedup();
-    out
+    crate::install::inventory::stale_copies(&crate::install::inventory::Roots::current())
 }
 
 pub fn kind_of(p: &Path) -> TargetKind {
@@ -200,7 +118,12 @@ pub fn kind_of(p: &Path) -> TargetKind {
         return TargetKind::CodexCli;
     }
     let lower = p.to_string_lossy().to_lowercase().replace('/', "\\");
-    if lower.contains("\\claude\\claude-code\\") {
+    if lower.contains("\\.local\\share\\claude\\versions\\") {
+        TargetKind::NativeVersion
+    } else if lower.contains("\\extensions\\anthropic.claude-code") {
+        TargetKind::EditorExtension
+    } else if lower.contains("\\claude-code\\") {
+        // `Claude\claude-code\`、`Claude-NEW1\claude-code\`、MSIX 的 LocalCache 里那份都是这个形状。
         TargetKind::CliVersioned
     } else if p
         .parent()
@@ -308,4 +231,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn classifies_the_copies_that_used_to_be_missed() {
+        // v0.8.0 之前这几类根本不在清单里，自然也没有分类。
+        assert_eq!(
+            kind_of(Path::new(r"C:\Users\me\.local\share\claude\versions\2.1.267")),
+            TargetKind::NativeVersion
+        );
+        assert_eq!(
+            kind_of(Path::new(
+                r"C:\Users\me\.vscode\extensions\anthropic.claude-code-2.1.267-win32-x64\resources\native-binary\claude.exe"
+            )),
+            TargetKind::EditorExtension
+        );
+        assert_eq!(
+            kind_of(Path::new(
+                r"C:\Users\me\AppData\Roaming\Claude-NEW1\claude-code\2.1.258\claude.exe"
+            )),
+            TargetKind::CliVersioned
+        );
+    }
+
+    #[test]
+    fn inventory_kinds_map_onto_target_kinds() {
+        use crate::install::inventory::Kind;
+        assert_eq!(Kind::Native.target_kind(), TargetKind::Cli);
+        assert_eq!(Kind::Winget.target_kind(), TargetKind::Cli);
+        assert_eq!(Kind::NativeVersion.target_kind(), TargetKind::NativeVersion);
+        assert_eq!(Kind::DesktopManaged.target_kind(), TargetKind::CliVersioned);
+        assert_eq!(Kind::Editor.target_kind(), TargetKind::EditorExtension);
+        assert_eq!(Kind::DesktopStub.target_kind(), TargetKind::DesktopStub);
+    }
 }

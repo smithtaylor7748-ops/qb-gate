@@ -309,13 +309,19 @@ export function useSession<T>(key: string, initial: T): [T, (v: T) => void] {
 
   const value = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
-  const setValue = useCallback(
-    (v: T) => {
-      session.set(key, v);
-      sessionListeners.get(key)?.forEach((l) => l());
-    },
-    [key]
-  );
+  const setValue = useCallback((v: T) => setSession(key, v), [key]);
 
   return [value, setValue];
+}
+
+/**
+ * 不在组件里也能写会话态。
+ *
+ * 给「请求打开某个全局对话框」这类场合用：总览、账户页、托盘事件都能喊一声
+ * `requestSwitch(label)`，对话框本身只挂一份（`pages/accounts/SwitchFlow.tsx`）。
+ * 原来两个页面各挂一份切换对话框，文案和逻辑已经各走各的了。
+ */
+export function setSession<T>(key: string, v: T): void {
+  session.set(key, v);
+  sessionListeners.get(key)?.forEach((l) => l());
 }

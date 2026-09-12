@@ -9,6 +9,9 @@ import type { StepId } from './steps';
  * （软件检测 / 安装 / 升级 / 时区 / 中文环境识别），而中文环境识别本身是一个
  * 完整独立的话题（10 项加权指纹，背后 475 行 `signals.ts`）。
  * 它有自己的页面，但**没有自己的进度步骤**，见 `steps.ts` 的说明。
+ *
+ * 「订阅引导」同理，而且更彻底：它是纯图文资料，连检测都不做，
+ * 不产生任何可以记进 `progress.json` 的结果。见 `pages/SubscriptionGuidePage.tsx`。
  */
 export type PageId =
   | 'home'
@@ -18,6 +21,7 @@ export type PageId =
   | 'iplock'
   | 'accounts'
   | 'environment'
+  | 'subscription-guide'
   | 'plugins'
   | 'relay'
   | 'profiles'

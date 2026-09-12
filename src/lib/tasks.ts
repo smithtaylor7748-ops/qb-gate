@@ -33,7 +33,8 @@ export type TaskName =
   | 'launch-claude-desktop'
   | 'launch-codex'
   | 'killswitch-preview'
-  | 'killswitch-execute';
+  | 'killswitch-execute'
+  | 'chrome-reinstall';
 
 export interface TaskState {
   running: boolean;

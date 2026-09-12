@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Clock, FileText, Info, Lock, Scale, Undo2 } from 'lucide-react';
+import { Clock, FileText, FolderCog, Info, Lock, Scale, Undo2 } from 'lucide-react';
 
 import { api, type Settings as AppSettings, type UpdateStatus } from '../lib/api';
 import { useNav } from '../lib/nav';
@@ -19,6 +19,7 @@ import {
   Checkbox,
   useToast,
 } from '../ui';
+import { ManagedDirControl } from './managed/ManagedPanel';
 
 export default function Settings() {
   const { go } = useNav();
@@ -53,16 +54,15 @@ export default function Settings() {
     }
   }
 
-  async function setCodexGate(on: boolean) {
-    const next: AppSettings = { ...(settings.data ?? { codex_under_gate: false }), codex_under_gate: on };
-    setBusy('codexGate');
+  /** 默认值集中在这一处 —— 分散写就会像上一版那样，加一个字段漏一处。 */
+  const DEFAULTS: AppSettings = { codex_under_gate: false, gate_auto_rearm: true };
+
+  async function save(name: string, patch: Partial<AppSettings>, ok: string) {
+    const next: AppSettings = { ...(settings.data ?? DEFAULTS), ...patch };
+    setBusy(name);
     try {
       await api.settingsSave(next);
-      toast.ok(
-        on
-          ? 'Codex 已纳入门禁。出口 IP 不合规时 codex 会被系统拒绝执行。'
-          : 'Codex 已移出门禁，它身上的执行锁已摘除。'
-      );
+      toast.ok(ok);
       invalidate('settings', 'gate');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -72,7 +72,28 @@ export default function Settings() {
     }
   }
 
+  async function setCodexGate(on: boolean) {
+    await save(
+      'codexGate',
+      { codex_under_gate: on },
+      on
+        ? 'Codex 已纳入门禁。出口 IP 不合规时 codex 会被系统拒绝执行。'
+        : 'Codex 已移出门禁，它身上的执行锁已摘除。'
+    );
+  }
+
+  async function setAutoRearm(on: boolean) {
+    await save(
+      'autoRearm',
+      { gate_auto_rearm: on },
+      on
+        ? '已开启：出口 IP 回到白名单后门禁会自动重新放行。'
+        : '已关闭：门禁关上之后要自己点「重新放行」。'
+    );
+  }
+
   const codexGated = settings.data?.codex_under_gate ?? false;
+  const autoRearm = settings.data?.gate_auto_rearm ?? true;
 
   return (
     <>
@@ -98,6 +119,42 @@ export default function Settings() {
           </span>
         </Row>
 
+        <Row
+          className="mt-2"
+          side={
+            <Checkbox
+              checked={autoRearm}
+              disabled={!!busy || settings.loading}
+              onChange={(on) => void setAutoRearm(on)}
+            >
+              {autoRearm ? '已开启' : '已关闭'}
+            </Checkbox>
+          }
+        >
+          <span>门禁关上之后自动重新放行</span>
+          <span className="notice">
+            <strong>默认开启。</strong>
+            看门狗收摊、升级重锁、一键关闭之后，只要出口 IP 回到白名单，
+            门禁会自己开回来。它<strong>只恢复租约、不启动任何进程</strong>，
+            而且仍然要求出口 IP 已核实且在白名单里 —— 安全口径一个字没放松。
+          </span>
+        </Row>
+
+        <Collapsible className="mt-1" summary="为什么这条默认是开的">
+          <p className="notice">
+            关掉它，看门狗一旦收摊就此退出，<strong>从此没有任何东西看着</strong>——
+            出口 IP 后来恢复了也不会有人开门。使用者只会在下次开新会话时撞见{' '}
+            <code>Claude Code couldn&apos;t start</code>，而且完全不会把它跟
+            半小时前那次网络抖动联系起来。
+          </p>
+          <p className="notice mt-2">
+            这跟「Codex 纳入门禁」那条默认关正好相反，理由也相反：
+            那个开关<strong>打开</strong>会让命令突然跑不起来，
+            这个开关<strong>关掉</strong>会让门永远不自己开。
+            两边守的是同一条 —— 默认值要是「最不意外」的那个。
+          </p>
+        </Collapsible>
+
         <Collapsible className="mt-1" summary="打开之前先知道这几件事">
           <p className="notice">
             <strong>它会影响你日常用 Codex。</strong>
@@ -117,6 +174,16 @@ export default function Settings() {
             你会得到一个永远跑不起来的 codex。
           </p>
         </Collapsible>
+      </Card>
+
+      {/* ------------------------------------------------ 托管安装目录 */}
+      <Card title="托管安装目录" icon={<FolderCog size={14} />} className="mb-3">
+        <ManagedDirControl compact />
+        <p className="notice mt-2">
+          面板自己装的 Claude Code 与 Codex 放在这里（桌面端的位置由官方安装器决定，不在这里）。
+          换目录时面板会当场实测新目录锁不锁得住 —— 不是 NTFS 的盘、没有改权限资格的目录都选不进来；
+          已经装好的会一键搬过去并在新位置重新上锁。
+        </p>
       </Card>
 
       <Card title="ClaudeGate 版本" icon={<Info size={14} />} className="mb-3">

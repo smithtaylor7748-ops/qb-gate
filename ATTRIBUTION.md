@@ -46,6 +46,68 @@ MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件
 原因是 cc-switch 现在这部分已经和 SQLite DAO、本地代理层缠在一起，
 逐行搬进来的维护成本高于重写。
 
+### 订阅引导模块 — 整个页面原样引入
+
+- 来源包：`ClaudeGate-订阅引导-20260910`（独立交付，未发布到公开仓库）
+- 许可：**MIT**，Copyright (c) 2026 Subscription Guide contributors
+- 用在：`src/subscription-guide/`（`SubscriptionGuide.tsx` · `content.ts` ·
+  `subscription-guide.css` · `index.ts`），页面挂在 `src/pages/SubscriptionGuidePage.tsx`
+
+这一份跟上面几条不一样：**不是参考，是整目录搬进来的**。许可证正本放在
+`src/subscription-guide/LICENSE`。
+
+**维护规矩：不要在宿主这边单独改模块文件。** 上游那个包
+（`桌面\ClaudeGate-订阅引导-20260910`）自带 `npm run check` / `npm test` /
+`npm run build`，其中 `npm test` 会校验来源 id 唯一、外链白名单边界、
+四条路线各六步、以及每条注意事项的分组与出处；`npm run build` 还会把
+`content.ts` 重新生成成 `GUIDE.zh-CN.md` 与离线预览。**绕过它们直接改宿主副本，
+文字稿和页面就会对不上，而且那几条校验一条都跑不到。**
+
+所以改内容的正确顺序是：
+
+```text
+1. 改上游包里的 src/subscription-guide/
+2. 在上游包里跑 npm run check && npm test && npm run build
+3. 把改过的文件拷回宿主，顺带更新 docs/subscription-guide/GUIDE.zh-CN.md
+4. 宿主跑 npm run build
+```
+
+**当前状态（2026-09-10）**：两边按 SHA-256 逐字节一致。相对上游首次交付，
+在上游包里改过这些，宿主是同步过来的副本：
+
+| 文件 | 改了什么 |
+|---|---|
+| `content.ts` | 加 `Caution` 类型、`cautions`（12 条注意事项）、`CAUTIONS_REVIEWED`，来源从 27 条加到 34 条 |
+| `SubscriptionGuide.tsx` | 加「注意事项」这一档 section 与它的渲染分支 |
+| `subscription-guide.css` | 加 `.cg-caution*` 一组样式（照旧全部限定在 `.cg-guide` 内） |
+| 上游 `scripts/check-content.mjs` · `scripts/build.mjs` | 把注意事项纳入校验与文字稿生成 |
+
+宿主侧自己的适配一共两处，都留了注释，**这两处不要往上游回流**：
+
+| 位置 | 干什么 |
+|---|---|
+| `src/pages/SubscriptionGuidePage.tsx` | 传 `openUrl` 与 `go`，把模块接到面板的外链与导航上 |
+| `src/styles/components.css` 的 `.main-inner--wide` | 这一页放宽到 1460px，边距交给模块自己 |
+
+模块本身不联网、不读账号、不写文件、不加 Rust 命令，也**不进 `progress.json`** ——
+它是纯图文资料，产生不了可记录的检查结果。外链有自己的一层来源域名白名单
+（`content.ts` 的 `isAllowedExternalUrl`：只放行 HTTPS、无 URL 凭证、
+主机在来源表里），不在名单里的链接它自己就拦下并提示。
+CSS 全部限定在 `.cg-guide` 内，没有 `:root` / `html` / `body` / `*` 规则，
+不会影响其他页面。
+
+随包的四份文档放在 `docs/subscription-guide/`：
+
+- `GUIDE.zh-CN.md` —— 四条购买路线的完整文字稿（带来源）
+- `LEGAL-REVIEW.zh-CN.md` —— **发布前必读**，里面对本项目自身列了四条待办：
+  订阅凭证桥接、凭证复制、品牌名称、第三方许可清单
+- `MEDIA-SOURCES.md` —— 图片与视频的检索、出处与复用限制
+- `VERIFICATION.md` —— 上游做过什么测试、**没做**什么测试
+
+⚠ **MIT 只覆盖模块自己的代码、文字和插图。** 它链接到的官方文档、第三方博客、
+B 站视频、品牌名称与商家页面都不在这份 MIT 授权范围内 ——
+组件里放的是链接，没有转载它们的图文，维护时也请保持这个做法。
+
 ### Cockpit Tools —— ⛔ 只看界面，一行代码都不许抄
 
 - 仓库：https://github.com/jlcodes99/cockpit-tools
