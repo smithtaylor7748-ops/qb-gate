@@ -14,9 +14,9 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -51,6 +51,21 @@ jobs:
             ForEach-Object { Copy-Item $_.FullName dist-installers/ }
           Get-ChildItem dist-installers
 
+      # 把每个安装包的 SHA-256 算出来，写进 Release 正文。
+      # 安装包没有代码签名证书，哈希是使用者唯一能自己核对的东西 —— 必须给。
+      - name: Compute checksums
+        id: sums
+        shell: pwsh
+        run: |
+          $lines = Get-ChildItem dist-installers -File | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash, $_.Name
+          }
+          $lines | Set-Content dist-installers/SHA256SUMS.txt -Encoding ascii
+          "text<<SUMS_EOF"        | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
+          $lines                  | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
+          "SUMS_EOF"              | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
+          $lines
+
       - uses: actions/upload-artifact@v4
         with:
           name: qb-gate-windows
@@ -62,12 +77,35 @@ jobs:
         with:
           files: dist-installers/*
           body: |
-            Windows 安装包。
+            Windows 10 / 11 x64 安装包。下载下面的 `.exe` 双击安装即可。
 
-            首次运行请注意：
-            - 「IP 锁」会给 `claude.exe` 加 Deny ExecuteFile ACE，
-              加上之后**双击 exe 会被系统拒绝**，这是设计如此，
+            ### ⚠ Windows 会弹 SmartScreen 蓝框
+
+            安装包**没有代码签名证书**，所以会出现「Windows 已保护你的电脑」。
+            这不代表文件有问题，个人项目买不起也没必要买 EV 证书。
+            要继续就点「更多信息 → 仍要运行」。
+
+            不放心的话，核对 SHA-256（下面这串，也在 `SHA256SUMS.txt` 里）：
+
+            ```
+            ${{ steps.sums.outputs.text }}
+            ```
+
+            ```powershell
+            Get-FileHash .\下载到的文件.exe -Algorithm SHA256
+            ```
+
+            本安装包由 GitHub Actions 在干净的 Windows runner 上、
+            从本仓库这个 tag 的源码构建，构建日志在 Actions 里公开可查。
+
+            ### 首次运行请注意
+
+            - 「IP 锁」会给 `claude.exe` 加 Deny ExecuteFile ACE，加上之后
+              **双击 exe 会被系统拒绝执行**，这是设计如此 ——
               登录与启动都要走面板里的受控入口。
-            - 安装 Claude 走 winget（`Anthropic.ClaudeCode` / `Anthropic.Claude`），
-              Claude Code 装不上时会自动回退到官方安装脚本。
-              没有 winget 的机器只给「打开官方下载页」。
+            - **白名单为空时不会上锁**，所以第一件事是把当前出口 IP 加进白名单。
+            - 「Chrome 清空重装」会**永久删除**整个 Chrome `User Data`
+              （书签、密码、扩展、全部登录态），执行前请先备份。
+            - 本项目**不是安全边界**，存在已知绕过路径，别当强制访问控制用。
+
+            使用前请读 [DISCLAIMER.md](../../blob/main/DISCLAIMER.md)。
