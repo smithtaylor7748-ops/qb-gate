@@ -472,6 +472,7 @@ README 里那些「不显然但很贵」的分支，多半是这么来的。
 |---|---|
 | [DISCLAIMER.md](DISCLAIMER.md) | 免责声明。**使用前必读**，里面写清楚了哪些操作不可逆 |
 | [ATTRIBUTION.md](ATTRIBUTION.md) | 第三方来源与许可，逐条说明抄了什么、没抄什么 |
+| [CLAUDE.md](CLAUDE.md) | **改这个仓库之前先读**：收工清单、不许加的功能、抄代码前的 license 规矩 |
 | [docs/DESIGN-NOTES.zh-CN.md](docs/DESIGN-NOTES.zh-CN.md) | 实现笔记：为什么这么写。改代码前先读 |
 | [docs/KNOWN-ISSUES.zh-CN.md](docs/KNOWN-ISSUES.zh-CN.md) | 已知问题、修不了的缺口、没实机验证过的路径 |
 
