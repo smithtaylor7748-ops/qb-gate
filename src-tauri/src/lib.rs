@@ -193,6 +193,14 @@ fn hook_uninstall() -> Result<gate::hook::HookStatus> {
     gate::hook::uninstall()
 }
 
+/// 运行环境体检：系统代理、IPv6、浏览器 DoH、MCP 配置里的明文密钥。
+///
+/// 读注册表和本地配置文件，**不联网、不改任何东西**。
+#[tauri::command]
+fn checkup_scan() -> sysenv::checkup::Checkup {
+    sysenv::checkup::scan()
+}
+
 // -------------------------------------------------------------- 版本库
 
 /// 托管目录的版本库里有哪几版可以退回去。
@@ -1305,6 +1313,7 @@ pub fn run() {
             allowlist_write,
             allowlist_add_current,
             country_presets,
+            checkup_scan,
             managed_history,
             managed_rollback,
             hook_status,

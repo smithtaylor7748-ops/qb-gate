@@ -86,7 +86,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { id: 'purity', label: 'IP 纯净度', icon: <ShieldCheck size={15} /> },
       { id: 'dns', label: 'DNS 泄露', icon: <Globe size={15} /> },
-      { id: 'signals', label: '中文环境识别', icon: <Fingerprint size={15} /> },
+      { id: 'signals', label: '环境体检', icon: <Fingerprint size={15} /> },
     ],
   },
   {

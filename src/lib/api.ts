@@ -380,6 +380,32 @@ export interface ManagedStatus {
   apps: ManagedAppStatus[];
 }
 
+/** 体检一项的结论。`unknown` 跟 `pass` 是两回事，界面上不许合并。 */
+export type CheckState = 'pass' | 'warn' | 'fail' | 'unknown';
+
+export interface CheckItem {
+  id: string;
+  label: string;
+  state: CheckState;
+  detail: string;
+  /** 面板能不能安全地替你修。目前全是 false —— 见 Rust 侧文件头。 */
+  fixable: boolean;
+  /** 不能代劳时给的命令或步骤，以及代价。 */
+  manual?: string | null;
+}
+
+/** 一处明文密钥的**位置**。结构上就装不下密钥内容。 */
+export interface SecretHit {
+  file: string;
+  /** 字段名，比如 `api_key`。值永远不带出来。 */
+  field: string;
+}
+
+export interface Checkup {
+  items: CheckItem[];
+  secrets: SecretHit[];
+}
+
 /** 版本库里的一版。 */
 export interface VersionEntry {
   version: string;
@@ -807,6 +833,12 @@ export const api = {
    */
   relayDetectBackend: (baseUrl: string, id?: string, model?: string) =>
     call<BackendReport>('relay_detect_backend', { baseUrl, id, model }),
+
+  /**
+   * 运行环境体检：系统代理、IPv6、浏览器 DoH、MCP 配置里的明文密钥。
+   * 读注册表与本地配置，**不联网、不改任何东西**。
+   */
+  checkupScan: () => call<Checkup>('checkup_scan'),
 
   // 时区
   tzCurrent: () => call<string>('tz_current'),

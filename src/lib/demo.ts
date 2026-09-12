@@ -25,6 +25,7 @@ import type {
   BackendReport,
   BackupEntry,
   CategoryListing,
+  Checkup,
   CleanupReport,
   DnsReport,
   GateStatus,
@@ -311,6 +312,50 @@ const hook: HookStatus = {
   recent_blocks: [
     '2026-09-11 22:14:03  出口 IP 198.51.100.22 不在白名单内',
     '2026-09-11 22:13:58  门禁裁决已过期 142 秒（面板没在跑，或看门狗已停）',
+  ],
+};
+
+const checkup: Checkup = {
+  items: [
+    {
+      id: 'proxy',
+      label: '系统代理',
+      state: 'pass',
+      detail: '系统代理没开 —— 出口由路由/TUN 决定，跟面板量到的是同一条路',
+      fixable: false,
+      manual: null,
+    },
+    {
+      id: 'ipv6',
+      label: 'IPv6',
+      state: 'warn',
+      detail:
+        'IPv6 开着。隧道只接管 IPv4 时，v6 流量会绕过它直接从本地出去 —— 这是最常见的一种「代理开着但还是暴露了」。',
+      fixable: false,
+      manual:
+        '管理员身份运行，然后重启：' +
+        '\nreg add HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters /v DisabledComponents /t REG_DWORD /d 0xff /f',
+    },
+    {
+      id: 'doh',
+      label: '浏览器 DoH 策略',
+      state: 'unknown',
+      detail: '没有配置 DoH 策略 —— 浏览器用的是它自己的默认值，可能在用内置的 DoH 解析器。',
+      fixable: false,
+      manual: '判断不了就交给「DNS 泄露 → 高级通过」那条让 Codex 看一眼。',
+    },
+    {
+      id: 'secrets',
+      label: 'MCP / 配置里的明文密钥',
+      state: 'fail',
+      detail: '在 2 处看到疑似明文密钥字段。面板**只报位置不报内容**，自己去看一眼。',
+      fixable: false,
+      manual: '这些文件会被同步盘、备份、以及你随手贴出来的截图带走。',
+    },
+  ],
+  secrets: [
+    { file: `${HOME}\\.mcp.json`, field: 'api_key' },
+    { file: `${HOME}\\.codex\\config.toml`, field: 'token' },
   ],
 };
 
@@ -649,6 +694,7 @@ const FIXTURES: Record<string, () => unknown> = {
   detect_software: () => software,
   install_probe: () => installProbe,
   claude_traces: () => traces,
+  checkup_scan: () => checkup,
   accounts_list: () => accounts,
   managed_status: () => managed,
   managed_externals: () => externals,

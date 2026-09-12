@@ -5,6 +5,8 @@
 //!
 //! 需要管理员权限的只有这一处。其余功能都不提权。
 
+pub mod checkup;
+
 use crate::error::{GateError, Result};
 use serde::{Deserialize, Serialize};
 

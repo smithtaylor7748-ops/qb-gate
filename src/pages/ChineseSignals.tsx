@@ -1,5 +1,6 @@
-import { Play, RotateCw, Wrench } from 'lucide-react';
+import { Play, RotateCw, Stethoscope, Wrench } from 'lucide-react';
 
+import type { CheckItem } from '../lib/api';
 import { R } from '../lib/resources';
 import { useResource } from '../lib/store';
 import { useNav } from '../lib/nav';
@@ -37,8 +38,8 @@ export default function ChineseSignals() {
   return (
     <>
       <PageHeader
-        title="中文环境识别"
-        sub="十项加权指纹，满分 100，全部在本地算，不上传任何数据。"
+        title="环境体检"
+        sub="浏览器侧十项加权指纹 + 本机侧四项检查。全部在本地算，不上传任何数据。"
         actions={
           <Button
             variant={r ? 'default' : 'primary'}
@@ -180,6 +181,88 @@ export default function ChineseSignals() {
           官方 OAuth 直连不在该描述范围内。
         </p>
       </Collapsible>
+
+      <LocalCheckup />
     </>
+  );
+}
+
+const CHECK_TONE = { pass: 'ok', warn: 'warn', fail: 'danger', unknown: 'default' } as const;
+const CHECK_LABEL = { pass: '通过', warn: '注意', fail: '有问题', unknown: '查不出' } as const;
+
+/**
+ * 本机侧体检 —— 浏览器里看不到的那几项。
+ *
+ * 项目划分参考 check-cc 与 claude-antiban-macos（都是 MIT），Windows 侧读法自己写。
+ *
+ * # 为什么没有「一键修复」按钮
+ *
+ * 这几项里真正安全可逆的只有时区（它在环境页，有快照兜底）。关系统代理会当场
+ * 断网、关 IPv6 要管理员权限加重启、改 DoH 是动整机的企业策略 —— 面板不做那种
+ * 「点一下，然后你发现自己上不了网」的按钮，而是给出原样可复制的命令加代价说明。
+ * 跟「中文字体那 14 分修不掉就不提供修复按钮，也不假装能修」是同一条。
+ */
+function LocalCheckup() {
+  const checkup = useResource('checkup', R.checkup);
+  const c = checkup.data;
+
+  return (
+    <Card
+      title="本机体检"
+      icon={<Stethoscope size={14} />}
+      className="mb-3"
+      actions={
+        <Button
+          size="sm"
+          variant="primary"
+          icon={<Play size={12} />}
+          loading={checkup.loading}
+          onClick={() => void checkup.refresh()}
+        >
+          {c ? '重新体检' : '开始体检'}
+        </Button>
+      }
+    >
+      <p className="notice mb-2">
+        读注册表与本地配置文件，<strong>不联网、不改任何东西</strong>。
+        查的是浏览器指纹看不到的那几项：系统代理、IPv6、浏览器 DoH 策略，
+        以及 MCP / Codex 配置里有没有写成明文的密钥。
+      </p>
+
+      {checkup.error && <p className="notice notice--danger">{checkup.error}</p>}
+
+      {!c && !checkup.loading && (
+        <EmptyState title="还没体检过">
+          点右上角「开始体检」。它只读不写，随时可以再跑一次。
+        </EmptyState>
+      )}
+
+      {c?.items.map((it: CheckItem) => (
+        <Row key={it.id} side={<Pill tone={CHECK_TONE[it.state]}>{CHECK_LABEL[it.state]}</Pill>}>
+          <span>{it.label}</span>
+          <span className="notice">{it.detail}</span>
+          {it.manual && (
+            <Collapsible className="mt-1" summary="要自己动手的话">
+              <pre className="logview whitespace-pre-wrap">{it.manual}</pre>
+            </Collapsible>
+          )}
+        </Row>
+      ))}
+
+      {!!c?.secrets.length && (
+        <div className="mt-2">
+          <p className="notice notice--danger">
+            <strong>下面这些位置写着明文密钥。</strong>
+            面板<strong>只报位置，不读也不显示内容</strong> —— 报出来的东西迟早会
+            被打进日志、截图或者 issue 里，所以结构上就不带值。
+          </p>
+          {c.secrets.map((h, i) => (
+            <Row key={i} side={<Pill tone="danger">{h.field}</Pill>}>
+              <span className="w-full break-all font-mono text-xs">{h.file}</span>
+            </Row>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }

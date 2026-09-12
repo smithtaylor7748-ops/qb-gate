@@ -47,6 +47,12 @@ export const R = {
    */
   signals: res(() => runScan(), { auto: false }),
 
+  /**
+   * 本机环境体检。要跑几个 `reg query` 子进程、还要读一遍配置文件，
+   * 跟 traces / dns 同一档：**用户点了才跑**。
+   */
+  checkup: res(() => api.checkupScan(), { auto: false }),
+
   /** 升级计划走 latest 渠道 —— 写死 stable 会降级，见档案 §4.5。 */
   upgrade: res(() => api.upgradePlan('latest'), { auto: false }),
 
