@@ -22,7 +22,6 @@
 
 import type {
   AccountsReport,
-  BackendReport,
   BackupEntry,
   CategoryListing,
   Checkup,
@@ -43,8 +42,6 @@ import type {
   Profile,
   ProfileStore,
   Progress,
-  ProviderMeta,
-  ProviderView,
   PurityCriteria,
   Settings,
   SnapshotEntry,
@@ -54,111 +51,122 @@ import type {
   UpdateStatus,
   UpgradePlan,
   VersionEntry,
-} from './api';
+} from "./api";
 
-export const DEMO_ENABLED = import.meta.env.VITE_DEMO === '1';
+export const DEMO_ENABLED = import.meta.env.VITE_DEMO === "1";
 
-const HOME = 'C:\\Users\\demo';
+const HOME = "C:\\Users\\demo";
 const APPS = `${HOME}\\AppData\\Local\\ClaudeIpGate\\apps`;
 
 const ip: IpInfo = {
-  ip: '203.0.113.7',
+  ip: "203.0.113.7",
   asn: 64501,
-  asOrganization: 'Example Broadband LLC',
-  country: 'United States',
-  countryCode: 'US',
-  region: 'Virginia',
-  city: 'Ashburn',
-  timezone: 'America/New_York',
+  asOrganization: "Example Broadband LLC",
+  country: "United States",
+  countryCode: "US",
+  region: "Virginia",
+  city: "Ashburn",
+  timezone: "America/New_York",
   fraudScore: 0,
   isResidential: true,
   isBroadcast: false,
 };
 
 const purity: PanelVerdict = {
-  purity: 'Pass',
-  residential: 'Pass',
-  native: 'Pass',
+  purity: "Pass",
+  residential: "Pass",
+  native: "Pass",
   passed: true,
-  note: '面板自查只作参考，三项硬指标以 IPQualityScore 与 ippure.com 的结论为准。',
+  note: "面板自查只作参考，三项硬指标以 IPQualityScore 与 ippure.com 的结论为准。",
 };
 
 const criteria: PurityCriteria = {
   ipqs: {
-    url: 'https://www.ipqualityscore.com/free-ip-lookup-proxy-vpn-test',
-    criteria: 'Fraud Score ≤ 5，且 Proxy / VPN / TOR / Recent Abuse 全为 No，Connection Type = Residential',
+    url: "https://www.ipqualityscore.com/free-ip-lookup-proxy-vpn-test",
+    criteria:
+      "Fraud Score ≤ 5，且 Proxy / VPN / TOR / Recent Abuse 全为 No，Connection Type = Residential",
   },
   ippure: {
-    url: 'https://ippure.com/',
-    criteria: 'IPPure 系数 ≤ 5%，IP来源 = 原生IP，IP属性 = 住宅IP',
+    url: "https://ippure.com/",
+    criteria: "IPPure 系数 ≤ 5%，IP来源 = 原生IP，IP属性 = 住宅IP",
   },
   optional: [
-    { name: 'ipinfo.io', url: 'https://ipinfo.io/' },
-    { name: 'Scamalytics', url: 'https://scamalytics.com/ip' },
+    { name: "ipinfo.io", url: "https://ipinfo.io/" },
+    { name: "Scamalytics", url: "https://scamalytics.com/ip" },
   ],
   maxFraudScore: 5,
-  iproyal: 'https://iproyal.com/',
+  iproyal: "https://iproyal.com/",
 };
 
 const gate: GateStatus = {
-  current_ip: '203.0.113.7',
-  allowlist: ['203.0.113.7'],
+  current_ip: "203.0.113.7",
+  allowlist: ["203.0.113.7"],
   ip_allowed: true,
   targets: [
-    { path: `${APPS}\\claude-code\\claude.exe`, kind: 'Managed', exists: true, locked: true },
-    { path: `${HOME}\\.local\\bin\\claude.exe`, kind: 'Cli', exists: true, locked: true },
+    {
+      path: `${APPS}\\claude-code\\claude.exe`,
+      kind: "Managed",
+      exists: true,
+      locked: true,
+    },
+    {
+      path: `${HOME}\\.local\\bin\\claude.exe`,
+      kind: "Cli",
+      exists: true,
+      locked: true,
+    },
     {
       path: `${HOME}\\AppData\\Roaming\\Claude\\claude-code\\2.0.14\\claude.exe`,
-      kind: 'CliVersioned',
+      kind: "CliVersioned",
       exists: true,
       locked: true,
     },
     {
       path: `${HOME}\\AppData\\Local\\AnthropicClaude\\claude.exe`,
-      kind: 'DesktopStub',
+      kind: "DesktopStub",
       exists: true,
       locked: true,
     },
   ],
   all_locked: true,
-  lease: { holder: null, granted: [], mode: null },
+  lease: { holders: {}, holder: null, granted: [], mode: null },
   watchdog_running: false,
   stale_copies: [],
   recent_log: [
-    '2026-09-12 09:41:07  出口 IP 203.0.113.7 在白名单内',
-    '2026-09-12 09:41:07  4 个副本已上锁（托管 / 官方安装器 / 版本库 / 桌面端存根）',
-    '2026-09-12 09:12:33  租约已收回，看门狗停止',
-    '2026-09-12 08:55:19  已放行 claude-code，看门狗接管（Cli 档）',
+    "2026-09-12 09:41:07  出口 IP 203.0.113.7 在白名单内",
+    "2026-09-12 09:41:07  4 个副本已上锁（托管 / 官方安装器 / 版本库 / 桌面端存根）",
+    "2026-09-12 09:12:33  租约已收回，看门狗停止",
+    "2026-09-12 08:55:19  已放行 claude-code，看门狗接管（Cli 档）",
   ],
   needs_reopen: null,
 };
 
 const software: SoftwareReport = {
   claudeCode: {
-    id: 'claude-code',
-    name: 'Claude Code',
+    id: "claude-code",
+    name: "Claude Code",
     installed: true,
-    version: '2.0.14',
+    version: "2.0.14",
     path: `${APPS}\\claude-code\\claude.exe`,
     advisory: null,
   },
   claudeCodeInstalls: [
     {
-      kind: 'managed',
+      kind: "managed",
       path: `${APPS}\\claude-code\\claude.exe`,
       lockable: true,
       launchable: true,
       preferred: true,
     },
     {
-      kind: 'native',
+      kind: "native",
       path: `${HOME}\\.local\\bin\\claude.exe`,
       lockable: true,
       launchable: true,
       preferred: false,
     },
     {
-      kind: 'native_version',
+      kind: "native_version",
       path: `${HOME}\\.local\\share\\claude\\versions\\2.0.14`,
       lockable: true,
       launchable: false,
@@ -166,28 +174,28 @@ const software: SoftwareReport = {
     },
   ],
   claudeDesktop: {
-    id: 'claude-desktop',
-    name: 'Claude 桌面端',
+    id: "claude-desktop",
+    name: "Claude 桌面端",
     installed: true,
-    version: '0.14.2',
+    version: "0.14.2",
     path: `${HOME}\\AppData\\Local\\AnthropicClaude\\claude.exe`,
     advisory: null,
   },
   codex: {
-    id: 'codex',
-    name: 'Codex',
+    id: "codex",
+    name: "Codex",
     installed: true,
-    version: '0.28.0',
+    version: "0.28.0",
     path: `${APPS}\\codex\\codex.exe`,
-    advisory: '默认不在 IP 门禁范围内，可在「设置 → 门禁范围」里打开。',
+    advisory: "默认不在 IP 门禁范围内，可在「设置 → 门禁范围」里打开。",
   },
   browsers: [
     {
-      id: 'chrome',
-      name: 'Google Chrome',
+      id: "chrome",
+      name: "Google Chrome",
       installed: true,
-      version: '141.0.7390.55',
-      path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      version: "141.0.7390.55",
+      path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
       advisory: null,
     },
   ],
@@ -196,29 +204,54 @@ const software: SoftwareReport = {
 const accounts: AccountsReport = {
   slots: [
     {
-      label: 'demo-main',
+      label: "demo-main",
       active: true,
       logged_in: true,
       cli_days_left: 23,
-      account_uuid: '00000000-0000-4000-8000-000000000001',
-      plan: 'Claude Pro',
-      billing: '官网订阅',
-      plan_fetched_at: '2026-09-12 09:04',
+      account_uuid: "00000000-0000-4000-8000-000000000001",
+      plan: "Claude Pro",
+      billing: "官网订阅",
+      plan_fetched_at: "2026-09-12 09:04",
       desktop_profile: true,
+      // 当前登录的那个：桌面端有实时样本，五小时窗口的恢复时刻是推算的。
+      usage: {
+        source: "desktop",
+        measured_at: new Date(Date.now() - 6 * 60_000).toISOString(),
+        age_minutes: 6,
+        five_hour: {
+          used: 62,
+          resets_at: new Date(Date.now() + 97 * 60_000).toISOString(),
+          estimated: true,
+        },
+        seven_day: {
+          used: 79,
+          resets_at: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+          estimated: false,
+        },
+      },
     },
     {
-      label: 'demo-alt',
+      label: "demo-alt",
       active: false,
       logged_in: true,
       cli_days_left: 61,
-      account_uuid: '00000000-0000-4000-8000-000000000002',
-      plan: 'Claude Max 5x',
-      billing: 'Google Play 订阅',
-      plan_fetched_at: '2026-09-10 21:37',
+      account_uuid: "00000000-0000-4000-8000-000000000002",
+      plan: "Claude Max 5x",
+      billing: "Google Play 订阅",
+      plan_fetched_at: "2026-09-10 21:37",
       desktop_profile: false,
+      // 没登录的槽位不可能有实时数据 —— 物理限制。只有 Claude Code 留下的快照，
+      // 而且是十天前的：`resets_at` 早过去了，所以两个窗口都没有恢复时刻。
+      usage: {
+        source: "cache",
+        measured_at: "2026-09-02T18:07:05.310Z",
+        age_minutes: 14_400,
+        five_hour: { used: 25, resets_at: null, estimated: false },
+        seven_day: { used: 13, resets_at: null, estimated: false },
+      },
     },
     {
-      label: 'demo-empty',
+      label: "demo-empty",
       active: false,
       logged_in: false,
       cli_days_left: null,
@@ -227,70 +260,73 @@ const accounts: AccountsReport = {
       billing: null,
       plan_fetched_at: null,
       desktop_profile: false,
+      // 两源都没有 —— 什么都不显示，不给假读数。
+      usage: null,
     },
   ],
-  caveat: '用量与额度只能去 Claude 官方 Settings → Usage 看，面板不读取任何限流 / 429 / 额度状态。',
+  caveat:
+    "剩余天数只读本地时间戳，查不出「被风控下线」。唯一能确认的办法是实际发一次认证请求。",
   planCaveat:
-    '套餐读自槽位目录里的 .claude.json（官方客户端写下的档案缓存），不发任何网络请求，可能过期。',
+    "套餐读自槽位目录里的 .claude.json（官方客户端写下的档案缓存），不发任何网络请求，可能过期。",
   sync: { done: [], failed: [] },
-  desktop: { managed: true, active: 'demo-main' },
+  desktop: { managed: true, active: "demo-main" },
   bridgePresent: true,
 };
 
 const progress: Progress = {
   steps: {
     purity: {
-      state: 'passed',
-      risk: 'low',
-      detail: '已在 IPQS 与 ippure 复核通过',
-      updated_at: '2026-09-12 09:06',
+      state: "passed",
+      risk: "low",
+      detail: "已在 IPQS 与 ippure 复核通过",
+      updated_at: "2026-09-12 09:06",
     },
     environment: {
-      state: 'passed',
-      risk: 'low',
-      detail: 'Claude Code / 桌面端 / Codex 都已装',
-      updated_at: '2026-09-12 09:08',
+      state: "passed",
+      risk: "low",
+      detail: "Claude Code / 桌面端 / Codex 都已装",
+      updated_at: "2026-09-12 09:08",
     },
     dns: {
-      state: 'passed',
-      risk: 'low',
-      detail: '简易通过：10 个探针都由境外解析器回报',
-      updated_at: '2026-09-12 09:10',
+      state: "passed",
+      risk: "low",
+      detail: "简易通过：10 个探针都由境外解析器回报",
+      updated_at: "2026-09-12 09:10",
     },
     iplock: {
-      state: 'passed',
-      risk: 'low',
-      detail: '4 个副本全部上锁，白名单 1 条',
-      updated_at: '2026-09-12 09:12',
+      state: "passed",
+      risk: "low",
+      detail: "4 个副本全部上锁，白名单 1 条",
+      updated_at: "2026-09-12 09:12",
     },
     accounts: {
-      state: 'passed',
-      risk: 'low',
-      detail: '当前槽位 demo-main，凭证剩 23 天',
-      updated_at: '2026-09-12 09:14',
+      state: "passed",
+      risk: "low",
+      detail: "当前槽位 demo-main，凭证剩 23 天",
+      updated_at: "2026-09-12 09:14",
     },
   },
   completed_once: true,
 };
 
 const dns: DnsReport = {
-  egress_asn: 'AS64501',
+  egress_asn: "AS64501",
   resolvers: [
     {
-      address: '203.0.113.53',
-      country_code: 'US',
-      country_name: 'United States',
-      asn: 'AS64501 Example Broadband LLC',
+      address: "203.0.113.53",
+      country_code: "US",
+      country_name: "United States",
+      asn: "AS64501 Example Broadband LLC",
       from_adapter: false,
       interface: null,
       is_private: false,
       is_domestic: false,
     },
     {
-      address: '198.51.100.53',
-      country_code: 'US',
-      country_name: 'United States',
-      asn: 'AS64502 Example Anycast DNS',
+      address: "198.51.100.53",
+      country_code: "US",
+      country_name: "United States",
+      asn: "AS64502 Example Anycast DNS",
       from_adapter: false,
       interface: null,
       is_private: false,
@@ -300,93 +336,100 @@ const dns: DnsReport = {
   passed: true,
   findings: [],
   upstream_conclusion: null,
-  note: '10 个探针域名全部由出口同侧的解析器回报，物理网卡的 DNS 没有漏出去。高级通过仍要交给 Codex 复核。',
+  note: "10 个探针域名全部由出口同侧的解析器回报，物理网卡的 DNS 没有漏出去。高级通过仍要交给 Codex 复核。",
   score: 100,
   ethernet_safe: true,
 };
 
 const hook: HookStatus = {
   installed: true,
-  slot: 'demo-main',
+  slot: "demo-main",
   settings_path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\claude-profile-demo-main\\settings.json`,
   script_path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\hooks\\gate-check.ps1`,
   recent_blocks: [
-    '2026-09-11 22:14:03  出口 IP 198.51.100.22 不在白名单内',
-    '2026-09-11 22:13:58  门禁裁决已过期 142 秒（面板没在跑，或看门狗已停）',
+    "2026-09-11 22:14:03  出口 IP 198.51.100.22 不在白名单内",
+    "2026-09-11 22:13:58  门禁裁决已过期 142 秒（面板没在跑，或看门狗已停）",
   ],
 };
 
 const demoEnv: EnvHit[] = [
   {
-    name: 'ANTHROPIC_BASE_URL',
-    scope: '用户环境变量',
+    name: "ANTHROPIC_BASE_URL",
+    scope: "用户环境变量",
     // 注意这里只剩 host —— 真实场景里这个变量的路径段可能带 token，
     // 所以 Rust 侧 mask_env_value 只留 origin。演示数据要跟真实输出长得一样。
-    shown: 'https://relay.example.com',
+    shown: "https://relay.example.com",
   },
-  { name: 'ANTHROPIC_API_KEY', scope: '用户环境变量', shown: '（已设置，值不显示）' },
-  { name: 'HTTPS_PROXY', scope: '当前进程', shown: 'http://127.0.0.1:7890' },
+  {
+    name: "ANTHROPIC_API_KEY",
+    scope: "用户环境变量",
+    shown: "（已设置，值不显示）",
+  },
+  { name: "HTTPS_PROXY", scope: "当前进程", shown: "http://127.0.0.1:7890" },
 ];
 
 const checkup: Checkup = {
   items: [
     {
-      id: 'proxy',
-      label: '系统代理',
-      state: 'pass',
-      detail: '系统代理没开 —— 出口由路由/TUN 决定，跟面板量到的是同一条路',
+      id: "proxy",
+      label: "系统代理",
+      state: "pass",
+      detail: "系统代理没开 —— 出口由路由/TUN 决定，跟面板量到的是同一条路",
       fixable: false,
       manual: null,
     },
     {
-      id: 'egress_consistency',
-      label: '出口一致性',
-      state: 'fail',
+      id: "egress_consistency",
+      label: "出口一致性",
+      state: "fail",
       detail:
-        '两条路出去的国家不一样：绕过代理是 US，跟随系统代理是 HK。有程序会从另一个国家出去。',
+        "两条路出去的国家不一样：绕过代理是 US，跟随系统代理是 HK。有程序会从另一个国家出去。",
       fixable: false,
-      manual: '常见原因是系统代理或某个环境变量里的代理只接管了一部分流量。',
+      manual: "常见原因是系统代理或某个环境变量里的代理只接管了一部分流量。",
     },
     {
-      id: 'ipv6',
-      label: 'IPv6',
-      state: 'warn',
+      id: "ipv6",
+      label: "IPv6",
+      state: "warn",
       detail:
-        'IPv6 开着。隧道只接管 IPv4 时，v6 流量会绕过它直接从本地出去 —— 这是最常见的一种「代理开着但还是暴露了」。',
+        "IPv6 开着。隧道只接管 IPv4 时，v6 流量会绕过它直接从本地出去 —— 这是最常见的一种「代理开着但还是暴露了」。",
       fixable: false,
       manual:
-        '管理员身份运行，然后重启：' +
-        '\nreg add HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters /v DisabledComponents /t REG_DWORD /d 0xff /f',
+        "管理员身份运行，然后重启：" +
+        "\nreg add HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters /v DisabledComponents /t REG_DWORD /d 0xff /f",
     },
     {
-      id: 'doh',
-      label: '浏览器 DoH 策略',
-      state: 'unknown',
-      detail: '没有配置 DoH 策略 —— 浏览器用的是它自己的默认值，可能在用内置的 DoH 解析器。',
-      fixable: false,
-      manual: '判断不了就交给「DNS 泄露 → 高级通过」那条让 Codex 看一眼。',
-    },
-    {
-      id: 'env_residue',
-      label: '环境变量残留',
-      state: 'warn',
+      id: "doh",
+      label: "浏览器 DoH 策略",
+      state: "unknown",
       detail:
-        '找到 3 个相关的环境变量。设了 ANTHROPIC_BASE_URL —— Claude Code 会走它指的地方，而不是中转站页上显示的那条。两处说的不是一件事。设了代理变量 —— 面板测出口时是绕过系统代理的，所以面板量到的出口和请求实际走的路可能不一样。',
+        "没有配置 DoH 策略 —— 浏览器用的是它自己的默认值，可能在用内置的 DoH 解析器。",
       fixable: false,
-      manual: '改用户环境变量：设置 → 系统 → 系统信息 → 高级系统设置 → 环境变量。面板不替你删。',
+      manual: "判断不了就交给「DNS 泄露 → 高级通过」那条让 Codex 看一眼。",
     },
     {
-      id: 'secrets',
-      label: 'MCP / 配置里的明文密钥',
-      state: 'fail',
-      detail: '在 2 处看到疑似明文密钥字段。面板只报位置不报内容，自己去看一眼。',
+      id: "env_residue",
+      label: "环境变量残留",
+      state: "warn",
+      detail:
+        "找到 3 个相关的环境变量。设了 ANTHROPIC_BASE_URL —— Claude Code 会走它指的地方，而不是中转站页上显示的那条。两处说的不是一件事。设了代理变量 —— 面板测出口时是绕过系统代理的，所以面板量到的出口和请求实际走的路可能不一样。",
       fixable: false,
-      manual: '这些文件会被同步盘、备份、以及你随手贴出来的截图带走。',
+      manual:
+        "改用户环境变量：设置 → 系统 → 系统信息 → 高级系统设置 → 环境变量。面板不替你删。",
+    },
+    {
+      id: "secrets",
+      label: "MCP / 配置里的明文密钥",
+      state: "fail",
+      detail:
+        "在 2 处看到疑似明文密钥字段。面板只报位置不报内容，自己去看一眼。",
+      fixable: false,
+      manual: "这些文件会被同步盘、备份、以及你随手贴出来的截图带走。",
     },
   ],
   secrets: [
-    { file: `${HOME}\\.mcp.json`, field: 'api_key' },
-    { file: `${HOME}\\.codex\\config.toml`, field: 'token' },
+    { file: `${HOME}\\.mcp.json`, field: "api_key" },
+    { file: `${HOME}\\.codex\\config.toml`, field: "token" },
   ],
   env: demoEnv,
 };
@@ -395,7 +438,7 @@ const settings: Settings = {
   codex_under_gate: false,
   gate_auto_rearm: true,
   managed_apps_dir: null,
-  country_allowlist: ['US'],
+  country_allowlist: ["US"],
   hook_enabled: true,
   disable_telemetry: false,
 };
@@ -406,44 +449,44 @@ const managed: ManagedStatus = {
   is_default: true,
   apps: [
     {
-      app: 'claude-code',
+      app: "claude-code",
       path: `${APPS}\\claude-code\\claude.exe`,
       installed: true,
-      version: '2.0.14',
-      installed_at: '2026-09-11 17:22',
+      version: "2.0.14",
+      installed_at: "2026-09-11 17:22",
     },
     {
-      app: 'codex',
+      app: "codex",
       path: `${APPS}\\codex\\codex.exe`,
       installed: true,
-      version: '0.28.0',
-      installed_at: '2026-09-11 17:26',
+      version: "0.28.0",
+      installed_at: "2026-09-11 17:26",
     },
   ],
 };
 
 const versionHistory: VersionEntry[] = [
   {
-    version: '2.0.14',
+    version: "2.0.14",
     path: `${APPS}\\claude-code\\versions\\2.0.14\\claude.exe`,
-    sha256: 'a1b2c3d4e5f6',
-    archived_at: '2026-09-11 17:22',
+    sha256: "a1b2c3d4e5f6",
+    archived_at: "2026-09-11 17:22",
     is_current: true,
     locked: true,
   },
   {
-    version: '2.0.11',
+    version: "2.0.11",
     path: `${APPS}\\claude-code\\versions\\2.0.11\\claude.exe`,
-    sha256: 'f6e5d4c3b2a1',
-    archived_at: '2026-09-02 10:05',
+    sha256: "f6e5d4c3b2a1",
+    archived_at: "2026-09-02 10:05",
     is_current: false,
     locked: true,
   },
   {
-    version: '2.0.9',
+    version: "2.0.9",
     path: `${APPS}\\claude-code\\versions\\2.0.9\\claude.exe`,
-    sha256: '0f1e2d3c4b5a',
-    archived_at: '2026-08-24 08:41',
+    sha256: "0f1e2d3c4b5a",
+    archived_at: "2026-08-24 08:41",
     is_current: false,
     locked: true,
   },
@@ -451,148 +494,116 @@ const versionHistory: VersionEntry[] = [
 
 const installProbe: InstallProbe = {
   winget_available: true,
-  winget_version: 'v1.9.25200',
+  winget_version: "v1.9.25200",
   packages: [
     {
-      target: 'claude-code',
-      id: 'Anthropic.ClaudeCode',
+      target: "claude-code",
+      id: "Anthropic.ClaudeCode",
       found: true,
-      available_version: '2.0.14',
-      installed_version: '2.0.14',
+      available_version: "2.0.14",
+      installed_version: "2.0.14",
     },
     {
-      target: 'claude-desktop',
-      id: 'Anthropic.Claude',
+      target: "claude-desktop",
+      id: "Anthropic.Claude",
       found: true,
-      available_version: '0.14.2',
-      installed_version: '0.14.2',
+      available_version: "0.14.2",
+      installed_version: "0.14.2",
     },
     {
-      target: 'codex',
-      id: 'OpenAI.Codex',
+      target: "codex",
+      id: "OpenAI.Codex",
       found: true,
-      available_version: '0.28.0',
-      installed_version: '0.28.0',
+      available_version: "0.28.0",
+      installed_version: "0.28.0",
     },
   ],
-};
-
-const relayMeta: ProviderMeta = {
-  id: 'demo-relay-1',
-  target: 'claude-code',
-  slug: 'demo-relay',
-  name: '演示中转站',
-  base_url: 'https://api.example.com/v1',
-  model: 'claude-sonnet-4-5',
-  small_fast_model: 'claude-haiku-4-5',
-  wire_api: 'responses',
-  auth_style: 'bearer_token',
-  note: '示例数据，不是任何真实服务。',
-  website: 'https://example.com',
-  icon: null,
-  sort: 0,
-  created_at: '2026-09-11 20:15',
-};
-
-const relay: ProviderView[] = [
-  { ...relayMeta, has_key: true, key_masked: 'sk-demo…4f2a', key_encrypted: true, active: true },
-  {
-    ...relayMeta,
-    id: 'demo-relay-2',
-    target: 'codex',
-    slug: 'demo-relay-codex',
-    name: '演示中转站（Codex）',
-    base_url: 'https://codex.example.com/v1',
-    model: 'gpt-5-codex',
-    small_fast_model: null,
-    auth_style: 'env_key',
-    sort: 1,
-    has_key: true,
-    key_masked: 'sk-demo…91c7',
-    key_encrypted: true,
-    active: true,
-  },
-];
-
-/** 演示里那条中转站是「像官方但证据不够硬」—— 最能说明这个功能在查什么。 */
-const backend: BackendReport = {
-  backend: 'anthropic',
-  confidence: 'weak',
-  source: null,
-  evidence: [
-    '带 `anthropic-ratelimit-*` 限流头',
-    '`request-id` 是 Anthropic 的 `req_` 形状',
-    '限流计数两次请求之间**一动不动** —— 像是写死的假头',
-  ],
-  ratelimit_real: false,
-  detail: '有 Anthropic 的痕迹，但限流头疑似伪造。',
 };
 
 const presets: Preset[] = [
   {
-    id: 'demo-preset',
-    name: '示例预设',
-    target: 'claude-code',
-    base_url: 'https://api.example.com/v1',
-    wire_api: 'responses',
-    auth_style: 'bearer_token',
-    model: 'claude-sonnet-4-5',
-    website: 'https://example.com',
-    note: '示例数据，不是任何真实服务。',
+    id: "demo-preset",
+    name: "示例预设",
+    target: "claude-code",
+    base_url: "https://api.example.com/v1",
+    wire_api: "responses",
+    auth_style: "bearer_token",
+    model: "claude-sonnet-4-5",
+    website: "https://example.com",
+    note: "示例数据，不是任何真实服务。",
+  },
+  {
+    id: "demo-preset-codex",
+    name: "示例预设（Codex）",
+    target: "codex",
+    base_url: "https://codex.example.com/v1",
+    wire_api: "chat",
+    auth_style: "env_key",
+    model: "gpt-5-codex",
+    website: "https://example.com",
+    note: "示例数据，不是任何真实服务。",
   },
 ];
 
 const profiles: Profile[] = [
   {
-    id: 'demo-profile-1',
-    name: '日常（demo-main + 官方直连）',
-    note: '账户 demo-main，时区跟着出口走',
-    account: 'demo-main',
+    id: "demo-profile-1",
+    name: "日常（demo-main + 官方直连）",
+    note: "账户 demo-main，时区跟着出口走",
+    account: "demo-main",
     relays: {},
-    timezone: 'America/New_York',
+    timezone: "America/New_York",
     sort: 0,
-    created_at: '2026-09-11 20:31',
+    created_at: "2026-09-11 20:31",
   },
   {
-    id: 'demo-profile-2',
-    name: '中转（demo-alt + 演示中转站）',
+    id: "demo-profile-2",
+    name: "中转（demo-alt + 演示中转站）",
     note: null,
-    account: 'demo-alt',
-    relays: { 'claude-code': 'demo-relay-1', codex: 'demo-relay-2' },
+    account: "demo-alt",
+    relays: { "claude-code": "demo-relay-1", codex: "demo-relay-2" },
     timezone: null,
     sort: 1,
-    created_at: '2026-09-11 20:33',
+    created_at: "2026-09-11 20:33",
   },
 ];
 
-const profileStore: ProfileStore = { profiles, last_applied: 'demo-profile-1' };
+const profileStore: ProfileStore = { profiles, last_applied: "demo-profile-1" };
 
 const snapshots: SnapshotEntry[] = [
   {
-    id: '20260912-090412',
+    id: "20260912-090412",
     path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\snapshots\\20260912-090412`,
     manifest: {
-      created: '2026-09-12 09:04:12',
-      note: '切到 demo-main 之前',
-      active_account: 'demo-main',
-      timezone: 'America/New_York',
+      schema: 1,
+      environments: [],
+      created: "2026-09-12 09:04:12",
+      note: "切到 demo-main 之前",
+      active_account: "demo-main",
+      timezone: "America/New_York",
       all_locked: true,
-      files: ['settings.json', 'allowlist.txt', 'relay.json'],
+      files: ["settings.json", "allowlist.txt", "relay.json"],
+      absent: [],
+      hashes: {},
     },
   },
 ];
 
 const plugins: PluginStatus[] = [
   {
-    id: 'sillytavern',
-    name: '酒馆 SillyTavern',
-    state: 'ready',
-    detail: '依赖齐了。点启动会先验出口 IP，再拉起桥接与酒馆。',
+    id: "sillytavern",
+    name: "酒馆 SillyTavern",
+    state: "ready",
+    detail: "依赖齐了。点启动会先验出口 IP，再拉起桥接与酒馆。",
     checks: [
-      { label: 'SillyTavern 根目录', ok: true, detail: `${HOME}\\SillyTavern` },
-      { label: '桥接根目录（含 bridge.py）', ok: true, detail: `${HOME}\\SillyTavern\\bridge` },
-      { label: '启动脚本', ok: true, detail: 'start-sillytavern.cmd' },
-      { label: '端口 5001 / 8000', ok: true, detail: '都空着' },
+      { label: "SillyTavern 根目录", ok: true, detail: `${HOME}\\SillyTavern` },
+      {
+        label: "桥接根目录（含 bridge.py）",
+        ok: true,
+        detail: `${HOME}\\SillyTavern\\bridge`,
+      },
+      { label: "启动脚本", ok: true, detail: "start-sillytavern.cmd" },
+      { label: "端口 5001 / 8000", ok: true, detail: "都空着" },
     ],
   },
 ];
@@ -601,7 +612,8 @@ const catalog: OfficialCatalogStatus = {
   configured: false,
   source: null,
   signed: false,
-  detail: '官方清单仓库尚未创建，商店保持「仅内置插件」模式，不接受任意下载地址。',
+  detail:
+    "官方清单仓库尚未创建，商店保持「仅内置插件」模式，不接受任意下载地址。",
 };
 
 const tavern: TavernConfig = {
@@ -614,38 +626,38 @@ const tavern: TavernConfig = {
 
 const assets: CategoryListing[] = [
   {
-    id: 'worlds',
-    label: '世界书',
+    id: "worlds",
+    label: "世界书",
     dir: `${HOME}\\SillyTavern\\data\\default-user\\worlds`,
     exists: true,
     items: [
       {
-        name: 'Demo-World.json',
-        path: 'worlds\\Demo-World.json',
+        name: "Demo-World.json",
+        path: "worlds\\Demo-World.json",
         size: 48213,
-        modified: '2026-09-10 22:14',
+        modified: "2026-09-10 22:14",
         is_dir: false,
       },
     ],
   },
   {
-    id: 'characters',
-    label: '角色卡',
+    id: "characters",
+    label: "角色卡",
     dir: `${HOME}\\SillyTavern\\data\\default-user\\characters`,
     exists: true,
     items: [
       {
-        name: 'Demo-A.png',
-        path: 'characters\\Demo-A.png',
+        name: "Demo-A.png",
+        path: "characters\\Demo-A.png",
         size: 412336,
-        modified: '2026-09-09 19:02',
+        modified: "2026-09-09 19:02",
         is_dir: false,
       },
       {
-        name: 'Demo-B.png',
-        path: 'characters\\Demo-B.png',
+        name: "Demo-B.png",
+        path: "characters\\Demo-B.png",
         size: 388104,
-        modified: '2026-09-09 19:03',
+        modified: "2026-09-09 19:03",
         is_dir: false,
       },
     ],
@@ -654,9 +666,9 @@ const assets: CategoryListing[] = [
 
 const backups: BackupEntry[] = [
   {
-    id: '20260911-210455',
+    id: "20260911-210455",
     path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\tavern-backups\\20260911-210455`,
-    created: '2026-09-11 21:04:55',
+    created: "2026-09-11 21:04:55",
     size: 1248902,
   },
 ];
@@ -664,44 +676,54 @@ const backups: BackupEntry[] = [
 const traces: TraceReport = {
   traces: [
     {
-      kind: 'credential',
-      label: '槽位凭证',
+      kind: "credential",
+      label: "槽位凭证",
       path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\claude-profile-demo-main`,
-      detail: '面板管理的账户槽位，清理时永远不碰',
+      detail: "面板管理的账户槽位，清理时永远不碰",
     },
     {
-      kind: 'install',
-      label: '托管安装',
+      kind: "install",
+      label: "托管安装",
       path: `${APPS}\\claude-code`,
-      detail: 'Claude Code 2.0.14',
+      detail: "Claude Code 2.0.14",
     },
   ],
   chrome_installed: true,
-  chrome_path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+  chrome_path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   chrome_running: false,
   chrome_scanned: true,
   winget_available: true,
 };
 
 const upgrade: UpgradePlan = {
-  installed: '2.0.14',
-  available: '2.0.14',
-  action: 'up_to_date',
-  detail: 'latest 渠道上没有更新的版本。',
+  installed: "2.0.14",
+  available: "2.0.14",
+  action: "up_to_date",
+  detail: "latest 渠道上没有更新的版本。",
 };
 
 const update: UpdateStatus = {
-  current_version: '0.9.0',
-  repository: 'smithtaylor7748-ops/qb-gate',
+  current_version: "0.9.0",
+  repository: "smithtaylor7748-ops/qb-gate",
   configured: true,
   update_available: false,
-  latest_version: '0.9.0',
-  detail: 'QB Gate 不做自动更新，这里只是查一下 Releases。',
+  latest_version: "0.9.0",
+  detail: "QB Gate 不做自动更新，这里只是查一下 Releases。",
 };
 
-const kill: KillReport = { targets: [], killed: [], failed: [], relocked: 0, spared: [] };
+const kill: KillReport = {
+  targets: [],
+  killed: [],
+  failed: [],
+  relocked: 0,
+  spared: [],
+};
 
-const cleanup: CleanupReport = { done: [], failed: [], notes: ['演示模式不执行任何实际操作。'] };
+const cleanup: CleanupReport = {
+  done: [],
+  failed: [],
+  notes: ["演示模式不执行任何实际操作。"],
+};
 
 const externals: ManagedExternal[] = [];
 
@@ -716,10 +738,29 @@ const FIXTURES: Record<string, () => unknown> = {
   allowlist_read: () => gate.allowlist,
   hook_status: () => hook,
   country_presets: () => [
-    ['只留美国', ['US']],
+    ["只留美国", ["US"]],
     [
-      '常用支持地区',
-      ['AU', 'CA', 'CH', 'DE', 'ES', 'FR', 'GB', 'IE', 'IT', 'JP', 'KR', 'NL', 'NZ', 'PL', 'SE', 'SG', 'TW', 'US'],
+      "常用支持地区",
+      [
+        "AU",
+        "CA",
+        "CH",
+        "DE",
+        "ES",
+        "FR",
+        "GB",
+        "IE",
+        "IT",
+        "JP",
+        "KR",
+        "NL",
+        "NZ",
+        "PL",
+        "SE",
+        "SG",
+        "TW",
+        "US",
+      ],
     ],
   ],
   probe_ip: () => ip,
@@ -734,13 +775,10 @@ const FIXTURES: Record<string, () => unknown> = {
   managed_status: () => managed,
   managed_externals: () => externals,
   managed_history: () => versionHistory,
-  managed_rollback: () => '已回滚到 2.0.11，已重新上锁 5 个副本',
+  managed_rollback: () => "已回滚到 2.0.11，已重新上锁 5 个副本",
   managed_cleanup: () => cleanup,
-  relay_list: () => relay,
-  relay_current: () => [relayMeta],
   relay_presets: () => presets,
-  relay_detect_backend: () => backend,
-  tz_current: () => 'America/New_York',
+  tz_current: () => "America/New_York",
   snapshot_list: () => snapshots,
   profile_list: () => profileStore,
   settings_load: () => settings,
@@ -759,6 +797,9 @@ const FIXTURES: Record<string, () => unknown> = {
 export async function demoCall<T>(cmd: string): Promise<T> {
   await new Promise((r) => setTimeout(r, 120));
   const make = FIXTURES[cmd];
-  if (!make) throw new Error(`演示模式：「${cmd}」没有演示数据，这个操作只在装好的面板里可用。`);
+  if (!make)
+    throw new Error(
+      `演示模式：「${cmd}」没有演示数据，这个操作只在装好的面板里可用。`,
+    );
   return make() as T;
 }

@@ -1,0 +1,116 @@
+# QB Gate 的 Cargo workspace。
+#
+# # 为什么拆
+#
+# 拆之前全部 Rust 代码（28,782 行、29 个模块）挤在 `src-tauri` 一个 crate 里，
+# 而那个 crate 的 `Cargo.toml` 里写着 `tauri`。后果不是「不好看」，是两件实打实的事：
+#
+#   1. **领域代码写得出 `fn run_watchdog(…, app: tauri::AppHandle)` 这种签名。**
+#      写得出就有人写 —— `gate/mod.rs` 976 行零测试，原因就是它没法脱离 Tauri
+#      进程构造出来。分层靠自觉的时候，自觉总会输给「就先这么调一下」。
+#   2. **单测一碰 `events::Reporter`，链接器就把 tao/wry 整套 GUI 运行时拖进
+#      测试二进制**，然后因缺 manifest 以 `0xc0000139` 崩在 main 之前 ——
+#      一个测试都没跑就整体失败。这件事写在 `src-tauri/src/events.rs` 的注释里。
+#
+# 拆开之后这两条都变成**编译器强制**：领域 crate 的 `Cargo.toml` 里没有 `tauri`
+# 这个名字，所以那种签名写不出来，那套 GUI 运行时也链接不进它们的测试。
+#
+# # 分层
+#
+# ```text
+# L0 qb-foundation   error · paths · audit · sink(三个 trait)      零上行依赖
+# L1 qb-platform     repository · secret · process · operations …
+# L2 qb-gate / qb-install / qb-accounts / …                        互不依赖
+# L3 qb-app          跨域编排（关停、切号、装机）
+# L4 src-tauri       命令、托盘、启动装配                          ★ 唯一写 tauri 的 crate
+# ```
+#
+# workspace 只能保证**层间**不上行；**层内**（L2 的几个 crate 互不依赖）Cargo
+# 管不了，那一半由 `src-tauri/tests/architecture.rs` 钉住。两道门缺一不可。
+[workspace]
+resolver = "2"
+members = ["src-tauri", "crates/*"]
+
+[workspace.package]
+version = "0.13.0"
+edition = "2021"
+rust-version = "1.88"
+license = "GPL-3.0-or-later"
+authors = ["QB Gate contributors"]
+
+# 版本号集中在这里，各 crate 只写 `serde.workspace = true`。
+#
+# 顺带解决体检里那条「`reqwest` 装了两份」：0.12 是项目自己用的，
+# 0.13 是 `rmcp` 拖进来的，以 `reqwest-mcp` 的别名并存。两份 HTTP 栈
+# 各带一份 rustls，而且哪天类型互相串了会报出一堆看不懂的错。
+# 这里先把它钉成**只有 rmcp 一家在用**，等 rmcp 升到 0.12 系就删掉。
+[workspace.dependencies]
+qb-probe = { path = "crates/qb-probe" }
+qb-relay = { path = "crates/qb-relay" }
+qb-station = { path = "crates/qb-station" }
+qb-install = { path = "crates/qb-install" }
+qb-accounts = { path = "crates/qb-accounts" }
+qb-iplock = { path = "crates/qb-iplock" }
+qb-launch = { path = "crates/qb-launch" }
+qb-extensions = { path = "crates/qb-extensions" }
+qb-sysenv = { path = "crates/qb-sysenv" }
+qb-app = { path = "crates/qb-app" }
+qb-contract = { path = "crates/qb-contract" }
+qb-foundation = { path = "crates/qb-foundation" }
+qb-platform = { path = "crates/qb-platform" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+chrono = "0.4"
+dirs = "5"
+tracing = "0.1"
+tokio = { version = "1", features = [
+  "time",
+  "sync",
+  "rt-multi-thread",
+  "macros",
+  "process",
+] }
+reqwest = { version = "0.12", features = [
+  "json",
+  "rustls-tls",
+], default-features = false }
+ts-rs = { version = "11", features = ["serde-compat"] }
+sha2 = "0.10"
+hex = "0.4"
+uuid = { version = "1", features = ["v4"] }
+toml_edit = { version = "0.22", features = ["serde"] }
+serde_yaml_ng = "0.10"
+reqwest-mcp = { package = "reqwest", version = "0.13", default-features = false, features = ["rustls"] }
+rmcp = { version = "=3.3.0", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+rusqlite = { version = "0.40", features = ["bundled", "backup"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+# Windows API。特性开关是**并集**：Cargo 把同一个包在整个 workspace 里
+# 的 features 合并，所以这里一次写全，各 crate 直接 `.workspace = true`。
+# 分散写的话，某个 crate 少开一个 feature 也照样能编过（别人替它开了），
+# 然后单独编译那个 crate 时才炸 —— 那种错最难查。
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  # DPAPI：中转站的 API Key 靠它加密落盘，见 qb-platform 的 secret.rs。
+  "Win32_Security_Cryptography",
+  "Win32_System_Threading",
+  "Win32_System_JobObjects",
+  "Win32_System_Memory",
+  "Win32_Storage_FileSystem",
+] }
+
+# profile 只认 workspace 根。留在成员 crate 里会被静默忽略 ——
+# 那样 `panic = "unwind"` 就没了，而它正是 panic hook 能拿到堆栈的前提
+# （abort 会让进程在 panic 那一刻直接死，钩子根本没机会跑）。
+# 见 src-tauri/src/panic_hook.rs。
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "unwind"
+strip = true

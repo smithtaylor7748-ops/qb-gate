@@ -1,0 +1,24 @@
+[package]
+name = "qb-accounts"
+description = "QB Gate 的官方账户槽位：多份登录状态各自独立，切换靠换目录而不是改文件"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+qb-contract.workspace = true
+qb-foundation.workspace = true
+qb-install.workspace = true
+qb-platform.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+toml_edit.workspace = true
+ts-rs.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true

@@ -1,8 +1,10 @@
 /**
  * 样式入口。顺序有讲究：Tailwind 先进来建立层，然后是令牌、基础、组件。
  */
-@import "tailwindcss";
+@import "tailwindcss" source("../");
 
 @import "./tokens.css";
 @import "./base.css";
 @import "./components.css";
+
+@import "./workspace.css";

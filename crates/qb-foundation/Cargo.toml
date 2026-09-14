@@ -1,0 +1,32 @@
+[package]
+name = "qb-foundation"
+description = "QB Gate 的地基层：错误类型、运行期路径、审计日志、三个 sink trait"
+# 从不发到 crates.io。写出来有两个作用：`cargo publish` 手滑跑不动，
+# 以及 cargo-deny 的 wildcards 检查会据此把内部 path 依赖放行
+# （对要发布的 crate 它不放行，因为 crates.io 不接受 path 依赖）。
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# 这里的依赖清单就是「地基层」这三个字的定义。
+#
+# **不许出现的东西：`tauri`、`rusqlite`、除 `qb-contract` 之外的任何本项目 crate。**
+# `qb-contract` 是例外，而且是单向的：它零依赖，装的是「形状」，
+# 而这一层要产出那些形状（`GateError::kind()` 返回 `ErrorKind`）。
+# 一旦其中任何一个混进来，L0 就不再是「谁都可以依赖它、它不依赖任何人」，
+# 而是又一个活动件 —— `gate` 当年就是这么从门禁长成入度 25 的伪底层的。
+[dependencies]
+qb-contract.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

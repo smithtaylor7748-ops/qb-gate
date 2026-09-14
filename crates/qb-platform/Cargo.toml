@@ -1,0 +1,36 @@
+[package]
+name = "qb-platform"
+description = "QB Gate 的平台层：NTFS ACL、DPAPI、验签、进程、两阶段文件提交、日志与崩溃落盘"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# 平台层 = 「跟 Windows 和磁盘打交道的那些事」。
+#
+# **不许出现 `tauri`**，也不许出现任何领域 crate（qb-gate / qb-install / …）。
+# 这一层回答的是「怎么给一个文件加 Deny ACE」「怎么把一串字节用 DPAPI 封起来」，
+# 不回答「什么时候该加」—— 后者是领域的事，混进来就又是一个伪底层。
+[dependencies]
+qb-contract.workspace = true
+qb-foundation.workspace = true
+
+serde.workspace = true
+ts-rs.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+hex.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+dirs.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true

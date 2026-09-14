@@ -1,11 +1,19 @@
 [package]
 name = "qb-gate"
-version = "0.11.0"
-description = "Claude 环境控制面板"
-authors = ["QB Gate contributors"]
-license = "GPL-3.0-or-later"
-edition = "2021"
-rust-version = "1.77"
+default-run = "qb-gate"
+# 版本号不写 `.workspace = true`：`scripts/release-check.mjs` 在这个文件里
+# 正则找 `^version = "…"`，要跟 package.json / tauri.conf.json 三处对齐。
+# 根 Cargo.toml 的 `[workspace.package] version` 与这里的一致性由同一个脚本钉住。
+version = "0.13.0"
+description = "Windows workspace for official accounts, relay environments and extensions"
+# 从不发到 crates.io。写出来有两个作用：`cargo publish` 手滑跑不动，
+# 以及 cargo-deny 的 wildcards 检查会据此把内部 path 依赖放行
+# （对要发布的 crate 它不放行，因为 crates.io 不接受 path 依赖）。
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
 
 [lib]
 name = "qb_gate_lib"
@@ -14,36 +22,65 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+# ★ 全 workspace 唯一写着 `tauri` 的 crate。
+#
+# 这不是巧合，是整个拆分的目的：领域 crate 的依赖清单里没有这个名字，
+# 于是 `fn run_watchdog(…, app: tauri::AppHandle)` 那种签名在它们那里
+# **写不出来**，它们的测试也链接不进 tao/wry。往任何别的 crate 里加 tauri
+# 之前先想清楚 —— 那一刻这条保证就没了。
 [dependencies]
+qb-probe.workspace = true
+qb-relay.workspace = true
+qb-station.workspace = true
+qb-install.workspace = true
+qb-accounts.workspace = true
+qb-iplock.workspace = true
+qb-launch.workspace = true
+qb-extensions.workspace = true
+qb-sysenv.workspace = true
+qb-app.workspace = true
+qb-contract.workspace = true
+qb-foundation.workspace = true
+qb-platform.workspace = true
+
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["time", "sync", "rt-multi-thread", "macros", "process"] }
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
-thiserror = "2"
-chrono = "0.4"
-sha2 = "0.10"
-hex = "0.4"
-toml_edit = "0.22"
-dirs = "5"
+tauri-plugin-single-instance = "2"
+rusqlite = { version = "0.40", features = ["bundled", "backup"] }
+uuid.workspace = true
+ts-rs.workspace = true
+serde_yaml_ng.workspace = true
+rmcp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+reqwest-mcp.workspace = true
+thiserror.workspace = true
+# 日志。以前全项目零日志框架，只有 gate::log::write 往 ip-gate.log 追加
+# 无 level、无模块名、无结构的一行文本 —— 排障时只能从头翻。
+#
+# ip-gate.log 保持原样不动（它是给使用者看的审计日志，约束是「只记时间、
+# 公网 IP、上锁解锁，不记任何对话内容」）。tracing 写的是另一份诊断日志。
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+chrono.workspace = true
+sha2.workspace = true
+hex.workspace = true
+toml_edit.workspace = true
+dirs.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
-  # DPAPI：中转站的 API Key 靠它加密落盘，见 relay/secret.rs。
+  # DPAPI：中转站的 API Key 靠它加密落盘，见 src/secret.rs。
   "Win32_Security_Cryptography",
   "Win32_System_Threading",
+  "Win32_System_JobObjects",
   "Win32_System_Memory",
   "Win32_Storage_FileSystem",
 ] }
-
-[profile.release]
-codegen-units = 1
-lto = true
-opt-level = "s"
-panic = "abort"
-strip = true

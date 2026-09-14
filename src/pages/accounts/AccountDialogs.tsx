@@ -10,9 +10,9 @@
  * 给『重新打开』」，外加「没登录的槽位切完自动起 Claude Code 登录」。条件分支一大堆，
  * 托盘还因为弹不了框要把面板叫出来。
  *
- * 使用者要的是一句话：**切账户就把全部 Claude 关掉，后面启动什么自己点。**
+ * 使用者要的是一句话：**切账户就把相关官方 Claude 关掉，后面启动什么自己点。**
  * 清场之后没有任何进程还连着旧账户，也就没有「桌面端开着不能换资料目录」这回事，
- * 托盘也能直接切。所以这里只剩：一个桌面端复选框、一个「关闭全部并切换」按钮。
+ * 托盘也能直接切。所以这里只剩：一个桌面端复选框、一个「关闭官方会话并切换」按钮。
  * 切完不起任何进程 —— 没登录过 / 过期的槽位也一样，用户回总览点 Claude Code，
  * 登录界面由 Claude Code 自己弹出。
  */
@@ -163,12 +163,12 @@ function SwitchFlow() {
       onCancel={close}
       onConfirm={() => void doSwitch()}
       title={`切换到 ${label ?? ''}？`}
-      confirmLabel="关闭全部并切换"
+      confirmLabel="关闭官方会话并切换"
       loading={busy}
       danger
     >
       <p>
-        会先<strong>关闭全部正在跑的 Claude</strong>（桌面端、所有 Claude Code 会话
+        会先<strong>关闭全部正在跑的 Claude</strong>（桌面端、相关官方 Claude Code 会话
         {data?.bridgePresent ? '、酒馆桥接' : ''}），再把 Claude Code
         {data?.bridgePresent ? '、酒馆桥接' : ''} 切到这个账户
         {slot ? `（${slot.logged_in ? fmtDaysLeft(slot.cli_days_left) : '未登录'}）` : ''}。

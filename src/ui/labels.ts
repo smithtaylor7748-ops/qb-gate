@@ -197,3 +197,21 @@ export function fmtDaysLeft(days: number | null | undefined): string {
   if (days === 0) return '今天到期';
   return `剩 ${days} 天`;
 }
+
+/**
+ * 「这份读数是什么时候测的」。
+ *
+ * DNS 与中文环境的结果会留到下次开面板（`ResourceOptions.persist`），
+ * 所以界面上**必须**带时刻 —— 否则一份昨天的读数看起来跟刚测的一模一样，
+ * 而中间你可能已经换过网。`null` 表示没有记录，调用方自己决定显示什么。
+ */
+export function fmtMeasured(at: number | null): string | null {
+  if (at === null) return null;
+  const min = Math.floor((Date.now() - at) / 60_000);
+  if (min < 2) return '刚测的';
+  if (min < 60) return `${min} 分钟前测的`;
+  const d = new Date(at);
+  const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  if (d.toDateString() === new Date().toDateString()) return `测于 ${hhmm}`;
+  return `测于 ${d.getMonth() + 1}-${String(d.getDate()).padStart(2, '0')} ${hhmm}`;
+}

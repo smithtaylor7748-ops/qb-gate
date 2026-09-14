@@ -1,0 +1,25 @@
+[package]
+name = "qb-launch"
+description = "QB Gate 的启动与关停：起一个会话、按策略收掉一批进程"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+qb-contract.workspace = true
+qb-foundation.workspace = true
+qb-iplock.workspace = true
+qb-install.workspace = true
+qb-platform.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+tokio.workspace = true
+ts-rs.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true

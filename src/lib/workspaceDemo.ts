@@ -1,0 +1,104 @@
+/** Public screenshots use synthetic, reserved examples only. No machine state is read. */
+// 目录随扩展中心一起搬进了 qb-extensions（W2 拆 crate）。
+// demo 数据直接读那一份，免得两边的精选条目对不上。
+import catalog from "../../crates/qb-extensions/extension-catalog.json";
+import type { Workspace } from "./generated/Workspace";
+const state: Workspace = {
+  providers: [
+    {
+      id: "example",
+      name: "我的 API 服务",
+      base_url: "https://relay.example.com/v1",
+      website: "",
+      note: "工作使用的模型服务",
+      tags: ["工作"],
+      favorite: true,
+      revision: 1,
+    },
+  ],
+  credentials: [
+    {
+      id: "sample-key",
+      provider_id: "example",
+      label: "开发凭证",
+      masked: "示例凭证",
+      available: true,
+      revision: 1,
+    },
+  ],
+  environments: [
+    {
+      id: "sample-code",
+      name: "Claude · 开发环境",
+      client: "claude-code",
+      provider_id: "example",
+      credential_id: "sample-key",
+      model: "自定义模型",
+      small_model: "",
+      wire_api: "responses",
+      auth_style: "env_key",
+      revision: 1,
+      applied_revision: 1,
+      config_dir:
+        "C:\\Users\\demo\\AppData\\Local\\ClaudeIpGate\\environments\\sample-code",
+      config_state: "applied",
+    },
+  ],
+  sessions: [],
+  operations: [],
+  installations: [],
+  launch_plans: [],
+  migration_notes: [],
+};
+export async function demoWorkspaceCall(
+  command: string,
+  args: Record<string, unknown> = {},
+): Promise<unknown> {
+  if (command === "workspace_state") return structuredClone(state);
+  if (command === "extension_catalog") return catalog;
+  if (command === "diagnostic_history") return [];
+  if (command === "workspace_references") return [];
+  if (command === "environment_preview")
+    return [
+      {
+        path: state.environments[0].config_dir + "\\settings.json",
+        before: "{}",
+        after:
+          '{\n  "env": { "ANTHROPIC_BASE_URL": "https://relay.example.com" }\n}',
+      },
+    ];
+  if (command === "extension_preview")
+    return {
+      destination: "C:\\Users\\demo\\.claude\\skills",
+      files: ["SKILL.md"],
+      changes: ["添加 SKILL.md"],
+      conflict: false,
+    };
+  if (command === "session_launch") {
+    const session = {
+      id: crypto.randomUUID(),
+      context: {
+        client: args.client,
+        identity_kind: args.kind,
+        identity_id: args.id,
+        config_dir: "演示目录",
+        working_dir: "演示工作目录",
+      },
+      pid: 1000,
+      process_created: "1",
+      started_at: new Date().toISOString(),
+      state: "running",
+      gated: true,
+      detail: "演示会话",
+      config_revision: 1,
+    };
+    state.sessions.push(session as Workspace["sessions"][number]);
+    return session;
+  }
+  if (command === "session_stop") {
+    const s = state.sessions.find((s) => s.id === args.id);
+    if (s) s.state = "stopped";
+    return;
+  }
+  throw new Error("这是公开截图演示模式，此操作不会修改本机配置。");
+}

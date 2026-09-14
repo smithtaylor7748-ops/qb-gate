@@ -1,0 +1,22 @@
+[package]
+name = "qb-contract"
+description = "QB Gate 的 IPC 契约：前后端共用的数据形状，由 ts-rs 导成 TypeScript"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# 契约层只允许出现「描述形状」的依赖。
+#
+# **不许出现 tauri、rusqlite、reqwest、本 workspace 的任何别的 crate。**
+# 这一层一旦能 `use` 到别的模块，就会有人在 DTO 上挂业务方法，
+# 然后「一堆纯数据」反过来依赖三个业务模块 —— 那正是
+# `domain::export_types` 当年干的事，全项目最大的那个 11 模块环由此而来。
+[dependencies]
+serde.workspace = true
+ts-rs.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

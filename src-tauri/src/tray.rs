@@ -23,7 +23,9 @@ use tauri::{
     AppHandle, Manager, Runtime,
 };
 
+#[cfg(test)]
 use crate::relay::RelayTarget;
+use tauri::Emitter;
 
 pub const TRAY_ID: &str = "qbgate";
 
@@ -76,6 +78,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 
 /// 重建菜单。账户或中转站变了之后调它，否则托盘里还是上一次的内容。
 pub fn refresh<R: Runtime>(app: &AppHandle<R>) {
+    crate::operations::changed(&crate::events::ui(app), "all", "tray");
     if let Ok(menu) = build_menu(app) {
         if let Some(tray) = app.tray_by_id(TRAY_ID) {
             let _ = tray.set_menu(Some(menu));
@@ -163,7 +166,11 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         account_refs.push(&account_warn);
         account_refs.push(&account_sep);
     }
-    account_refs.extend(account_items.iter().map(|i| i as &dyn tauri::menu::IsMenuItem<R>));
+    account_refs.extend(
+        account_items
+            .iter()
+            .map(|i| i as &dyn tauri::menu::IsMenuItem<R>),
+    );
 
     let active_label = slots
         .iter()
@@ -177,47 +184,11 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         &account_refs,
     )?;
 
-    // ---- 中转站，每个 target 一个子菜单
-    let store = crate::relay::store::load();
-    let mut relay_menus: Vec<Submenu<R>> = Vec::new();
-    for t in RelayTarget::ALL {
-        let rows = store.view_of(t);
-        let items: Vec<MenuItem<R>> = rows
-            .iter()
-            .map(|p| {
-                let mark = if p.active { "● " } else { "   " };
-                MenuItem::with_id(
-                    app,
-                    format!("{ID_RELAY}:{}:{}", t.as_str(), p.meta.id),
-                    format!("{mark}{}", p.meta.name),
-                    !p.active,
-                    None::<&str>,
-                )
-            })
-            .collect::<tauri::Result<_>>()?;
-        let refs: Vec<&dyn tauri::menu::IsMenuItem<R>> = items
-            .iter()
-            .map(|i| i as &dyn tauri::menu::IsMenuItem<R>)
-            .collect();
-
-        let current = rows
-            .iter()
-            .find(|p| p.active)
-            .map(|p| p.meta.name.clone())
-            .unwrap_or_else(|| "未配置".into());
-        relay_menus.push(Submenu::with_items(
-            app,
-            format!("{} · {current}", t.label()),
-            !refs.is_empty(),
-            &refs,
-        )?);
-    }
+    let relay = MenuItem::with_id(app, ID_RELAY, "中转站 · 管理与独立启动", true, None::<&str>)?;
 
     let mut items: Vec<&dyn tauri::menu::IsMenuItem<R>> =
         vec![&open, &status, &reopen, &sep1, &accounts_menu];
-    for m in &relay_menus {
-        items.push(m);
-    }
+    items.push(&relay);
     items.push(&sep2);
     items.push(&quit);
 
@@ -237,9 +208,12 @@ fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEvent) 
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 let st = app.state::<crate::AppState>();
-                match crate::reopen_and_rewatch(&st, None).await {
-                    Ok(d) => crate::gate::log::write(&format!("托盘：{d}")),
-                    Err(e) => crate::gate::log::write(&format!("托盘：重新放行失败：{e}")),
+                let Ok(_guard) = crate::operations::exclusive().await else {
+                    return;
+                };
+                match crate::app::reopen_and_rewatch(&st, None).await {
+                    Ok(d) => crate::audit::write(&format!("托盘：{d}")),
+                    Err(e) => crate::audit::write(&format!("托盘：重新放行失败：{e}")),
                 }
                 refresh(&app);
             });
@@ -261,38 +235,40 @@ fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEvent) 
             let label = (*label).to_string();
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
+                let Ok(_guard) = crate::operations::exclusive().await else {
+                    return;
+                };
                 let st = app.state::<crate::AppState>();
-                match crate::clear_for_switch(&st, true).await {
-                    Ok(r) => crate::gate::log::write(&format!(
+                if let Err(e) = crate::usecase::account_ops::preflight_switch(&label) {
+                    crate::audit::write(&format!("托盘：账户切换预检失败：{e}"));
+                    refresh(&app);
+                    return;
+                }
+                match crate::app::clear_for_switch(&st, true).await {
+                    Ok(r) => crate::audit::write(&format!(
                         "托盘：切账户前清场，关掉 {} 个 Claude 进程",
                         r.killed.len()
                     )),
                     Err(e) => {
-                        crate::gate::log::write(&format!("托盘：清场失败，没有切换（槽位没动）：{e}"));
+                        crate::audit::write(&format!("托盘：清场失败，没有切换（槽位没动）：{e}"));
                         refresh(&app);
                         return;
                     }
                 }
-                match crate::accounts::switch_with(&label, crate::accounts::DesktopMode::Auto) {
-                    Ok(_) => crate::gate::log::write(&format!("托盘：账户切换到 {label}")),
-                    Err(e) => crate::gate::log::write(&format!("托盘：账户切换失败：{e}")),
+                match crate::usecase::account_ops::switch_with(
+                    &label,
+                    crate::accounts::DesktopMode::Auto,
+                ) {
+                    Ok(_) => crate::audit::write(&format!("托盘：账户切换到 {label}")),
+                    Err(e) => crate::audit::write(&format!("托盘：账户切换失败：{e}")),
                 }
                 refresh(&app);
             });
         }
 
-        [ID_RELAY, target, pid] => {
-            let Some(t) = RelayTarget::ALL
-                .into_iter()
-                .find(|x| x.as_str() == *target)
-            else {
-                return;
-            };
-            match crate::relay::activate(t, pid) {
-                Ok(()) => crate::gate::log::write(&format!("托盘：{} 中转站已切换", t.label())),
-                Err(e) => crate::gate::log::write(&format!("托盘：中转站切换失败：{e}")),
-            }
-            refresh(app);
+        [ID_RELAY] => {
+            show_main(app);
+            let _ = app.emit(qb_contract::channels::NAVIGATE, "/relays");
         }
 
         _ => {}

@@ -1,0 +1,21 @@
+[package]
+name = "qb-relay"
+description = "QB Gate 的中转站：供应商目录、协议探测、连通性诊断"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+qb-foundation.workspace = true
+qb-platform.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+toml_edit.workspace = true
+ts-rs.workspace = true

@@ -1,279 +1,160 @@
-/**
- * 一个轻量数据层。零依赖，基于 `useSyncExternalStore`。
- *
- * 「切页丢状态」的根因不是没有路由，是**每个页面各自持有自己拉来的数据** ——
- * 旧代码里 `probeIp` 被三个页面各打一遍，Purity 勾的人工复核、Environment 的
- * 升级计划切页就没。加路由解决不了这个，得让数据活在页面外面。
- *
- * 四件事：
- *   1. 模块级缓存，页面卸载不清空 —— 切回来数据还在，不重新探测。
- *   2. **单一轮询器**，`document.hidden` 时自动暂停。旧代码三处 `setInterval`
- *      都没做这个判断，窗口最小化照跑。
- *   3. stale-while-revalidate：先给旧值再后台刷新，不闪回「—」。
- *   4. 三态显式分离：`loading` / `error` / `data === undefined`。
- *      旧 Dashboard 六个请求全 `.catch(() => undefined)`，加载中、无数据、
- *      请求失败三种情况在界面上长得一模一样，都是一个「—」。
- *
- * 进度持久化仍然在 Rust 那边（`progress.json`），这里不做本地乐观更新，
- * 也不用 localStorage —— 全项目保持零 localStorage。
- */
+/** Backend state is owned by TanStack Query. Drafts remain in the separate session store. */
+import { useCallback, useSyncExternalStore } from "react";
+import { QueryClient, useQuery } from "@tanstack/react-query";
 
-import { useCallback, useSyncExternalStore } from 'react';
-
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: false,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      gcTime: Infinity,
+    },
+    mutations: { retry: false },
+  },
+});
 export interface ResourceOptions {
-  /** 轮询间隔（毫秒）。不填就不轮询。 */
   pollMs?: number;
-  /** 超过这个时间算陈旧：重新挂载或窗口重新可见时后台刷新一次。 */
   staleMs?: number;
-  /** 首次被订阅时是否自动拉一次。默认 true；DNS 那种慢的填 false。 */
   auto?: boolean;
+  /**
+   * 把结果留到下次开面板。**只给慢的手动检测用**（dns / signals / checkup）。
+   *
+   * 不留的后果是实打实的：那几项是 `auto:false`，不点不跑，而结果只活在
+   * 内存缓存里 —— 面板一重启就没了，综合评分里 DNS 25 分加中文环境 20 分
+   * 每次开面板都从「未检测」重新开始，昨天测过也白测。
+   *
+   * ⚠ **不许给 `ip` / `purity` / `gate` 用。** 出口 IP 是门禁判定的依据，
+   * 把上一次的 IP 端出来当当前值，人会照着一个已经不成立的前提做决定。
+   * 留的这三项都是「环境长什么样」，慢、且不随网络秒变。
+   */
+  persist?: boolean;
 }
-
 export interface ResourceDef<T> {
   fetcher: () => Promise<T>;
   options: ResourceOptions;
 }
-
-export function res<T>(fetcher: () => Promise<T>, options: ResourceOptions = {}): ResourceDef<T> {
-  return { fetcher, options };
-}
-
 export interface ResourceState<T> {
   data: T | undefined;
-  /** Rust 侧抛回来的错误信息，已经是可以直接显示的中文。 */
   error: string | undefined;
-  /** 正在请求中。**有旧值时也可能为真**（后台刷新）。 */
   loading: boolean;
-  /** 有值但已过 staleMs。界面可以据此加个淡色提示。 */
   stale: boolean;
-  /** 从没成功拉到过数据（用于区分「空」和「还没开始」）。 */
   neverLoaded: boolean;
 }
+const definitions = new Map<string, ResourceDef<unknown>>();
 
-interface Entry<T> {
-  def: ResourceDef<T>;
-  snapshot: ResourceState<T>;
-  /** 最近一次**成功**的时间。失败不更新它。 */
-  fetchedAt: number;
-  /** 最近一次发起请求的时间，成功失败都算。用来给失败重试做节流。 */
-  attemptedAt: number;
-  inflight: Promise<void> | null;
-  listeners: Set<() => void>;
-}
+// ------------------------------------------------------- 跨重启的结果缓存
 
-const EMPTY: ResourceState<never> = {
-  data: undefined,
-  error: undefined,
-  loading: false,
-  stale: false,
-  neverLoaded: true,
-};
+const CACHE_PREFIX = "qb.cache.";
+/** key → 这份数据是什么时候测出来的（毫秒）。界面必须把它显示出来。 */
+const measured = new Map<string, number>();
+/** 已经试过从 localStorage 取的 key，避免每次渲染都读一遍。 */
+const hydrated = new Set<string>();
 
-const entries = new Map<string, Entry<unknown>>();
-
-function entryOf<T>(key: string, def: ResourceDef<T>): Entry<T> {
-  let e = entries.get(key) as Entry<T> | undefined;
-  if (!e) {
-    e = {
-      def,
-      snapshot: EMPTY as ResourceState<T>,
-      fetchedAt: 0,
-      attemptedAt: 0,
-      inflight: null,
-      listeners: new Set(),
-    };
-    entries.set(key, e as Entry<unknown>);
-  }
-  return e;
-}
-
-/** 快照必须是稳定引用，所以每次变更都换一个新对象，不变更就一直是同一个。 */
-function patch<T>(e: Entry<T>, next: Partial<ResourceState<T>>): void {
-  e.snapshot = { ...e.snapshot, ...next };
-  e.listeners.forEach((l) => l());
-}
-
-function load<T>(e: Entry<T>): Promise<void> {
-  // 同一个 key 同时只有一个请求在飞 —— 三个页面同时挂载也只打一次。
-  if (e.inflight) return e.inflight;
-
-  e.attemptedAt = Date.now();
-  patch(e, { loading: true });
-  const p = e.def
-    .fetcher()
-    .then((data) => {
-      e.fetchedAt = Date.now();
-      patch(e, { data, error: undefined, loading: false, stale: false, neverLoaded: false });
-    })
-    .catch((err: unknown) => {
-      // 保留旧值 —— 一次网络抖动不该把界面上已有的数字抹成空。
-      patch(e, {
-        error: err instanceof Error ? err.message : String(err),
-        loading: false,
-      });
-    })
-    .finally(() => {
-      e.inflight = null;
-    });
-
-  e.inflight = p;
-  return p;
-}
-
-/** 立刻重新拉取某个资源。返回的 Promise 在这一轮结束时 resolve。 */
-export function refresh(key: string): Promise<void> {
-  const e = entries.get(key);
-  return e ? load(e) : Promise.resolve();
+/** 这份数据测于何时。`null` = 没有记录（本次会话里也还没跑过）。 */
+export function measuredAt(key: string): number | null {
+  return measured.get(key) ?? null;
 }
 
 /**
- * 让某个资源作废。
+ * 第一次用到某个持久化资源时，把上次的结果塞回缓存。
  *
- * 有人在看就立刻重拉；没人在看就只清时间戳，下次挂载时自然会拉。
- * 破坏性操作之后调它，比各页面自己 `await refresh()` 更不容易漏。
+ * 存取一律 try/catch：无痕窗口、清过站点数据、或者 WebView 禁了存储时
+ * `localStorage` 本身就会抛，**读不到要当没有，不能让整页崩掉**。
  */
+function hydrate(key: string, def: ResourceDef<unknown>): void {
+  if (!def.options.persist || hydrated.has(key)) return;
+  hydrated.add(key);
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + key);
+    if (!raw) return;
+    const saved = JSON.parse(raw) as { at: number; data: unknown };
+    if (typeof saved?.at !== "number" || saved.data === undefined) return;
+    measured.set(key, saved.at);
+    // 只在缓存还空着时塞 —— 本次会话已经跑过的话，那份才是新的。
+    if (queryClient.getQueryData([key]) === undefined) {
+      queryClient.setQueryData([key], saved.data);
+    }
+  } catch {
+    // 读不到就当没有。
+  }
+}
+
+/** 包一层，成功的结果顺手落盘并记下时刻。 */
+function fetcherFor<T>(key: string, def: ResourceDef<T>): () => Promise<T> {
+  if (!def.options.persist) return def.fetcher;
+  return async () => {
+    const data = await def.fetcher();
+    const at = Date.now();
+    measured.set(key, at);
+    try {
+      localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ at, data }));
+    } catch {
+      // 写不进去不影响本次显示，下次重启退回「未检测」而已。
+    }
+    return data;
+  };
+}
+export function res<T>(
+  fetcher: () => Promise<T>,
+  options: ResourceOptions = {},
+): ResourceDef<T> {
+  return { fetcher, options };
+}
+export function useResource<T>(
+  key: string,
+  def: ResourceDef<T>,
+): ResourceState<T> & { refresh: () => Promise<void> } {
+  definitions.set(key, def);
+  hydrate(key, def as ResourceDef<unknown>);
+  const query = useQuery({
+    queryKey: [key],
+    queryFn: fetcherFor(key, def),
+    enabled: def.options.auto !== false,
+    staleTime: def.options.staleMs ?? Infinity,
+    refetchInterval: def.options.auto !== false ? def.options.pollMs : false,
+    refetchIntervalInBackground: false,
+  });
+  return {
+    data: query.data,
+    error: query.error ? String(query.error) : undefined,
+    loading: query.isFetching,
+    stale: query.isStale,
+    neverLoaded: query.data === undefined,
+    refresh: useCallback(() => refresh(key), [key]),
+  };
+}
+export async function refresh(key: string): Promise<void> {
+  const def = definitions.get(key);
+  if (!def) return;
+  await queryClient.cancelQueries({ queryKey: [key], exact: true });
+  await queryClient.fetchQuery({
+    queryKey: [key],
+    queryFn: fetcherFor(key, def),
+    staleTime: 0,
+  });
+}
 export function invalidate(...keys: string[]): void {
   for (const key of keys) {
-    const e = entries.get(key);
-    if (!e) continue;
-    e.fetchedAt = 0;
-    if (e.listeners.size > 0) void load(e);
+    void queryClient.cancelQueries({ queryKey: [key], exact: true }).then(() =>
+      queryClient.invalidateQueries({
+        queryKey: [key],
+        exact: true,
+        refetchType:
+          definitions.get(key)?.options.auto === false ? "none" : "active",
+      }),
+    );
   }
 }
-
 export function invalidateAll(): void {
-  invalidate(...entries.keys());
+  invalidate(...definitions.keys());
 }
-
-// ---------------------------------------------------------------- 轮询器
-
-/**
- * 全局唯一的心跳。每秒看一遍哪些资源到点了，**窗口不可见时整个跳过**。
- *
- * 旧代码是三个页面各自 `setInterval`，既不共享也不暂停；最小化之后
- * 后台仍然每 15 秒打一次 IP 查询接口，白白消耗第三方接口的额度。
- */
-const TICK_MS = 1000;
-
-/**
- * 从没成功过的资源，隔这么久重试一次。
- *
- * 没有这条的话，**App 这种永不卸载的订阅者会把启动那一刻的失败一直挂到关面板**：
- * `progress` 在开机断网时读失败，之后网络恢复了也永远不会再读一次，
- * 侧栏就一直显示「检查进度 0 / 5」，而用户根本不知道那是读失败不是真的 0。
- */
-const ERROR_RETRY_MS = 15_000;
-
-let timer: ReturnType<typeof setInterval> | null = null;
-
-function tick(): void {
-  if (typeof document !== 'undefined' && document.hidden) return;
-  const now = Date.now();
-
-  for (const e of entries.values()) {
-    if (e.listeners.size === 0) continue;
-    const { pollMs, staleMs, auto } = e.def.options;
-
-    // 失败过且一直没拿到数据 —— 隔一阵重试。
-    // 手动资源（auto: false）不在此列：DNS 探测要跑六秒，
-    // 自动重试它既慢又不是用户要的。
-    if (auto !== false && e.snapshot.neverLoaded && e.snapshot.error && !e.inflight) {
-      if (now - e.attemptedAt >= ERROR_RETRY_MS) void load(e);
-      continue;
-    }
-
-    if (pollMs && e.fetchedAt > 0 && now - e.fetchedAt >= pollMs) {
-      void load(e);
-      continue;
-    }
-    // stale 标记只在这里更新，快照才能保持稳定引用。
-    if (staleMs && e.fetchedAt > 0) {
-      const stale = now - e.fetchedAt >= staleMs;
-      if (stale !== e.snapshot.stale) patch(e, { stale });
-    }
-  }
-}
-
-function onVisible(): void {
-  if (document.hidden) return;
-  // 回到前台先把陈旧的补一遍，不然要等下一个轮询周期。
-  const now = Date.now();
-  for (const e of entries.values()) {
-    if (e.listeners.size === 0) continue;
-    const { pollMs, staleMs } = e.def.options;
-    const age = now - e.fetchedAt;
-    if (e.fetchedAt > 0 && ((pollMs && age >= pollMs) || (staleMs && age >= staleMs))) {
-      void load(e);
-    }
-  }
-}
-
-function ensureTimer(): void {
-  if (timer !== null) return;
-  timer = setInterval(tick, TICK_MS);
-  if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', onVisible);
-  }
-}
-
-// ---------------------------------------------------------------- Hook
-
-/**
- * 订阅一个资源。
- *
- * `def` 用 `resources.ts` 里集中声明的那份，不要在页面里现写 —— 集中声明才能
- * 保证同一个 key 在所有页面用的是同一个 fetcher 和同一套轮询策略。
- */
-export function useResource<T>(key: string, def: ResourceDef<T>): ResourceState<T> & {
-  refresh: () => Promise<void>;
-} {
-  const subscribe = useCallback(
-    (cb: () => void) => {
-      const e = entryOf(key, def);
-      e.listeners.add(cb);
-      ensureTimer();
-
-      // 首次订阅且从没拉过 —— 开一炮。已经有值就交给轮询与 stale 逻辑。
-      const auto = e.def.options.auto !== false;
-      if (auto && e.fetchedAt === 0 && !e.inflight) void load(e);
-
-      return () => {
-        e.listeners.delete(cb);
-      };
-    },
-    // def 每次渲染都是新对象引用，但内容恒定；只按 key 订阅。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [key]
-  );
-
-  const getSnapshot = useCallback(
-    () => entryOf(key, def).snapshot,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [key]
-  );
-
-  const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  const doRefresh = useCallback(() => refresh(key), [key]);
-
-  return { ...state, refresh: doRefresh };
-}
-
-/** 不订阅，直接读当前缓存值。用在事件处理里（比如按钮点下去要看一眼当前 IP）。 */
 export function peek<T>(key: string): T | undefined {
-  return entries.get(key)?.snapshot.data as T | undefined;
+  return queryClient.getQueryData<T>([key]);
 }
-
-/**
- * 把命令返回的全量新状态直接写进缓存，省掉一次回查。
- *
- * `progress_set` 就是这种：它返回的是整个 `Progress`，前端直接替换即可 ——
- * 这也是档案里定的规矩，进度的真相在 Rust，前端不做本地乐观更新。
- */
 export function put<T>(key: string, data: T): void {
-  const e = entries.get(key) as Entry<T> | undefined;
-  if (!e) return;
-  e.fetchedAt = Date.now();
-  patch(e, { data, error: undefined, loading: false, stale: false, neverLoaded: false });
+  void queryClient.cancelQueries({ queryKey: [key], exact: true });
+  queryClient.setQueryData([key], data);
 }
 
 // ---------------------------------------------------------------- 会话态
@@ -290,21 +171,25 @@ const session = new Map<string, unknown>();
 const sessionListeners = new Map<string, Set<() => void>>();
 
 export function useSession<T>(key: string, initial: T): [T, (v: T) => void] {
-  const subscribe = useCallback((cb: () => void) => {
-    let set = sessionListeners.get(key);
-    if (!set) {
-      set = new Set();
-      sessionListeners.set(key, set);
-    }
-    set.add(cb);
-    return () => {
-      set.delete(cb);
-    };
-  }, [key]);
+  if (!session.has(key)) session.set(key, initial);
+  const subscribe = useCallback(
+    (cb: () => void) => {
+      let set = sessionListeners.get(key);
+      if (!set) {
+        set = new Set();
+        sessionListeners.set(key, set);
+      }
+      set.add(cb);
+      return () => {
+        set.delete(cb);
+      };
+    },
+    [key],
+  );
 
   const getSnapshot = useCallback(
     () => (session.has(key) ? (session.get(key) as T) : initial),
-    [key, initial]
+    [key, initial],
   );
 
   const value = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -324,4 +209,15 @@ export function useSession<T>(key: string, initial: T): [T, (v: T) => void] {
 export function setSession<T>(key: string, v: T): void {
   session.set(key, v);
   sessionListeners.get(key)?.forEach((l) => l());
+}
+
+/**
+ * 读会话态的当前值，**绕开 render 快照**。
+ *
+ * `useSession` 给出的是本次渲染那一刻的值。要拿它当互斥锁用（「已经有一项
+ * 检测在跑就别再起一项」）就必须读实时值 —— 串行跑第二项时闭包里那份还是
+ * 上一次渲染的旧值，用它判定等于没判。
+ */
+export function getSession<T>(key: string, fallback: T): T {
+  return session.has(key) ? (session.get(key) as T) : fallback;
 }

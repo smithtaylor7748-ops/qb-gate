@@ -1,0 +1,127 @@
+[
+  {
+    "id": "sillytavern",
+    "name": "SillyTavern",
+    "description": "接入已有酒馆安装，管理桥接、运行状态、角色卡与备份。",
+    "kind": "application",
+    "source": "https://github.com/SillyTavern/SillyTavern",
+    "version": "integration-1",
+    "license": "AGPL-3.0 (external application)",
+    "clients": [
+      "claude-code"
+    ],
+    "install_method": "connect",
+    "configuration": "{}",
+    "dependencies": [
+      "SillyTavern",
+      "Python",
+      "Claude Code"
+    ]
+  },
+  {
+    "id": "mcp-filesystem",
+    "name": "Filesystem MCP",
+    "description": "让指定环境通过 MCP 访问你选择的文件目录。",
+    "kind": "mcp",
+    "source": "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
+    "version": "2026.8.31",
+    "license": "Apache-2.0 / original MIT contributions",
+    "clients": [
+      "claude-code",
+      "codex"
+    ],
+    "install_method": "mcp-config",
+    "configuration": "{\"command\":\"npx\",\"args\":[\"-y\",\"@modelcontextprotocol/server-filesystem@2026.8.31\",\"${DIRECTORY}\"],\"env\":{}}",
+    "dependencies": [
+      "Node.js",
+      "需要选择允许访问的目录"
+    ]
+  },
+  {
+    "id": "mcp-git",
+    "name": "Git MCP",
+    "description": "在指定仓库中读取 Git 历史、差异和工作区状态。",
+    "kind": "mcp",
+    "source": "https://github.com/modelcontextprotocol/servers/tree/main/src/git",
+    "version": "2026.8.18",
+    "license": "MIT (PyPI 2026.8.18)",
+    "clients": [
+      "claude-code",
+      "codex"
+    ],
+    "install_method": "mcp-config",
+    "configuration": "{\"command\":\"uvx\",\"args\":[\"mcp-server-git==2026.8.18\",\"--repository\",\"${DIRECTORY}\"],\"env\":{}}",
+    "dependencies": [
+      "uv",
+      "Git",
+      "需要选择 Git 仓库"
+    ]
+  },
+  {
+    "id": "skill-creator",
+    "name": "Skill Creator",
+    "description": "编写、改进和评估可复用的 Agent Skills。",
+    "kind": "skill",
+    "source": "https://github.com/anthropics/skills/tree/main/skills/skill-creator",
+    "version": "34040c9c568585f6929bedeaad110ad08f079624",
+    "license": "Apache-2.0",
+    "clients": [
+      "claude-code"
+    ],
+    "install_method": "github-skill",
+    "configuration": "{}",
+    "dependencies": []
+  },
+  {
+    "id": "webapp-testing",
+    "name": "Web App Testing",
+    "description": "使用 Playwright 检查本地网页行为并记录截图。",
+    "kind": "skill",
+    "source": "https://github.com/anthropics/skills/tree/main/skills/webapp-testing",
+    "version": "34040c9c568585f6929bedeaad110ad08f079624",
+    "license": "Apache-2.0",
+    "clients": [
+      "claude-code"
+    ],
+    "install_method": "github-skill",
+    "configuration": "{}",
+    "dependencies": [
+      "Python",
+      "Playwright"
+    ]
+  },
+  {
+    "id": "template-claude",
+    "name": "Claude Code 中转环境",
+    "description": "预览配置后，为 Claude Code 创建独立的 API 使用环境。",
+    "kind": "template",
+    "source": "QB Gate",
+    "version": "1",
+    "license": "GPL-3.0-or-later",
+    "clients": [
+      "claude-code"
+    ],
+    "install_method": "environment-template",
+    "configuration": "{\"client\":\"claude-code\",\"auth_style\":\"env_key\"}",
+    "dependencies": [
+      "服务商和 API 凭证"
+    ]
+  },
+  {
+    "id": "template-codex",
+    "name": "Codex 中转环境",
+    "description": "创建独立 CODEX_HOME，使用 Responses 协议与 API 认证。",
+    "kind": "template",
+    "source": "QB Gate",
+    "version": "1",
+    "license": "GPL-3.0-or-later",
+    "clients": [
+      "codex"
+    ],
+    "install_method": "environment-template",
+    "configuration": "{\"client\":\"codex\",\"wire_api\":\"responses\",\"auth_style\":\"env_key\"}",
+    "dependencies": [
+      "服务商和 API 凭证"
+    ]
+  }
+]

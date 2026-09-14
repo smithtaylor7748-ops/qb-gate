@@ -12,6 +12,13 @@ interface ModalProps {
   footer?: ReactNode;
   /** 关不掉的弹窗（正在执行破坏性操作时）。Esc 与点背景都不生效。 */
   dismissible?: boolean;
+  /**
+   * `wide` 给正文是一整块功能的弹窗用（总览上点开的安全项）。
+   *
+   * 默认那档 560px 是照确认框量的 —— 一句后果说明加两个按钮。
+   * 拿它装 DNS 的解析器清单会变成一根面条，人得在小窗里滚半天。
+   */
+  size?: 'default' | 'wide';
 }
 
 /**
@@ -30,6 +37,7 @@ export function Modal({
   children,
   footer,
   dismissible = true,
+  size = 'default',
 }: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -41,12 +49,38 @@ export function Modal({
     else if (!open && d.open) d.close();
   }, [open]);
 
+  /**
+   * Esc 的第二道保险：挂在 document 上。
+   *
+   * 下面那个 `onKeyDown` 挂在 `<dialog>` 上，只有焦点还在弹窗里面时才收得到。
+   * 实测会丢：在弹窗里点一个按钮，按钮文字从「开始检测」变成「重新检测」，
+   * React 把那个节点换掉了，焦点掉回 `document.body` —— 之后按 Esc
+   * 谁都收不到，弹窗关不掉。确认框只有两个按钮时看不出来，
+   * 总览上点开的安全项里正文全是能点的东西，一点就中。
+   *
+   * 只有**最上面那个**弹窗响应，否则嵌套的确认框一按 Esc 会连着外层一起关掉。
+   * 判据是文档序里最后一个 `dialog[open]`：确认框是渲染在外层弹窗内部的，
+   * 文档序天然就在后面。
+   */
+  useEffect(() => {
+    if (!open || !dismissible) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const all = document.querySelectorAll('dialog[open]');
+      if (all[all.length - 1] !== ref.current) return;
+      e.preventDefault();
+      onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, dismissible, onClose]);
+
   if (!open) return null;
 
   return (
     <dialog
       ref={ref}
-      className="modal"
+      className={size === 'wide' ? 'modal modal--wide' : 'modal'}
       aria-labelledby={titleId}
       onKeyDown={(e) => {
         // Esc 自己处理，**不依赖原生的 cancel 事件**。

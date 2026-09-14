@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "QB Gate",
-  "version": "0.11.0",
+  "version": "0.13.0",
   "identifier": "com.qbgate.panel",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -27,12 +27,24 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/icon.ico"],
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
     "windows": {
       "nsis": {
         "installMode": "currentUser"
       }
-    }
+    },
+    "resources": {
+      "../LICENSE": "licenses/LICENSE",
+      "../ATTRIBUTION.md": "licenses/ATTRIBUTION.md",
+      "../THIRD_PARTY_NOTICES.txt": "licenses/THIRD_PARTY_NOTICES.txt",
+      "../docs/dependencies.json": "licenses/dependencies.json"
+    },
+    "shortDescription": "Local AI client workspace",
+    "license": "GPL-3.0-or-later"
   }
 }

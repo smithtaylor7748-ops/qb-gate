@@ -1,0 +1,24 @@
+[package]
+name = "qb-sysenv"
+description = "QB Gate 的环境体检：环境变量残留、出口一致性、系统层面的坑"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+qb-accounts.workspace = true
+qb-foundation.workspace = true
+qb-platform.workspace = true
+qb-probe.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+tokio.workspace = true
+ts-rs.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true

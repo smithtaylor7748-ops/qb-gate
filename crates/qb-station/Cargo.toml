@@ -1,0 +1,17 @@
+[package]
+name = "qb-station"
+description = "QB Gate 的中转站健康度：账单日志聚合与时间窗评分"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+qb-contract.workspace = true
+qb-foundation.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+ts-rs.workspace = true

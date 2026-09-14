@@ -1,0 +1,47 @@
+# 依赖更新。
+#
+# 为什么需要：这个程序会碰使用者的 API Key 与官方 OAuth 凭证，而依赖树里有
+# 570 多个 crate。没有任何机制在上游披露漏洞时通知我们，等于把供应链风险
+# 完全交给运气。
+#
+# 三个生态都要开：
+#   - cargo          后端，含 DPAPI、SQLite、HTTP 栈
+#   - npm            前端
+#   - github-actions CI 用的 action 本身也会有漏洞（而且它拿得到仓库权限）
+#
+# 频率定周一早上，一周一批。开成 daily 会把 PR 列表淹掉，
+# 淹掉的结果是没人看 —— 那跟不开是一样的。
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # 补丁号更新一律合成一个 PR。分开提的话，一周能来十几个，
+      # 而它们几乎从不需要单独评审。
+      patch:
+        update-types: [patch]
+    ignore:
+      # rmcp 的版本是 ATTRIBUTION.md 里核对过许可证的那一版，
+      # 升级要连带重新核对，不走自动 PR。
+      - dependency-name: rmcp
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      patch:
+        update-types: [patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3

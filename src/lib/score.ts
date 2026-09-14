@@ -28,8 +28,8 @@
  */
 
 import type { GateStatus, DnsReport, Progress } from './api';
+import { describeLease } from './lease';
 import type { ScanResult } from './signals';
-import type { PageId } from './nav';
 
 export type Band = 'good' | 'fair' | 'poor';
 
@@ -40,9 +40,11 @@ export interface ScoreItem {
   /** 得分，0..weight。`null` = 这一项还没检测过，不计入总分。 */
   earned: number | null;
   detail: string;
-  /** 点「去看看」跳哪一页。 */
-  page: PageId;
 }
+
+/* 这里原来有个 `page` / `route` 字段，指「点这一格跳哪一页」。
+   现在四格点下去是就地开小窗，跳哪儿由 `ScoreBand` 的 `OPENS` 表说了算 ——
+   评分算法不该知道界面长什么样。 */
 
 export interface Score {
   /** 0–100。`null` = 一项都没检测过，界面上显示「—」而不是 0。 */
@@ -116,7 +118,7 @@ export function computeScore({ progress, dns, signals, gate }: Inputs): Score {
 
 function purityItem(progress: Progress): ScoreItem {
   const rec = progress.steps['purity'];
-  const base = { id: 'purity' as const, label: 'IP 纯净度', weight: WEIGHTS.purity, page: 'purity' as const };
+  const base = { id: 'purity' as const, label: 'IP 纯净度', weight: WEIGHTS.purity };
 
   // 真值在人工判定里 —— probe_purity 的 passed 结构上永远是 false。
   if (!rec || rec.state === 'pending') {
@@ -138,7 +140,7 @@ function purityItem(progress: Progress): ScoreItem {
 }
 
 function dnsItem(dns?: DnsReport): ScoreItem {
-  const base = { id: 'dns' as const, label: 'DNS 泄露', weight: WEIGHTS.dns, page: 'dns' as const };
+  const base = { id: 'dns' as const, label: 'DNS 泄露', weight: WEIGHTS.dns };
   if (!dns) return { ...base, earned: null, detail: '还没检测过' };
   // DnsReport.score 已经是 100 分制且方向一致（高了好）。
   return {
@@ -156,7 +158,6 @@ function signalsItem(signals?: ScanResult): ScoreItem {
     id: 'signals' as const,
     label: '中文环境',
     weight: WEIGHTS.signals,
-    page: 'signals' as const,
   };
   if (!signals) return { ...base, earned: null, detail: '还没检测过' };
   // 方向相反：total 越低越好，所以取补数。
@@ -168,7 +169,7 @@ function signalsItem(signals?: ScanResult): ScoreItem {
 }
 
 function lockItem(gate?: GateStatus): ScoreItem {
-  const base = { id: 'iplock' as const, label: 'IP 锁', weight: WEIGHTS.iplock, page: 'iplock' as const };
+  const base = { id: 'iplock' as const, label: 'IP 锁', weight: WEIGHTS.iplock };
   if (!gate) return { ...base, earned: null, detail: '还没读到门禁状态' };
 
   const total = gate.targets.length;
@@ -177,12 +178,9 @@ function lockItem(gate?: GateStatus): ScoreItem {
   }
 
   // 租约期内是**故意解锁**的，不该因此扣分 —— 那正是面板放行的结果。
-  if (gate.lease.holder) {
-    return {
-      ...base,
-      earned: base.weight,
-      detail: `已放行给 ${gate.lease.holder}`,
-    };
+  const lease = describeLease(gate.lease, '已放行给');
+  if (lease) {
+    return { ...base, earned: base.weight, detail: lease.text };
   }
 
   const locked = gate.targets.filter((t) => t.locked).length;

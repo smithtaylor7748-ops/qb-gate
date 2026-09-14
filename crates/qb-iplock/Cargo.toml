@@ -1,0 +1,28 @@
+[package]
+name = "qb-iplock"
+description = "QB Gate 的门禁：出口 IP 不合格就锁上 claude.exe 的执行权"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+qb-contract.workspace = true
+qb-foundation.workspace = true
+qb-install.workspace = true
+qb-platform.workspace = true
+qb-probe.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+hex.workspace = true
+sha2.workspace = true
+rusqlite.workspace = true
+tokio.workspace = true
+ts-rs.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true

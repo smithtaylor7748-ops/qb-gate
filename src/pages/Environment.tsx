@@ -2,11 +2,9 @@ import { useState } from 'react';
 import {
   Clock,
   Download,
-  Fingerprint,
   History as HistoryIcon,
   PackageCheck,
   RotateCw,
-  SkipForward,
   Sparkles,
 } from 'lucide-react';
 
@@ -19,7 +17,7 @@ import {
   type Trace,
 } from '../lib/api';
 import type { ScanResult } from '../lib/signals';
-import { useNav } from '../lib/nav';
+import { markStep } from '../lib/progress';
 import { AFTER, R } from '../lib/resources';
 import { invalidate, peek, useResource, useSession } from '../lib/store';
 import { endTask, resetTask, useTask } from '../lib/tasks';
@@ -77,7 +75,6 @@ const INSTALLED_OF: Record<
 };
 
 export default function Environment() {
-  const { mark, go } = useNav();
   const toast = useToast();
 
   const sw = useResource('software', R.software);
@@ -132,7 +129,7 @@ export default function Environment() {
         : scan?.band === 'medium' || tzMismatch || !s?.claudeCode.installed
           ? 'medium'
           : 'low';
-    await mark(
+    await markStep(
       'environment',
       risk === 'high' ? 'failed' : 'passed',
       risk,
@@ -748,19 +745,6 @@ export default function Environment() {
         </Button>
       </Card>
 
-      {/* -------------------------------------------- 中文环境识别入口 */}
-      <Card title="中文环境识别" icon={<Fingerprint size={14} />} className="mb-3">
-        <Row
-          side={
-            <Button size="sm" onClick={() => go('signals')}>
-              打开
-            </Button>
-          }
-        >
-          <span>十项加权指纹，满分 100，全部在本地算。</span>
-        </Row>
-      </Card>
-
       <div className="mt-4 flex flex-wrap justify-end gap-2">
         <Button
           icon={<PackageCheck size={13} />}
@@ -770,16 +754,6 @@ export default function Environment() {
           }}
         >
           记录本步结果
-        </Button>
-        <Button
-          variant="ghost"
-          icon={<SkipForward size={13} />}
-          onClick={async () => {
-            await mark('environment', 'skipped', 'unknown', '用户强制跳过，未确认本机环境');
-            toast.info('已标记为跳过');
-          }}
-        >
-          标记为已跳过
         </Button>
       </div>
 

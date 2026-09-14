@@ -1,0 +1,36 @@
+[package]
+name = "qb-app"
+description = "QB Gate 的编排层：跨域用例、工作区聚合、快照与统一档案"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+qb-accounts.workspace = true
+qb-contract.workspace = true
+qb-extensions.workspace = true
+qb-foundation.workspace = true
+qb-install.workspace = true
+qb-iplock.workspace = true
+qb-launch.workspace = true
+qb-platform.workspace = true
+qb-probe.workspace = true
+qb-relay.workspace = true
+qb-sysenv.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+hex.workspace = true
+sha2.workspace = true
+rusqlite.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+toml_edit.workspace = true
+ts-rs.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true

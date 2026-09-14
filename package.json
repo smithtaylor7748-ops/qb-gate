@@ -1,33 +1,55 @@
 {
   "name": "qb-gate",
   "private": true,
-  "version": "0.11.0",
+  "version": "0.13.0",
   "type": "module",
-  "description": "Claude 环境控制面板：IP 锁、纯净度、DNS 泄露、环境检测与安装",
+  "description": "官方账户、中转站与扩展的 Windows 本地工作空间",
   "license": "GPL-3.0-or-later",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "demo": "vite --mode demo"
+    "demo": "vite --mode demo",
+    "test": "vitest run",
+    "types:generate": "cargo run --manifest-path src-tauri/Cargo.toml --example export-types --quiet",
+    "test:ui": "node scripts/ui-regression.mjs",
+    "release:check": "node scripts/release-check.mjs",
+    "licenses:generate": "node scripts/licenses.mjs",
+    "format:check": "prettier --check src/features src/lib/workspace.ts src/lib/store.ts src/lib/store.test.tsx src/lib/tasks.ts src/lib/workspaceDemo.ts src/styles/workspace.css scripts/*.mjs",
+    "types:check": "node scripts/check-types.mjs"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.102.8",
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/plugin-dialog": "^2.2.0",
     "@tauri-apps/plugin-opener": "^2.2.2",
     "lucide-react": "^1.43.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/cli": "^2.1.0",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^24.0.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "6.1.1",
+    "jsdom": "^26.1.0",
+    "prettier": "^3.9.6",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "8.3.0",
+    "vitest": "4.1.11"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smithtaylor7748-ops/qb-gate.git"
   }
 }

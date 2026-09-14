@@ -1,0 +1,80 @@
+# 供应链检查。`cargo deny check`
+#
+# 为什么需要：这个程序会碰使用者的 API Key 与官方 OAuth 凭证，而依赖树里有
+# 570 多个 crate、94 处版本重复。在这之前 CI 里没有任何一道供应链的门 ——
+# 上游披露漏洞时不会有任何人知道。
+#
+# 每一档的松紧都是**实测之后**定的，不是抄模板：
+#   - 漏洞     0 个   → 直接当硬门
+#   - 无人维护 6 个   → 全部来自 tauri 的传递依赖，我们改不动，只报不拦
+#   - 重复版本 94 处  → Tauri 依赖树的常态，只报不拦
+# 把改不动的东西设成硬门，结果是有人把整道门关掉 —— 那比没有门更糟。
+
+[graph]
+# 只按实际发布目标解析。这是个 Windows-only 的程序（KNOWN-ISSUES 写死了
+# 「当前完整支持 Windows x64，macOS / Linux 不是可用发布目标」），
+# 不限定的话会把三个平台的依赖全拉进来一起判，报一堆根本装不到的东西。
+targets = ["x86_64-pc-windows-msvc"]
+all-features = false
+
+[advisories]
+# 有漏洞就红。这是这份配置存在的首要理由，而且实测当前是 0 —— 门是干净的。
+yanked = "deny"
+# 只管**我们自己直接依赖**的无人维护 crate。
+# 实测那 6 条（proc-macro-error、unic-char-property、unic-char-range、
+# unic-common、unic-ucd-ident、unic-ucd-version）全是 tauri 往下拉的，
+# 升 tauri 才能动，设成 deny 只会让 CI 长期红着没人看。
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+# 本项目是 GPL-3.0-or-later。允许清单只放跟它相容、且社区公认宽松的那几类。
+# 新依赖若带来清单外的许可证，这里会红 —— 那正是我们想要的：
+# 许可证兼容性必须是一个**有人看过**的决定，而不是默认通过。
+allow = [
+  # 下面这张表是 `cargo deny list` 实测出来的全集，不是抄的模板 ——
+  # 抄模板会留一堆用不上的条目，反而看不出真正在用什么。
+  "0BSD",
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  # webpki-roots：Mozilla 的 CA 根证书库。CDLA 是数据集许可，不是代码许可，
+  # Permissive-2.0 这一档无附加义务。
+  "CDLA-Permissive-2.0",
+  # 本项目自己。留在这里而不是用 private.ignore —— 显式列出来，
+  # 将来真有 GPL 依赖进来时也能一眼看出「这是相容的」。
+  "GPL-3.0-or-later",
+  "ISC",
+  "MIT",
+  "MIT-0",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unlicense",
+  "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+# 94 处版本重复是 Tauri 依赖树的常态（windows 0.58/0.61/0.62、
+# thiserror 1/2、syn 2/3、toml 0.9/1.1 …）。设成 deny 要维护一张几十行的
+# 例外表，而那张表只会越来越旧。只报不拦。
+multiple-versions = "warn"
+# 通配符版本（`foo = "*"`）仍然禁止：它等于「随便哪个版本都行」，
+# 上游一发破坏性改动就当场炸。
+wildcards = "deny"
+# 但 workspace 内部的 path 依赖是例外。`qb-foundation = { path = "…" }`
+# 没有 version 字段，cargo-deny 会把它算成通配符 —— 而它根本不从 registry
+# 取，锁的就是本仓库这一份源码，不存在「上游改了」这回事。
+#
+# 另一条路是给每个内部 crate 都写上 version，但那样每次提版本号要改 N 处，
+# 而且 `scripts/release-check.mjs` 管不到它们 —— 拿一个真实的漏检
+# 去换一个假的安全感。
+allow-wildcard-paths = true
+# 真正不该出现的东西放这里。目前为空 —— 有了再加，别先摆一堆想象中的。
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

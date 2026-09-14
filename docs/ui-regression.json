@@ -1,0 +1,464 @@
+{
+  "cases": [
+    {
+      "route": "",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "relays",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "software",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "extensions",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "settings",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "",
+      "width": 944,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "relays",
+      "width": 944,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "software",
+      "width": 944,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "extensions",
+      "width": 944,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "settings",
+      "width": 944,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "relays",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "software",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "extensions",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "settings",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "",
+      "width": 680,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "relays",
+      "width": 680,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "software",
+      "width": 680,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "extensions",
+      "width": 680,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "settings",
+      "width": 680,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "",
+      "width": 1180,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "relays",
+      "width": 1180,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "software",
+      "width": 1180,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "extensions",
+      "width": 1180,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "settings",
+      "width": 1180,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "",
+      "width": 944,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "relays",
+      "width": 944,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "software",
+      "width": 944,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "extensions",
+      "width": 944,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "settings",
+      "width": 944,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "",
+      "width": 786,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "relays",
+      "width": 786,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "software",
+      "width": 786,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "extensions",
+      "width": 786,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "settings",
+      "width": 786,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "",
+      "width": 680,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "relays",
+      "width": 680,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "software",
+      "width": 680,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "extensions",
+      "width": 680,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "settings",
+      "width": 680,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "",
+      "width": 944,
+      "theme": "light",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "relays",
+      "width": 944,
+      "theme": "light",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "software",
+      "width": 944,
+      "theme": "light",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "extensions",
+      "width": 944,
+      "theme": "light",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "settings",
+      "width": 944,
+      "theme": "light",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "",
+      "width": 944,
+      "theme": "dark",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "relays",
+      "width": 944,
+      "theme": "dark",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "software",
+      "width": 944,
+      "theme": "dark",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "extensions",
+      "width": 944,
+      "theme": "dark",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "settings",
+      "width": 944,
+      "theme": "dark",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "",
+      "width": 786,
+      "theme": "light",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "relays",
+      "width": 786,
+      "theme": "light",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "software",
+      "width": 786,
+      "theme": "light",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "extensions",
+      "width": 786,
+      "theme": "light",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "settings",
+      "width": 786,
+      "theme": "light",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "",
+      "width": 786,
+      "theme": "dark",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "relays",
+      "width": 786,
+      "theme": "dark",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "software",
+      "width": 786,
+      "theme": "dark",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "extensions",
+      "width": 786,
+      "theme": "dark",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "settings",
+      "width": 786,
+      "theme": "dark",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "modal:4/4 已锁看门狗未跑残",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "modal:会话门禁",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "modal:IP 纯净度权重 353",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "modal:DNS 泄露权重 252",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "modal:中文环境权重 20—还没",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "modal:IP 锁权重 20204",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "modal:4/4 已锁看门狗未跑残",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "modal:会话门禁",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "modal:IP 纯净度权重 353",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "modal:DNS 泄露权重 252",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "modal:中文环境权重 20—还没",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "modal:IP 锁权重 20204",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    }
+  ],
+  "flows": [
+    "catalog isolation",
+    "global search and browser back",
+    "draft navigation persistence",
+    "keyboard modal close",
+    "overview security modal"
+  ],
+  "pageErrors": []
+}

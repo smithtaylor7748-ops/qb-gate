@@ -3,7 +3,8 @@ dist
 .DS_Store
 *.local
 
-src-tauri/target
+# workspace 的 target 在仓库根，不再是 src-tauri/target
+/target
 src-tauri/gen
 
 # 运行期状态，绝不入库
@@ -16,3 +17,32 @@ installers-cache/
 # 这两条是硬防线：删掉它们等于把那份内容公开出去。
 /docs/subscription-guide/
 /src/subscription-guide/
+
+# Runtime credentials, encrypted stores, journals and build/test output
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.pem
+*.key
+.auth.json
+auth.json
+.credentials.json
+/lease.json
+/gate-intent.json
+/gate-verdict.json
+/relay.json
+/profiles.json
+/runtime/
+/snapshots/
+/operations/
+/test-results/
+/playwright-report/
+/dist-installers/

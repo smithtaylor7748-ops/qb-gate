@@ -1,48 +1,68 @@
 name: CI
-
-# 每次推送、每个 PR 都在一台**全新的 Windows 机器**上跑一遍类型检查和单测。
-#
-# 为什么值得：这个面板要找「Claude 装在哪」，而作者那台机器上什么都有 ——
-# 只在那台机器上测，永远测不出「别人的机器上什么都没有 / 只装了 winget 那份」
-# 会怎样。`install::inventory` 与 `accounts` 的单测是在临时目录里搭假机器跑的，
-# 放到 GitHub 的干净 runner 上，正好顺带证明它们不依赖作者本机的任何状态
-# （档案 §1 第 8 条：单测不许碰真实的运行期状态）。
-#
-# 出安装包仍然走 release.yml（打 tag 才跑）。
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, 'codex/**']
   pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   test:
     runs-on: windows-latest
-
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
-
       - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
-
       - uses: dtolnay/rust-toolchain@stable
-
-      - uses: swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          components: rustfmt, clippy
+      - uses: swatinem/rust-cache@v2
+      - run: npm ci
+      # 实测当前 0 漏洞，所以直接当硬门。
+      - name: npm advisories
+        run: npm audit --audit-level=moderate
+      - name: Public source and version checks
+        run: npm run release:check
+      - name: Formatting
+        run: |
+          npm run format:check
+          cargo fmt --all --check
+      - run: npm test
+      - run: npm run types:check
+      - run: npm run build
+      - name: Isolated Rust regressions
+        run: cargo test --locked --workspace
+      # 判定函数的可见性收窄到 pub(super) 靠的就是这道门：一旦有人把判定
+      # 搬回调用方自己写一遍，原函数变成 dead_code，这里直接编译失败。
+      # 以前这条只在本地跑过，CI 里是空的。
+      - name: Lints
+        run: cargo clippy --locked --workspace --lib -- -D warnings
+      - name: Browser runtime
+        run: npx playwright install chromium
+      - name: Demo UI regression with external requests blocked
+        run: npm run test:ui
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-regression
+          path: |
+            docs/ui-regression.json
+            docs/screenshots/*-light.png
+            docs/screenshots/*-dark.png
 
-      - name: Install npm deps
-        run: npm ci
-
-      - name: Typecheck and build frontend
-        run: npm run build
-
-      # 单测全部打桩：不联网、不动真 ACL、不碰真进程、不写运行期状态文件。
-      - name: Rust tests
-        working-directory: src-tauri
-        run: cargo test --locked
+  # 供应链。单独一个 job：它不需要 npm、不需要 Windows，也不该拖慢主回归。
+  #
+  # 四档的松紧在仓库根的 deny.toml 里逐条解释过，都是实测之后定的：
+  # 漏洞 0 个当硬门，无人维护 6 个与重复版本 94 处只报不拦 ——
+  # 把改不动的东西设成硬门，结果是有人把整道门关掉。
+  supply-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check

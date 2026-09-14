@@ -1,0 +1,25 @@
+[package]
+name = "qb-install"
+description = "QB Gate 的安装层：Claude 装在哪、怎么装、怎么升、怎么回滚"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+qb-foundation.workspace = true
+qb-platform.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+hex.workspace = true
+dirs.workspace = true
+ts-rs.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true

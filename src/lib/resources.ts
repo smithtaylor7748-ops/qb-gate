@@ -17,8 +17,8 @@ import { runScan } from './signals';
 
 export const R = {
   /** 出口 IP。全项目就这一处探测，Home / Purity / IpLock / Environment 共用。 */
-  ip: res(() => api.probeIp(), { staleMs: 60_000 }),
-  purity: res(() => api.probePurity(), { staleMs: 60_000 }),
+  ip: res(() => api.probeIp(), { staleMs: 60_000, auto: false }),
+  purity: res(() => api.probePurity(), { staleMs: 60_000, auto: false }),
   criteria: res(() => api.purityCriteria()),
 
   /** 门禁状态。本地 ACL 查询，轮询无妨。 */
@@ -30,8 +30,22 @@ export const R = {
   software: res(() => api.detectSoftware()),
   accounts: res(() => api.accountsList()),
   progress: res(() => api.progressLoad()),
-  /** 中转站目录（三个 target 的全部记录）。Key 不在里面，只有掩码。 */
-  relay: res(() => api.relayList()),
+  /**
+   * 官方端点预设。**只收厂商公开文档里的直连地址，一个第三方中转站都不放** ——
+   * 理由写在 `src-tauri/src/relay/presets.rs` 的文件头。
+   *
+   * 两个 target 一起取：新系统的「服务商」这一层没有 target 概念，
+   * target 是每个使用环境自己选的。
+   */
+  presets: res(async () => {
+    const all = [
+      ...(await api.relayPresets('claude-code')),
+      ...(await api.relayPresets('codex')),
+    ];
+    // 按 id 去重：Rust 侧的 id 本来就是全局唯一的（presets.rs 有单测钉着），
+    // 但演示夹具不看 target、两次都回同一批，合起来就重了。
+    return [...new Map(all.map((p) => [p.id, p])).values()];
+  }),
   tz: res(() => api.tzCurrent()),
   settings: res(() => api.settingsLoad()),
   snapshots: res(() => api.snapshotList()),
@@ -39,14 +53,19 @@ export const R = {
 
   plugins: res(() => api.pluginList(), { pollMs: 20_000 }),
 
-  /** DNS 探测约 6 秒（10 个探针域名各等 3 秒上限），只在用户点了才跑。 */
-  dns: res(() => api.probeDns(), { auto: false }),
+  /**
+   * DNS 探测约 6 秒（10 个探针域名各等 3 秒上限），只在用户点了才跑。
+   *
+   * `persist` 是必须的：不留的话面板一重启，综合评分里这 25 分就回到
+   * 「未检测」—— 昨天测过也白测，而重测要再等六秒。
+   */
+  dns: res(() => api.probeDns(), { auto: false, persist: true }),
 
   /**
    * 中文环境识别。纯本地计算，但 `runScan()` 是串行 `for await`，
    * WebRTC 那项自带 1 秒超时，所以也别自动跑。
    */
-  signals: res(() => runScan(), { auto: false }),
+  signals: res(() => runScan(), { auto: false, persist: true }),
 
   /**
    * 本机环境体检。要跑几个 `reg query` 子进程、还要读一遍配置文件，
@@ -55,7 +74,7 @@ export const R = {
    * 演示模式下自动跑一次 —— 截图脚本点不了按钮，而一张「还没体检过」的空卡片
    * 说明不了这个功能在查什么。正式构建里 `DEMO_ENABLED` 是编译期常量 false。
    */
-  checkup: res(() => api.checkupScan(), { auto: DEMO_ENABLED }),
+  checkup: res(() => api.checkupScan(), { auto: DEMO_ENABLED, persist: true }),
 
   /** 升级计划走 latest 渠道 —— 写死 stable 会降级，见档案 §4.5。 */
   upgrade: res(() => api.upgradePlan('latest'), { auto: false }),
@@ -98,5 +117,5 @@ export const AFTER = {
   /** 酒馆启停。 */
   tavern: ['plugins', 'gate'] as const,
   /** 应用档案 / 回滚快照：账户、中转站、门禁、快照列表全都可能变了。 */
-  profile: ['accounts', 'relay', 'gate', 'tz', 'snapshots', 'profiles'] as const,
+  profile: ['accounts', 'gate', 'tz', 'snapshots', 'profiles'] as const,
 };

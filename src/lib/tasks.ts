@@ -9,8 +9,9 @@
  * 字段名与 `src-tauri/src/events.rs` 的 `TaskProgress` 一一对应。
  */
 
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { useCallback, useSyncExternalStore } from 'react';
+import { CHANNELS } from "./channels";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { useCallback, useSyncExternalStore } from "react";
 
 /** 与 Rust `events::TaskProgress` 对应。任务名也在那边定义。 */
 export interface TaskProgress {
@@ -25,16 +26,16 @@ export interface TaskProgress {
 }
 
 export type TaskName =
-  | 'install'
-  | 'upgrade'
-  | 'tavern-start'
-  | 'dns-probe'
-  | 'launch-claude-code'
-  | 'launch-claude-desktop'
-  | 'launch-codex'
-  | 'killswitch-preview'
-  | 'killswitch-execute'
-  | 'chrome-reinstall';
+  | "install"
+  | "upgrade"
+  | "tavern-start"
+  | "dns-probe"
+  | "launch-claude-code"
+  | "launch-claude-desktop"
+  | "launch-codex"
+  | "killswitch-preview"
+  | "killswitch-execute"
+  | "chrome-reinstall";
 
 export interface TaskState {
   running: boolean;
@@ -49,7 +50,7 @@ export interface TaskState {
 
 const IDLE: TaskState = {
   running: false,
-  phase: '',
+  phase: "",
   step: 0,
   total: 0,
   log: [],
@@ -60,7 +61,11 @@ const IDLE: TaskState = {
 const states = new Map<string, TaskState>();
 const listeners = new Map<string, Set<() => void>>();
 
+let snapshot: Array<[string, TaskState]> = [];
+const allListeners = new Set<() => void>();
 function notify(task: string): void {
+  snapshot = Array.from(states);
+  allListeners.forEach((fn) => fn());
   listeners.get(task)?.forEach((l) => l());
 }
 
@@ -92,7 +97,7 @@ function apply(p: TaskProgress): void {
  * 不清的话第二次点会看到上一次的日志和「已完成」，让人以为什么都没发生。
  */
 export function resetTask(task: TaskName): void {
-  states.set(task, { ...IDLE, running: true, phase: '准备中…' });
+  states.set(task, { ...IDLE, running: true, phase: "准备中…" });
   notify(task);
 }
 
@@ -115,10 +120,12 @@ function ensureListening(): void {
   if (unlisten) return;
   // 订阅失败不能变成未捕获的 promise 拒绝：拿不到进度事件只是进度条不动，
   // 面板其它部分照常能用，不该在控制台留一条吓人的红字。
-  unlisten = listen<TaskProgress>('gate://task', (e) => apply(e.payload)).catch(() => {
-    unlisten = null; // 允许下次挂载时重试
-    return () => undefined;
-  });
+  unlisten = listen<TaskProgress>(CHANNELS.task, (e) => apply(e.payload)).catch(
+    () => {
+      unlisten = null; // 允许下次挂载时重试
+      return () => undefined;
+    },
+  );
 }
 
 export function useTask(task: TaskName): TaskState {
@@ -135,9 +142,23 @@ export function useTask(task: TaskName): TaskState {
         set.delete(cb);
       };
     },
-    [task]
+    [task],
   );
 
   const getSnapshot = useCallback(() => stateOf(task), [task]);
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+export function useAllTasks() {
+  return useSyncExternalStore(
+    useCallback((fn: () => void) => {
+      ensureListening();
+      allListeners.add(fn);
+      return () => {
+        allListeners.delete(fn);
+      };
+    }, []),
+    () => snapshot,
+    () => snapshot,
+  );
 }

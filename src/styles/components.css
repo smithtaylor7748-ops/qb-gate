@@ -8,158 +8,12 @@
  * 页面里的一次性排版仍然用 Tailwind 工具类，不再回到内联 style。
  */
 
-/* ================================================================ 布局 */
+/* 这里原来是 v0.11.0 的外壳：`.app` / `.main` / `.main-inner`（固定 980px）、
+   `.sidebar` / `.brand*` / `.navgroup*` / `.navitem*` 与它们的窄屏规则，
+   共 153 行。新外壳整个在 `workspace.css` 里（`.qb-shell` / `.qb-sidebar` /
+   `.qb-main` / `.qb-page`，正文宽度改成自适应、上限 1480px），
+   这一段全树零引用，删。要找旧版长什么样去看 `ed32bd7`。 */
 
-.app {
-  display: flex;
-  height: 100%;
-  overflow: hidden;
-}
-
-.main {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  min-width: 0;
-}
-
-.main-inner {
-  padding: 24px 28px 40px;
-  max-width: 980px;
-  width: 100%;
-  margin: 0 auto;
-}
-
-@media (max-width: 700px) {
-  .main-inner {
-    padding: 16px 14px 32px;
-  }
-}
-
-
-/* ================================================================ 侧栏 */
-
-.sidebar {
-  width: var(--sidebar-w);
-  flex-shrink: 0;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  overflow-x: hidden;
-  transition: width var(--duration-base) var(--ease-out);
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 14px 14px 12px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.brand-text {
-  min-width: 0;
-  overflow: hidden;
-}
-.brand-title {
-  font-size: var(--text-lg);
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-.brand-sub {
-  display: block;
-  color: var(--text-3);
-  font-size: var(--text-xs);
-  white-space: nowrap;
-}
-
-.navgroup {
-  padding: 10px 8px 2px;
-}
-.navgroup-title {
-  font-size: var(--text-2xs);
-  color: var(--text-3);
-  padding: 4px 9px;
-  letter-spacing: 0.08em;
-  white-space: nowrap;
-}
-
-.navitem {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  padding: 8px 9px;
-  border: none;
-  background: none;
-  border-radius: var(--radius-md);
-  color: var(--text-2);
-  text-align: left;
-  font-size: var(--text-base);
-  transition:
-    background var(--duration-fast) var(--ease-out),
-    color var(--duration-fast) var(--ease-out);
-}
-.navitem:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-.navitem[aria-current="page"] {
-  background: var(--accent-bg);
-  color: var(--text);
-}
-.navitem-icon {
-  flex-shrink: 0;
-  display: flex;
-  color: var(--text-3);
-}
-.navitem[aria-current="page"] .navitem-icon {
-  color: var(--accent);
-}
-.navitem-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 每一行右侧那条从 store 实时读出来的状态摘要。 */
-.navitem-summary {
-  font-size: var(--text-2xs);
-  color: var(--text-3);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.navitem-summary.ok {
-  color: var(--ok);
-}
-.navitem-summary.warn {
-  color: var(--warn);
-}
-.navitem-summary.danger {
-  color: var(--danger);
-}
-
-/* 窄屏：收成 56px 图标条，文字与摘要隐藏，靠 title / aria-label 说明。 */
-@media (max-width: 900px) {
-  .sidebar {
-    width: var(--sidebar-w-narrow);
-  }
-  .brand-text,
-  .navgroup-title,
-  .navitem-label,
-  .navitem-summary {
-    display: none;
-  }
-  .brand,
-  .navitem {
-    justify-content: center;
-    padding-left: 0;
-    padding-right: 0;
-  }
-}
 
 /* ================================================================ 卡片 */
 
@@ -220,18 +74,32 @@
   color: var(--text);
   white-space: nowrap;
   position: relative;
+  /* 尺寸的默认值写在基类里，跟 `.btn--md` 一份。
+     `Button` 组件总会带上档位，但 `<Link className="btn">` 这类手写的
+     不会 —— 尺寸只写在档位里的时候，它们渲染出来是零内边距、继承字号，
+     字直接顶着边框，看上去像「文字突出按钮外面」。档位类排在后面，
+     `.btn--sm` 照样覆盖得掉。 */
+  font-size: var(--text-base);
+  padding: 8px 16px;
+  min-height: 32px;
   transition:
     border-color var(--duration-fast) var(--ease-out),
     background var(--duration-fast) var(--ease-out),
     opacity var(--duration-fast) var(--ease-out);
 }
+/* 两档都比原来大一号。旧尺寸（12px 字 / 7px 内边距 / 无最小高度）在
+   1080p 缩放 125% 的机器上按起来费劲，使用者原话是「功能按钮都有点小」。
+   `min-height` 是关键的那一条：只加内边距的话，带图标和不带图标的按钮
+   高度仍然差 2–3px，一行里排开是参差的。 */
 .btn--md {
-  font-size: var(--text-sm);
-  padding: 7px 13px;
+  font-size: var(--text-base);
+  padding: 8px 16px;
+  min-height: 32px;
 }
 .btn--sm {
-  font-size: var(--text-xs);
-  padding: 4px 9px;
+  font-size: var(--text-sm);
+  padding: 5px 11px;
+  min-height: 26px;
 }
 .btn:hover:not(:disabled) {
   border-color: var(--text-3);
@@ -345,6 +213,10 @@
   font-size: var(--text-xs);
   color: var(--text-3);
   margin-bottom: 3px;
+  /* 标签目前都是写死的短文案，但它跟 `.metric-v` 是同一种 flex 容器，
+     同一个匿名 flex item 的下限问题。一起补上，省得下次谁往标签里
+     塞一个变量又踩一遍。 */
+  overflow-wrap: anywhere;
 }
 .metric-v {
   display: flex;
@@ -353,6 +225,13 @@
   font-size: var(--text-md);
   min-width: 0;
   flex-wrap: wrap;
+  /* 必须是 `anywhere` 而不是 `break-word`。
+     裸文本在 flex 容器里是匿名 flex item，`min-width` 取 auto ——
+     也就是最长那个不可断开的词。`break-word` 不改这个下限，盒子照样被撑破；
+     只有 `anywhere` 会把下限降到单个字符。
+     实机上撑破它的是执行锁：`lease.holder` 是多个持有者用「、」拼起来的，
+     里面是 `20260913-045632-ef2e6a09…` 这种三十几位的会话 id。 */
+  overflow-wrap: anywhere;
 }
 .metric-v.mono {
   font-family: var(--mono);
@@ -396,6 +275,12 @@
   gap: 7px;
   min-width: 0;
   flex-wrap: wrap;
+  /* 跟 `.metric-v` 同一条理由：`min-width: 0` 只让这个容器自己能被压扁，
+     压不动里面那个不可断开的词。左栏装的全是机器给的字符串 ——
+     环境变量名（`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`，下划线不断行）、
+     IPv6 地址、Windows 路径（反斜杠也不断行）—— 没有这一条，
+     它们会从行里横着长出去。 */
+  overflow-wrap: anywhere;
 }
 .row-side {
   display: flex;
@@ -412,6 +297,10 @@
   font-size: var(--text-sm);
   color: var(--text-2);
   line-height: 1.6;
+  /* 条目里装的是 findings、待删文件清单、放过的进程 —— 一律带路径。
+     确认框是 `.modal`，它 `overflow: hidden`：这里溢出去的字不是滚出去，
+     是**直接被裁掉**，而那正是使用者要据以决定删不删的那一行。 */
+  overflow-wrap: anywhere;
 }
 .bullet-marker {
   flex-shrink: 0;
@@ -437,6 +326,9 @@
   font-size: var(--text-xs);
   color: var(--text-3);
   line-height: 1.7;
+  /* 说明行里常嵌 <code> 路径，评分格又是 `minmax(150px, 1fr)` 的定宽格子 ——
+     格子不会被内容撑宽，撑不下就只能溢出去。 */
+  overflow-wrap: anywhere;
 }
 .notice--warn {
   color: var(--warn);
@@ -465,7 +357,9 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   color: var(--text);
-  padding: 7px 10px;
+  padding: 8px 11px;
+  /* 跟 .btn--md 同高。差 2px 的话，一行里输入框比旁边的按钮矮一截。 */
+  min-height: 32px;
   font: inherit;
   font-size: var(--text-base);
   transition: border-color var(--duration-fast) var(--ease-out);
@@ -716,6 +610,12 @@
 }
 .modal[open] {
   display: flex;
+}
+/* 总览上点开的安全项：正文是一整块功能，不是一句确认语。
+   高度也放宽，否则 DNS 那张解析器表要在 200px 的窗口里滚。 */
+.modal--wide {
+  width: min(860px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
 }
 .modal::backdrop {
   background: rgb(0 0 0 / 0.55);
@@ -986,11 +886,28 @@
 /* ---------------------------------------------------------- 评分明细格 */
 
 .scorecell {
+  /* 整格现在是 <button>（点开小窗），按钮自带背景、边框、居中和字体，
+     这里全抹平 —— 已测格和未测格的外观一个像素都不许变。 */
+  appearance: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  display: block;
+  width: 100%;
+  cursor: pointer;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 8px 10px;
   min-width: 0;
   flex: 1;
+}
+.scorecell:hover {
+  border-color: var(--accent-border);
+}
+.scorecell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 /* 未检测：虚线 + 压暗，不跟已测项混在一起看。 */
 .scorecell--none {
@@ -1244,4 +1161,187 @@
 .tl-row--danger .tl-icon,
 .tl-row--danger .tl-text {
   color: var(--danger);
+}
+
+/* ============================================ 安全页：分段与锚点条 */
+
+/* 整页很长（六段，每段是一整块功能），没有目录就只能靠滚。
+   点一下滚过去，**不换页也不换地址** —— 旧版那 13 个 go() 跳页正是要消灭的。 */
+.anchorbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.anchorchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+.anchorchip:hover {
+  border-color: var(--accent-border);
+  color: var(--text);
+}
+.anchorchip small {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.secblock {
+  /* 锚点跳过去时给标题留出上边距，否则它会顶在滚动容器最上沿。 */
+  scroll-margin-top: 14px;
+  padding-top: 18px;
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.secblock:first-of-type {
+  border-top: 0;
+  margin-top: 0;
+}
+.secblock-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.secblock-head h2 {
+  font-size: var(--text-lg);
+  font-weight: 500;
+}
+
+/* 评分卡右上角那排读数里可点的那几个。
+   看起来必须**还是一行读数**（旧版就是读数），只是点得动 —— 做成按钮的样子
+   会在标题行里塞进两个抢眼的方块，把真正的主角（分数）压下去。 */
+.metachip {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.metachip:hover {
+  background: var(--surface-2);
+}
+.metachip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ================================================ 槽位横条上的额度 */
+
+/* 横条从一行变成两行：上面还是原来那一行，下面是额度。
+   .slotrow 原本是 flex row，这里改成 column，内容那一行自己包一层。 */
+.slotrow {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.slotrow-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* 一个窗口一行。第一版两个挤在一行里，条子只剩 56px，
+   两段的长短比不出来 —— 那正是被读反的原因之一。 */
+.slotusage {
+  display: grid;
+  gap: 3px 10px;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.gauge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.gauge--dead {
+  opacity: 0.6;
+}
+.gauge-name {
+  color: var(--text-3);
+  flex-shrink: 0;
+  width: 4em;
+}
+/* 上色的那段是**用掉的**，空槽是剩下的 —— 跟磁盘占用条一个读法。
+   两段都上色试过，七天只剩 19% 时右边那小截红太短，左边长长的浅色
+   反而被读成「可用的」。现在长度说「用了多少」、颜色说「还够不够」，
+   两个信号指向同一个结论。 */
+.gauge-track {
+  display: flex;
+  flex: 1;
+  min-width: 60px;
+  max-width: 150px;
+  height: 7px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--border);
+}
+.gauge-used {
+  display: block;
+  height: 100%;
+  flex-shrink: 0;
+  border-radius: 999px;
+}
+.gauge-used--ok {
+  background: var(--ok);
+}
+.gauge-used--warn {
+  background: var(--warn);
+}
+.gauge-used--danger {
+  background: var(--danger);
+}
+.gauge-pct {
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  font-weight: 600;
+  min-width: 4.5em;
+}
+/* 两个窗口里紧的那个。只看宽裕的那半做判断是这套显示最大的风险：
+   实机上出现过 5 小时剩 88% 而 7 天剩 21%。 */
+.gauge-binding {
+  flex-shrink: 0;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  border: 1px solid var(--warn-border);
+  font-size: 9px;
+}
+.gauge-reset {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+/* 「推算」这两个字必须看得见但不抢戏 —— 把推算值显示得跟实测值一模一样，
+   是这套显示最容易犯的错。 */
+.gauge-reset em {
+  font-style: normal;
+  margin-left: 3px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 9px;
+}
+.gauge-note {
+  color: var(--text-3);
+}
+.gauge-src {
+  color: var(--text-3);
+  justify-self: end;
 }
