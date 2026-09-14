@@ -234,20 +234,51 @@ pub enum AuthStyle { #[default] EnvKey, BearerToken, None }
 `presets.rs` 的真实数据（11 条）：Claude Code 侧三家 anthropic 端点全是 `Responses + BearerToken`；
 Codex 侧只有 OpenAI 官方是 `Responses`，其余第三方 `/v1` 端点都是 `Chat`，认证全是 `EnvKey`。
 
-### 4.9 侧栏（不要自己编）
+### 4.9 ⛔ 侧栏：照 `Shell.tsx` + `workspace.css` 抄，不要自己编
 
-唯一定义处是 **`src/lib/routes.ts` 的 `NAV`**：**五项，平铺，没有分组**。
+使用者明确说**喜欢现有这个侧栏**，草图里那个是我编的、要改成跟它一致。
+实现就在仓库里，直接抄真值，不要对着截图量像素。
+
+**结构**（`src/features/Shell.tsx:249-299`）
 
 ```
-官方账户 (/)  中转站 (/relays)  软件 (/software)  扩展 (/extensions)  设置 (/settings)
+aside.qb-sidebar
+├─ a.qb-brand                     整块可点，回首页
+│   ├─ span.qb-mark   "Q" + 右下角一个 "↗"（不是圆点）
+│   └─ span           "QB Gate" + small "你的 AI 工作空间"
+├─ button.qb-search-trigger       🔍 + "搜索与快速跳转" + kbd "⌃ K"
+├─ nav                            五项，来自 routes.ts 的 NAV，无分组
+│   └─ a  ×5          Icon(19px) + span( 名字 + small( 读数 或 hint ) )
+└─ div.qb-sidebar-foot            ● + "本地工作空间" + select(跟随系统/浅色/深色)
 ```
 
-注释原话：**「第一项就是仪表盘，没有单独的『总览』」**、
-**「六项安全对象全在总览上 …… 没有单独的安全页 —— 那会让同一份内容有两个入口，正是这次重排要消灭的」**。
+**第二行的规则**：`readout ? readout[0] : hint` —— **有读数用读数，没有就用 hint**。
+读数来自 `sidebar.tsx::useSummaries`，只有官方账户 / 软件 / 扩展三项有。
 
-每行第二行是**读数**（`sidebar.tsx::useSummaries`：剩 18 天 / 都已装 / 运行中），没有读数的项显示 hint。
-⚠ 新加读数类元素**必须**一起进 `workspace.css` 的 `@media (max-width:1020px)` 那条 `display:none` 名单，
-否则 72px 窄侧栏会被撑爆，`test:ui` 三档窄屏溢出断言全红。
+**样式真值**（`src/styles/workspace.css:121-245`，别改数字）
+
+| 元素 | 值 |
+|---|---|
+| `.qb-sidebar` | `width:228px` · `padding:30px 16px 18px` · `border-right:1px solid var(--border)` · `background:var(--surface)` |
+| `.qb-brand` | `gap:11px` · `font-size:20px` · `font-weight:650` · `padding:0 12px 28px` |
+| `.qb-brand small` | `10px` · `weight:400` · **`letter-spacing:1px`** · `color:var(--text-2)` · `margin-top:2px` |
+| `.qb-mark` | `37×39px` · `radius:11px` · `background:var(--accent)` · `color:var(--surface)` · `font:26px/700` · `display:grid;place-items:center` |
+| `.qb-mark span`（那个 ↗） | `position:absolute` · `font-size:17px` · `right:1px` · `bottom:-4px` |
+| `.qb-search-trigger` | `background:var(--bg)` · `border:1px solid var(--border)` · `radius:8px` · `padding:9px` · `font:11px` · **`margin-bottom:28px`** · 图标 `Search size=16` |
+| `.qb-search-trigger kbd` | `margin-left:auto` · `10px` · 内容是 **`⌃ K`**（不是 `^K`） |
+| `nav` | `flex column` · **`gap:7px`** |
+| `nav a` | `gap:13px` · **`padding:12px`** · `radius:10px` · `border:1px solid transparent` · `color:var(--text-2)` · 图标 `size=19` |
+| `nav a small` | `display:block` · **`10px`** · `color:var(--text-3)` · `margin-top:2px` · `weight:400` |
+| 读数三档 | `.ok`→`var(--ok)` · `.warn`→`var(--warn)` · `.danger`→`var(--danger)`；都加 `tabular-nums` + `weight:500` |
+| `nav a:hover` | `background:var(--surface-2)` · `color:var(--text)` |
+| **`nav a.active`** | `color:var(--accent)` · `background:var(--accent-bg)` · `weight:600` · **`border-color:var(--accent-border)`**（是 1px 描边，**不是**左侧色条） |
+| `.qb-sidebar-foot` | `margin-top:auto` · `gap:7px` · `padding:16px 10px 0` · `font:10px` · `color:var(--text-2)` |
+| foot `select` | `border:0` · `background:transparent` · `width:100%` · `margin-top:7px` |
+
+**⚠ 窄屏**：`workspace.css` 的 `@media (max-width:1020px)` 把 `.qb-sidebar nav a > span`
+和 `.qb-sidebar-foot` 整个 `display:none`，侧栏收成 72px 图标条。
+**新加任何在行内占宽的元素，必须一起加进那条名单**，否则 72px 会被撑爆，
+`npm run test:ui` 的三档窄屏溢出断言当场全红。
 
 ---
 
