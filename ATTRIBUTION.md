@@ -27,7 +27,7 @@ MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件
 
 - 仓库：https://github.com/farion1231/cc-switch
 - 许可：**MIT**，Copyright (c) Jason Young
-- 用在：`src-tauri/src/relay/`（`mod.rs` · `store.rs` · `presets.rs`）
+- 用在：`crates/qb-relay/src/relay/`（`mod.rs` · `store.rs` · `presets.rs`）
 
 参考的是「多供应商 + 一键切换 + 直接写进 CLI 自己的配置文件」这套产品形态，
 以及原子写（临时文件 + 改名）与自动备份的做法。代码为独立实现，未复制。
@@ -102,7 +102,7 @@ Tailwind 在这里只负责生成间距、字号、圆角这些工具类。
 
 - 仓库：https://github.com/SillyTavern/SillyTavern
 - 许可：**AGPL-3.0**
-- 用在：`src-tauri/src/plugins/sillytavern.rs`
+- 用在：`crates/qb-extensions/src/plugins/sillytavern.rs`
 
 **QB Gate 没有复制、修改或链接 SillyTavern 的任何代码。** 插件做的事情是：
 以独立进程启动它自带的启动脚本、轮询端口判断就绪、需要时按 PID 停止，
@@ -130,7 +130,7 @@ QB Gate 自身的 GitHub Releases 更新在仓库创建和签名公钥配置前�
 ### bash.ws — DNS 泄露测试的权威 NS 回显
 
 - 服务：https://bash.ws/dnsleak
-- 用在：`src-tauri/src/probe/dns.rs`
+- 用在：`crates/qb-probe/src/probe/dns.rs`
 
 用的是 bash.ws 自己对外提供的接口协议：
 
@@ -324,3 +324,43 @@ ippure 与 FuckClaude 都提到：Claude Code 在 `ANTHROPIC_BASE_URL` 指向中
 **这是第三方逆向分析主张，本项目未做独立验证，不作为既定事实陈述。**
 面板界面上引用时会标注来源与「未证实」。同时注意其触发条件是**走中转端点**；
 官方 OAuth 直连路径不在该描述范围内。
+
+
+## v0.12：工作空间、中转与多类型扩展
+
+以下项目的使用边界分别记录。设计参考不代表整包复制；实际依赖版本以 package-lock.json / Cargo.lock 为准。
+
+| 来源 | 用途 | 许可与固定依据 |
+|---|---|---|
+| [cc-switch](https://github.com/farion1231/cc-switch) | 配置适配、MCP/Skills 与备份组织方式的参考；QB Gate 独立实现 | MIT |
+| [UniGetUI](https://github.com/Devolutions/UniGetUI) | 发现、已安装、更新及任务交互参考 | MIT；未复制应用代码 |
+| [Bruno](https://github.com/usebruno/bruno) | 脱敏请求集合导出思路与 `.bru` 文件格式 | MIT；未打包 Bruno |
+| [MCP Registry](https://github.com/modelcontextprotocol/registry) | 元数据、来源与版本字段参考 | 未复制源码，不把收录视为安全背书 |
+| [Rust MCP SDK](https://github.com/modelcontextprotocol/rust-sdk) | 直接依赖客户端初始化、stdio/HTTP 传输与能力检查 | rmcp **3.3.0**，crate 声明 Apache-2.0；固定依赖许可，不假定整个生态统一许可 |
+| [Agent Skills](https://github.com/agentskills/agentskills) | SKILL.md 元数据约束和来源固定设计 | 仓库双许可：代码 Apache-2.0，**文档 CC-BY-4.0**。本项目参考的是规范文档那一半，按 CC-BY-4.0 署名，未复制代码。核查版本 `69ef37e9424c0a7ea9dd2293b559e43ec8176379` |
+| [Anthropic Skills](https://github.com/anthropics/skills) | 精选目录收录 skill-creator 与 webapp-testing，用户安装时才下载 | 两个目录各自 Apache-2.0；固定 `34040c9c568585f6929bedeaad110ad08f079624`。不将整个仓库视为同一许可 |
+| [MCP Servers](https://github.com/modelcontextprotocol/servers) | 精选 Filesystem 与 Git MCP 运行配置 | 仓库核查 `d73f99efbfd40c3aa1b61e88728b3d49fb52608f`；Filesystem npm **2026.8.31**，Git PyPI **2026.8.18**（包声明 MIT）；上游有许可迁移，实际安装版本分别核对 |
+| [Tauri plugins](https://github.com/tauri-apps/plugins-workspace) | 直接使用单实例、对话框、链接打开插件 | MIT OR Apache-2.0；实际版本在 Cargo.lock |
+| React Router / TanStack Query | 前端路由和服务端状态管理 | MIT；实际版本在 package-lock.json |
+| rusqlite / SQLite / ts-rs | 本地元数据、事务、类型导出 | 分别按锁文件依赖声明；完整文本见 THIRD_PARTY_NOTICES.txt |
+
+这里写死的提交哈希是**代码强制的**：面板的「检查来源更新」只会报告上游有新提交，
+不会改掉精选目录里这两个固定版本（见 `extensions::check_updates`）。需要新版本的人
+自己从来源手动导入，导入进来的是一条独立记录，不影响这张表里核对过的那一版。
+
+## 评估过但没有采用
+
+### 订阅指引（Subscription Guide）— MIT，已移除
+
+v0.12.0 的重构里带进来一份 3,310 行的订阅指引组件（`src/subscription-guide/`：
+购买步骤、常见问题、视频与来源清单，附 MIT LICENSE）。**它从头到尾没有被挂上过**
+—— 全树零个引用点，v0.11.0 里也不存在这个目录。
+
+没有采用它，原因是这一版重排的主线恰恰是删掉「无用的介绍」：一份
+750 行的购买教程正是使用者点名嫌多的那类内容，而且价格与步骤会过时、
+没人维护就会从帮助变成误导。代码已从工作区移除，要找的话在 git 历史里。
+按 MIT 的要求，这里保留出处记录。
+
+SillyTavern 是外部 AGPL-3.0 应用。QB Gate 接入用户已有安装，不捆绑应用本体；本项目仍按 GPL-3.0-or-later 发布。
+
+[docs/dependencies.json](docs/dependencies.json) 记录依赖名称、版本、来源和许可声明；[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) 包含可获得的原始版权及许可文本，并随安装包提供。缺少随包许可文件时的补充文本固定到上游提交，记录于 docs/license-supplements.json。构建和测试依赖也一并列出。

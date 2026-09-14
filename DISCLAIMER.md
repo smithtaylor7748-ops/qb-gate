@@ -85,7 +85,8 @@ Anthropic《消费者条款》《使用政策》、Claude Code 的法律与合�
 
 本项目的设计约束（同样写在 `README.md` 的「合规边界」一节）：
 
-1. **不读取任何限流 / 429 / 额度状态**，代码中不存在「用完自动换号」的路径；
+1. **不发任何网络请求去查额度，不调用 OAuth 内部接口**；用量只读官方客户端
+   自己写在本机的缓存文件，且仅用于显示，代码中不存在「用完自动换号」的路径；
 2. 账户切换**只能由人手动触发**，无定时器、无看门狗、无自动调用点；
 3. 任意时刻只有一个账户处于激活状态；
 4. **所有账户必须是使用者本人合法拥有的**。
@@ -228,9 +229,11 @@ npm 全局安装出来的 `codex.cmd` 挡得住 `codex` 命令本身，挡不住
 - 中转站 API Key 使用 Windows **DPAPI**（`CryptProtectData`）加密后存放在本机
   `relay.json`。**DPAPI 防的是配置文件被拷走、或被同机其他 Windows 账户读取；
   它防不住在你自己账户下运行的恶意程序。**
-- 面板读取 Claude 官方客户端自己写下的本地文件（`.claude.json` 的 `oauthAccount`、
-  `.credentials.json` 的 `refreshTokenExpiresAt`）以显示套餐与剩余天数。
-  **纯本地文件读取，不发任何网络请求，不读取用量、额度、429 或 OAuth 内部接口。**
+- 面板读取 Claude 官方客户端自己写下的本地文件（`.claude.json` 的 `oauthAccount`
+  与 `cachedUsageUtilization`、`.credentials.json` 的 `refreshTokenExpiresAt`、
+  桌面端的 `plan-usage-history.json`）以显示套餐、剩余天数与用量。
+  **纯本地文件读取，不发任何网络请求，不调用 OAuth 内部接口，也不调用任何额度接口。**
+  用量只用于显示；面板不据此做任何决定，也没有自动切换账户的路径。
 - 账户迁移会**复制**包含凭证文件在内的整个槽位目录。
   请自行确认备份目录、快照与日志的存放位置是否符合你的安全要求，
   移交或报废机器前请自行彻底清除。
@@ -256,7 +259,7 @@ npm 全局安装出来的 `codex.cmd` 挡得住 `codex` 命令本身，挡不住
 ### 推广关系披露
 
 > **本项目中指向 IPRoyal 的购买入口带有推广代码**
-> （`https://iproyal.cn/?r=sulianyan`，见 `src-tauri/src/probe/verdict.rs`）。
+> （`https://iproyal.cn/?r=sulianyan`，见 `crates/qb-probe/src/probe/verdict.rs`）。
 > 通过该链接产生的购买**可能**为推广者带来收益。
 
 除此之外，维护者与文中出现的其他任何商家、代理服务商、接码平台、支付平台
@@ -302,8 +305,10 @@ no trademark license, affiliation or endorsement.
   It only reports the state of the network you already have. **You are solely
   responsible for the legality of your own network access under your local law.**
 - **You must own every account you use with it.** Anthropic's policies prohibit
-  creating or rotating accounts to evade limits or bans. This project reads no
-  quota/429 state and performs no automatic account switching, but that is a
+  creating or rotating accounts to evade limits or bans. This project makes no
+  network request to query quota and calls no OAuth-internal endpoint — usage is
+  read only from files the official client itself writes on your machine, for
+  display — and it performs no automatic account switching, but that is a
   design constraint, not a compliance endorsement. Account resale, sharing, or
   brokering is expressly not supported.
 - **Some operations are destructive and irreversible.** In particular, the Chrome
