@@ -1,114 +1,81 @@
 # QB Gate
 
-Windows 上的本地 AI 客户端工作空间：管理官方账户，独立启动中转环境，按环境安装扩展。
+因为有些工作需要频繁变动 IP，而电脑上正在运行的 AI 软件因为频繁 IP 变动而极易导致风控，所以推出了这款软件。
+
+**完整开源、没有未开源的部分**：面板的全部源码都在这个仓库里 —— 没有闭源模块、
+没有预编译二进制、也没有本项目自己的服务端；安装包由 GitHub Actions 从本仓库源码构建。
 
 [![CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/workflows/ci.yml/badge.svg)](https://github.com/smithtaylor7748-ops/qb-gate/actions/workflows/ci.yml)
-[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
+[![LINUX DO](https://img.shields.io/badge/LINUX-DO-FFB003.svg?logo=data:image/svg%2bxml;base64,DQo8c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiPjxwYXRoIGQ9Ik00Ni44Mi0uMDU1aDYuMjVxMjMuOTY5IDIuMDYyIDM4IDIxLjQyNmM1LjI1OCA3LjY3NiA4LjIxNSAxNi4xNTYgOC44NzUgMjUuNDV2Ni4yNXEtMi4wNjQgMjMuOTY4LTIxLjQzIDM4LTExLjUxMiA3Ljg4NS0yNS40NDUgOC44NzRoLTYuMjVxLTIzLjk3LTIuMDY0LTM4LjAwNC0yMS40M1EuOTcxIDY3LjA1Ni0uMDU0IDUzLjE4di02LjQ3M0MxLjM2MiAzMC43ODEgOC41MDMgMTguMTQ4IDIxLjM3IDguODE3IDI5LjA0NyAzLjU2MiAzNy41MjcuNjA0IDQ2LjgyMS0uMDU2IiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZWNlY2VjO2ZpbGwtb3BhY2l0eToxIi8+PHBhdGggZD0iTTQ3LjI2NiAyLjk1N3EyMi41My0uNjUgMzcuNzc3IDE1LjczOGE0OS43IDQ5LjcgMCAwIDEgNi44NjcgMTAuMTU3cS00MS45NjQuMjIyLTgzLjkzIDAgOS43NS0xOC42MTYgMzAuMDI0LTI0LjM4N2E2MSA2MSAwIDAgMSA5LjI2Mi0xLjUwOCIgc3R5bGU9InN0cm9rZTpub25lO2ZpbGwtcnVsZTpldmVub2RkO2ZpbGw6IzE5MTkxOTtmaWxsLW9wYWNpdHk6MSIvPjxwYXRoIGQ9Ik03Ljk4IDcwLjkyNmMyNy45NzctLjAzNSA1NS45NTQgMCA4My45My4xMTNRODMuNDI2IDg3LjQ3MyA2Ni4xMyA5NC4wODZxLTE4LjgxIDYuNTQ0LTM2LjgzMi0xLjg5OC0xNC4yMDMtNy4wOS0yMS4zMTctMjEuMjYyIiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZjlhZjAwO2ZpbGwtb3BhY2l0eToxIi8+PC9zdmc+)](https://linux.do)
 
-![总览](docs/screenshots/overview.png)
+---
 
-## 三个核心能力
+## 怎么解决
 
-- **官方账户工作台**：管理本人持有的 Claude 登录槽位，关联桌面端资料，启动官方 Claude Code、Claude Desktop 和 Codex。槽位横条显示五小时与七天窗口的剩余额度和恢复时刻。
-- **中转站管理与诊断**：服务商 → API 凭证 → 使用环境。每个中转环境有独立配置目录，支持 Claude Code 与 Codex，与官方会话同时运行。
-- **多类型扩展中心**：应用集成、MCP、Skills、配置模板。发现、已安装和更新分开；酒馆只在它自己的详情页中管理。
-
-中转站是客户端 API 配置和诊断工具，不运行本地 API 网关，不提供计费、代理或 VPN 服务。官方账户不会自动轮换。
-
-用量读自官方客户端写在本机的文件（槽位的 `.claude.json` 与桌面端的 `plan-usage-history.json`），**不发网络请求、不调用任何额度接口**，且只用于显示 —— 面板不据此做任何决定，不存在按额度自动切换身份的路径。
-
-## 下载与安装
-
-到 [GitHub Releases](https://github.com/smithtaylor7748-ops/qb-gate/releases) 下载与源码标签匹配的 `QB Gate_<版本>_x64-setup.exe`。支持 Windows 10 / 11 x64，需要 WebView2 Runtime。发行包尚未配置代码签名，下载后可核对同一 Release 的 `SHA256SUMS.txt`。
-
-```powershell
-Get-FileHash '.\QB Gate_0.12.1_x64-setup.exe' -Algorithm SHA256
-```
-
-默认按当前 Windows 用户安装。早期名称为 **ClaudeGate**；如机器同时存在 ClaudeGate 与 QB Gate，先退出旧面板，再从 Windows“已安装的应用”卸载旧名称。运行期数据位于 `%LOCALAPPDATA%\ClaudeIpGate`，不是程序安装目录。不要手动删除该数据目录来更新程序。
-
-本项目与 Anthropic、OpenAI 或扩展上游没有隶属关系。使用前请阅读 [免责声明](DISCLAIMER.md) 与 [已知限制](docs/KNOWN-ISSUES.zh-CN.md)。
-
-## 从哪里开始
-
-| 导航 | 用途 |
-|---|---|
-| 工作台 | 分别启动官方与中转客户端、查看会话、保存启动方案、紧急关闭受管会话 |
-| 官方账户 | 登录槽位、手动切换、桌面端资料关联、历史 API 配置迁移预览 |
-| 中转站 | 服务商、凭证、环境、模型、配置差异与回滚、连接诊断 |
-| 扩展中心 | 发现、已安装、更新、导入 Skills 或 MCP、接入已有酒馆 |
-| 环境与门禁 | 检测覆盖情况、网络与环境证据、软件安装和版本、门禁规则 |
-| 设置 | 外观、程序偏好、备份恢复、来源和帮助 |
-
-按 `Ctrl+K` 搜索功能、账户、服务商和扩展。页面使用地址路由，支持返回；筛选与未保存草稿保存在当前面板会话中。长任务可在任务中心查看，网络诊断和 MCP 连接测试支持取消。
+核心是一道 IP 门禁：出口 IP 不在你的白名单里，AI 软件就启动不了；运行中 IP 变了或查不到，立即上锁并关闭受管会话。下面按侧栏菜单简单介绍。
 
 ### 官方账户
 
-新建槽位后，在官方客户端中完成原生登录。切换官方账户前，面板核验并关闭相关官方进程；无法枚举、无法确认进程身份、关闭失败或退出超时都会阻断切换。中转进程按独立会话归属管理。
+侧栏里分 Claude 与 Codex 桌面端两边。
 
-官方 Codex 使用自己的原生登录目录，不属于 Claude 槽位。Claude Desktop 当前只支持官方启动。发现官方目录包含 API 端点或 Key 时，先到“官方账户 → 历史 API 配置”查看迁移差异；确认后建立独立中转环境。OAuth 凭证不会复制进数据库或配置快照。
+- **综合评分**：IP 纯净度、DNS 泄露、中文环境、IP 锁、出口一致性五项检测，一键全面体检，点任一格在小窗里就地处理。IP 纯净度里的「禁用本机 IPv6」默认开启。
+- **门禁**：IP 白名单（可加国家规则）配合执行锁，白名单之外的出口 IP 起不了 Claude；看门狗在放行期间每 15–20 秒复核一次，不合格或查不到就上锁并关闭受管会话；会话内门禁（每次请求前再验一次）默认关闭。
+- **账户槽位**：新建、切换、删除你本人的登录槽位；显示套餐、凭证剩余天数、5 小时与 7 天额度和 token 用量（只读本机文件）；检查官方目录里残留的 API 配置。
+- **启动与关闭**：验过出口 IP 再启动 Claude Code、Claude 桌面端、酒馆；一键关闭所有 Claude。
+- **Codex 桌面端**：官方登录槽位、手动切换、本机用量。
 
 ### 中转站
 
-1. 添加服务商名称和 HTTP(S) API 基础地址。
-2. 添加一把或多把 API 凭证。编辑时明确选择“保留、替换、清除”。
-3. 创建使用环境，选择客户端、凭证、模型和协议。
-4. 预览并应用配置，或从工作台直接启动。外部修改会阻断直接启动，需先重新预览。
+- 智能调度（内测中：界面里已经出现，但目前还不能正常使用）。
 
-Claude Code 环境设置独立 `CLAUDE_CONFIG_DIR`；Codex 环境设置独立 `CODEX_HOME`，限定 API 认证和文件凭证存储。密钥在 Windows 上由 DPAPI 加密存储，仅对子进程注入对应变量，不修改系统环境变量。配置更改不重新注入已运行进程；新配置在下次启动生效。
+### 软件
 
-诊断由用户发起。默认检查连接与模型列表；实际模型调用、流式响应和工具调用需主动勾选，可能产生 API 费用。地址末尾有无 `/v1` 都会统一处理。401、404、超时、无模型输出、流式中断分别报告；响应头只作为来源线索，不把缺少某个头当成伪造证据。
-
-导出默认不含 Key。导入后需要重新填写凭证。删除服务商、凭证或环境前会检查引用关系。配置预览绑定文件内容和修订号，预览后发生变化会要求重新检查。
+- **托管安装**：Claude Code、Codex CLI 从官方源下载，核对 SHA-256 与数字签名后装进托管目录，装完自动上锁；Claude 桌面端可重新安装。
+- **升级与回滚**：可选最新版或稳定版，旧版本收进版本库（最多 3 份），随时回滚。
+- **门禁范围**：Claude 的执行锁始终开启；Codex 可以选择纳入 IP 门禁（默认关闭）。
+- **清理与卸载**：扫描面板之外的多余副本；完全卸载先只读盘点，手动输入「卸载」才执行；另附给其他 AI 用的卸载提示词。
+- **Google Chrome**：隐私审计（只读）、修改系统代理、浏览器出站锁（都是点了才执行、可以撤销），以及完全卸载（会删除全部浏览器数据）。
 
 ### 扩展
 
-![扩展中心](docs/screenshots/extensions.png)
+- **酒馆（SillyTavern）**：接入你自己安装的酒馆，自动定位安装位置，管理桥接、启停、角色资产与备份。
+- **MCP、Skills、配置模板**：导入并预览差异后装进指定环境，连接测试由你手动发起。
 
-目录默认只列 SillyTavern 集成；其余条目（Filesystem MCP、Git MCP、Skill Creator、Web App Testing、Claude Code 与 Codex 中转模板）装过之后才出现在列表里，也可以用全局搜索直接打开。手动导入不受此限制。
+### 设置
 
-- **应用集成**：先在详情填写已有安装的位置，再接入；管理桥接、启动、停止、角色资产和备份。解除接入保留原应用与数据。
-- **MCP**：导入 stdio 或 HTTP 配置，填写变量，选择官方或中转环境，预览后启用。连接测试会运行所选命令或连接所填服务，仅初始化并读取工具能力。
-- **Skills**：扫描本地目录或 GitHub 仓库的 `SKILL.md`，固定来源版本，预览文件差异后安装。导入阶段不执行仓库脚本。更新遇到用户修改会停止；卸载将文件移入保留数据目录。
-- **模板**：填写服务商、凭证与模型，生成独立中转使用环境。
+- **常规**：外观主题；网络恢复后重新放行；关闭 Claude Code 非必要遥测；启动时按出口 IP 对齐系统时区与区域格式（默认开启）、显示语言（默认关闭）。
+- **备份与恢复**：创建与恢复配置快照。
+- **帮助与来源**：新手引导、许可与第三方来源、问题反馈、发行版本。
+- **高级维护**：更改托管目录、恢复系统时区。
 
-每个扩展只写入所选环境。清单收录不是安全认证；执行 MCP 程序和使用第三方 Skills 前应检查来源与内容。具体许可与固定版本在详情页和 [来源清单](ATTRIBUTION.md) 中列出。
+---
 
-### 门禁与会话
+## 社区与反馈
 
-执行锁使用 Windows ACL；网络判断共用一个判定器。巡检间隔为 15 秒，另有检测与关停耗时；无法确认 IP 时立即发起关停，没有宽限期。退出受管面板会终止使用 Job Object 绑定的受门禁会话；最小化到托盘会继续运行。未纳入门禁的 Codex 会话不使用退出即终止策略。
+这个项目从 **[LINUX DO](https://linux.do)** 起步，发布和更新也在那边 ——
+谢谢愿意在自己机器上实机试、愿意把报错原样截图贴出来的佬友，
+README 里那些「不显然但很贵」的分支，多半是这么来的。
 
-官方和中转的身份配置隔离，但同一 Claude 程序的执行锁是共同的。停止某个会话只处理该会话；紧急关闭处理全部受管会话，并保持门禁关闭。检测与执行锁不构成强制网络隔离，已发出的请求无法撤回。
+想报 bug、提功能、问「装不上怎么办」，两条路：
 
-## 数据、恢复与升级
+| 去哪 | 适合什么 |
+|---|---|
+| [GitHub Issues](https://github.com/smithtaylor7748-ops/qb-gate/issues) | 能复现的 bug、功能提案 —— 有编号、能追溯、修完对得上版本 |
+| **QQ 群「门禁值班室」**：`1109462206` | 还说不清的现场问题、装不上、想法没成形时先聊两句 |
 
-v0.12.0 首次启动先检查恢复日志，再把旧 JSON 数据备份并迁入 SQLite。无法解密的旧 Key 标为待填写；旧的“账户 + 中转”档案拆成独立启动方案。不会自动清除无法确认归属的官方目录配置。
+群里聊明白的问题**最后还是要落一条 Issue** —— 聊天记录会被刷上去，Issue 不会。
 
-外部配置使用“读取校验 → 备份 → 暂存 → 替换 → 验证 → 提交”流程。SQLite 事务与文件日志共同记录提交决定。恢复失败时显示恢复页面，保留错误原因与原日志，并阻止普通写操作；仍提供重试和应急移除执行锁。
+贴日志和截图之前，**把出口 IP、账户邮箱、Token 打码**：纯净度页和账户卡上
+就是你的真实信息。
 
-快照包括配置与内部元数据，不包括官方 OAuth、软件二进制或全部扩展资产；恢复不会更改安装根目录。软件迁移、版本回滚、酒馆资产备份走各自入口。参见 [迁移说明](docs/MIGRATION-0.12.zh-CN.md)。
+---
 
-## 从源码构建
+## 免责声明
 
-需要 Windows x64、Node.js 24、Rust stable（最低 1.88）、MSVC C++ Build Tools 与 Windows SDK。普通构建无需 Python；酒馆和部分扩展各有依赖。
+使用前请完整阅读 [免责声明 DISCLAIMER.md](DISCLAIMER.md)。要点：
 
-```powershell
-npm ci
-npm run release:check
-npm test
-npm run types:check
-npm run build
-cargo test --locked --manifest-path src-tauri/Cargo.toml
-npm run test:ui
-npm run tauri build
-```
-
-安装包输出：`target/release/bundle/nsis/`（Cargo workspace 的 target 在仓库根）。`npm run demo` 用虚构账户和保留地址展示界面，不调用本机 Tauri 命令；截图由演示模式生成，不包含真实凭证。
-
-锁文件纳入版本控制。`npm run types:generate` 从 Rust 导出前端类型；`npm run licenses:generate` 更新依赖清单与许可声明。CI 在 Windows runner 上执行源码检查、格式检查、类型检查、前后端测试和界面回归。Release 工作流额外验证标签版本并生成安装包与哈希。
-
-## 开发与反馈
-
-请先读 [CLAUDE.md](CLAUDE.md)、[架构](docs/ARCHITECTURE.zh-CN.md)、[已知限制](docs/KNOWN-ISSUES.zh-CN.md) 与 [贡献说明](CONTRIBUTING.md)。报告问题时附版本、复现步骤和脱敏日志，不上传数据库、快照、OAuth 文件、API Key 或个人安装路径。
-
-项目采用 **GPL-3.0-or-later**。依赖及外部扩展保留各自许可证。见 [LICENSE](LICENSE)、[ATTRIBUTION.md](ATTRIBUTION.md)、[依赖清单](docs/dependencies.json) 和 [完整第三方声明](THIRD_PARTY_NOTICES.txt)。
+- 非官方项目，与 Anthropic、OpenAI 等任何服务商都没有隶属、合作或背书关系。
+- **不保证不被风控，不承诺防封。** 本软件只管住你本机的 AI 软件，不改写设备指纹、不伪装账户身份，不为绕过任何服务商的风控、地区限制或封禁而设计，也做不到。
+- 不含代理、VPN 或翻墙功能。网络接入是否合法，由使用者自行负责。
+- 只能用于你本人合法拥有的账户，并遵守所在地法律与各服务商条款。账户切换只能手动触发，同一时刻只有一个账户激活；不联网查额度（额度读数只来自本机文件，仅用于显示），也没有按限流、429 或额度自动换号的路径。
+- 部分功能会修改系统设置（IPv6、时区与区域格式、防火墙规则、系统代理等）或永久删除数据，执行前请看清提示。
