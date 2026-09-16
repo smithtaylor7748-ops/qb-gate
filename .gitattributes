@@ -1,0 +1,15 @@
+# 文本文件一律按 LF 检出。
+#
+# GitHub 的 Windows runner 默认 core.autocrlf=true，检出来是 CRLF，
+# 而 Prettier 默认 endOfLine: lf —— 于是 format:check 把每个文件都判成格式不对。
+# 本机工作区恰好是 LF，所以本地一直是绿的，只在 runner 上红（v0.22.6 第一次发布就栽在这）。
+* text=auto eol=lf
+
+# Windows 自己的脚本保持 CRLF。
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+*.png binary
+*.ico binary
+*.exe binary

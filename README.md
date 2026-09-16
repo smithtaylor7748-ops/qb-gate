@@ -2,13 +2,18 @@
 
 因为有些工作需要频繁变动 IP，而电脑上正在运行的 AI 软件因为频繁 IP 变动而极易导致风控，所以推出了这款软件。
 
-**完整开源、没有未开源的部分**：面板的全部源码都在这个仓库里 —— 没有闭源模块、
-没有预编译二进制、也没有本项目自己的服务端；安装包由 GitHub Actions 从本仓库源码构建。
+[![Windows 一键下载安装包](https://img.shields.io/badge/Windows-%E4%B8%80%E9%94%AE%E4%B8%8B%E8%BD%BD%E5%AE%89%E8%A3%85%E5%8C%85-0078D6?style=for-the-badge)](https://github.com/smithtaylor7748-ops/qb-gate/releases/latest/download/QB-Gate-Windows-x64-setup.exe)
 
-[![CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/workflows/ci.yml/badge.svg)](https://github.com/smithtaylor7748-ops/qb-gate/actions/workflows/ci.yml)
-[![LINUX DO](https://img.shields.io/badge/LINUX-DO-FFB003.svg?logo=data:image/svg%2bxml;base64,DQo8c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiPjxwYXRoIGQ9Ik00Ni44Mi0uMDU1aDYuMjVxMjMuOTY5IDIuMDYyIDM4IDIxLjQyNmM1LjI1OCA3LjY3NiA4LjIxNSAxNi4xNTYgOC44NzUgMjUuNDV2Ni4yNXEtMi4wNjQgMjMuOTY4LTIxLjQzIDM4LTExLjUxMiA3Ljg4NS0yNS40NDUgOC44NzRoLTYuMjVxLTIzLjk3LTIuMDY0LTM4LjAwNC0yMS40M1EuOTcxIDY3LjA1Ni0uMDU0IDUzLjE4di02LjQ3M0MxLjM2MiAzMC43ODEgOC41MDMgMTguMTQ4IDIxLjM3IDguODE3IDI5LjA0NyAzLjU2MiAzNy41MjcuNjA0IDQ2LjgyMS0uMDU2IiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZWNlY2VjO2ZpbGwtb3BhY2l0eToxIi8+PHBhdGggZD0iTTQ3LjI2NiAyLjk1N3EyMi41My0uNjUgMzcuNzc3IDE1LjczOGE0OS43IDQ5LjcgMCAwIDEgNi44NjcgMTAuMTU3cS00MS45NjQuMjIyLTgzLjkzIDAgOS43NS0xOC42MTYgMzAuMDI0LTI0LjM4N2E2MSA2MSAwIDAgMSA5LjI2Mi0xLjUwOCIgc3R5bGU9InN0cm9rZTpub25lO2ZpbGwtcnVsZTpldmVub2RkO2ZpbGw6IzE5MTkxOTtmaWxsLW9wYWNpdHk6MSIvPjxwYXRoIGQ9Ik03Ljk4IDcwLjkyNmMyNy45NzctLjAzNSA1NS45NTQgMCA4My45My4xMTNRODMuNDI2IDg3LjQ3MyA2Ni4xMyA5NC4wODZxLTE4LjgxIDYuNTQ0LTM2LjgzMi0xLjg5OC0xNC4yMDMtNy4wOS0yMS4zMTctMjEuMjYyIiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZjlhZjAwO2ZpbGwtb3BhY2l0eToxIi8+PC9zdmc+)](https://linux.do)
+适用于 Windows 10 / 11 x64。安装包暂未做代码签名，Windows 可能弹出 SmartScreen 提示；下载后可以对照 [Releases](https://github.com/smithtaylor7748-ops/qb-gate/releases/latest) 页面里的 `SHA256SUMS.txt` 核对哈希。
 
----
+| | |
+|---|---|
+| ![官方账户](docs/screenshots/accounts-layout-light.png) | ![IP 纯净度](docs/screenshots/ip-current-light.png) |
+| **官方账户**：评分、门禁、账户槽位与启动 | **IP 纯净度**：人工复核与面板自测 |
+| ![软件](docs/screenshots/software.png) | ![设置](docs/screenshots/settings.png) |
+| **软件**：托管安装、升级回滚与卸载 | **设置**：程序行为与启动时对齐 |
+
+截图里全是演示数据，不是任何真实机器的状态。
 
 ## 怎么解决
 
@@ -48,28 +53,6 @@
 - **帮助与来源**：新手引导、许可与第三方来源、问题反馈、发行版本。
 - **高级维护**：更改托管目录、恢复系统时区。
 
----
-
-## 社区与反馈
-
-这个项目从 **[LINUX DO](https://linux.do)** 起步，发布和更新也在那边 ——
-谢谢愿意在自己机器上实机试、愿意把报错原样截图贴出来的佬友，
-README 里那些「不显然但很贵」的分支，多半是这么来的。
-
-想报 bug、提功能、问「装不上怎么办」，两条路：
-
-| 去哪 | 适合什么 |
-|---|---|
-| [GitHub Issues](https://github.com/smithtaylor7748-ops/qb-gate/issues) | 能复现的 bug、功能提案 —— 有编号、能追溯、修完对得上版本 |
-| **QQ 群「门禁值班室」**：`1109462206` | 还说不清的现场问题、装不上、想法没成形时先聊两句 |
-
-群里聊明白的问题**最后还是要落一条 Issue** —— 聊天记录会被刷上去，Issue 不会。
-
-贴日志和截图之前，**把出口 IP、账户邮箱、Token 打码**：纯净度页和账户卡上
-就是你的真实信息。
-
----
-
 ## 免责声明
 
 使用前请完整阅读 [免责声明 DISCLAIMER.md](DISCLAIMER.md)。要点：
@@ -79,3 +62,17 @@ README 里那些「不显然但很贵」的分支，多半是这么来的。
 - 不含代理、VPN 或翻墙功能。网络接入是否合法，由使用者自行负责。
 - 只能用于你本人合法拥有的账户，并遵守所在地法律与各服务商条款。账户切换只能手动触发，同一时刻只有一个账户激活；不联网查额度（额度读数只来自本机文件，仅用于显示），也没有按限流、429 或额度自动换号的路径。
 - 部分功能会修改系统设置（IPv6、时区与区域格式、防火墙规则、系统代理等）或永久删除数据，执行前请看清提示。
+
+## QQ 群
+
+「门禁值班室」：`1109462206`
+
+使用问题、装不上、功能建议都可以来群里聊。贴日志和截图之前，先把出口 IP、账户邮箱、Token 打码。
+
+## 许可证
+
+本项目基于 GPL-3.0-or-later 开源，完整条款见 [LICENSE](LICENSE)。
+
+## 社区
+
+本项目在 [LINUX DO](https://linux.do/) 社区进行开源推广，感谢社区佬友的交流、反馈与建议。

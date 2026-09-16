@@ -38,6 +38,13 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist-installers | Out-Null
           Get-ChildItem target/release/bundle/nsis -Filter '*-setup.exe' | Copy-Item -Destination dist-installers
+          # 再放一份固定文件名的：README 的「一键下载」链到
+          # releases/latest/download/QB-Gate-Windows-x64-setup.exe。文件名里带版本号的话，
+          # 这个链接每发一版就断一次。按版本号挑，不按「目录里唯一那个」挑。
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $current = @(Get-ChildItem dist-installers -Filter "*_${version}_x64-setup.exe")
+          if ($current.Count -ne 1) { throw "expected one installer for $version, found $($current.Count)" }
+          Copy-Item -LiteralPath $current[0].FullName -Destination (Join-Path dist-installers 'QB-Gate-Windows-x64-setup.exe')
           $releaseLines = Get-ChildItem dist-installers -Filter '*.exe' | ForEach-Object {
             '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
           }

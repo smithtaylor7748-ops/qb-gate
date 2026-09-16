@@ -26,10 +26,13 @@ jobs:
         run: npm audit --audit-level=moderate
       - name: Public source and version checks
         run: npm run release:check
-      - name: Formatting
-        run: |
-          npm run format:check
-          cargo fmt --all --check
+      # 两条分成两步，别合回一个 `run: |`。Windows runner 的默认 shell 是 pwsh，
+      # 多行脚本只看最后一条命令的退出码 —— 合在一起时 Prettier 红了、cargo fmt 绿了，
+      # 这一步照样报成功（v0.22.6 发布时 release.yml 在 Prettier 上红，这里却是绿的）。
+      - name: Formatting (Prettier)
+        run: npm run format:check
+      - name: Formatting (rustfmt)
+        run: cargo fmt --all --check
       - run: npm test
       - run: npm run types:check
       - run: npm run build
