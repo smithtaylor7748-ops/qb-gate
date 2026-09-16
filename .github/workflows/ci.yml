@@ -44,7 +44,7 @@ jobs:
         run: npx playwright install chromium
       - name: Demo UI regression with external requests blocked
         run: npm run test:ui
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ui-regression
