@@ -15,7 +15,16 @@
  * 看不出**分数被哪一项拖着**，也看不出哪一块还是空的。
  */
 
-import { AlertTriangle, Lock, Radar, ShieldCheck } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  Lock,
+  Radar,
+  RotateCw,
+  ShieldCheck,
+} from "lucide-react";
+
+import RepairCenter from "../security/RepairCenter";
 
 import { describeLease } from "../../lib/lease";
 import { useProgress } from "../../lib/progress";
@@ -51,9 +60,29 @@ const OPENS: Record<ScoreItem["id"], ObjectId> = {
   dns: "dns",
   signals: "signals",
   iplock: "allowlist",
+  egress: "egress",
 };
 
-export default function ScoreBand() {
+/**
+ * 「重新检测」与「一键全面体检」原来在页头上。0.20.0 把页头整个删了 ——
+ * 一行只放标题的横条白占一屏高度，而那两个按钮讲的正是这张卡里的事。
+ * 动作跟它作用的对象放在一起，中间不隔一条分界线。
+ */
+interface Props {
+  onRecheck: () => void;
+  rechecking: boolean;
+  onCheckup: () => void;
+  checkupBusy: boolean;
+  checkupPhase: string;
+}
+
+export default function ScoreBand({
+  onRecheck,
+  rechecking,
+  onCheckup,
+  checkupBusy,
+  checkupPhase,
+}: Props) {
   const progress = useProgress();
 
   const ip = useResource("ip", R.ip);
@@ -62,13 +91,17 @@ export default function ScoreBand() {
   // 没跑过就是 undefined，评分那边会如实记成「未检测」。
   const dns = useResource("dns", R.dns);
   const signals = useResource("signals", R.signals);
+  const egress = useResource("egress", R.egress);
   const hook = useResource("hook", R.hook);
 
   const score = computeScore({
     progress,
+    ip: ip.data,
+    ipError: ip.error,
     dns: dns.data,
     signals: signals.data,
     gate: gate.data,
+    egress: egress.data,
   });
 
   const info = ip.data;
@@ -92,10 +125,7 @@ export default function ScoreBand() {
             : info?.isResidential === false
               ? "非住宅"
               : "住宅未知";
-        return [
-          `纯净度 ${info?.fraudScore ?? "未知"} · ${place}`,
-          `${it.detail} · 原生未知`,
-        ];
+        return [`IPPure ${info?.fraudScore ?? "未知"} · ${place}`, it.detail];
       }
       case "dns": {
         const d = dns.data;
@@ -123,6 +153,16 @@ export default function ScoreBand() {
           when ? `${head} · ${when}` : head,
         ];
       }
+      case "egress": {
+        const e = egress.data;
+        if (!e) return [it.detail, ""];
+        const worst = e.items.find(
+          (i) => i.state === "fail" || i.state === "warn",
+        );
+        const when = fmtMeasured(measuredAt("egress"));
+        const head = worst ? `最重：${worst.label}` : "没有对不上的";
+        return [it.detail, when ? `${head} · ${when}` : head];
+      }
       case "iplock": {
         const g = gate.data;
         if (!g) return [it.detail, ""];
@@ -141,7 +181,7 @@ export default function ScoreBand() {
   return (
     <Card
       title="综合评分"
-      className="mb-3"
+      className="official-score"
       actions={
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
           {ip.error ? (
@@ -246,6 +286,28 @@ export default function ScoreBand() {
                 : "—"}
             </span>
           </button>
+
+          <span className="ml-auto flex flex-wrap items-center gap-1.5">
+            <RepairCenter />
+            <Button
+              size="sm"
+              icon={<RotateCw size={12} />}
+              loading={rechecking}
+              disabled={checkupBusy}
+              onClick={onRecheck}
+            >
+              刷新出口
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              icon={<Activity size={12} />}
+              loading={checkupBusy}
+              onClick={onCheckup}
+            >
+              {checkupBusy ? checkupPhase : "一键全面体检"}
+            </Button>
+          </span>
         </div>
       }
     >
@@ -256,15 +318,19 @@ export default function ScoreBand() {
           </span>
           <span className="notice">/ 100</span>
         </div>
-        {score.total !== null && (
-          <Pill tone={BAND_TONE[score.band]}>{BAND_LABEL[score.band]}</Pill>
+        {(score.total !== null || score.measured > 0) && (
+          <Pill tone={score.missing ? "warn" : BAND_TONE[score.band]}>
+            {score.missing
+              ? `已测 ${score.measured}/5 项`
+              : BAND_LABEL[score.band]}
+          </Pill>
         )}
 
         <div
           className="wbar flex-1"
           role="img"
-          aria-label={`综合评分 ${score.total ?? "未知"} / 100，四项权重分别为 ${score.items
-            .map((i) => `${i.label} ${i.earned ?? "未检测"} / ${i.weight}`)
+          aria-label={`综合评分 ${score.total ?? "未知"} / 100，五项权重分别为 ${score.items
+            .map((i) => `${i.label} ${i.earned ?? "待计分"} / ${i.weight}`)
             .join("，")}`}
         >
           {score.items.map((it) => {
@@ -274,7 +340,7 @@ export default function ScoreBand() {
                 key={it.id}
                 className={`wseg${it.earned === null ? " wseg--none" : ""}`}
                 style={{ flexGrow: it.weight, flexBasis: 0 }}
-                title={`${it.label} ${it.earned ?? "未检测"} / ${it.weight}`}
+                title={`${it.label} ${it.earned ?? "待计分"} / ${it.weight}`}
               >
                 {it.earned !== null && (
                   <span
@@ -289,16 +355,14 @@ export default function ScoreBand() {
       </div>
 
       {/* auto-fit 网格而不是 flex-wrap：flex 换行时落单的最后一格会被
-          `flex: 1` 拉满整行，四格变成 3 + 1 很难看。网格换行后仍然等宽。 */}
-      <div
-        className="mt-3 grid gap-2"
-        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}
-      >
+          `flex: 1` 拉满整行，五格变成 4 + 1 很难看。网格换行后仍然等宽。 */}
+      <div className="score-grid">
         {score.items.map((it) => {
           // 拆成局部常量 TS 才会收窄 —— 用 `none` 这个布尔量做条件的话，
           // 分支里的 `it.earned` 仍然是 `number | null`。
           const earned = it.earned;
           const [a, b] = factsOf(it);
+          const selfTested = it.id === "purity" && !!info?.ip && !ip.error;
           return (
             <button
               type="button"
@@ -314,15 +378,16 @@ export default function ScoreBand() {
               <div
                 className={`scorecell-value${earned === null ? " scorecell-value--none" : ""}`}
               >
-                {earned ?? "—"}
+                {earned ?? (selfTested ? "已自测" : "—")}
               </div>
               {earned === null ? (
                 <>
+                  {selfTested && <p className="notice">{a}</p>}
                   <p className="notice">{it.detail}</p>
                   {/* 整格本身就是按钮，这里不能再嵌一个真按钮（嵌套 button 是
                       非法 HTML，浏览器会把它拆出去）。只借 .btn 的样子。 */}
                   <span className="btn btn--sm mt-1.5 w-full justify-center">
-                    去检测
+                    {selfTested ? "复核结果" : "去检测"}
                   </span>
                 </>
               ) : (
@@ -345,10 +410,8 @@ export default function ScoreBand() {
       </div>
 
       <p className="notice mt-2">
-        <strong>分母只算已检测项。</strong>
-        {score.missing > 0 && `${score.missing} 项未检测 —— `}
-        没跑过的不按 0 分算（那会在你什么都没做时就报「环境很差」），
-        也不按满分算（那是替一个没做过的检测打包票）。
+        已测 {score.measured}/5 项，{score.assessed} 项已有计分依据。
+        点击任意一项查看读数、复核结论和处理建议。
       </p>
     </Card>
   );

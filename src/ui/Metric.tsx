@@ -1,6 +1,6 @@
-import { AlertCircle, RotateCw } from 'lucide-react';
-import type { ReactNode } from 'react';
-import Skeleton from './Skeleton';
+import { AlertCircle, RotateCw } from "lucide-react";
+import type { ReactNode } from "react";
+import Skeleton from "./Skeleton";
 
 interface Props {
   label: ReactNode;
@@ -34,13 +34,14 @@ export default function Metric({
   loading = false,
   error,
   onRetry,
-  emptyHint = '没有拿到这项数据',
-  emptyText = '—',
+  emptyHint = "没有拿到这项数据",
+  emptyText = "—",
   mono = false,
   hint,
-  className = '',
+  className = "",
 }: Props) {
-  const isEmpty = children === undefined || children === null || children === '';
+  const isEmpty =
+    children === undefined || children === null || children === "";
 
   return (
     <div className={`metric ${className}`}>
@@ -61,14 +62,14 @@ export default function Metric({
               type="button"
               className="btn btn--ghost btn--sm !p-1"
               onClick={onRetry}
-              aria-label={`重试读取${typeof label === 'string' ? label : ''}`}
+              aria-label={`重试读取${typeof label === "string" ? label : ""}`}
             >
               <RotateCw size={11} aria-hidden="true" />
             </button>
           )}
         </span>
       ) : (
-        <span className={`metric-v${mono ? ' mono' : ''}`}>
+        <span className={`metric-v${mono ? " mono" : ""}`}>
           {isEmpty ? (
             <span className="metric-empty" title={emptyHint}>
               {emptyText}

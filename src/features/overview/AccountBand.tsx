@@ -1,38 +1,5 @@
-/**
- * 总览 Claude 页签：左边账户槽位，右边启动。
- *
- * # v0.7.0 搬走了两样东西
- *
- * * **Codex 磁贴**去了 `GptBand.tsx`。它跟左边的账户槽位没有任何关系 ——
- *   槽位换的是 `claude-profile` 目录联结点，Codex 的凭证在 `~/.codex`，
- *   完全是另一套。可它原来长得和另外三格一模一样。
- * * **一键关闭**去了 `KillBar.tsx` 并挪到页签外通栏。它按双重证据收进程，
- *   两侧的都收；留在 Claude 页签里会让人以为它只关 Claude。
- *
- * # 为什么账户与启动这两件事合在一段里
- *
- * 因为它们是同一个动作的两半：**切换账户之后总要再启动一次**
- * ——「正在跑的会话不会自动换过去」这句话确认框里一直写着。
- * 分成两张卡的时候，用户得先在上面切一次、再滚到下面点一次启动。
- *
- * # 槽位一页 5 条
- *
- * 6 个槽位竖排会比右边的启动宫格高出一截。分页之后左栏固定 5 行 + 一行页码，
- * 跟右栏的 2×2 宫格 + 一键关闭条高度基本齐平。
- *
- * # 「切换」这个词对过期槽位是错的
- *
- * `logged_in` 只是「`.credentials.json` 在不在」（`accounts/mod.rs`），
- * `cli_days_left` 是 refreshToken 剩余天数，两者故意不合并 ——
- * **过期槽位必须仍然可切**，因为你得先切过去才能在那个槽里重新登录（档案 §4.8，
- * `expired_slot_is_still_switchable` 那个单测钉着）。
- * 所以这里不禁用按钮，只换文案：过期的写「切换并重登」，没登过的写「切换并登录」。
- *
- * # v0.8.0：切换对话框不在这里了
- *
- * 搬去了 `pages/accounts/AccountDialogs.tsx`，全局只挂一份 —— 原来这里和账户页
- * 各挂一份，已经各走各的了。那边文件头写着 v0.9.0 的切换语义：
- * 先关闭全部 Claude，再切，**不自动启动任何东西** —— 用户切完回这里自己点启动磁贴。
+/** Claude official accounts: four slots per page; launch and current usage share the right column.
+ * Switching stays manual and retains the existing account dialog and process checks.
  */
 
 import { useState } from "react";
@@ -40,39 +7,37 @@ import {
   MonitorSmartphone,
   PlayCircle,
   Plus,
+  RefreshCw,
   Terminal,
+  Trash2,
   Users,
   Wine,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { useNavigate } from "react-router-dom";
 
-import { api, type LaunchTarget, type Slot } from "../../lib/api";
-import { Link } from "react-router-dom";
+import { api, type LaunchTarget } from "../../lib/api";
 import { workspaceApi, type Client } from "../../lib/workspace";
 import { AFTER, R } from "../../lib/resources";
 import { invalidate, useResource, useSession } from "../../lib/store";
 import { endTask, resetTask, useTask } from "../../lib/tasks";
-import {
-  Button,
-  Card,
-  ConfirmDialog,
-  Pill,
-  useToast,
-  fmtDaysLeft,
-} from "../../ui";
+import { Button, Card, ConfirmDialog, useToast } from "../../ui";
 
 import {
   needsLogin,
+  requestAccountDetail,
+  requestDelete,
   requestNewSlot,
   requestSwitch,
 } from "../../pages/accounts/AccountDialogs";
 import Tile from "./Tile";
-import SlotUsageBars from "./SlotUsage";
+import AccountUsageCard from "./AccountUsageCard";
+import OfficialConfigResidue from "./OfficialConfigResidue";
+import KillBar from "./KillBar";
+import SlotRow, { switchLabel } from "./SlotRow";
 
-/** 一页几条。改这个数要顺带看一眼右栏高度还齐不齐。 */
-const PER_PAGE = 5;
-
-const CLAUDE_USAGE_URL = "https://claude.ai/settings/usage";
+/** Numbered pages keep launch controls beside the account list. */
+const PER_PAGE = 4;
 
 /** 启动目标 → 任务名。写成三元表达式的话，加第三个目标必然漏改。 */
 const LAUNCH_TASK = {
@@ -81,26 +46,11 @@ const LAUNCH_TASK = {
   codex: "launch-codex",
 } as const;
 
-function switchLabel(s: Slot): string {
-  if (!s.logged_in) return "切换并登录";
-  if ((s.cli_days_left ?? 0) < 0) return "切换并重登";
-  return "切换";
-}
-
-/** 剩余天数的语气。`null` 是「读不出到期时间」，不是「过期」，所以给中性。 */
-function daysTone(s: Slot) {
-  if (!s.logged_in) return "default" as const;
-  const d = s.cli_days_left;
-  if (d == null) return "default" as const;
-  if (d < 0) return "danger" as const;
-  if (d < 5) return "warn" as const;
-  return "ok" as const;
-}
-
 // ---------------------------------------------------------------- 主体
 
 export default function AccountBand() {
   const toast = useToast();
+  const navigate = useNavigate();
 
   const accounts = useResource("accounts", R.accounts);
   const plugins = useResource("plugins", R.plugins);
@@ -110,16 +60,14 @@ export default function AccountBand() {
   const tavernTask = useTask("tavern-start");
 
   const [busy, setBusy] = useState("");
-  const [onlyUsable, setOnlyUsable] = useSession("home.accounts.usable", false);
   /** `-1` = 这个会话里还没手动翻过页，落在激活槽位那一页。 */
   const [pageRaw, setPage] = useSession("home.accounts.page", -1);
   const [askDesktop, setAskDesktop] = useState(false);
 
   const slots = accounts.data?.slots ?? [];
-  const usableSlots = slots.filter(
-    (s) => s.logged_in && (s.cli_days_left ?? 0) >= 0,
-  );
-  const shown = onlyUsable ? usableSlots : slots;
+  // 0.20.0 去掉了「可用 / 全部」那个切换：过期和没登录的槽位**本来就该看得见**
+  // （得先切过去才能在那个槽里重新登录），把它们藏起来只会让人找不到。
+  const shown = slots;
 
   const pages = Math.max(1, Math.ceil(shown.length / PER_PAGE));
   // 没手动翻过页时落在激活槽位那一页 —— 否则开面板第一眼看不到自己在用哪个。
@@ -132,7 +80,17 @@ export default function AccountBand() {
   const page = Math.min(pageRaw < 0 ? autoPage : pageRaw, pages - 1);
   const pageSlots = shown.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
 
-  const running = plugins.data?.[0]?.state === "running";
+  const tavern = plugins.data?.[0];
+  const running = tavern?.state === "running";
+  /**
+   * 依赖还没配齐这一档（最常见的是三个路径一个都没填）。
+   *
+   * 这时候这块贴**点了只会失败** —— 而且失败信息里那句
+   * 「路径不存在: bridge.py」曾经是使用者看到的全部内容。
+   * 一个只能失败的按钮不该照常长着「起桥接与酒馆」的样子：
+   * 改成在点之前就说明白，点下去带他到能填路径的那一页。
+   */
+  const tavernUnready = tavern?.state === "missing";
 
   // ------------------------------------------------------------ 动作
 
@@ -171,11 +129,19 @@ export default function AccountBand() {
     try {
       const url = await api.pluginStart();
       endTask("tavern-start");
-      // 无论是新起的还是复用现有服务都要打开页面 ——
-      // 少了这一步，成功的启动和崩溃看起来一模一样。
-      if (url.startsWith("http")) await openUrl(url);
-      toast.ok("酒馆已就绪，已打开页面");
       invalidate(...AFTER.tavern);
+      // 无论是新起的还是复用现有服务都要打开页面 ——
+      // 少了这一步，成功的启动和崩溃看起来一模一样。反过来也一样：
+      // 走到这里酒馆已经在跑、租约也拿着，页面没打开不许报成启动失败。
+      try {
+        if (url.startsWith("http")) await openUrl(url);
+        toast.ok("酒馆已就绪，已打开页面");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        toast.error(
+          `酒馆已就绪，但页面没打开：${msg}。可以在浏览器里手动打开 ${url}`,
+        );
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       endTask("tavern-start", msg);
@@ -187,10 +153,10 @@ export default function AccountBand() {
 
   return (
     <>
-      <Card className="mb-3">
-        <div className="grid gap-4 md:grid-cols-[1.3fr_1fr]">
+      <div className="account-workspace">
+        <Card className="account-slots">
           {/* ------------------------------------------------ 左：槽位 */}
-          <div className="flex min-w-0 flex-col gap-1.5">
+          <div className="account-slot-content">
             <div className="mb-1 flex items-center gap-2">
               <h2 className="card-title">
                 <Users size={14} aria-hidden="true" />
@@ -199,22 +165,12 @@ export default function AccountBand() {
               <span className="ml-auto flex flex-shrink-0 gap-1.5">
                 <Button
                   size="sm"
-                  variant={onlyUsable ? "primary" : "default"}
-                  onClick={() => {
-                    setOnlyUsable(!onlyUsable);
-                    setPage(0);
-                  }}
-                >
-                  {onlyUsable
-                    ? `可用 ${usableSlots.length}`
-                    : `全部 ${slots.length}`}
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => void openUrl(CLAUDE_USAGE_URL)}
-                >
-                  Usage
-                </Button>
+                  icon={<RefreshCw size={12} />}
+                  loading={accounts.loading}
+                  title="立刻重读一遍槽位与额度。后台每 30 秒自己也会读一次。"
+                  aria-label="刷新账户"
+                  onClick={() => void accounts.refresh()}
+                />
                 <Button
                   size="sm"
                   icon={<Plus size={12} />}
@@ -222,9 +178,6 @@ export default function AccountBand() {
                 >
                   新建
                 </Button>
-                <Link className="btn btn--sm" to="/accounts">
-                  管理
-                </Link>
               </span>
             </div>
 
@@ -240,64 +193,71 @@ export default function AccountBand() {
                     <code>~\.claude</code>。
                   </>
                 ) : (
-                  "当前筛选下没有槽位。点上面的「可用」切回全部。"
+                  "没有槽位。"
                 )}
               </p>
             ) : (
               <>
-                {pageSlots.map((s) => (
-                  <div
-                    key={s.label}
-                    className={`slotrow${s.active ? " slotrow--active" : ""}`}
-                  >
-                    <div className="slotrow-main">
-                      <span className="slotrow-label">{s.label}</span>
-                      <span
-                        className="slotrow-plan"
-                        title={s.billing ?? undefined}
-                      >
-                        {s.plan ?? "套餐未知"}
-                      </span>
-                      <span className="slotrow-side">
-                        <Pill tone={daysTone(s)}>
-                          {s.logged_in
-                            ? fmtDaysLeft(s.cli_days_left)
-                            : "未登录"}
-                        </Pill>
-                        {s.active ? (
-                          // 激活槽位过期时原来什么按钮都没有 —— 用户看到「凭证已过期」
-                          // 却无处下手。这里补一个只启动、不切换的入口。
-                          needsLogin(s) ? (
+                <div className="account-slot-list">
+                  {pageSlots.map((s) => (
+                    <SlotRow
+                      key={s.label}
+                      slot={s}
+                      onOpen={requestAccountDetail}
+                      actions={
+                        <>
+                          {s.active ? (
+                            // 激活槽位过期时原来什么按钮都没有 —— 用户看到
+                            // 「凭证已过期」却无处下手。这里补一个只启动、
+                            // 不切换的入口。没过期的那一档，重登入口在详情页里
+                            // （令牌可能已被回收，而本地时间戳看不出来）。
+                            needsLogin(s) ? (
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                loading={busy === "claude-code"}
+                                disabled={!!busy}
+                                onClick={() => launch("claude-code")}
+                              >
+                                重新登录
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-accent">
+                                使用中
+                              </span>
+                            )
+                          ) : (
                             <Button
                               size="sm"
-                              variant="primary"
-                              loading={busy === "claude-code"}
                               disabled={!!busy}
-                              onClick={() => launch("claude-code")}
+                              onClick={() => requestSwitch(s.label)}
                             >
-                              重新登录
+                              {switchLabel(s)}
                             </Button>
-                          ) : (
-                            <span className="text-xs text-accent">使用中</span>
-                          )
-                        ) : (
+                          )}
+                          {/* 「管理账户」就是删除，所以它直接长在条上，
+                            不再跳去一个单独的管理页。当前账户删不了 ——
+                            删掉它会留下一个指向空处的联结点，而没有任何
+                            东西会去修它。 */}
                           <Button
                             size="sm"
-                            disabled={!!busy}
-                            onClick={() => requestSwitch(s.label)}
-                          >
-                            {switchLabel(s)}
-                          </Button>
-                        )}
-                      </span>
-                    </div>
-                    {/* 额度。两源都没有就整条不画 —— 给一个「剩 100%」
-                        比不给更糟，那是替一个根本没读到的数字打包票。 */}
-                    {s.usage && <SlotUsageBars usage={s.usage} />}
-                  </div>
-                ))}
-
-                <div className="mt-1 flex items-center gap-2">
+                            variant="danger"
+                            icon={<Trash2 size={12} />}
+                            aria-label={`删除 ${s.label}`}
+                            disabled={!!busy || s.active}
+                            title={
+                              s.active
+                                ? "当前账户删不了：请先切换到另一个账户。"
+                                : `删除 ${s.label}`
+                            }
+                            onClick={() => requestDelete(s.label)}
+                          />
+                        </>
+                      }
+                    />
+                  ))}
+                </div>
+                <div className="account-pagination">
                   <span className="notice">
                     {shown.length} 个槽位
                     {pages > 1 && ` · 第 ${page + 1} / ${pages} 页`}
@@ -320,59 +280,83 @@ export default function AccountBand() {
                   )}
                 </div>
 
-                <p className="notice mt-1">{accounts.data?.planCaveat}</p>
-                <p className="notice">{accounts.data?.caveat}</p>
+                {/* 口径说明（套餐读自哪儿、剩余天数查不出被风控下线）不在这里了
+                    —— 使用者要这块地方放账户，说明搬进了账户详情页的
+                    「套餐与凭证」一节，那里是真正要用到它的地方。
+                    ⚠ 只是换了位置，**不是删掉**：`AccountsReport` 的类型注释
+                    写着这两句要显示。 */}
               </>
             )}
           </div>
+        </Card>
+        <div className="account-workspace-right">
+          <Card className="account-launch">
+            {/* ------------------------------------------------ 右：启动 */}
+            {/* 启动保持在右栏，用量紧接在其下方。 */}
+            <div className="flex min-w-0 flex-col gap-2">
+              <div className="mb-1 flex items-center gap-2">
+                <h2 className="card-title">
+                  <PlayCircle size={14} aria-hidden="true" />
+                  启动
+                </h2>
+                <span className="notice ml-auto">门禁不过，一个进程都不起</span>
+              </div>
 
-          {/* ------------------------------------------------ 右：启动 */}
-          <div className="flex min-w-0 flex-col gap-2 md:border-l md:border-line md:pl-4">
-            <div className="mb-1 flex items-center gap-2">
-              <h2 className="card-title">
-                <PlayCircle size={14} aria-hidden="true" />
-                启动
-              </h2>
-              <span className="notice ml-auto">门禁不过，一个进程都不起</span>
-            </div>
-
-            <div className="tilegrid">
-              <Tile
-                icon={<Terminal size={18} />}
-                name="Claude Code"
-                note="15 秒一次 · 断网先上锁留进程"
-                tone="accent"
-                task={codeTask}
-                disabled={!!busy}
-                onClick={() => launch("claude-code")}
-              />
-              {/* 这段代价必须常驻在贴上，不能藏进 hover —— 它不是 bug 是设计，
+              <div className="launchcol">
+                <Tile
+                  icon={<Terminal size={18} />}
+                  name="Claude Code"
+                  note="15 秒一次 · 断网先上锁留进程"
+                  tone="accent"
+                  task={codeTask}
+                  disabled={!!busy}
+                  onClick={() => launch("claude-code")}
+                />
+                {/* 这段代价必须常驻在贴上，不能藏进 hover —— 它不是 bug 是设计，
                   但用户有权在点之前就知道。完整版在下面那个强制确认框里。 */}
-              <Tile
-                icon={<MonitorSmartphone size={18} />}
-                name="Claude 桌面端"
-                note="查不到 IP 立即关闭，不给宽限"
-                tone="warn"
-                task={desktopTask}
-                disabled={!!busy}
-                onClick={() => setAskDesktop(true)}
-              />
-              <Tile
-                icon={<Wine size={18} />}
-                name="酒馆"
-                note={
-                  running
-                    ? "运行中 · 再点只打开页面"
-                    : "起桥接与酒馆 · 最长 80 秒"
-                }
-                task={tavernTask}
-                disabled={!!busy}
-                onClick={launchTavern}
-              />
+                <Tile
+                  icon={<MonitorSmartphone size={18} />}
+                  name="Claude 桌面端"
+                  note="查不到 IP 立即关闭，不给宽限"
+                  tone="warn"
+                  task={desktopTask}
+                  disabled={!!busy}
+                  onClick={() => setAskDesktop(true)}
+                />
+                {/* 第四块：一键关闭。起和收是同一件事的两头，排在一起。
+                  它收的不只是这一侧的东西 —— 名字里那个「所有」不许拿掉。 */}
+                <Tile
+                  icon={<Wine size={18} />}
+                  name="酒馆"
+                  note={
+                    tavernUnready
+                      ? "还没配好 · 点开去填路径"
+                      : running
+                        ? "运行中 · 再点只打开页面"
+                        : "起桥接与酒馆 · 最长 80 秒"
+                  }
+                  tone={tavernUnready ? "warn" : undefined}
+                  task={tavernTask}
+                  disabled={!!busy}
+                  onClick={
+                    tavernUnready
+                      ? () => navigate("/extensions/sillytavern")
+                      : launchTavern
+                  }
+                />
+                <KillBar variant="tile" />
+              </div>
+
+              <div className="mt-1">
+                <OfficialConfigResidue
+                  activeLabel={slots.find((s) => s.active)?.label ?? ""}
+                />
+              </div>
             </div>
-          </div>
+          </Card>
+          <AccountUsageCard />
         </div>
-      </Card>
+      </div>
 
       {/* --------------------------------------------------- 确认框 */}
 

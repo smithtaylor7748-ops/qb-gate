@@ -35,12 +35,16 @@ pub use qb_install::install;
 pub use qb_iplock::gate;
 pub use qb_launch::{killswitch, launch};
 pub use qb_platform::{
-    config_io, endpoint, operations, process, repository, secret, sessions, settings,
+    config_io, endpoint, operations, process, repository, secret, sessions, settings, signature,
 };
+// 启动时对齐要先知道出口 IP 落在哪个时区 —— 那是 `qb-probe` 的事。
+// 依赖本来就在 Cargo.toml 里（诊断用得到），这里补上再导出。
+pub use qb_probe::probe;
 pub use qb_relay::relay;
 pub use qb_sysenv::sysenv;
 
 pub mod diagnostics;
+pub mod local_router;
 pub mod profile;
 pub mod snapshot;
 pub mod usecase;

@@ -621,8 +621,7 @@ async fn unzip(zip: &Path, out: &Path) -> Result<()> {
         q(zip),
         q(out)
     );
-    let o = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+    let o = crate::process::powershell_tokio(&script)
         .output()
         .await
         .map_err(|e| GateError::Other(format!("启动 PowerShell 解压失败：{e}")))?;
@@ -1129,12 +1128,10 @@ pub fn lock_strays(_new: &Path) -> usize {
 #[cfg(windows)]
 pub async fn running_from(dir: &Path) -> Result<Vec<(u32, String)>> {
     const SCRIPT: &str = "$ErrorActionPreference = 'Stop'; \
-        try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }; \
         $rows = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath } | \
           ForEach-Object { [pscustomobject]@{ Id = [int]$_.ProcessId; Path = [string]$_.ExecutablePath } }); \
         ConvertTo-Json -InputObject $rows -Compress";
-    let out = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+    let out = crate::process::powershell_tokio(SCRIPT)
         .output()
         .await
         .map_err(|e| GateError::Other(format!("启动 PowerShell 枚举进程失败：{e}")))?;
@@ -1336,18 +1333,13 @@ pub fn plan_codex_externals(found: &[PathBuf], managed_root: &Path) -> Vec<Exter
 async fn stale_registrations(app: App, prefix: &str) -> Vec<External> {
     let script = format!(
         "$ErrorActionPreference = 'SilentlyContinue'; \
-         try {{ [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false }} catch {{ }}; \
          $rows = @(Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' | \
            Where-Object {{ $_.PSChildName -like '{prefix}*' }} | ForEach-Object {{ \
              $p = Get-ItemProperty $_.PSPath; \
              [pscustomobject]@{{ Key = $_.PSChildName; Location = [string]$p.InstallLocation }} }}); \
          ConvertTo-Json -InputObject $rows -Compress"
     );
-    let Ok(o) = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()
-        .await
-    else {
+    let Ok(o) = crate::process::powershell_tokio(&script).output().await else {
         return Vec::new();
     };
     let rows: Vec<serde_json::Value> =

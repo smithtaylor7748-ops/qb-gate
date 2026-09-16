@@ -7,4 +7,8 @@
 //! 的 `pub mod` 清单里，于是 187 行代码不编译、不进二进制、里面的
 //! `ts_rs` 类型从没导出过。看起来像完成的功能，实际是死的 —— 别再让它退回去。
 
+pub mod audit;
+pub mod billing;
 pub mod model;
+pub mod pricing;
+pub mod route;

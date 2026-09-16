@@ -1,0 +1,177 @@
+/* 酒馆详情页。
+   ⛔ 颜色一律引用 tokens.css 的变量，这里不出现任何 hex。
+   ⛔ 路径要完整显示（`overflow-wrap: anywhere`），不许截断 ——
+      这一页的全部用处就是让人看清自己指的是哪个目录。
+      同时 `npm run test:ui` 在 680px 上断言 .qb-main 不横向溢出。 */
+
+/* ---------------------------------------------------------- 状态条 */
+
+.tv-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.tv-status--accent {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+.tv-status--warn {
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+}
+.tv-status--ok {
+  border-color: var(--ok-border);
+  background: var(--ok-bg);
+}
+
+.tv-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.tv-dot--ok {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent);
+}
+.tv-dot--warn {
+  background: var(--warn);
+}
+.tv-dot--danger {
+  background: var(--danger);
+}
+
+.tv-status-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+.tv-status-text strong {
+  font-size: 13.5px;
+}
+.tv-status-text span {
+  color: var(--text-2);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.tv-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* ---------------------------------------------------------- 端口 */
+
+.tv-ports {
+  display: flex;
+  gap: 6px;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+/* ---------------------------------------------------------- 候选 */
+
+.tv-group + .tv-group {
+  margin-top: 10px;
+}
+.tv-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.tv-group-head::after {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+  content: "";
+}
+
+.tv-cand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.tv-cand + .tv-cand {
+  margin-top: 5px;
+}
+.tv-cand--picked {
+  border-color: var(--ok-border);
+  background: var(--ok-bg);
+}
+.tv-cand-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.tv-cand-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.tv-cand-note {
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+/* ---------------------------------------------------------- 资产 */
+
+.tv-cats {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+}
+.tv-cat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.tv-cat:hover {
+  border-color: var(--border-strong);
+}
+.tv-cat[aria-expanded="true"] {
+  border-color: var(--accent-border);
+}
+.tv-cat-n {
+  margin-left: auto;
+  color: var(--text-3);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.tv-cat--empty .tv-cat-n {
+  opacity: 0.5;
+}
+
+.tv-files {
+  margin-top: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}

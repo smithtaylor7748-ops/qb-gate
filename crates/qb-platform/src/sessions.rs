@@ -25,7 +25,12 @@ pub fn sanitized_environment(
 ) -> Vec<(String, String)> {
     const CONFLICTS: &[&str] = &[
         "CLAUDE_CONFIG_DIR",
+        "CLAUDE_USER_DATA_DIR",
+        "ELECTRON_RUN_AS_NODE",
         "CODEX_HOME",
+        "CODEX_ELECTRON_USER_DATA_PATH",
+        "CODEX_ELECTRON_AGENT_RUN_ID",
+        "CODEX_AUTH_TOKEN",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_BASE_URL",
@@ -77,12 +82,13 @@ pub fn start(
     revision: u32,
 ) -> Result<Session> {
     let id = crate::config_io::id();
+    let args = desktop_arguments(context.client, &env);
     let process = NativeProcess::create(
         exe,
-        &[],
+        &args,
         &context.working_dir,
         &sanitized_environment(std::env::vars(), env),
-        context.client != Client::ClaudeDesktop,
+        context.client == Client::ClaudeCode,
         // 托管会话一律绑定生命周期，与「收不收」无关。
         true,
         &id,
@@ -109,6 +115,14 @@ pub fn start(
         let _ = Repository::open().and_then(|db| db.put("sessions", &id, &session));
         return Err(e);
     }
+    // An Electron second-instance handoff or a crashing client is not a launch.
+    std::thread::sleep(std::time::Duration::from_millis(900));
+    if !process.running()? {
+        session.state = "failed".into();
+        session.detail = "客户端启动后立即退出，请检查客户端配置".into();
+        Repository::open()?.put("sessions", &id, &session)?;
+        return Err(GateError::Other(session.detail));
+    }
     registry().lock().unwrap().insert(
         id,
         Managed {
@@ -122,6 +136,17 @@ pub fn start(
         crate::audit::write(&format!("清理历史会话记录失败：{e}"));
     }
     Ok(session)
+}
+
+/// The Windows desktop's Chromium singleton is selected before JS reads env vars.
+pub fn desktop_arguments(client: Client, env: &[(String, String)]) -> Vec<String> {
+    if client != Client::Codex {
+        return Vec::new();
+    }
+    env.iter()
+        .find(|(key, _)| key == "CODEX_ELECTRON_USER_DATA_PATH")
+        .map(|(_, path)| vec![format!("--user-data-dir={path}")])
+        .unwrap_or_default()
 }
 
 pub fn list() -> Vec<Session> {
@@ -749,6 +774,12 @@ mod tests {
             ("Path".into(), "bin".into()),
             ("OpenAi_Api_Key".into(), "official".into()),
             ("CLAUDE_CONFIG_DIR".into(), "old".into()),
+            (
+                "CODEX_ELECTRON_USER_DATA_PATH".into(),
+                "official-desktop".into(),
+            ),
+            ("CODEX_ELECTRON_AGENT_RUN_ID".into(), "parent-agent".into()),
+            ("ELECTRON_RUN_AS_NODE".into(), "1".into()),
         ];
         let result = sanitized_environment(
             inherited.clone(),
@@ -760,5 +791,19 @@ mod tests {
             .iter()
             .any(|(k, v)| k == "OPENAI_API_KEY" && v == "relay"));
         assert!(!result.iter().any(|(k, _)| k == "CLAUDE_CONFIG_DIR"));
+    }
+
+    #[test]
+    fn codex_selects_its_desktop_profile_before_the_chromium_singleton_check() {
+        let env = vec![(
+            "CODEX_ELECTRON_USER_DATA_PATH".into(),
+            "C:\\profiles\\relay desktop".into(),
+        )];
+        assert_eq!(
+            desktop_arguments(Client::Codex, &env),
+            vec!["--user-data-dir=C:\\profiles\\relay desktop"]
+        );
+        assert!(desktop_arguments(Client::ClaudeCode, &env).is_empty());
+        assert!(desktop_arguments(Client::ClaudeDesktop, &env).is_empty());
     }
 }

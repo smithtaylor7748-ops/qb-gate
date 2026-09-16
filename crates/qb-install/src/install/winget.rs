@@ -369,8 +369,7 @@ pub async fn run_streaming(
 #[cfg(windows)]
 pub async fn desktop_install_location() -> Option<String> {
     const SCRIPT: &str = "(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\AnthropicClaude' -ErrorAction SilentlyContinue).InstallLocation";
-    let o = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+    let o = crate::process::powershell_tokio(SCRIPT)
         .output()
         .await
         .ok()?;

@@ -16,7 +16,7 @@
 //!   - 数据目录的 ACL 要修，否则 Python 报 WinError 5。
 
 use crate::error::{GateError, Result};
-use crate::plugins::{DependencyCheck, PluginState, PluginStatus};
+use crate::plugins::{tavern_locate, DependencyCheck, PluginState, PluginStatus};
 use crate::sink::ProgressSink;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -58,6 +58,118 @@ impl Default for TavernConfig {
             st_port: 8000,
         }
     }
+}
+
+/// 三个路径里还空着的那几项。**「还没配」和「配错了」必须分开。**
+///
+/// 空 `PathBuf` 拼 `bridge.py` 得到的是个相对文件名，于是
+/// `start()` 的 `NotFound` 报出来是「路径不存在: bridge.py」——
+/// 这句话既没说是哪个 bridge.py，也没说该去哪填，使用者唯一能做的是猜。
+/// （默认值留空是对的，见 `TavernConfig::default`；错的是留空之后
+/// 走的还是「路径不存在」那条错误。）
+///
+/// 两种情况的下一步完全相反：**没配**要去设置里填自己那份部署的位置，
+/// **配错**要拿报出来的绝对路径去对照盘上的真实位置改。合成一句，
+/// 谁都查不出来 —— 跟 `IpUnknown` / `IpNotAllowed` 不许合并是同一条道理。
+fn unset_paths(cfg: &TavernConfig) -> Vec<&'static str> {
+    [
+        (&cfg.bridge_root, "桥接项目目录"),
+        (&cfg.sillytavern_root, "SillyTavern 目录"),
+        (&cfg.st_launcher, "酒馆启动脚本"),
+    ]
+    .into_iter()
+    .filter(|(p, _)| p.as_os_str().is_empty())
+    .map(|(_, label)| label)
+    .collect()
+}
+
+/// 没配时给出的那句话。**面板不分发 SillyTavern，也不分发 bridge.py**
+/// （见 DISCLAIMER 第 296 行），所以这里只能指路，不能替他装。
+fn setup_hint(missing: &[&str]) -> String {
+    format!(
+        "还没配路径（{}）。点「自动定位」让面板在本机找，或自己填。",
+        missing.join("、")
+    )
+}
+
+// ------------------------------------------------------------------ 定位
+
+/// 枚举本机所有命令行里带 `bridge.py` 的进程。
+///
+/// 这是 [`tavern_locate::TavernEvidence::Running`] 的来源，也是整条定位链里
+/// **唯一零扫描**的一档：跑过一次桥接的人，不用翻盘就能拿到准确路径。
+///
+/// 只读一次 `Win32_Process`，不动任何进程 —— 收进程是 `killswitch` 的事，
+/// 而且那边要的是双重证据，跟这里的用途完全不同。
+#[cfg(windows)]
+async fn running_bridge_cmdlines() -> Vec<String> {
+    let out = crate::process::powershell_tokio(
+        "@(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | \
+         Where-Object { $_.CommandLine -like '*bridge.py*' } | \
+         ForEach-Object { $_.CommandLine }) -join \"`n\"",
+    )
+    .output()
+    .await;
+    match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
+        // 枚举不到就退回扫盘那一档，不是错误。
+        Err(_) => Vec::new(),
+    }
+}
+
+#[cfg(not(windows))]
+async fn running_bridge_cmdlines() -> Vec<String> {
+    Vec::new()
+}
+
+/// `bridge.pid` 指的那个进程的命令行（进程已经没了就是 `None`）。
+#[cfg(windows)]
+async fn pidfile_cmdline() -> Option<String> {
+    let text = std::fs::read_to_string(bridge_data_dir().join("bridge.pid")).ok()?;
+    let pid: u32 = text.trim().parse().ok()?;
+    let out = crate::process::powershell_tokio(&format!(
+        "(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}' \
+         -ErrorAction SilentlyContinue).CommandLine"
+    ))
+    .output()
+    .await
+    .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+#[cfg(not(windows))]
+async fn pidfile_cmdline() -> Option<String> {
+    None
+}
+
+/// 在本机找酒馆与桥接。**只读，不写配置** —— 采用哪一条由使用者点。
+///
+/// `deep` 是使用者显式选的第二档：默认档几秒回来，深扫最长 90 秒。
+pub async fn locate(deep: bool) -> Result<tavern_locate::TavernSurvey> {
+    let cfg = load_config();
+    let mut roots = tavern_locate::Roots::current();
+    roots.running_cmdlines = running_bridge_cmdlines().await;
+    roots.pidfile_cmdline = pidfile_cmdline().await;
+    roots.configured = vec![
+        cfg.bridge_root.clone(),
+        cfg.sillytavern_root.clone(),
+        cfg.st_launcher.clone(),
+    ];
+    let budget = if deep {
+        tavern_locate::Budget::deep()
+    } else {
+        tavern_locate::Budget::quick()
+    };
+    // 扫盘是同步阻塞 I/O，可能跑满预算 —— 放到阻塞线程池里，
+    // 否则它会把整个 tokio 运行时卡住，连界面的心跳都停。
+    tokio::task::spawn_blocking(move || tavern_locate::locate(&roots, &budget))
+        .await
+        .map_err(|e| GateError::Other(format!("定位任务未能完成：{e}")))
 }
 
 fn config_path() -> PathBuf {
@@ -177,18 +289,34 @@ pub fn status() -> PluginStatus {
     let dd = bridge_data_dir();
     let mut checks = Vec::new();
 
+    // 路径没填时**不能把空串当路径显示** —— 那一行在界面上是一片空白，
+    // 看起来像「检测挂了」，而它其实是「你还没填」。
+    let shown = |p: &Path| {
+        if p.as_os_str().is_empty() {
+            "未配置".to_string()
+        } else {
+            p.display().to_string()
+        }
+    };
+
     let bridge_py = cfg.bridge_root.join("bridge.py");
     checks.push(DependencyCheck::new(
         "桥接项目",
-        bridge_py.is_file(),
-        cfg.bridge_root.display().to_string(),
+        !cfg.bridge_root.as_os_str().is_empty() && bridge_py.is_file(),
+        shown(&cfg.bridge_root),
     ));
 
     let st_server = cfg.sillytavern_root.join("server.js");
     checks.push(DependencyCheck::new(
         "SillyTavern",
-        st_server.is_file(),
-        cfg.sillytavern_root.display().to_string(),
+        !cfg.sillytavern_root.as_os_str().is_empty() && st_server.is_file(),
+        shown(&cfg.sillytavern_root),
+    ));
+
+    checks.push(DependencyCheck::new(
+        "酒馆启动脚本",
+        cfg.st_launcher.is_file(),
+        shown(&cfg.st_launcher),
     ));
 
     let py = find_python();
@@ -211,6 +339,11 @@ pub fn status() -> PluginStatus {
         },
     ));
 
+    // 到这里为止全是依赖项，后面两条是端口现况（永远 ok，只是给人看的）。
+    // 原来这行写的是 `take(4)` —— 加一条依赖检查就会有一项不参与判定，
+    // 而且毫无症状。改成记住条数，加多少条都不会漏。
+    let deps_len = checks.len();
+
     let bridge_up = port_in_use(cfg.bridge_port);
     let st_up = port_in_use(cfg.st_port);
     checks.push(DependencyCheck::new(
@@ -224,8 +357,14 @@ pub fn status() -> PluginStatus {
         if st_up { "在监听" } else { "空闲" },
     ));
 
-    let deps_ok = checks.iter().take(4).all(|c| c.ok);
-    let (state, detail) = if !deps_ok {
+    let deps_ok = checks.iter().take(deps_len).all(|c| c.ok);
+    let unset = unset_paths(&cfg);
+    let (state, detail) = if !unset.is_empty() {
+        // 「还没配」排在「依赖不齐」前面：路径空着时后者那句
+        // 「展开看缺哪一项」会把人引去查 Python 和 Claude，
+        // 而真正缺的是他自己还没填的三个路径。
+        (PluginState::Missing, setup_hint(&unset))
+    } else if !deps_ok {
         (PluginState::Missing, "依赖不齐，展开看缺哪一项".to_string())
     } else if bridge_up
         && st_up
@@ -280,18 +419,12 @@ async fn existing_bridge_pid(cfg: &TavernConfig) -> Result<Option<u32>> {
         return Ok(None);
     };
 
-    let out = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            &format!(
-                "(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}' \
-                 -ErrorAction Stop).CommandLine"
-            ),
-        ])
-        .output()
-        .await?;
+    let out = crate::process::powershell_tokio(&format!(
+        "(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}' \
+         -ErrorAction Stop).CommandLine"
+    ))
+    .output()
+    .await?;
     if !out.status.success() {
         return Err(GateError::Other(
             "无法枚举旧桥接进程，未覆盖 PID 记录".into(),
@@ -470,8 +603,22 @@ async fn tavern_healthy(port: u16) -> bool {
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.contains("text/html"))
 }
+/// 酒馆页面的地址。`start` 把它交回前端，由前端的 `openUrl` 打开 ——
+/// 所以它必须落在 `src-tauri/capabilities/default.json` 给 opener 配的
+/// 网址范围里，`src-tauri/tests/capabilities.rs` 拿这个函数去核。
+pub fn page_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
+}
 pub async fn start(rep: &dyn ProgressSink) -> Result<String> {
     let cfg = load_config_checked()?;
+    // 路径没填就在这里停 —— **必须在起任何进程、甚至查 Python 之前**。
+    // 往下走的话，第一个撞上的是 `bridge_py.is_file()`，报出来是
+    // 「路径不存在: bridge.py」（空目录拼出来的相对文件名），
+    // 使用者看不出这是「还没配」而不是「装坏了」。
+    let unset = unset_paths(&cfg);
+    if !unset.is_empty() {
+        return Err(GateError::Other(setup_hint(&unset)));
+    }
     let dd = bridge_data_dir();
     rep.phase(1, "检查依赖与官方身份");
     let claude = find_official_claude()?;
@@ -571,7 +718,7 @@ pub async fn start(rep: &dyn ProgressSink) -> Result<String> {
         if tavern_healthy(cfg.st_port).await {
             attempt.finished = true;
             rep.done("酒馆与桥接已就绪");
-            return Ok(format!("http://127.0.0.1:{}", cfg.st_port));
+            return Ok(page_url(cfg.st_port));
         }
         tokio::time::sleep(std::time::Duration::from_millis(POLL_MS)).await;
     }
@@ -633,6 +780,54 @@ mod tests {
         assert!(vendored.to_lowercase().contains(r"\claude-code-cli\"));
         let official = r"c:\users\me\.local\bin\claude.exe";
         assert!(!official.to_lowercase().contains(r"\claude-code-cli\"));
+    }
+
+    /// 默认配置 = 还没配，**三项一条不漏地报出来**。
+    ///
+    /// 这条钉的是 `default_config_carries_no_machine_specific_paths` 的另一半：
+    /// 留空是对的，但留空之后得有人认出「这是还没配」。认不出来的那一版里，
+    /// 点一次酒馆只会得到「路径不存在: bridge.py」。
+    #[test]
+    fn a_fresh_install_reports_all_three_paths_as_unset() {
+        let unset = unset_paths(&TavernConfig::default());
+        assert_eq!(unset, ["桥接项目目录", "SillyTavern 目录", "酒馆启动脚本"]);
+    }
+
+    /// 那句话必须**给出下一步动作**，而不是「配置有误」。
+    ///
+    /// 「自动定位」是这一档唯一不用人自己去翻盘的出路 —— 提不到它，
+    /// 使用者就只剩「在三个空框里凭记忆填绝对路径」这一条。
+    #[test]
+    fn the_setup_hint_offers_the_next_action() {
+        let msg = setup_hint(&unset_paths(&TavernConfig::default()));
+        assert!(msg.contains("自动定位"), "得给出下一步：{msg}");
+        assert!(msg.contains("桥接项目目录"), "得说还缺哪几项：{msg}");
+    }
+
+    /// 填了路径就不再算「没配」—— 哪怕填的是个不存在的目录。
+    ///
+    /// 这一档要继续走到 `is_file()` 那条 `NotFound`，报出**绝对路径**
+    /// 让人自己对照着改。把它也吞进「还没配」的话，填错路径的人
+    /// 会被一直劝去填一个他明明已经填过的框。
+    #[test]
+    fn a_filled_in_but_wrong_path_is_not_the_unconfigured_case() {
+        let cfg = TavernConfig {
+            bridge_root: PathBuf::from(r"x:\nope\bridge-v2"),
+            sillytavern_root: PathBuf::from(r"x:\nope\SillyTavern"),
+            st_launcher: PathBuf::from(r"x:\nope\start.cmd"),
+            ..Default::default()
+        };
+        assert!(unset_paths(&cfg).is_empty());
+    }
+
+    /// 填了一半也算没配 —— 空的那一项照样会拼出相对路径。
+    #[test]
+    fn a_half_filled_config_still_counts_as_unconfigured() {
+        let cfg = TavernConfig {
+            bridge_root: PathBuf::from(r"x:\nope\bridge-v2"),
+            ..Default::default()
+        };
+        assert_eq!(unset_paths(&cfg), ["SillyTavern 目录", "酒馆启动脚本"]);
     }
 
     #[test]

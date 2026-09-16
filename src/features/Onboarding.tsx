@@ -261,18 +261,33 @@ export default function Onboarding() {
                   ? hasTraces
                     ? `${traces.data.traces.length} 处`
                     : traces.data.chrome_scanned
-                      ? "未发现"
-                      : "Chrome 正在运行，没扫成"
+                      ? traces.data.chrome_files_locked > 0
+                        ? `未发现（${traces.data.chrome_files_locked} 个没读开）`
+                        : "未发现"
+                      : "没扫成"
                   : "未检测"}
               </Metric>
             </div>
+            {/* Chrome 开着也照扫了（见 `chrome.rs` 的「Chrome 开着照扫」），
+                所以这里按**读开了几个**说话，不按「开没开」说话。 */}
             {traces.data && !traces.data.chrome_scanned && (
               <p className="notice notice--warn mt-3">
-                Chrome 正在运行，它的资料文件被占着扫不了。
+                一个 Chrome 资料文件都没读开，这一项没扫成。
                 <strong>这不等于「没有痕迹」</strong>
-                ——先关掉 Chrome 再点一次检测。
+                ——资料目录可能不在默认位置，或者被别的程序锁着。
               </p>
             )}
+            {traces.data &&
+              traces.data.chrome_scanned &&
+              traces.data.chrome_files_locked > 0 && (
+                <p className="notice notice--warn mt-3">
+                  读开 {traces.data.chrome_files_read} 个，还有{" "}
+                  {traces.data.chrome_files_locked} 个没读开
+                  {traces.data.chrome_running ? "（Chrome 正开着）" : ""}。
+                  <strong>上面的结论只覆盖读开的那部分</strong>
+                  ——关掉 Chrome 再检测一次能扫全。
+                </p>
+              )}
             <div className="mt-3 flex gap-2">
               <Button
                 disabled={!!action.pending}

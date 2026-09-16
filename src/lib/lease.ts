@@ -59,7 +59,10 @@ export interface LeaseText {
  *
  * @param verb 动词部分，各处措辞不同（「已租给」/「已放行给」）。
  */
-export function describeLease(lease: LeaseLike, verb: string): LeaseText | null {
+export function describeLease(
+  lease: LeaseLike,
+  verb: string,
+): LeaseText | null {
   const names = holderNames(lease);
   if (names.length === 0) return null;
   const short = names.map(shortHolder);

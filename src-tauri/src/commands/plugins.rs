@@ -59,6 +59,15 @@ pub fn tavern_config() -> plugins::sillytavern::TavernConfig {
     plugins::sillytavern::load_config()
 }
 
+/// 在本机找酒馆与桥接装在哪。**只读，不写配置** —— 采用哪一条由使用者点。
+///
+/// 故意不拿 `operations::exclusive`：它只读盘，跟切号 / 装机那几个互斥操作
+/// 不冲突，而深扫最长要跑 90 秒 —— 占着那把锁会把别的操作全堵住。
+#[tauri::command]
+pub async fn tavern_locate(deep: bool) -> Result<plugins::tavern_locate::TavernSurvey> {
+    plugins::sillytavern::locate(deep).await
+}
+
 #[tauri::command]
 pub async fn tavern_config_save(cfg: plugins::sillytavern::TavernConfig) -> Result<()> {
     let _guard = operations::exclusive_soon().await?;

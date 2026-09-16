@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ReactNode } from "react";
 
 interface Props {
   title: ReactNode;
@@ -14,7 +14,9 @@ export default function PageHeader({ title, sub, actions }: Props) {
         <h1>{title}</h1>
         {sub && <p className="sub">{sub}</p>}
       </div>
-      {actions && <div className="flex flex-shrink-0 items-center gap-2">{actions}</div>}
+      {actions && (
+        <div className="flex flex-shrink-0 items-center gap-2">{actions}</div>
+      )}
     </header>
   );
 }

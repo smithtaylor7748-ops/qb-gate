@@ -19,13 +19,13 @@
  */
 
 /** 这条日志讲的是什么。**不含「出错」** —— 出错是语气，见上面第 1 条。 */
-export type LogCategory = 'gate' | 'account' | 'process';
+export type LogCategory = "gate" | "account" | "process";
 
-export type LogTone = 'default' | 'ok' | 'warn' | 'danger';
+export type LogTone = "default" | "ok" | "warn" | "danger";
 
 /** 行内快捷动作。目前只有一种。 */
 export interface LogAction {
-  kind: 'allowlist';
+  kind: "allowlist";
   ip: string;
 }
 
@@ -55,35 +55,45 @@ const DENIED = /出口 IP (\S+) 不在白名单内/;
 // 「没生效」单列：`升级没生效：{msg}`（`install/upgrade.rs` 两处）是一条实打实的
 // 失败，但正文里一个「失败」二字都没有 —— 少了这个词，用户点「出错」筛选时
 // 恰恰看不到升级失败那几行。这与「重锁」落进 GATE 是同一类补漏。
-const DANGER = ['拒绝', '失败', '错误', '查不到', '没生效'];
+const DANGER = ["拒绝", "失败", "错误", "查不到", "没生效"];
 // 「锁不上」：`已上锁 N 个，另有 M 个锁不上` —— 部分失败，门没全关上（v0.8.0）。
-const WARN = ['收摊', '应急解锁', '白名单为空', '可绕过', '锁不上'];
-const OK = ['已放行', '已就绪', '已完成'];
+const WARN = ["收摊", "应急解锁", "白名单为空", "可绕过", "锁不上"];
+const OK = ["已放行", "已就绪", "已完成"];
 
-const ACCOUNT = ['账户', '中转站', '槽位'];
+const ACCOUNT = ["账户", "中转站", "槽位"];
 // 「重锁」要单列：`面板退出时重锁失败` 里没有「上锁」二字，
 // 少了它这条门禁事件会掉进 process。
-const GATE = ['上锁', '重锁', '解锁', '放行', '租约', '白名单', '残留副本', '门禁', '执行锁'];
+const GATE = [
+  "上锁",
+  "重锁",
+  "解锁",
+  "放行",
+  "租约",
+  "白名单",
+  "残留副本",
+  "门禁",
+  "执行锁",
+];
 
 function hit(text: string, words: string[]): boolean {
   return words.some((w) => text.includes(w));
 }
 
 function toneOf(text: string): LogTone {
-  if (hit(text, DANGER)) return 'danger';
-  if (hit(text, WARN)) return 'warn';
-  if (hit(text, OK)) return 'ok';
-  return 'default';
+  if (hit(text, DANGER)) return "danger";
+  if (hit(text, WARN)) return "warn";
+  if (hit(text, OK)) return "ok";
+  return "default";
 }
 
 function categoryOf(text: string): LogCategory {
   // v0.8.0 起启动那一行会带上用的是哪个账户槽位
   // （`Claude Code 已放行并启动（…，账户槽位 main）`）。它首先是一次门禁放行 ——
   // 按「账户」归类的话，按「门禁」筛选时就看不到放行记录了。
-  if (text.includes('放行')) return 'gate';
-  if (hit(text, ACCOUNT)) return 'account';
-  if (hit(text, GATE)) return 'gate';
-  return 'process';
+  if (text.includes("放行")) return "gate";
+  if (hit(text, ACCOUNT)) return "account";
+  if (hit(text, GATE)) return "gate";
+  return "process";
 }
 
 export function parseLogLine(raw: string): LogEntry {
@@ -100,7 +110,7 @@ export function parseLogLine(raw: string): LogEntry {
   };
 
   const denied = DENIED.exec(text);
-  if (denied) entry.action = { kind: 'allowlist', ip: denied[1] };
+  if (denied) entry.action = { kind: "allowlist", ip: denied[1] };
 
   return entry;
 }
@@ -110,19 +120,19 @@ export function parseLog(lines: string[]): LogEntry[] {
 }
 
 /** 界面上的四个筛选片。`all` 与 `error` 不是分类，所以单独一个类型。 */
-export type LogFilter = 'all' | LogCategory | 'error';
+export type LogFilter = "all" | LogCategory | "error";
 
 export const LOG_FILTER_LABEL: Record<LogFilter, string> = {
-  all: '全部',
-  gate: '门禁',
-  account: '账户',
-  process: '启停',
-  error: '出错',
+  all: "全部",
+  gate: "门禁",
+  account: "账户",
+  process: "启停",
+  error: "出错",
 };
 
 /** 「出错」看 `tone`，其余看 `category` —— 见文件头第 1 条。 */
 export function matchesFilter(e: LogEntry, f: LogFilter): boolean {
-  if (f === 'all') return true;
-  if (f === 'error') return e.tone === 'danger';
+  if (f === "all") return true;
+  if (f === "error") return e.tone === "danger";
   return e.category === f;
 }

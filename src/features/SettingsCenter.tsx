@@ -53,11 +53,38 @@ export default function SettingsCenter() {
     </>
   );
 }
+/** 一行开关：设置里的那个键、标题、底下那行小字。 */
+type Toggle = [keyof Preferences, string, string];
 function General() {
   const settings = useResource("settings", R.settings);
   const action = useAction();
   const [theme, setTheme] = useSession("theme", "system");
   if (!settings.data) return <p>{settings.error ?? "正在读取设置…"}</p>;
+  // 两组开关长得一模一样，只有文案不同 —— 渲染只写一份。
+  const row = ([key, title, description]: Toggle) => (
+    <label className="qb-setting-row" key={key}>
+      <span>
+        <strong>{title}</strong>
+        <small>{description}</small>
+      </span>
+      <input
+        type="checkbox"
+        checked={Boolean(settings.data?.[key])}
+        disabled={!!action.pending}
+        onChange={(e) =>
+          void action.run(
+            key,
+            () =>
+              api.settingsSave({
+                ...settings.data!,
+                [key]: e.target.checked,
+              }),
+            "偏好已保存",
+          )
+        }
+      />
+    </label>
+  );
   return (
     <section className="qb-detail">
       <h2>外观</h2>
@@ -85,31 +112,31 @@ function General() {
             "关闭 Claude Code 的非必要遥测",
             "只影响之后启动的 Claude Code 会话。",
           ],
-        ] as Array<[keyof Preferences, string, string]>
-      ).map(([key, title, description]) => (
-        <label className="qb-setting-row" key={key}>
-          <span>
-            <strong>{title}</strong>
-            <small>{description}</small>
-          </span>
-          <input
-            type="checkbox"
-            checked={Boolean(settings.data?.[key])}
-            disabled={!!action.pending}
-            onChange={(e) =>
-              void action.run(
-                key,
-                () =>
-                  api.settingsSave({
-                    ...settings.data!,
-                    [key]: e.target.checked,
-                  }),
-                "偏好已保存",
-              )
-            }
-          />
-        </label>
-      ))}
+        ] as Toggle[]
+      ).map(row)}
+      <h2 className="qb-subheading">启动时对齐</h2>
+      <p className="qb-muted">
+        面板启动时把系统对齐到出口 IP 的归属地；已经一致就不做任何动作。
+      </p>
+      {(
+        [
+          [
+            "align_timezone_on_start",
+            "系统时区",
+            "只在与出口 IP 不一致时切换，那一次需要管理员确认。",
+          ],
+          [
+            "align_locale_on_start",
+            "区域格式",
+            "日期、数字与货币的显示方式，之后启动的程序才读到新值。",
+          ],
+          [
+            "align_display_language_on_start",
+            "系统显示语言",
+            "需要先装好对应语言包，而且要注销后才生效，因此默认关闭。",
+          ],
+        ] as Toggle[]
+      ).map(row)}
       <p className="qb-help-note">
         IP
         白名单、国家规则与会话门禁集中在“环境与门禁”。安装目录迁移位于“高级维护”。

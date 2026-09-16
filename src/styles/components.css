@@ -14,7 +14,6 @@
    `.qb-main` / `.qb-page`，正文宽度改成自适应、上限 1480px），
    这一段全树零引用，删。要找旧版长什么样去看 `ed32bd7`。 */
 
-
 /* ================================================================ 卡片 */
 
 .card {
@@ -44,6 +43,11 @@
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
+  /* 窄屏上让动作区整块换行，而不是顶出盒子。
+     `.card-actions` 是 `flex-shrink: 0`（按钮不许被压扁），所以它一旦
+     放不下就只能溢出 —— 0.20.0 把「重新检测 / 一键全面体检」并进综合评分
+     那一行之后，680px 那一档当场溢出 22px，`test:ui` 抓到的。 */
+  flex-wrap: wrap;
 }
 .card-title {
   font-size: var(--text-md);
@@ -59,6 +63,13 @@
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  /* 换到第二行之后，里面的东西自己也要能再换行。
+     `flex-shrink: 0` 让它按 max-content 撑开（按钮不许被压扁），
+     所以还要一条 `max-width` 把它夹回卡片宽度里 —— 夹住之后
+     `flex-wrap` 才真的起作用，否则它只是「可以换行但永远换不了」。 */
+  flex-wrap: wrap;
+  max-width: 100%;
+  min-width: 0;
 }
 
 /* ================================================================ 按钮 */
@@ -617,6 +628,17 @@
   width: min(860px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
 }
+/* 两列表单：中转站的添加 / 编辑。860 那档两列各 420 加间距就顶到边了。 */
+.modal--form {
+  width: min(880px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+}
+/* 带曲线和宽表的：请求日志七列。窄下去每一列都在换行，
+   读数对不齐就没法横着比 —— 而横着比正是这张表存在的理由。 */
+.modal--huge {
+  width: min(1180px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+}
 .modal::backdrop {
   background: rgb(0 0 0 / 0.55);
   backdrop-filter: blur(2px);
@@ -776,12 +798,13 @@
 }
 
 .sidetab {
+  /* 一行：名字 + 说明并排。0.20.0 之前是两行（`flex-direction: column`），
+     光这一条就占 61px —— 总览要在一屏里放下，这是最容易让出来的一块。 */
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
-  padding: 8px 12px;
+  padding: 6px 12px;
   text-align: left;
   border: 1px solid var(--border);
   border-bottom: 2px solid transparent;
@@ -789,7 +812,10 @@
   background: var(--surface-2);
   color: var(--text-2);
   cursor: pointer;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  transition:
+    background 0.12s,
+    color 0.12s,
+    border-color 0.12s;
 }
 
 .sidetab:hover {
@@ -963,6 +989,26 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 标签做成按钮时，视觉上跟纯文字那一档完全一样 ——
+   它是「打开详情」的入口，不是又一个动作按钮，不该抢眼。 */
+.slotrow-open {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.slotrow-open:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.slotrow-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
 .slotrow-plan {
   color: var(--text-3);
   font-size: var(--text-xs);
@@ -997,7 +1043,7 @@
 .pager-btn:hover {
   border-color: var(--text-3);
 }
-.pager-btn[aria-current='true'] {
+.pager-btn[aria-current="true"] {
   border-color: var(--accent-border);
   background: var(--accent-bg);
   color: var(--accent);
@@ -1344,4 +1390,107 @@
 .gauge-src {
   color: var(--text-3);
   justify-self: end;
+}
+
+/* ------------------------------------------- 账户详情里的 token 统计表 */
+
+/* ⛔ 表格一律横向滚动，否则 680px 那一档的溢出断言当场红。
+   跟中转站那张表（`station.css` 的 `.qb-st-tw`）故意分开写：那张有自己的
+   min-width 和列宽，两张表挤进同一个类名之后，改一边必然动到另一边，
+   而 `test:ui` 只会告诉你「某处溢出了」。 */
+.qb-acct-tw {
+  overflow-x: auto;
+}
+.qb-acct-tw table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--text-xs);
+  min-width: 460px;
+}
+.qb-acct-tw th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-3);
+  padding: 5px 10px 5px 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.qb-acct-tw td {
+  padding: 5px 10px 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+.qb-acct-tw td.num,
+.qb-acct-tw th.num {
+  text-align: right;
+  padding-right: 0;
+  font-variant-numeric: tabular-nums;
+}
+.qb-acct-tw tfoot th {
+  border-bottom: 0;
+  color: var(--text-1);
+}
+
+/* 账户详情里的事实表。
+   `workspace.css` 那个 `.qb-facts` 是 `150px 1fr` 的两列 —— 那是给窄的
+   详情栏做的，放进 huge 弹窗里左窄右宽、读起来是歪的。这里按可用宽度
+   自己排列数，窄屏退成一列。 */
+.qb-facts.qb-facts--wide {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px 18px;
+  padding: 10px 0;
+}
+/* 长路径不许把格子撑破。`workspace.css` 的 `.qb-facts` 只给 `dd` 加了
+   这一条，而这里的值在 `strong` 里 —— 少了它，两个格子会叠在一起，
+   路径互相压着，一个字都读不出来（实机截图上抓到过）。 */
+.qb-facts.qb-facts--wide strong,
+.qb-facts.qb-facts--wide code {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+/* 右栏的启动格：2×2 四块（Claude Code / 桌面端 / 酒馆 / 一键关闭）。
+   一度试过竖排一列，是为了填掉三块时右下角那个空格；加进第四块之后
+   2×2 正好填满，也不用把每块拉成整栏宽。窄屏按可用宽度自己退成一列。 */
+.launchcol {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 7px;
+}
+@media (min-width: 768px) {
+  .launchcol {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* 账户用量小结的四个数。auto-fit 而不是四等分：窄屏退成两列、一列，
+   而不是把 `$0.00` 压成竖着的四个字符。 */
+.ustats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+.ustat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 11px;
+}
+.ustat-name {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.ustat-value {
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.ustat-sub {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

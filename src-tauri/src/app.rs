@@ -38,6 +38,22 @@ pub struct AppState {
     /// 没填时是 `None`，所有刷新都是空操作 —— demo 模式、单测、
     /// 以及托盘还没起来的那一小段启动期都走这条路，不必到处判空。
     refresh_ui: std::sync::Mutex<Option<UiRefresher>>,
+    /// 中转站本机路由的状态：当前上游、熔断器、还没落库的请求日志。
+    ///
+    /// 跟 handle 分开放是有理由的：**路由停掉之后这些状态还要留着** ——
+    /// 停了再起不该把日志和熔断记录清零。
+    pub station: std::sync::Arc<std::sync::Mutex<qb_app::local_router::RouterState>>,
+    /// 路由跑起来之后监听在哪。`None` = 没启动。
+    pub station_addr: std::sync::Mutex<Option<std::net::SocketAddr>>,
+    /// 持有它就等于持有那个监听。丢掉/`stop()` 就停。
+    pub station_router: std::sync::Mutex<Option<qb_app::local_router::RouterHandle>>,
+    /// 智能调度驻留循环的停止句柄。`None` / 已关闭 = 没在跑。
+    ///
+    /// 跟看门狗那个是**两回事**,别合并:看门狗守的是安全边界(出口 IP 变了
+    /// 要收 Claude),调度换的是花钱的上游。合成一个之后,关掉调度会把
+    /// 看门狗一起关掉 —— 而那扇门开着却没人核对出口 IP,正是 CLAUDE.md
+    /// 里那条教训防的场面。
+    pub scheduler_stop: std::sync::Mutex<Option<tokio::sync::watch::Sender<bool>>>,
 }
 
 impl AppState {

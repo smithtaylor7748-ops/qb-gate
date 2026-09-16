@@ -339,6 +339,41 @@ pub async fn managed_cleanup(
     r
 }
 
+// ------------------------------------------------------- 完全卸载（0.19.0）
+
+/// 完全卸载之前的**只读盘点**：这个软件在本机的全部落点，按类分好，
+/// 每一项都带绝对路径与归属依据。
+///
+/// **只读。** 不删任何东西、不改任何设置 —— 界面拿它列确认框，
+/// 使用者输入确认词之后才轮到执行那一半。
+///
+/// 跟 `managed_externals` 的分界线：那个清的是「面板没装的多余副本」，
+/// 托管那份、版本库、配置、认证、账户槽位一概不碰；这个的前提相反 ——
+/// **这台机器上不再要这个软件了**，上面那些全都要清。
+///
+/// 不占 `operations::exclusive()`：它是只读的，不该把别的活挡在外面
+/// （跟 `managed_externals` 同一个道理）。
+#[tauri::command]
+pub async fn purge_plan(target: install::purge::Target) -> Result<Vec<install::purge::Item>> {
+    usecase::purge_ops::plan(target).await
+}
+
+/// **执行**完全卸载。调用之前界面必须已经让使用者看过盘点并输入了确认词。
+///
+/// 跟 `purge_plan` 相反，这个**要占独占锁**：它会关进程、摘执行锁、删文件，
+/// 跟别的长任务撞上会互相毁。
+///
+/// 结束时复扫一遍，把还剩下的照实列在 `left` 里 —— 不看命令报了什么，
+/// 看重新扫一遍还剩什么。
+#[tauri::command]
+pub async fn purge_execute(
+    target: install::purge::Target,
+    state: tauri::State<'_, AppState>,
+) -> Result<usecase::purge_ops::Report> {
+    let _guard = operations::exclusive().await?;
+    usecase::purge_ops::execute(target, &state.gate).await
+}
+
 // --------------------------------------------------- Claude 痕迹与 Chrome
 
 /// 这台机器以前装过 / 登录过 Claude 吗。

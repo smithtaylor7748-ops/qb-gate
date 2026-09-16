@@ -1,0 +1,1961 @@
+/* 中转站四个分页的样式。
+   ⛔ 颜色一律引用 tokens.css 的变量 —— 草图（V24）用的是合并前的旧配色，
+      不要从草图里抄 hex。见 CLAUDE.md「颜色只在 tokens.css 里定义」。
+   ⛔ 所有表格放在 .qb-st-tw 里横向滚动：`npm run test:ui` 在 680px 上
+      断言 .qb-main 不横向溢出，一张不滚的表当场红。 */
+
+.qb-st-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.qb-st-tabs button {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 8px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.qb-st-tabs button:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.qb-st-tabs button[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 500;
+}
+
+/* 客户端分页：线路出现在哪一页只看协议 */
+.qb-st-ctabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.qb-st-ctabs button {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  font: inherit;
+  font-size: 13px;
+  padding: 9px 14px;
+  cursor: pointer;
+  color: var(--text-2);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.qb-st-ctabs button[aria-selected="true"] {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+.qb-st-ctabs .n {
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.qb-st-ctabs .live {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  flex: none;
+}
+
+/* 启动条：整页只有这一处能启动 */
+.qb-st-launch {
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface-2);
+  padding: 12px 14px;
+}
+.qb-st-launch .top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.qb-st-launch .st {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.qb-st-launch .led {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex: none;
+}
+.qb-st-launch.up .led {
+  background: var(--ok);
+}
+.qb-st-launch .foot {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+/* 站点 → 分组两层。⛔ 余额是站点级的，倍率与 24h 实扣是分组级的 ——
+   画成平级会让同一份余额在两张卡上各写一遍，看起来像两笔钱。 */
+.qb-st-site {
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.qb-st-sitehd {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 13px;
+  flex-wrap: wrap;
+}
+.qb-st-sitehd .sn {
+  min-width: 0;
+  flex: 1;
+}
+.qb-st-sitehd .sn b {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+.qb-st-sitehd .sn small {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qb-st-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border);
+  border-top: 1px solid var(--border);
+}
+.qb-st-lc {
+  background: var(--surface);
+  overflow: hidden;
+}
+.qb-st-lc.on {
+  background: var(--accent-bg);
+}
+.qb-st-lc .pick {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  padding: 11px 13px;
+  cursor: pointer;
+}
+.qb-st-lc .pick:hover {
+  background: var(--surface-2);
+}
+.qb-st-rd {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  flex: none;
+}
+.qb-st-lc.on .qb-st-rd {
+  border-color: var(--accent);
+  background: radial-gradient(circle, var(--accent) 0 45%, transparent 46%);
+}
+.qb-st-lc .who {
+  min-width: 0;
+  flex: 1;
+}
+.qb-st-lc .who b {
+  font-weight: 600;
+  font-size: 14px;
+}
+.qb-st-lc .who small {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qb-st-quick {
+  display: flex;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.qb-st-quick > div {
+  padding: 6px 13px;
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+.qb-st-quick > div:last-child {
+  border-right: 0;
+}
+.qb-st-k {
+  color: var(--text-3);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  display: block;
+}
+.qb-st-v {
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.qb-st-strike {
+  text-decoration: line-through;
+  color: var(--text-3);
+}
+
+/* 智能调度 */
+.qb-st-deck {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 980px) {
+  .qb-st-deck {
+    grid-template-columns: 1fr;
+  }
+}
+.qb-st-verdict {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  border-radius: 12px;
+  padding: 12px 15px;
+}
+.qb-st-verdict .lead {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.qb-st-verdict .big {
+  font-size: 19px;
+  font-weight: 600;
+}
+.qb-st-verdict .big small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-2);
+  margin-left: 7px;
+}
+
+/* ⛔ 三个复选框，不是三根推子。推子显示 50% 的精度而那个精度不存在 ——
+   三条线稳定度都在 91~92 时把「稳定」从 0 拉到 100，排名一个字不变。 */
+.qb-st-goals {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.qb-st-goal {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  cursor: pointer;
+  background: var(--surface);
+}
+.qb-st-goal.on {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.qb-st-goal input {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  flex: none;
+}
+.qb-st-goal .gn {
+  font-size: 13.5px;
+  font-weight: 600;
+  display: block;
+}
+.qb-st-goal .gd {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.qb-st-floors {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.qb-st-floor {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-2);
+  flex-wrap: wrap;
+}
+.qb-st-floor.off {
+  opacity: 0.48;
+}
+.qb-st-num {
+  width: 64px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  padding: 2px 5px;
+  text-align: right;
+}
+
+/* 赛道：每一维单独一根条 = 跟池里最好那条的比值。
+   合成一根总分条会把「哪一项拖后腿」抹掉，而那正是要看的东西。 */
+.qb-st-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.qb-st-lane {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.qb-st-lane .no {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-3);
+  width: 16px;
+  flex: none;
+  text-align: right;
+}
+.qb-st-lane .nm {
+  width: 132px;
+  flex: none;
+  min-width: 0;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qb-st-lane.win .nm {
+  font-weight: 600;
+}
+.qb-st-lane.out {
+  opacity: 0.5;
+}
+.qb-st-mets {
+  flex: 1;
+  display: flex;
+  gap: 9px;
+  min-width: 0;
+}
+.qb-st-met {
+  flex: 1;
+  min-width: 46px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.qb-st-met i {
+  font-style: normal;
+  font-size: 9.5px;
+  color: var(--text-3);
+  display: flex;
+  justify-content: space-between;
+  gap: 5px;
+}
+.qb-st-met .mb {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.qb-st-met .mb b {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.qb-st-met.cheap .mb b {
+  background: var(--warn);
+}
+.qb-st-met.stable .mb b {
+  background: var(--ok);
+}
+/* 最弱的那一项就是这条线路的分数 —— 标出来，否则「取最差项」这条规则看不见 */
+.qb-st-met.weak i {
+  color: var(--accent);
+  font-weight: 600;
+}
+.qb-st-met.weak .mb {
+  border-color: var(--accent-border);
+}
+.qb-st-lane .tot {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  width: 44px;
+  text-align: right;
+  flex: none;
+}
+.qb-st-lane.win .tot {
+  color: var(--accent);
+  font-weight: 600;
+}
+.qb-st-lane .why {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-3);
+  min-width: 0;
+}
+
+/* 熔断：四张状态卡，不是表格 */
+.qb-st-brks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 9px;
+}
+.qb-st-brk {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.qb-st-brk.warn {
+  border-color: var(--warn-border);
+}
+.qb-st-brk.bad {
+  border-color: var(--danger-border);
+}
+.qb-st-brk .trig {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+}
+.qb-st-brk.warn .trig {
+  color: var(--warn);
+}
+.qb-st-brk.bad .trig {
+  color: var(--danger);
+}
+.qb-st-brk .act {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.qb-st-brk .set {
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+/* 站点检验 */
+.qb-st-cred {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 96px;
+}
+.qb-st-cred .bar {
+  width: 44px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+  flex: none;
+}
+.qb-st-cred .bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+/* ⛔ 从没检验过不写成 0 —— 0 分是一个断言，没检验过是还没有断言。 */
+.qb-st-never {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  color: var(--text-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.qb-st-fails {
+  display: block;
+  font-size: 11.5px;
+  color: var(--danger);
+  line-height: 1.45;
+}
+/* 「选中转站 → 选分组 → 选模型」那三级。
+   窄面板里换行成一列 —— 模型那一格最宽（要放下 `×0.15 · 计费翻倍 ×5`）。 */
+.qb-st-cascade {
+  display: flex;
+  align-items: flex-end;
+  gap: 11px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.qb-st-cascade label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 150px;
+}
+.qb-st-cascade label:last-of-type {
+  flex: 2 1 240px;
+}
+.qb-st-cascade label > span {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.qb-st-cascade select,
+.qb-st-cascade input {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-1);
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.qb-st-cascade select:disabled {
+  color: var(--text-3);
+}
+
+.qb-st-runbar {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  flex-wrap: wrap;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface-2);
+  padding: 11px 14px;
+}
+.qb-st-bound {
+  font-size: 11.5px;
+  color: var(--text-3);
+  text-align: center;
+  padding: 2px;
+}
+.qb-st-nudge {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid var(--warn-border);
+  background: var(--warn-bg);
+  border-radius: 12px;
+  padding: 10px 13px;
+  font-size: 12.5px;
+}
+
+/* ⛔ 表格一律横向滚动，否则 680px 那一档溢出断言当场红 */
+.qb-st-tw {
+  overflow-x: auto;
+}
+.qb-st-tw table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+  min-width: 660px;
+}
+.qb-st-tw th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-3);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.qb-st-tw td {
+  padding: 7px 10px 7px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.qb-st-tw td.num,
+.qb-st-tw th.num {
+  text-align: right;
+  padding-right: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.qb-st-empty {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 26px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+.qb-st-note {
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+/* 看起来像链接的按钮。用 <button> 而不是 <a> —— 它不导航，只切视图；
+   用 <a href="#"> 会在地址栏留下一个回不去的 hash。 */
+.qb-linkish {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.qb-linkish:hover {
+  color: var(--accent);
+}
+
+/* =========================================================================
+   中转站重排（0.16.0）：没有子菜单栏。
+   软件分段器 → 总览卡 + 右列三按钮 → 站点卡 → 账户行。
+   ⛔ 颜色只引 tokens.css 的变量，不写 hex。
+   ========================================================================= */
+
+.qb-st-ctl {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+/* ---------------------------------------------------------- 总览卡 */
+.qb-st-ov {
+  display: flex;
+  gap: 9px;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+.qb-st-ovmain {
+  flex: 1 1 420px;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 11px 13px;
+}
+.qb-st-ovside {
+  flex: 0 0 176px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.qb-st-now {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+.qb-st-now .eyebrow {
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.qb-st-now .name {
+  font-size: 13px;
+  font-weight: 500;
+}
+.qb-st-now .name.dim {
+  color: var(--text-3);
+  font-weight: 400;
+}
+.qb-st-now .side {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.qb-st-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 9px;
+  margin-bottom: 10px;
+}
+.qb-st-kpi {
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 9px 11px;
+  min-width: 0;
+}
+.qb-st-kpi .k {
+  display: block;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.qb-st-kpi .v {
+  display: block;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+.qb-st-kpi .s {
+  display: block;
+  font-size: 9.5px;
+  color: var(--text-3);
+  margin-top: 1px;
+}
+
+.qb-st-rangebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.qb-st-rangebar label {
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.qb-st-rangebar select {
+  font: inherit;
+  font-size: 11.5px;
+  padding: 4px 8px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+}
+
+.qb-st-legend {
+  display: flex;
+  gap: 11px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+  font-size: 9.5px;
+  color: var(--text-3);
+}
+.qb-st-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 2px;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+.qb-st-chart-empty {
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+/* ------------------------------------------- 右列：就三个按钮，别往里塞
+   启动（主色实心）/ 智能调度（开着转绿）/ 调度设置，三个都是整块点的大按钮 ——
+   使用者点名不要小开关。按高度撑满、底边对齐总览卡，不留空地。
+
+   动效分三层，每一层都在告诉人「按钮现在在干什么」，不是纯装饰：
+     悬停 —— 一道光扫过、微微浮起：这块能点；
+     按下 —— 从按下的位置泛开涟漪：点到了；
+     状态 —— 启动中光带一直扫 + 底边进度条，成功打勾泛光、失败转红抖一下；
+             调度开着时一道光沿边绕、状态点一圈圈往外扩。
+   ⛔ 颜色只引 tokens.css 的变量（color-mix 里也一样），不写 hex。
+   ⛔ 系统开了「减少动态效果」就全停，只留状态本身（文字、颜色）。 */
+
+@property --qb-st-spin {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.qb-st-launchbtn,
+.qb-st-schedbtn,
+.qb-st-schedcfg {
+  appearance: none;
+  position: relative;
+  /* 光带、涟漪、绕边光都是负 z-index 的子元素：在按钮底色之上、文字之下。 */
+  isolation: isolate;
+  overflow: hidden;
+  min-width: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition:
+    transform var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out),
+    background-color var(--duration-base) var(--ease-out),
+    border-color var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out);
+}
+/* 全局 :focus-visible 会把圆角改成 sm，这里钉回来，聚焦时角不跳。 */
+.qb-st-launchbtn:focus-visible,
+.qb-st-schedbtn:focus-visible,
+.qb-st-schedcfg:focus-visible {
+  border-radius: var(--radius-md);
+}
+.qb-st-launchbtn:active:not(:disabled),
+.qb-st-schedbtn:active,
+.qb-st-schedcfg:active {
+  transform: translateY(0) scale(0.985);
+  box-shadow: none;
+}
+
+.qb-st-launchbtn .hd,
+.qb-st-schedbtn .hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+/* ⛔ `color: inherit` 不能省：components.css 有一条全局 `.sub`（--text-3），
+   不压住的话主色底上的副标题会变成暗字。 */
+.qb-st-launchbtn .sub,
+.qb-st-schedbtn .sub {
+  color: inherit;
+  font-size: 10.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+.qb-st-ico {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  transition: transform var(--duration-base) var(--ease-out);
+}
+
+/* ---- 光带：悬停扫一次，干活时一直扫 */
+.qb-st-sheen {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 32%,
+    var(--qb-st-sheen) 50%,
+    transparent 68%
+  );
+  transform: translateX(-110%);
+}
+@keyframes qb-st-sheen {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(110%);
+  }
+}
+/* ⛔ 悬停这条要把「正在干活」排除掉：点完启动鼠标还停在按钮上，这条选择器
+   比下面那条更具体，不排除的话「一直扫」会被「扫一次」盖掉。 */
+.qb-st-launchbtn:hover:not(:disabled):not([data-fx="launching"]) .qb-st-sheen,
+.qb-st-schedbtn:hover:not([data-fx="busy"]) .qb-st-sheen,
+.qb-st-schedcfg:hover .qb-st-sheen {
+  animation: qb-st-sheen 900ms var(--ease-out);
+}
+.qb-st-launchbtn[data-fx="launching"] .qb-st-sheen,
+.qb-st-schedbtn[data-fx="busy"] .qb-st-sheen {
+  animation: qb-st-sheen 1.15s linear infinite;
+}
+
+/* ---- 涟漪：从按下的位置泛开（元素由 useRipple 放进来，放完自己摘掉） */
+.qb-st-ripple {
+  position: absolute;
+  z-index: -1;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.26;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0);
+  animation: qb-st-ripple 650ms var(--ease-out) forwards;
+}
+@keyframes qb-st-ripple {
+  to {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0;
+  }
+}
+
+/* ---- 转圈：一段亮弧绕着一圈淡环走 */
+.qb-st-orbit {
+  width: 15px;
+  height: 15px;
+  border: 2px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: cg-spin 0.8s linear infinite;
+}
+
+/* ================================================= 启动：主色实心 */
+.qb-st-launchbtn {
+  --qb-st-sheen: color-mix(in srgb, var(--surface) 38%, transparent);
+  flex: 1 1 76px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 13px;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--surface);
+}
+/* ⛔ 副标题不许降透明度：`--surface` 压 `--accent` 的对比度只有 4.93，再淡就不到 AA。 */
+.qb-st-launchbtn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px -12px
+    color-mix(in srgb, var(--accent) 90%, transparent);
+}
+.qb-st-launchbtn:hover:not(:disabled) .qb-st-ico {
+  transform: translateX(2px);
+}
+/* 没选上游：灰底虚线框，原因写在 .sub 里。 */
+.qb-st-launchbtn:disabled {
+  background: var(--surface-2);
+  border: 1px dashed var(--border-strong);
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+.qb-st-launchbtn:disabled .hd {
+  font-weight: 500;
+}
+
+/* 启动中：光带一直扫、底边一条进度在跑、图标换成转圈。
+   不置 disabled（焦点会掉），只换光标。 */
+.qb-st-launchbtn[data-fx="launching"] {
+  cursor: progress;
+}
+.qb-st-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--surface) 22%, transparent);
+}
+.qb-st-progress i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 35%;
+  border-radius: 3px;
+  background: var(--surface);
+  animation: cg-slide 1.2s var(--ease-out) infinite;
+}
+
+/* 成功：打勾弹出来，外圈泛开一道光。 */
+.qb-st-launchbtn[data-fx="done"] {
+  animation: qb-st-glow-accent 1.3s var(--ease-out) 1;
+}
+.qb-st-launchbtn[data-fx="done"] .qb-st-ico,
+.qb-st-launchbtn[data-fx="failed"] .qb-st-ico {
+  animation: qb-st-pop 520ms var(--ease-out) 1;
+}
+@keyframes qb-st-glow-accent {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 14px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+@keyframes qb-st-pop {
+  0% {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.25);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* 失败：转红、抖一下。原因在下面的提示条里。 */
+.qb-st-launchbtn[data-fx="failed"] {
+  background: var(--danger);
+  border-color: var(--danger);
+  animation: qb-st-shake 420ms var(--ease-out) 1;
+}
+@keyframes qb-st-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-4px);
+  }
+  40% {
+    transform: translateX(4px);
+  }
+  60% {
+    transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+
+/* ================================================= 智能调度 */
+/* 关着：白底绿框，点一下启动。 */
+.qb-st-schedbtn {
+  --qb-st-sheen: color-mix(in srgb, var(--ok) 16%, transparent);
+  flex: 1 1 104px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 13px;
+  background: var(--surface);
+  border: 1px solid var(--ok-border);
+  color: var(--text);
+}
+.qb-st-schedbtn:hover {
+  background: var(--ok-bg);
+  border-color: var(--ok);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px -14px color-mix(in srgb, var(--ok) 85%, transparent);
+}
+.qb-st-schedbtn .qb-st-ico {
+  color: var(--ok);
+}
+.qb-st-schedbtn .desc {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.qb-st-schedbtn .sub {
+  color: var(--text-2);
+}
+/* 「上一轮」那句是后端原样给的，长短不定：最多两行，全文在 title 里。 */
+.qb-st-schedbtn .last {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+/* 「面板开着才生效 / 面板关掉即停」—— 字小一号、颜色淡一档，跟状态分开。 */
+.qb-st-schedbtn .foot {
+  padding-top: 2px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-3);
+}
+.qb-st-schedbtn[data-fx="busy"] {
+  cursor: progress;
+}
+
+/* 开着：整块转绿实心。 */
+.qb-st-schedbtn[aria-pressed="true"] {
+  --qb-st-sheen: color-mix(in srgb, var(--surface) 30%, transparent);
+  background: var(--ok);
+  border-color: var(--ok);
+  color: var(--surface);
+}
+.qb-st-schedbtn[aria-pressed="true"] .qb-st-ico,
+.qb-st-schedbtn[aria-pressed="true"] .sub,
+.qb-st-schedbtn[aria-pressed="true"] .foot {
+  color: var(--surface);
+}
+.qb-st-schedbtn[aria-pressed="true"]:hover {
+  background: var(--ok);
+  box-shadow: 0 10px 22px -12px color-mix(in srgb, var(--ok) 90%, transparent);
+}
+
+/* 刚点亮：外圈泛开一道绿光。 */
+.qb-st-schedbtn[data-fx="ignite"] {
+  animation: qb-st-glow-ok 1.2s var(--ease-out) 1;
+}
+@keyframes qb-st-glow-ok {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 14px color-mix(in srgb, var(--ok) 0%, transparent);
+  }
+}
+
+/* 绕边光：一段亮弧沿着按钮内沿一直走。靠 mask 只露出 1.5px 宽的一圈边。
+   ⛔ 别叫 .qb-st-ring —— 检验弹窗的可信度圆环已经占了那个名字，撞上之后
+   那个圆环会被这里的 opacity: 0 和 mask 整个藏掉。 */
+.qb-st-edge {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  padding: 1.5px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--qb-st-spin),
+    transparent 0turn 0.62turn,
+    color-mix(in srgb, var(--surface) 90%, transparent) 0.82turn,
+    transparent 1turn
+  );
+  -webkit-mask:
+    linear-gradient(var(--text) 0 0) content-box,
+    linear-gradient(var(--text) 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+.qb-st-schedbtn[aria-pressed="true"] .qb-st-edge {
+  opacity: 1;
+  animation: qb-st-spin 3.6s linear infinite;
+}
+@keyframes qb-st-spin {
+  to {
+    --qb-st-spin: 360deg;
+  }
+}
+
+/* 状态点：实心点 + 两圈往外扩的声呐环。 */
+.qb-st-sonar {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.qb-st-sonar::before,
+.qb-st-sonar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  animation: qb-st-sonar 2s var(--ease-out) infinite;
+}
+.qb-st-sonar::after {
+  animation-delay: 1s;
+}
+@keyframes qb-st-sonar {
+  from {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  to {
+    transform: scale(3.2);
+    opacity: 0;
+  }
+}
+
+/* ================================================= 调度设置 */
+/* 一行、带箭头 —— 看得出是「打开」，不是第二个开关。 */
+.qb-st-schedcfg {
+  --qb-st-sheen: color-mix(in srgb, var(--text) 7%, transparent);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 13px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+.qb-st-schedcfg:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.qb-st-schedcfg .chev {
+  margin-left: auto;
+  color: var(--text-3);
+  transition: transform var(--duration-base) var(--ease-out);
+}
+.qb-st-schedcfg:hover .chev {
+  transform: translateX(3px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qb-st-launchbtn,
+  .qb-st-schedbtn,
+  .qb-st-schedcfg,
+  .qb-st-ico,
+  .qb-st-edge,
+  .qb-st-schedcfg .chev {
+    transition: none;
+  }
+  .qb-st-launchbtn,
+  .qb-st-schedbtn,
+  .qb-st-schedcfg,
+  .qb-st-launchbtn:hover:not(:disabled),
+  .qb-st-schedbtn:hover,
+  .qb-st-schedcfg:hover,
+  .qb-st-launchbtn:hover:not(:disabled) .qb-st-ico,
+  .qb-st-schedcfg:hover .chev,
+  .qb-st-ico,
+  .qb-st-orbit,
+  .qb-st-edge,
+  .qb-st-progress i {
+    transform: none;
+    animation: none;
+  }
+  .qb-st-sheen,
+  .qb-st-ripple,
+  .qb-st-sonar::before,
+  .qb-st-sonar::after {
+    display: none;
+  }
+  /* 进度条停下来就是一整条，不再假装在跑。 */
+  .qb-st-progress i {
+    width: 100%;
+    opacity: 0.55;
+  }
+}
+
+/* ---------------------------------------------------------- 站点与账户行 */
+.qb-st-sites {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.qb-st-sites.sched .qb-st-site {
+  border-color: var(--ok-border);
+  box-shadow: inset 3px 0 0 var(--ok);
+}
+.qb-st-sites .qb-st-sitehd {
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.qb-st-sites .qb-st-sitehd b {
+  font-weight: 600;
+  font-size: 13px;
+}
+.qb-st-sites .qb-st-sitehd small {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.qb-st-sites .qb-st-sitehd .bal {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+/* 整行可点，没有小圆点。行是 div[role=radio] —— button 套 button 会被
+   解析器提前闭合外层，名字/动作/读数格散成三段。 */
+.qb-st-row {
+  display: block;
+  width: 100%;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 9px 12px;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.qb-st-site > .qb-st-row:first-of-type {
+  border-top: 0;
+}
+.qb-st-row:hover {
+  background: var(--surface-2);
+}
+.qb-st-row.on,
+.qb-st-row.on:hover {
+  background: var(--accent-bg);
+}
+.qb-st-sites.sched .qb-st-row.on {
+  background: var(--ok-bg);
+}
+.qb-st-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.qb-st-rowtop {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 7px;
+}
+.qb-st-rowtop .gname {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.qb-st-rowtop .acts {
+  display: flex;
+  gap: 5px;
+  margin-left: auto;
+}
+.qb-st-rowerr {
+  padding-top: 6px;
+  font-size: 11px;
+  color: var(--warn);
+}
+
+/* ⛔ 用间距分组，竖线只是装饰 —— 靠竖线分格撑布局的话，一换行就断成两截。 */
+.qb-st-row .qb-st-quick {
+  border-top: 0;
+}
+.qb-st-row .qb-st-quick > div {
+  padding: 0 16px 0 0;
+  margin-right: 16px;
+  border-right: 1px solid var(--border);
+  line-height: 1.3;
+}
+.qb-st-row .qb-st-quick > div:last-child {
+  margin-right: 0;
+  padding-right: 0;
+  border-right: 0;
+}
+.qb-st-dim {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+/* 说明条：这一块还没按定稿重做。 */
+.qb-st-todo {
+  margin: 0 0 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  padding: 8px 11px;
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+/* ---------------------------------------------------------- 标签 */
+.qb-st-pill {
+  font-size: 10px;
+  border-radius: 5px;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.qb-st-pill--ok {
+  background: var(--ok-bg);
+  color: var(--ok);
+  border-color: var(--ok-border);
+}
+.qb-st-pill--warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-color: var(--warn-border);
+}
+.qb-st-pill--danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger-border);
+}
+.qb-st-pill--accent {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+/* 「从没检验过」是独立行态 —— 虚线，⛔ 不写成 0 分。 */
+.qb-st-pill--unknown {
+  color: var(--text-3);
+  border: 1px dashed var(--border-strong);
+}
+
+@media (max-width: 720px) {
+  /* 窄屏右列落到总览卡下面：启动和智能调度两块横排，调度设置单独占一整行。
+     ⛔ 别写回 `.qb-st-ovside > * { flex: 1 }`，那会把调度设置挤成第三栏。 */
+  .qb-st-ovside {
+    flex: 1 1 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .qb-st-launchbtn,
+  .qb-st-schedbtn {
+    flex: 1 1 200px;
+  }
+  .qb-st-schedcfg {
+    flex: 1 1 100%;
+  }
+  .qb-st-rowtop .acts {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
+/* ================================================================ 请求日志弹窗（§2.7）
+
+   ⛔ 颜色只引 tokens.css 的变量，不写 hex。
+   ⛔ 表格一律包在 .qb-st-tw 里横向滚 —— 680px 上那条溢出断言盯着这件事。 */
+
+/* 一、线路配置带：倍率三态 · 绑定 Key · 协议 · 站点地址 */
+.qb-st-logband {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.qb-st-banditem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.qb-st-banditem .k {
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.qb-st-banditem .v {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.qb-st-mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.qb-st-bad {
+  color: var(--danger);
+}
+
+/* 二、两个数据源并排。⛔ 各自带来源标签 —— 口径不同，读数对不上是正常的，
+      不标就是自相矛盾。 */
+.qb-st-logstats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.qb-st-srcline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.qb-st-srcline b {
+  font-size: 12px;
+}
+.qb-st-srcline span {
+  font-size: 10px;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+.qb-st-logkpis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-bottom: 9px;
+}
+.qb-st-logkpi {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.qb-st-logkpi .k {
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.qb-st-logkpi b {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.qb-st-logkpi .s {
+  font-size: 9.5px;
+  color: var(--text-3);
+}
+
+/* Token 四类堆叠条。⛔ 四类分开 —— 合成一个总数会把「输出翻五倍」藏掉。 */
+.qb-st-tokbar .bar {
+  display: flex;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.qb-st-tokbar .bar i {
+  display: block;
+  height: 100%;
+}
+.qb-st-tokbar .qb-st-legend i {
+  height: 8px;
+  width: 8px;
+  border-radius: 2px;
+}
+
+/* 三、筛选栏。⛔ 没有「来源 / 客户端」这一项 —— 弹窗已经开在某条线路底下了。 */
+.qb-st-logfilter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 9px;
+}
+.qb-st-seg {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.qb-st-seg button {
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 10px;
+  border: 0;
+  cursor: pointer;
+  color: var(--text-2);
+  background: var(--surface);
+}
+.qb-st-seg button + button {
+  border-left: 1px solid var(--border);
+}
+.qb-st-seg button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+.qb-st-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.qb-st-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.qb-st-field select {
+  font: inherit;
+  font-size: 11.5px;
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 4px 8px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+}
+
+/* ================================================================ 添加 / 编辑弹窗（§2.5）
+
+   形态参考 cc-switch（MIT）的 ProviderForm。⛔ 颜色只引 tokens.css 的变量。 */
+
+.qb-st-form {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.qb-st-form input[type="text"],
+.qb-st-form input[type="password"],
+.qb-st-form input:not([type]),
+.qb-st-form select {
+  font: inherit;
+  font-size: 12.5px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 9px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+}
+.qb-st-form input:disabled,
+.qb-st-form select:disabled {
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+
+/* 预设胶囊。⛔ 一个第三方中转站都没有 —— 见组件头。 */
+.qb-st-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.qb-st-presets .chip {
+  font: inherit;
+  font-size: 11.5px;
+  padding: 4px 11px;
+  cursor: pointer;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.qb-st-presets .chip[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
+.qb-st-hint {
+  margin: 0;
+  padding: 7px 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-2);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius-md);
+}
+
+/* 居中大图标。点一下换颜色 —— 只是给人认卡片用的，不影响任何行为。 */
+.qb-st-icon {
+  display: flex;
+  justify-content: center;
+}
+.qb-st-icon .tile {
+  width: 72px;
+  height: 72px;
+  font: inherit;
+  font-size: 30px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 18px;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  background: var(--surface-2);
+}
+.qb-st-icon .tile--accent {
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
+.qb-st-icon .tile--ok {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
+}
+.qb-st-icon .tile--warn {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+}
+.qb-st-icon .tile--danger {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+}
+
+.qb-st-two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 11px;
+}
+.qb-st-fieldrow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.qb-st-sect {
+  margin: 6px 0 0;
+  padding-top: 9px;
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* 输入框 + 右侧独立按钮。⛔ 眼睛和 ⚡ 都在框外 ——
+   框内图标会盖住最后几个字符，而那几个字符正是最常粘错的。 */
+.qb-st-inline {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+  min-width: 0;
+}
+.qb-st-iconbtn {
+  font: inherit;
+  font-size: 14px;
+  flex: 0 0 auto;
+  width: 38px;
+  cursor: pointer;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+}
+.qb-st-iconbtn[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
+.qb-st-iconbtn--go:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+.qb-st-iconbtn:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+/* 探测结果三行：协议 / 计费 / 模型。
+   ⛔ 没探过时写「还没探过」，不要画成灰色的「不支持」—— 那是两件事。 */
+.qb-st-probe {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.qb-st-probe .row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.qb-st-probe .k {
+  flex: 0 0 34px;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+}
+.qb-st-probe .v {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  font-size: 11.5px;
+  min-width: 0;
+}
+.qb-st-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.qb-st-models > span {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.qb-st-adv > summary {
+  font-size: 12px;
+  cursor: pointer;
+  padding: 6px 0;
+  color: var(--text-2);
+}
+.qb-st-adv[open] > summary {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 9px;
+}
+.qb-st-adv > *:not(summary) {
+  margin-bottom: 9px;
+}
+.qb-st-tris {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 9px;
+}
+
+/* 配置 JSON 一节（§2.5 第 14 项）。⛔ 一个软件一份，不是一条线路一份。 */
+.qb-st-cfg {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.qb-st-quicks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 5px 12px;
+}
+.qb-st-cfghd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.qb-st-editor {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  width: 100%;
+  resize: vertical;
+  padding: 8px 10px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  tab-size: 2;
+}
+.qb-st-maprows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px 12px;
+  margin-top: 8px;
+}
+
+/* ================================================================ 站点检验 · 判决书（A 版）
+
+   ⛔ 结论顶在最上面，而且**颜色跟着证据走不跟着分数走** ——
+   同样是 29 分，证据不足那一档画成红色会让人以为查出了问题，
+   而实际上一项问题都没查出来。 */
+
+.qb-st-lead {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-lg);
+}
+.qb-st-lead.bad {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+}
+/* 虚线 = 「还没有断言」。⛔ 跟上面那一档必须一眼分得开。 */
+.qb-st-lead.unk {
+  background: var(--surface-2);
+  border: 1px dashed var(--border-strong);
+}
+.qb-st-lead h4 {
+  margin: 0 0 3px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.qb-st-lead p {
+  margin: 0;
+  max-width: 52ch;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.qb-st-leadpills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 7px;
+}
+
+.qb-st-ring {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  flex: none;
+}
+.qb-st-ring svg {
+  display: block;
+  transform: rotate(-90deg);
+}
+.qb-st-ring .mid {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  line-height: 1.1;
+}
+.qb-st-ring .mid b {
+  font-size: 24px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.qb-st-ring .mid span {
+  display: block;
+  font-size: 9px;
+  color: var(--text-3);
+}
+
+.qb-st-rounds {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.qb-st-rounds .rd {
+  font: inherit;
+  text-align: left;
+  padding: 5px 9px;
+  cursor: pointer;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.qb-st-rounds .rd[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
+.qb-st-rounds .rd b {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.qb-st-rounds .rd small {
+  font-size: 9.5px;
+  color: var(--text-3);
+}
+
+.qb-st-sect {
+  margin: 16px 0 9px;
+  padding-bottom: 5px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border);
+}
+.qb-st-checks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 9px;
+}

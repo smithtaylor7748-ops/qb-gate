@@ -6,10 +6,10 @@ import {
   useRef,
   useState,
   type ReactNode,
-} from 'react';
-import { CheckCircle2, Info, X, XCircle } from 'lucide-react';
+} from "react";
+import { CheckCircle2, Info, X, XCircle } from "lucide-react";
 
-type ToastKind = 'ok' | 'danger' | 'info';
+type ToastKind = "ok" | "danger" | "info";
 
 interface Toast {
   id: number;
@@ -54,30 +54,30 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (kind: ToastKind, text: string) => {
       const id = ++seq.current;
       setList((l) => [...l, { id, kind, text }]);
-      if (kind === 'ok' || kind === 'info') {
+      if (kind === "ok" || kind === "info") {
         setTimeout(() => remove(id), OK_MS);
       }
     },
-    [remove]
+    [remove],
   );
 
   const api = useMemo<ToastApi>(
     () => ({
-      ok: (t) => push('ok', t),
-      error: (t) => push('danger', t),
-      info: (t) => push('info', t),
+      ok: (t) => push("ok", t),
+      error: (t) => push("danger", t),
+      info: (t) => push("info", t),
       run: async (fn, okText) => {
         try {
           const r = await fn();
-          if (okText) push('ok', okText);
+          if (okText) push("ok", okText);
           return r;
         } catch (e) {
-          push('danger', e instanceof Error ? e.message : String(e));
+          push("danger", e instanceof Error ? e.message : String(e));
           return undefined;
         }
       },
     }),
-    [push]
+    [push],
   );
 
   return (
@@ -107,6 +107,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 export function useToast(): ToastApi {
   const ctx = useContext(Ctx);
-  if (!ctx) throw new Error('useToast 必须在 <ToastProvider> 里用');
+  if (!ctx) throw new Error("useToast 必须在 <ToastProvider> 里用");
   return ctx;
 }

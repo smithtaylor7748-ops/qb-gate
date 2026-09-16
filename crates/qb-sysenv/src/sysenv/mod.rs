@@ -3,9 +3,17 @@
 //! 用户拍板的档位：默认**退出时还原**，同时保留「不还原」选项并标注建议 ——
 //! 专机长期跑 Claude 时，时区保持一致比来回切更稳。
 //!
-//! 需要管理员权限的只有这一处。其余功能都不提权。
+//! 切时区和 IPv6 网卡绑定需要管理员权限。
+//!
+//! ⚠ 整个面板里还有第二处：`platform::firewall` 的加/撤出站锁规则。
+//! 面板自己**不提权**（安装是 `currentUser`，没有 requireAdministrator 清单），
+//! 时区/防火墙需要使用者以管理员身份启动面板；IPv6 单独提权一个受限的
+//! PowerShell 操作，不提升整个面板，失败如实报告。
 
 pub mod checkup;
+pub mod ipv6;
+pub mod locale;
+pub mod proxy;
 
 use crate::error::{GateError, Result};
 use serde::{Deserialize, Serialize};

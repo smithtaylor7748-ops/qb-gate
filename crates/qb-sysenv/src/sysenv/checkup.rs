@@ -19,6 +19,17 @@
 //! 与「中文字体那 14 分修不掉就不提供修复按钮，也不假装能修」是同一条。
 //! 面板不做那种「点一下，然后你发现自己上不了网」的按钮。
 //!
+//! # 0.19.0：系统代理这一项另有出口，但**这个模块仍然只报告**
+//!
+//! 使用者拍板开了「系统代理修改」这个口子，实现在 [`super::proxy`]。
+//! 上面那条「可能当场把他的网断掉」一个字都没错，所以那个口子把同样的谨慎
+//! 写进了约束：只在当次点击后改、改前记下原值、界面上随时能回滚，
+//! **没有定时器、没有启动时触发**。
+//!
+//! 体检这一侧不变 —— `check_proxy` 照旧只报告现状与代价，不在这里动手。
+//! 两件事分开的理由很实在：体检是**只读**的，一个只读扫描里藏着会改系统的
+//! 副作用，是这类工具最不该有的东西。
+//!
 //! # 密钥扫描只报位置，绝不报内容
 //!
 //! 跟 `relay::ProviderView` 那条「结构上就装不下 Key」同一个原则：
@@ -124,35 +135,19 @@ fn check_proxy() -> CheckItem {
 }
 
 fn check_ipv6() -> CheckItem {
-    const KEY: &str = r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters";
-    let disabled = reg_query(KEY, "DisabledComponents");
-    // 0xff = 全关。没有这个键 = 默认全开。
-    let all_off = disabled
-        .as_deref()
-        .map(|v| v.eq_ignore_ascii_case("0xff"))
-        .unwrap_or(false);
-    if all_off {
-        return item(
-            "ipv6",
-            "IPv6",
-            State::Pass,
-            "IPv6 已全局关闭，不会从 v6 漏真实地址",
-        );
-    }
-    let mut it = item(
-        "ipv6",
-        "IPv6",
-        State::Warn,
-        "IPv6 开着。隧道只接管 IPv4 时，v6 流量会绕过它直接从本地出去 —— \
-         这是最常见的一种「代理开着但还是暴露了」。",
-    );
-    it.manual = Some(
-        r"管理员身份运行，然后重启：
-reg add HKLM\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters /v DisabledComponents /t REG_DWORD /d 0xff /f
-
-面板不替你执行：它要管理员权限、要重启才生效，而且你可能正靠 IPv6 上网。"
-            .into(),
-    );
+    let mut it = match super::ipv6::bindings() {
+        Ok(rows) if !rows.is_empty() && rows.iter().all(|b| !b.enabled) => item(
+            "ipv6", "IPv6", State::Pass,
+            format!("已核验 {} 张网卡的 IPv6 绑定均关闭（含隐藏网卡）；不代表 Windows 内部 IPv6 回环被移除", rows.len()),
+        ),
+        Ok(rows) if !rows.is_empty() => item(
+            "ipv6", "IPv6", State::Warn,
+            format!("{} / {} 张网卡仍启用 IPv6；隧道仅接管 IPv4 时可能出现出口不一致", rows.iter().filter(|b| b.enabled).count(), rows.len()),
+        ),
+        Ok(_) => item("ipv6", "IPv6", State::Unknown, "没有读到网卡，无法确认 IPv6 状态"),
+        Err(e) => item("ipv6", "IPv6", State::Unknown, format!("读取 IPv6 状态失败：{e}")),
+    };
+    it.manual = Some("可在「IP 纯净度 → 禁用本机 IPv6」查看实际网卡状态、应用或恢复原设置。开关默认开启，修改需要管理员授权。".into());
     it
 }
 
@@ -342,6 +337,26 @@ const WATCHED_ENV: &[&str] = &[
     "NO_PROXY",
 ];
 
+/// 按**前缀**算的那一档。
+///
+/// `CLAUDE_CODE_*` 整族都会改 Claude Code 的行为（`CLAUDE_CODE_USE_BEDROCK`
+/// / `_USE_VERTEX` 直接把它切到另一个云端点），可它不是一个固定的名字表 ——
+/// 上游随时会加新的。0.19.2 之前这一项只认死名字，于是这一族**一个都查不到**，
+/// 而 purge 的归属判定（`purge_ops::is_owned_env`）和启动前的残留检查
+/// （`qb-accounts::residue`）早就认了它。同一件事三处口径不一样，
+/// 最松的那一处就是使用者看到的那一处。
+const WATCHED_ENV_PREFIX: &[&str] = &["CLAUDE_CODE_"];
+
+/// 这个变量名归不归「环境变量残留」这一项管。
+///
+/// 用 `to_ascii_uppercase().starts_with` 而不是切片比较：变量名理论上
+/// 可以带非 ASCII，切到半个字符上会当场 panic。
+pub fn is_watched_env(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    WATCHED_ENV.iter().any(|w| w.eq_ignore_ascii_case(name))
+        || WATCHED_ENV_PREFIX.iter().any(|p| upper.starts_with(p))
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, TS)]
 #[ts(export)]
 pub struct EnvHit {
@@ -442,11 +457,11 @@ fn user_env_vars() -> Vec<(String, String)> {
     Vec::new()
 }
 
-fn scan_env() -> (CheckItem, Vec<EnvHit>) {
+pub fn scan_env() -> (CheckItem, Vec<EnvHit>) {
     let mut hits = Vec::new();
 
     for (name, value) in user_env_vars() {
-        if WATCHED_ENV.iter().any(|w| w.eq_ignore_ascii_case(&name)) && !value.trim().is_empty() {
+        if is_watched_env(&name) && !value.trim().is_empty() {
             hits.push(EnvHit {
                 shown: mask_env_value(&name, &value),
                 name,
@@ -454,22 +469,24 @@ fn scan_env() -> (CheckItem, Vec<EnvHit>) {
             });
         }
     }
-    for name in WATCHED_ENV {
-        if let Ok(v) = std::env::var(name) {
-            if v.trim().is_empty() {
-                continue;
-            }
-            // 注册表里已经报过同名的就不重复 —— 进程环境多半就是从那儿来的。
-            if hits.iter().any(|h| h.name.eq_ignore_ascii_case(name)) {
-                continue;
-            }
-            hits.push(EnvHit {
-                name: (*name).to_string(),
-                scope: "当前进程".into(),
-                shown: mask_env_value(name, &v),
-            });
+    // 进程环境要**遍历**，不能照着固定名字表一个个查 ——
+    // 前缀那一档（`CLAUDE_CODE_*`）没有名字表可查。
+    for (name, v) in std::env::vars() {
+        if !is_watched_env(&name) || v.trim().is_empty() {
+            continue;
         }
+        // 注册表里已经报过同名的就不重复 —— 进程环境多半就是从那儿来的。
+        if hits.iter().any(|h| h.name.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        hits.push(EnvHit {
+            shown: mask_env_value(&name, &v),
+            name,
+            scope: "当前进程".into(),
+        });
     }
+    // 遍历出来的顺序不定，排一下：同一台机器两次体检的列表顺序不该跳来跳去。
+    hits.sort_by(|a, b| a.name.cmp(&b.name));
 
     let redirecting = hits
         .iter()
@@ -564,6 +581,16 @@ pub fn compare_egress(
         );
         return it;
     }
+    if a != b && (ca.is_empty() || cb.is_empty()) {
+        return item(
+            "egress_consistency",
+            "出口一致性",
+            State::Unknown,
+            format!(
+                "出口 IP 不同（直连 {a}，系统代理 {b}），至少一侧国家未知，无法判断地区是否一致。"
+            ),
+        );
+    }
     if a != b {
         return item(
             "egress_consistency",
@@ -579,7 +606,14 @@ pub fn compare_egress(
         "egress_consistency",
         "出口一致性",
         State::Pass,
-        "绕过系统代理和跟随系统代理，两条路出去的是同一个地方。",
+        format!(
+            "绕过系统代理和跟随系统代理，出口 IP 均为 {a}；国家：{}。",
+            if ca.is_empty() {
+                "未知".into()
+            } else {
+                ca.join("/")
+            }
+        ),
     )
 }
 
@@ -674,6 +708,39 @@ pub fn fix(id: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn different_ips_without_country_evidence_are_not_declared_same_country() {
+        let a = crate::probe::ip::Reading {
+            ip: Some("203.0.113.7".into()),
+            countries: Vec::new(),
+        };
+        let b = crate::probe::ip::Reading {
+            ip: Some("203.0.113.8".into()),
+            countries: vec![("test".into(), "US".into())],
+        };
+        assert_eq!(compare_egress(&a, &b).state, State::Unknown);
+    }
+
+    /// `CLAUDE_CODE_*` 整族都要认。0.19.2 之前只认死名字，
+    /// 于是 `CLAUDE_CODE_USE_BEDROCK` 这种把 Claude Code 切到另一个
+    /// 云端点的变量，这一项一个都查不到 —— 而 purge 和启动前的残留检查
+    /// 早就认它了。同一件事三处口径不一样，最松的那处就是使用者看到的那处。
+    #[test]
+    fn the_claude_code_family_is_watched_by_prefix() {
+        assert!(is_watched_env("CLAUDE_CODE_USE_BEDROCK"));
+        assert!(is_watched_env("CLAUDE_CODE_USE_VERTEX"));
+        assert!(is_watched_env("claude_code_something_new"), "大小写不敏感");
+        assert!(is_watched_env("ANTHROPIC_BASE_URL"), "死名字那一档还在");
+        assert!(!is_watched_env("CLAUDE"), "前缀要完整，不是沾边就算");
+        assert!(!is_watched_env("PATH"));
+    }
+
+    /// 非 ASCII 的变量名不许把判定弄崩 —— 切片比较会切在半个字符上。
+    #[test]
+    fn a_non_ascii_env_name_does_not_panic() {
+        assert!(!is_watched_env("变量"));
+        assert!(!is_watched_env("é"));
+    }
 
     #[test]
     fn finds_plain_secrets_in_json_and_toml() {

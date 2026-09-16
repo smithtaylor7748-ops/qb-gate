@@ -31,7 +31,7 @@
 //!
 //! # 四条政策边界
 //!
-//! 改这个文件之前先读 README 的合规一节：
+//! 改这个文件之前先读 `DISCLAIMER.md` 第 4 节（README 的「免责声明」一节也列了）：
 //!   1. 只读官方客户端写在本机的用量缓存用于**显示**；不发网络请求、
 //!      不调用任何额度接口，也不存在「用完自动换号」的路径
 //!   2. 切换只能由人在界面上手动触发，没有定时器、没有 watchdog、没有自动调用点
@@ -52,6 +52,7 @@
 use crate::error::{GateError, Result};
 use serde::Serialize;
 use ts_rs::TS;
+pub mod tokens;
 mod transaction;
 pub mod usage;
 use std::path::{Path, PathBuf};
@@ -79,6 +80,24 @@ pub struct Slot {
     #[ts(type = "number | null")]
     pub cli_days_left: Option<i64>,
     pub account_uuid: Option<String>,
+    /// 登录邮箱。读自本槽位 `.claude.json` 的 `oauthAccount`，**不联网**。
+    /// 详情页靠它区分两个槽位到底是不是同一个人。
+    pub email: Option<String>,
+    /// 组织名。同上。
+    pub org_name: Option<String>,
+    /// refreshToken 的到期时刻（本地时间，`YYYY-MM-DD HH:MM`）。
+    ///
+    /// 跟 `cli_days_left` 是同一个时间戳的两种说法：列表里「剩 N 天」够用，
+    /// 详情页要给得出具体哪一天 —— 「剩 0 天」和「今晚 23:41 到期」
+    /// 对使用者是两种紧迫程度。
+    pub expires_at: Option<String>,
+    /// 槽位目录的绝对路径。
+    ///
+    /// 由后端给而不是让界面自己拼：路径怎么拼全项目只有 `AccountRoots` 一处。
+    pub dir: String,
+    /// 桌面端资料目录的绝对路径（`%APPDATA%` 读得出来时才有）。
+    /// 它**在不在**看 `desktop_profile`，这里只给路径。
+    pub desktop_dir: Option<String>,
     /// 套餐，例如 `Claude Pro`。读自本槽位的 `.claude.json`，**不联网**。
     pub plan: Option<String>,
     /// 计费方式，例如 `Google Play 订阅`。同上。
@@ -90,6 +109,17 @@ pub struct Slot {
     /// 五小时 / 七天窗口的用量与恢复时刻。读的是官方客户端写在本机的文件，
     /// **不联网、不调接口**，详见 [`usage`]。两源都没有就是 `None`。
     pub usage: Option<usage::SlotUsage>,
+}
+
+/// 这个槽位登录的是哪个账户（`oauthAccount.accountUuid`）。
+///
+/// 数 token 时拿它跟默认目录里转写的 `ownerAccountUuid` 对账 ——
+/// 那是把默认目录那部分用量归到某个槽位的**唯一**依据。
+pub fn account_uuid_of(slot_dir: &std::path::Path) -> Option<String> {
+    read_profile(slot_dir)?
+        .get("accountUuid")?
+        .as_str()
+        .map(str::to_string)
 }
 
 /// 套餐是**读文件读出来的，不是查接口查出来的**。
@@ -151,10 +181,38 @@ impl AccountRoots {
         self.appdata.as_ref().map(|a| a.join("Claude"))
     }
 
-    fn desktop_dir(&self, label: &str) -> Option<PathBuf> {
+    /// 某个槽位的桌面端资料目录。完全卸载桌面端时要连它一起清，
+    /// 所以是 `pub` —— 路径怎么拼全项目只有这一处。
+    pub fn desktop_dir(&self, label: &str) -> Option<PathBuf> {
         self.appdata
             .as_ref()
             .map(|a| a.join(format!("Claude-{label}")))
+    }
+
+    /// 官方客户端的**默认**配置目录 `~\.claude`。
+    ///
+    /// 没有激活槽位时 Claude Code 用的就是它；而桌面端 Code 页里跑的会话
+    /// **不管有没有槽位都用它**（不吃 `CLAUDE_CONFIG_DIR`，档案 §7.26）。
+    /// 所以数 token 时绕不开它 —— 详见 `tokens.rs` 文件头。
+    pub fn default_config_dir(&self) -> Option<PathBuf> {
+        dirs::home_dir().map(|h| h.join(".claude"))
+    }
+
+    /// 这个槽位的桌面端用量历史可能在哪几份文件里。
+    ///
+    /// **两条，不是一条**：`Claude` 那个联结点只指向**当前**槽位的资料目录，
+    /// 别的槽位的历史在自己的 `Claude-<标签>` 里。只读前者的后果是非当前
+    /// 槽位永远读不到实时样本，界面退回十几天前的缓存打「快照已过期」——
+    /// 而数据其实是新的，只是在另一个目录。详见 `usage.rs` 文件头。
+    ///
+    /// 对当前槽位这两条会指到同一个文件，合并样本时由 `usage::dedupe` 收掉。
+    pub fn history_files(&self, label: &str) -> Vec<PathBuf> {
+        const HISTORY: &str = "plan-usage-history.json";
+        self.desktop_link()
+            .into_iter()
+            .chain(self.desktop_dir(label))
+            .map(|d| d.join(HISTORY))
+            .collect()
     }
 }
 
@@ -338,21 +396,29 @@ pub fn slots_in(r: &AccountRoots) -> Vec<Slot> {
             let label = name.strip_prefix(PREFIX)?.to_string();
             let dir = e.path();
             let profile = read_profile(&dir);
+            let expiry = refresh_token_expiry(&dir);
             Some(Slot {
                 active: active.as_deref() == Some(label.as_str()),
                 logged_in: dir.join(".credentials.json").exists(),
-                cli_days_left: cli_days_left(&dir),
+                cli_days_left: expiry.map(days_from),
                 account_uuid: profile
                     .as_ref()
                     .and_then(|v| v.get("accountUuid"))
                     .and_then(|v| v.as_str())
                     .map(String::from),
+                email: profile.as_ref().and_then(|v| text_of(v, "emailAddress")),
+                org_name: profile
+                    .as_ref()
+                    .and_then(|v| text_of(v, "organizationName")),
+                expires_at: expiry.and_then(local_stamp),
+                dir: dir.display().to_string(),
+                desktop_dir: r.desktop_dir(&label).map(|d| d.display().to_string()),
                 plan: profile.as_ref().and_then(plan_of),
                 billing: profile.as_ref().and_then(billing_of),
                 plan_fetched_at: profile.as_ref().and_then(fetched_at_of),
                 desktop_profile: r.desktop_dir(&label).is_some_and(|d| d.is_dir()),
                 usage: usage::for_slot(
-                    r.appdata.as_deref(),
+                    &r.history_files(&label),
                     &dir,
                     profile
                         .as_ref()
@@ -411,15 +477,26 @@ pub fn desktop_state(r: &AccountRoots) -> DesktopState {
 ///
 /// **只看 refreshToken，不看 accessToken。** accessToken 8–12 小时过期是正常的，
 /// 客户端自己拿 refreshToken 静默换新，用户无感 —— 因此故意不为它报警。
-fn cli_days_left(dir: &std::path::Path) -> Option<i64> {
+fn refresh_token_expiry(dir: &std::path::Path) -> Option<i64> {
     let text = std::fs::read_to_string(dir.join(".credentials.json")).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let ms = v
-        .get("claudeAiOauth")?
+    v.get("claudeAiOauth")?
         .get("refreshTokenExpiresAt")?
-        .as_i64()?;
-    let now = chrono::Utc::now().timestamp_millis();
-    Some((ms - now) / 86_400_000)
+        .as_i64()
+}
+
+fn days_from(ms: i64) -> i64 {
+    (ms - chrono::Utc::now().timestamp_millis()) / 86_400_000
+}
+
+/// 毫秒时间戳 → 本地 `YYYY-MM-DD HH:MM`。
+fn local_stamp(ms: i64) -> Option<String> {
+    Some(
+        chrono::DateTime::from_timestamp_millis(ms)?
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string(),
+    )
 }
 
 /// 读本槽位的 `oauthAccount`。**纯文件读取，不发任何请求。**
@@ -478,13 +555,19 @@ pub fn pretty_billing(raw: &str) -> String {
 
 /// `profileFetchedAt` 是毫秒时间戳。界面上要标出来 —— 这是缓存，可能过期。
 fn fetched_at_of(o: &serde_json::Value) -> Option<String> {
-    let ms = o.get("profileFetchedAt")?.as_i64()?;
-    let dt = chrono::DateTime::from_timestamp_millis(ms)?;
-    Some(
-        dt.with_timezone(&chrono::Local)
-            .format("%Y-%m-%d %H:%M")
-            .to_string(),
-    )
+    local_stamp(o.get("profileFetchedAt")?.as_i64()?)
+}
+
+/// `oauthAccount` 里的一个字符串字段，空串当没有。
+///
+/// ⛔ **不许拿它去读 `organizationRateLimitTier` / `userRateLimitTier`。**
+/// 理由见 `PLAN_CAVEAT` 上面那段，`plan_reading_never_touches_rate_limit_fields`
+/// 那条测试钉着。
+fn text_of(o: &serde_json::Value, key: &str) -> Option<String> {
+    o.get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
 }
 
 // ---------------------------------------------------------------- 新建
@@ -523,6 +606,97 @@ pub fn create_slot(r: &AccountRoots, label: &str) -> Result<CreateOutcome> {
     Ok(CreateOutcome {
         label: label.to_string(),
         activated,
+        notes,
+    })
+}
+
+// ---------------------------------------------------------------- 删除
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct DeleteOutcome {
+    pub label: String,
+    /// 真的删掉了哪几个目录。界面照它报数，不照请求报数。
+    pub removed: Vec<String>,
+    pub notes: Vec<String>,
+}
+
+/// 删掉一个槽位。**不可恢复** —— 那个账户在这台机器上要重新登录一次。
+///
+/// # ⛔ 当前激活的槽位一律拒删
+///
+/// 不是「谨慎」，是没人收拾得了后面那摊：删掉目录之后 `claude-profile`
+/// 那个联结点就悬在半空，而全项目**没有任何东西**会去修它 ——
+/// [`active_label`] 只是 `is_dir()` 一查回 `None`，于是下一次启动
+/// Claude Code 不设 `CLAUDE_CONFIG_DIR`，安安静静退回默认目录
+/// `~\.claude`。症状是「我明明有账户，一开就让我登录」，
+/// 而界面上什么都没报 —— 那正是 §7.26 那个坑的形态。
+///
+/// 要删它就先切到别的槽位去，那条路会把三处指向一起换好。
+///
+/// # 桌面端资料跟不跟着删
+///
+/// `drop_desktop` 为真时连 `%APPDATA%\Claude-<标签>` 一起删。**默认应该跟着删**：
+/// 留下的话，以后建一个同名槽位会静默继承这一份旧的桌面端身份 ——
+/// 新槽位是空的、桌面端却还登着上一个人，两边对不上而没有任何提示。
+///
+/// 这个函数只删目录，不关进程、不动别的槽位、不碰凭证以外的任何东西。
+/// 清场与否由调用方决定 —— 删的是非当前槽位，正在跑的会话钉在别的目录上
+/// （`CLAUDE_CONFIG_DIR` 是具体目录，见文件头），不受影响。
+pub fn delete_slot(r: &AccountRoots, label: &str, drop_desktop: bool) -> Result<DeleteOutcome> {
+    validate_label(label)?;
+    let dir = r.slot_dir(label);
+    if !dir.is_dir() {
+        return Err(GateError::Other(format!("槽位 {label} 不存在")));
+    }
+    if active_label(r).as_deref() == Some(label) {
+        return Err(GateError::Other(format!(
+            "{label} 是当前账户，删不了。请先切换到另一个账户，再回来删它。"
+        )));
+    }
+    // ⛔ **「当前」有两个，不是一个。** 面板的当前槽位是 `claude-profile` 指向谁，
+    // 桌面端的是 `%APPDATA%\Claude` 指向谁 —— 两者**故意可以分开**
+    // （`DesktopMode::Keep` 就是让它们分开的那一档）。
+    //
+    // 只挡前者的后果：面板在 A、桌面端在 B 时删 B 会被放行，
+    // `%APPDATA%\Claude-B` 被删掉，而 `%APPDATA%\Claude` 那个联结点悬在半空 ——
+    // 桌面端下次启动数据目录是空的，**界面上一个字都不报**。
+    // 桌面端正开着时删除多半会因为文件占用而失败，但那是运气，不是防线。
+    if desktop_state(r).active.as_deref() == Some(label) {
+        return Err(GateError::Other(format!(
+            "桌面端正用着 {label} 的资料，删不了。请先在切换对话框里把桌面端切到别的账户，再回来删它。"
+        )));
+    }
+
+    let mut removed = Vec::new();
+    let mut notes = Vec::new();
+    std::fs::remove_dir_all(&dir)?;
+    removed.push(dir.display().to_string());
+
+    if drop_desktop {
+        match r.desktop_dir(label) {
+            Some(d) if d.is_dir() => {
+                // 桌面端那份删不掉不该让整个删除失败 —— 槽位本体已经没了，
+                // 报一句让使用者知道那里还剩什么，比回滚一个删不回来的目录诚实。
+                match std::fs::remove_dir_all(&d) {
+                    Ok(()) => removed.push(d.display().to_string()),
+                    Err(e) => notes.push(format!(
+                        "槽位已删除，但桌面端资料 {} 没删掉（{e}）。它可能正开着。",
+                        d.display()
+                    )),
+                }
+            }
+            _ => {}
+        }
+    } else if r.desktop_dir(label).is_some_and(|d| d.is_dir()) {
+        notes.push(format!(
+            "桌面端资料 Claude-{label} 保留着。以后建同名槽位会接着用这一份。"
+        ));
+    }
+
+    Ok(DeleteOutcome {
+        label: label.to_string(),
+        removed,
         notes,
     })
 }
@@ -978,6 +1152,11 @@ mod tests {
             logged_in: true,
             cli_days_left: Some(-3),
             account_uuid: None,
+            email: None,
+            org_name: None,
+            expires_at: None,
+            dir: String::new(),
+            desktop_dir: None,
             plan: None,
             billing: None,
             plan_fetched_at: None,
@@ -1025,6 +1204,40 @@ mod tests {
         assert_eq!(plan, "Claude Pro");
         assert!(!plan.contains("default_claude_ai"));
         assert!(!plan.contains("tier_x"));
+    }
+
+    /// 上面那条只管 `plan_of`。0.20.0 给 `Slot` 加了邮箱、组织名、到期时刻，
+    /// 每加一个从 `oauthAccount` 读出来的字段，都是一次「顺手把限流档位
+    /// 也带出去」的机会。所以这条钉的是**整个 Slot 序列化之后的文本**：
+    /// 不管以后加什么字段，那两个值都不许出现在发给界面的 JSON 里。
+    #[test]
+    fn nothing_on_a_slot_ever_carries_a_rate_limit_tier() {
+        let m = Machine::new("no-tier", false);
+        let dir = m.slot("main", Some("{}"));
+        std::fs::write(
+            dir.join(".claude.json"),
+            serde_json::json!({
+                "oauthAccount": {
+                    "organizationType": "claude_pro",
+                    "emailAddress": "someone@example.com",
+                    "organizationName": "Example Inc",
+                    "organizationRateLimitTier": "default_claude_ai",
+                    "userRateLimitTier": "tier_x"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let slots = slots_in(&m.roots);
+        let json = serde_json::to_string(&slots).unwrap();
+        assert!(json.contains("someone@example.com"), "邮箱该给：{json}");
+        assert!(
+            !json.contains("default_claude_ai"),
+            "限流档位漏出去了：{json}"
+        );
+        assert!(!json.contains("tier_x"), "限流档位漏出去了：{json}");
+        assert!(!json.contains("RateLimit"), "限流字段名漏出去了：{json}");
     }
 
     #[test]
@@ -1158,6 +1371,111 @@ mod tests {
     }
 
     #[cfg(windows)]
+    // -------------------------------------------------- 删除槽位（0.20.0）
+
+    /// ⛔ 删当前槽位会留下一个悬空的 `claude-profile`，而没有任何东西会去修它
+    /// —— 下一次启动就安安静静退回 `~\.claude`，界面上什么都不报。
+    #[test]
+    fn the_active_slot_cannot_be_deleted() {
+        let m = Machine::new("del-active", true);
+        create_slot(&m.roots, "main").unwrap();
+        create_slot(&m.roots, "work").unwrap();
+        assert_eq!(active_label(&m.roots).as_deref(), Some("main"));
+
+        let err = delete_slot(&m.roots, "main", true).unwrap_err().to_string();
+        assert!(err.contains("当前账户"), "报错要说清为什么：{err}");
+        assert!(
+            m.roots.slot_dir("main").is_dir(),
+            "拒绝之后一个字节都不许动"
+        );
+        assert!(points_at(&m.roots.link(), &m.roots.slot_dir("main")));
+    }
+
+    /// ⛔ 「当前」有两个。面板在 main、桌面端在 work 时，work 也删不得 ——
+    /// 删了它 `%APPDATA%\Claude` 就悬空，桌面端下次启动数据目录是空的，
+    /// 而界面上一个字都不报。
+    #[test]
+    fn a_slot_the_desktop_is_using_cannot_be_deleted_either() {
+        let m = Machine::new("del-desktop-active", false);
+        create_slot(&m.roots, "main").unwrap();
+        create_slot(&m.roots, "work").unwrap();
+
+        // 桌面端指到 work（面板仍然在 main）。
+        let target = m.roots.desktop_dir("work").unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        make_junction(&m.appdata().join("Claude"), &target).unwrap();
+        assert_eq!(desktop_state(&m.roots).active.as_deref(), Some("work"));
+        assert_eq!(active_label(&m.roots).as_deref(), Some("main"));
+
+        let err = delete_slot(&m.roots, "work", true).unwrap_err().to_string();
+        assert!(err.contains("桌面端"), "报错要说清是哪个「当前」：{err}");
+        assert!(
+            m.roots.slot_dir("work").is_dir(),
+            "拒绝之后一个字节都不许动"
+        );
+        assert!(target.is_dir());
+    }
+
+    #[test]
+    fn deleting_a_slot_takes_its_desktop_profile_when_asked() {
+        let m = Machine::new("del-desktop", false);
+        create_slot(&m.roots, "main").unwrap();
+        create_slot(&m.roots, "work").unwrap();
+        let desktop = m.roots.desktop_dir("work").unwrap();
+        std::fs::create_dir_all(&desktop).unwrap();
+        std::fs::write(desktop.join("config.json"), "{}").unwrap();
+
+        let out = delete_slot(&m.roots, "work", true).unwrap();
+        assert!(!m.roots.slot_dir("work").exists());
+        assert!(!desktop.exists(), "跟着删的那一档要真的删掉");
+        assert_eq!(out.removed.len(), 2);
+        // 当前槽位一点没动。
+        assert!(m.roots.slot_dir("main").is_dir());
+        assert_eq!(active_label(&m.roots).as_deref(), Some("main"));
+    }
+
+    /// 不跟着删也行，但**必须说出来**：以后建同名槽位会接着用那一份，
+    /// 新槽位是空的、桌面端却还登着上一个人，两边对不上而没有提示。
+    #[test]
+    fn keeping_the_desktop_profile_is_reported_not_silent() {
+        let m = Machine::new("del-keep", false);
+        create_slot(&m.roots, "main").unwrap();
+        create_slot(&m.roots, "work").unwrap();
+        let desktop = m.roots.desktop_dir("work").unwrap();
+        std::fs::create_dir_all(&desktop).unwrap();
+
+        let out = delete_slot(&m.roots, "work", false).unwrap();
+        assert!(desktop.is_dir());
+        assert_eq!(out.removed.len(), 1);
+        assert!(
+            out.notes.iter().any(|n| n.contains("保留")),
+            "留下东西不许不吭声：{:?}",
+            out.notes
+        );
+    }
+
+    #[test]
+    fn deleting_a_slot_that_is_not_there_is_an_error_not_a_silent_success() {
+        let m = Machine::new("del-missing", false);
+        create_slot(&m.roots, "main").unwrap();
+        assert!(delete_slot(&m.roots, "nope", true).is_err());
+        assert!(delete_slot(&m.roots, "a:b", true).is_err(), "名字先过校验");
+    }
+
+    /// 用量历史要两条路径都给出来：只给联结点那条，非当前槽位就永远
+    /// 读不到实时样本（0.19.2 的「快照已过期」就是这么来的）。
+    #[test]
+    fn history_files_covers_both_the_junction_and_the_slots_own_desktop_dir() {
+        let m = Machine::new("history-files", false);
+        let got = m.roots.history_files("main");
+        assert_eq!(got.len(), 2, "两条路径，不是一条");
+        assert!(got[0].starts_with(m.appdata().join("Claude")));
+        assert!(got[1].starts_with(m.appdata().join("Claude-main")));
+        assert!(got
+            .iter()
+            .all(|p| p.file_name().unwrap() == "plan-usage-history.json"));
+    }
+
     #[test]
     fn creating_the_first_slot_activates_it_without_touching_the_desktop() {
         let m = Machine::new("create", true);

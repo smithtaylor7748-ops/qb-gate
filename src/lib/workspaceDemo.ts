@@ -15,6 +15,18 @@ const state: Workspace = {
       favorite: true,
       revision: 1,
     },
+    {
+      // 第二个站点：中转站页要能看出「一个站点底下挂几个分组」这两层结构，
+      // 只有一个站点的话那一层在截图里看不出来。
+      id: "moxi",
+      name: "备用中转",
+      base_url: "https://backup.example.com/anthropic",
+      website: "",
+      note: "备用",
+      tags: [],
+      favorite: false,
+      revision: 1,
+    },
   ],
   credentials: [
     {
@@ -42,6 +54,7 @@ const state: Workspace = {
       config_dir:
         "C:\\Users\\demo\\AppData\\Local\\ClaudeIpGate\\environments\\sample-code",
       config_state: "applied",
+      via_router: false,
     },
   ],
   sessions: [],
@@ -74,6 +87,31 @@ export async function demoWorkspaceCall(
       changes: ["添加 SKILL.md"],
       conflict: false,
     };
+  // 中转站的添加弹窗会顺手建站点（站点名撞上已有的就复用）。
+  // ⛔ 演示里也要真的加进列表：只回一个 id 的话，加完线路看不见它属于哪个站，
+  // 而那正好是「复用还是新建」这条分支唯一看得出来的地方。
+  if (command === "provider_save") {
+    const p = args.provider as Workspace["providers"][number];
+    const saved = { ...p, id: p.id || crypto.randomUUID(), revision: 1 };
+    const at = state.providers.findIndex((x) => x.id === saved.id);
+    if (at >= 0) state.providers[at] = saved;
+    else state.providers.push(saved);
+    return saved;
+  }
+  if (command === "credential_save") {
+    const c = args.credential as Workspace["credentials"][number];
+    const saved = {
+      ...c,
+      id: c.id || crypto.randomUUID(),
+      available: true,
+      masked: "***",
+      revision: c.revision + 1,
+    };
+    const at = state.credentials.findIndex((x) => x.id === saved.id);
+    if (at >= 0) state.credentials[at] = saved;
+    else state.credentials.push(saved);
+    return saved;
+  }
   if (command === "session_launch") {
     const session = {
       id: crypto.randomUUID(),

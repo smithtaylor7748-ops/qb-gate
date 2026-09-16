@@ -228,11 +228,6 @@ pub fn triage(p: &RawProcess, data_dir: &str, self_chain: &[u32]) -> Triage {
 const SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
 
-# 输出编码钉死成 UTF-8。这个 PowerShell 是 Rust 用 CREATE_NO_WINDOW 拉起来的，
-# 没有控制台，[Console]::OutputEncoding 会落到系统代码页上，中文路径到了
-# Rust 那边就成了一串替换字符。钉死之后跟系统装的是哪个区域设置无关。
-try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }
-
 $all = @(Get-CimInstance Win32_Process -ErrorAction Stop)
 
 # 面板自己的祖先链，从本进程一路往上走到头。
@@ -292,8 +287,7 @@ ConvertTo-Json -InputObject ([pscustomobject]@{ SelfChain = @($chain); Procs = $
 #[cfg(windows)]
 async fn enumerate() -> Result<Snapshot> {
     let script = SCRIPT.replace("__SELF_PID__", &std::process::id().to_string());
-    let out = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+    let out = crate::process::powershell_tokio(&script)
         .output()
         .await
         .map_err(|e| GateError::Other(format!("启动 PowerShell 枚举进程失败：{e}")))?;
@@ -396,7 +390,6 @@ pub async fn preview() -> Result<KillReport> {
 /// 所以不用 `-Filter "Name='…'"`，改成在管道里按名字筛。
 const DESKTOP_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
-try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }
 $names = @('claude.exe', 'Update.exe')
 $rows = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $names -contains $_.Name } | ForEach-Object {
   [pscustomobject]@{ ProcessId = [int]$_.ProcessId; ExecutablePath = $_.ExecutablePath }
@@ -441,8 +434,7 @@ pub fn parse_desktop_rows(
 /// 正在跑的桌面端进程。**枚举失败返回 `Err`，不许退化成「没有」。**
 #[cfg(windows)]
 pub fn desktop_processes() -> Result<Vec<(u32, String)>> {
-    let out = crate::process::hidden_std(std::process::Command::new("powershell"))
-        .args(["-NoProfile", "-NonInteractive", "-Command", DESKTOP_SCRIPT])
+    let out = crate::process::powershell_std(DESKTOP_SCRIPT)
         .output()
         .map_err(|e| GateError::Other(format!("启动 PowerShell 枚举桌面端进程失败：{e}")))?;
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -521,6 +513,38 @@ pub async fn preview_official() -> Result<KillReport> {
 }
 pub async fn execute_official() -> Result<KillReport> {
     execute_scoped(true).await
+}
+
+/// 只收桌面端：桌面端本身，连同它 Code 页拉起的会话（[`Role::Desktop`]）。
+///
+/// 中转站以桌面端启动之前用。桌面端是 Electron 单实例，不退干净的话新给的
+/// 配置目录一个都不生效；原来是报错让使用者自己去托盘退出，使用者的原话是
+/// 「图片内的动作自己不能做吗，非要用户手动」。
+///
+/// **判定、祖先链否决、PID + 创建时间核验跟 [`execute`] 是同一套**，只是把目标
+/// 收窄到桌面端 —— 终端里的 Claude Code、酒馆桥接一个都不碰。不重锁：
+/// 调用方接着就要验 IP 起进程，锁不锁由那一步的租约决定。
+pub async fn execute_desktop() -> Result<KillReport> {
+    let mut report = preview().await?;
+    report.targets = only_desktop(report.targets);
+    for t in &report.targets {
+        match crate::sessions::terminate_verified(t.pid, t.process_created) {
+            Ok(()) => report.killed.push(t.pid),
+            Err(e) => report.failed.push((t.pid, e.to_string())),
+        }
+    }
+    Ok(report)
+}
+
+/// 一批该收的进程里只留桌面端那一边。纯函数，可单测。
+///
+/// 按 [`Role`] 筛，**不按进程名筛**：Claude Code 和桌面端跑的都叫 `claude.exe`，
+/// 按名字筛会把终端里正在写的会话一起收掉。
+pub fn only_desktop(targets: Vec<KillTarget>) -> Vec<KillTarget> {
+    targets
+        .into_iter()
+        .filter(|t| t.role == Role::Desktop)
+        .collect()
 }
 async fn execute_scoped(official_only: bool) -> Result<KillReport> {
     let mut report = preview().await?;
@@ -635,6 +659,31 @@ mod tests {
             Client::Codex,
             "running"
         )));
+    }
+
+    fn target(pid: u32, role: Role) -> KillTarget {
+        KillTarget {
+            process_created: 1,
+            pid,
+            name: "claude.exe".into(),
+            path: None,
+            evidence: Evidence::AnthropicSigned,
+            role,
+        }
+    }
+
+    #[test]
+    fn closing_the_desktop_leaves_terminal_sessions_and_the_bridge_alone() {
+        // 三边跑的都可能叫 claude.exe / 都是 Anthropic 签名 —— 分得开它们的只有 role。
+        // 为了以中转打开桌面端而把终端里正在写的 Claude Code 一起收掉，是这个按钮
+        // 最不能犯的错。
+        let kept = only_desktop(vec![
+            target(1, Role::Desktop),
+            target(2, Role::Code),
+            target(3, Role::Bridge),
+            target(4, Role::Desktop),
+        ]);
+        assert_eq!(kept.iter().map(|t| t.pid).collect::<Vec<_>>(), vec![1, 4]);
     }
 
     #[test]

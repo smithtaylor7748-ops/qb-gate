@@ -1394,6 +1394,7 @@ mod tests {
             revision: 1,
             applied_revision: None,
             config_state: "saved".into(),
+            via_router: false,
         };
         db.set_environment(&e).unwrap();
         let m=ExtensionManifest{id:"test-mcp".into(),name:"test".into(),description:"fixture".into(),kind:ExtensionKind::Mcp,source:"fixture".into(),version:"1".into(),license:"MIT".into(),clients:vec![client],install_method:"mcp-config".into(),configuration:r#"{"url":"https://example.invalid/mcp","headers":{"Authorization":"synthetic-test-value"}}"#.into(),dependencies:vec![]};

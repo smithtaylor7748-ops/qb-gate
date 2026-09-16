@@ -10,7 +10,10 @@
 //! 两者的区别是：前者让使用者知情，后者替他伪装。
 
 pub use qb_accounts::accounts;
-pub use qb_foundation::{audit, error};
+// `paths` 是给 `sysenv::proxy` 用的：系统代理的原值必须落盘，
+// 只存在内存里的话面板一关就再也回滚不了。qb-foundation 本来就是依赖，
+// 这里只是把名字再导出一次。
+pub use qb_foundation::{audit, error, paths};
 pub use qb_platform::process;
 pub use qb_probe::probe;
 

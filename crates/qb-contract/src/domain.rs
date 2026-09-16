@@ -2,9 +2,18 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+// `Hash` / `Ord`：本机路由要按软件各记一份当前上游，
+// 没有这两个就没法拿它当 map 的键。
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Serialize, Deserialize, TS,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum Client {
+    /// 默认档。**这不是随手挑的**：0.16.0 之前线路池里没有 `client` 字段，
+    /// 那些线路全都是给 Claude Code 配的，迁移也把它们落到这一档
+    /// （`repository.rs` 的第 3 条迁移）。两处必须是同一个答案，
+    /// 否则老库升上来之后，反序列化补的默认值和迁移写进去的对不上。
+    #[default]
     ClaudeCode,
     ClaudeDesktop,
     Codex,
@@ -84,6 +93,18 @@ pub struct Environment {
     pub applied_revision: Option<u32>,
     pub config_dir: String,
     pub config_state: String,
+    /// 这个环境走不走本机路由。
+    ///
+    /// `true` 时 base_url 不用 provider 上那个,改指本机路由 +
+    /// 这个软件的路径前缀,Key 也由路由换成当前上游那把。换上游因此
+    /// **不用重写配置、不用重启客户端** —— 那正是本机路由存在的理由。
+    ///
+    /// ⛔ 这一位决定写进使用者磁盘的配置文件长什么样,所以它必须是
+    /// 环境自己的属性,不能靠「provider 的 base_url 看起来像回环」去推:
+    /// 推出来的话,一个真的架在 127.0.0.1 上的自建中转会被当成本机路由,
+    /// 它的 Key 会被悄悄换掉。
+    #[serde(default)]
+    pub via_router: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

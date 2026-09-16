@@ -9,7 +9,7 @@
 //!
 //! **不做自动换号。** 没有定时器、没有看门狗触发点、没有任何按额度或 429
 //! 自动切槽位的路径。存在那条路径，「多槽位」的定位就从「管理你自己的账户」
-//! 变成了「规避限制」—— 见 `DISCLAIMER.md` 与 README 的合规边界前两条。
+//! 变成了「规避限制」—— 见 `DISCLAIMER.md` 第 4 节那四条设计约束的前两条。
 //!
 //! 中转站的熔断事件**代码上**到不了这里：熔断住在 `qb-relay` / `qb-station`，
 //! 它们不依赖这个 crate，这个 crate 也不依赖它们。
@@ -26,3 +26,5 @@ pub use qb_platform::{config_io, process};
 
 pub mod accounts;
 pub mod residue;
+
+pub mod codex;

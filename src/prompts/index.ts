@@ -14,9 +14,10 @@ export interface PromptDef {
 }
 
 export const DNS_LEAK_PROMPT: PromptDef = {
-  id: 'dns-leak',
-  title: 'DNS 泄露深度排查与修复',
-  modelHint: '建议选高级模型（推理能力强的档位）。这一条要读网络配置并做判断，弱模型容易给出看似合理但错误的结论。',
+  id: "dns-leak",
+  title: "DNS 泄露深度排查与修复",
+  modelHint:
+    "建议选高级模型（推理能力强的档位）。这一条要读网络配置并做判断，弱模型容易给出看似合理但错误的结论。",
   body: `你是一名 Windows 网络诊断工程师。请在本机排查 DNS 泄露，并在获得我确认后修复。
 
 ## 背景
@@ -78,9 +79,9 @@ export const DNS_LEAK_PROMPT: PromptDef = {
 };
 
 export const CLEAN_REINSTALL_PROMPT: PromptDef = {
-  id: 'clean-reinstall',
-  title: 'Claude 相关软件的完整卸载与重装',
-  modelHint: '建议选高级模型。涉及删除文件与注册表，判断失误会误删无关数据。',
+  id: "clean-reinstall",
+  title: "Claude 相关软件的完整卸载与重装",
+  modelHint: "建议选高级模型。涉及删除文件与注册表，判断失误会误删无关数据。",
   body: `你是一名 Windows 系统维护工程师。请帮我把本机的 Claude 相关软件完整卸载干净，然后重新安装。
 
 ## 用途说明
@@ -141,9 +142,9 @@ export const CLEAN_REINSTALL_PROMPT: PromptDef = {
 };
 
 export const BROWSER_REINSTALL_PROMPT: PromptDef = {
-  id: 'browser-reinstall',
-  title: '浏览器重装与语言时区核对',
-  modelHint: '普通模型即可，但涉及删除浏览器配置文件，请确认已备份书签与密码。',
+  id: "browser-reinstall",
+  title: "浏览器重装与语言时区核对",
+  modelHint: "普通模型即可，但涉及删除浏览器配置文件，请确认已备份书签与密码。",
   body: `请帮我把浏览器重装一遍，并核对它的语言与时区设置是否与我的网络出口一致。
 
 ## 先提醒我
@@ -183,5 +184,4 @@ export const ALL_PROMPTS = [
 ];
 
 /** 索引文档里那份 sulianyan 新手指引，DNS 页面上作为参考链接给出。 */
-export const QUICKSTART_DOC =
-  'https://docs.sulianyan.com/quickstart.html';
+export const QUICKSTART_DOC = "https://docs.sulianyan.com/quickstart.html";

@@ -1,5 +1,5 @@
-import type { ComponentType } from 'react';
-import TavernPanel from './TavernPanel';
+import type { ComponentType } from "react";
+import TavernPanel from "./TavernPanel";
 
 /**
  * 插件清单。
@@ -23,15 +23,15 @@ export interface PluginMeta {
 
 export const PLUGINS: PluginMeta[] = [
   {
-    id: 'sillytavern',
-    name: '酒馆 SillyTavern',
+    id: "sillytavern",
+    name: "酒馆 SillyTavern",
     blurb:
-      '启动真正的 SillyTavern 与 Claude 桥接，世界书、角色卡、群聊、扩展全部原样具备。面板负责启停、IP 门禁与资产备份。',
+      "启动真正的 SillyTavern 与 Claude 桥接，世界书、角色卡、群聊、扩展全部原样具备。面板负责启停、IP 门禁与资产备份。",
     panel: TavernPanel,
     upstream: {
-      label: 'SillyTavern',
-      url: 'https://github.com/SillyTavern/SillyTavern',
-      license: 'AGPL-3.0',
+      label: "SillyTavern",
+      url: "https://github.com/SillyTavern/SillyTavern",
+      license: "AGPL-3.0",
     },
   },
 ];

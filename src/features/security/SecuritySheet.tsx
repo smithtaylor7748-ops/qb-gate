@@ -12,6 +12,7 @@
 import { setSession, useSession } from "../../lib/store";
 import { Modal } from "../../ui";
 import { OBJECTS, ObjectAction, ObjectDetail, type ObjectId } from "./objects";
+import Ipv6Panel from "./Ipv6Panel";
 
 const KEY = "security.sheet";
 
@@ -28,6 +29,7 @@ export default function SecuritySheet() {
       open={current !== undefined}
       onClose={() => setOpen(null)}
       size="wide"
+      headerActions={current?.id === "purity" ? <Ipv6Panel /> : undefined}
       title={
         current ? (
           <span className="qb-modal-title">

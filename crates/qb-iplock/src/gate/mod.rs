@@ -254,17 +254,18 @@ pub fn lease_release(state: &GateState) {
 /// 各写一份迟早会有一份漏掉「白名单为空」或者「国家层」这种维度，
 /// 而漏掉的那一处就是现成的绕过入口。
 pub async fn judge_now() -> judge::Judgement {
+    let generation = *VERDICT_GENERATION.lock().unwrap();
     if let Err(error) = crate::settings::load_checked() {
         crate::audit::write(&format!("门禁配置不可读，拒绝放行：{error}"));
         let verdict = judge::Judgement::IpUnknown;
-        write_verdict(&verdict);
+        write_verdict(&verdict, generation);
         return verdict;
     }
     let r = crate::probe::ip::reading().await;
     let allow = allowlist::read().unwrap_or_default();
     let countries = crate::settings::country_allowlist();
     let j = judge::judge(&r, &allow, &countries);
-    write_verdict(&j);
+    write_verdict(&j, generation);
     j
 }
 
@@ -299,7 +300,11 @@ pub struct Verdict {
     pub checked_at: u64,
 }
 
+static VERDICT_GENERATION: Mutex<u64> = Mutex::new(0);
+
 pub fn invalidate_verdict() -> Result<()> {
+    let mut generation = VERDICT_GENERATION.lock().unwrap();
+    *generation = generation.wrapping_add(1);
     crate::config_io::replace(&verdict_path(), None)
 }
 pub fn cached_verdict() -> Option<Verdict> {
@@ -355,7 +360,18 @@ fn verdict_of(j: &judge::Judgement, now: u64) -> Verdict {
     }
 }
 
-fn write_verdict(j: &judge::Judgement) {
+fn with_current_verdict(generation: &Mutex<u64>, expected: u64, write: impl FnOnce()) {
+    let current = generation.lock().unwrap();
+    if *current == expected {
+        write();
+    }
+}
+
+fn write_verdict(j: &judge::Judgement, generation: u64) {
+    with_current_verdict(&VERDICT_GENERATION, generation, || persist_verdict(j));
+}
+
+fn persist_verdict(j: &judge::Judgement) {
     let v = verdict_of(j, unix_now());
     let p = verdict_path();
     if let Some(d) = p.parent() {
@@ -757,6 +773,19 @@ pub async fn try_restore_lease(state: &GateState) -> Option<WatchMode> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_late_network_probe_cannot_repopulate_invalidated_gate_cache() {
+        let generation = std::sync::Mutex::new(1);
+        let cache = std::cell::Cell::new(None);
+        super::with_current_verdict(&generation, 1, || cache.set(Some(true)));
+        assert_eq!(cache.get(), Some(true));
+        *generation.lock().unwrap() = 2;
+        cache.set(None);
+        super::with_current_verdict(&generation, 1, || cache.set(Some(true)));
+        assert_eq!(cache.get(), None);
+        super::with_current_verdict(&generation, 2, || cache.set(Some(false)));
+        assert_eq!(cache.get(), Some(false));
+    }
     use super::*;
 
     // ⚠ 这个文件里能测的都是**不碰真实运行期状态**的那部分：不动真 ACL、

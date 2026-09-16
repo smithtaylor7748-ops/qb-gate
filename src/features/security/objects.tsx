@@ -1,7 +1,7 @@
 /**
- * 六个安全对象的唯一定义处：叫什么、状态一行怎么写、详情由哪些块组成。
+ * 七个安全对象的唯一定义处：叫什么、状态一行怎么写、详情由哪些块组成。
  *
- * **没有「安全」页了。** 六项全在总览上：四项是评分卡里的明细格，
+ * **没有「安全」页了。** 七项全在总览上：五项是评分卡里的明细格，
  * 执行锁与会话内门禁挂在评分卡右上角那排门禁读数上，点下去都开
  * `SecuritySheet` 那个小窗。留一个安全页等于同一份内容两个入口，
  * 正是这次重排要消灭的那类重复。
@@ -15,6 +15,7 @@ import {
   Globe,
   ListChecks,
   Lock,
+  Route,
   ShieldAlert,
   Stethoscope,
   type LucideIcon,
@@ -29,7 +30,7 @@ import {
   PurityPill,
   PurityProbe,
   PurityVerdict,
-  PurityWhy,
+  usePurityVerdict,
 } from "./PurityPanel";
 import {
   DnsAdvanced,
@@ -38,6 +39,7 @@ import {
   DnsRunButton,
   DnsWhy,
 } from "./DnsPanel";
+import { EgressResult, EgressRunButton, EgressWhy } from "./EgressPanel";
 import {
   LocalCheckup,
   SignalsBreakdown,
@@ -48,7 +50,7 @@ import {
 } from "./SignalsPanel";
 
 export type ObjectId =
-  "purity" | "dns" | "signals" | "allowlist" | "lock" | "session";
+  "purity" | "dns" | "signals" | "egress" | "allowlist" | "lock" | "session";
 
 export type Tone = "" | "ok" | "warn" | "danger";
 
@@ -74,6 +76,12 @@ export const OBJECTS: SecurityObject[] = [
     sub: "浏览器指纹 + 本机检查",
     icon: Stethoscope,
   },
+  {
+    id: "egress",
+    name: "出口一致性",
+    sub: "跟出口 IP 对不上的东西",
+    icon: Route,
+  },
   { id: "allowlist", name: "IP 白名单", sub: "谁能过这道门", icon: ListChecks },
   {
     id: "lock",
@@ -98,7 +106,6 @@ export function ObjectDetail({ id }: { id: ObjectId }) {
           <PurityFailure />
           <PurityVerdict />
           <PurityProbe />
-          <PurityWhy />
         </>
       );
     case "dns":
@@ -120,6 +127,13 @@ export function ObjectDetail({ id }: { id: ObjectId }) {
           <SignalsWhy />
         </>
       );
+    case "egress":
+      return (
+        <>
+          <EgressResult />
+          <EgressWhy />
+        </>
+      );
     case "allowlist":
       return <AllowlistPanel />;
     case "lock":
@@ -139,6 +153,7 @@ export function ObjectAction({ id }: { id: ObjectId }) {
   if (id === "purity") return <PurityPill />;
   if (id === "dns") return <DnsRunButton />;
   if (id === "signals") return <SignalsRunButton />;
+  if (id === "egress") return <EgressRunButton />;
   return null;
 }
 
@@ -149,20 +164,20 @@ export function ObjectAction({ id }: { id: ObjectId }) {
  * 既不好看也没信息量，而说明至少告诉你点进去能干什么。
  */
 export function useReadouts(): Partial<Record<ObjectId, [string, Tone]>> {
-  const progress = useResource("progress", R.progress);
+  const purity = usePurityVerdict();
   const dns = useResource("dns", R.dns);
   const signals = useResource("signals", R.signals);
   const gate = useResource("gate", R.gate);
   const hook = useResource("hook", R.hook);
+  const egress = useResource("egress", R.egress);
 
   const out: Partial<Record<ObjectId, [string, Tone]>> = {};
 
-  const purity = progress.data?.steps["purity"];
-  if (purity && purity.state !== "pending") {
+  if (purity) {
     out.purity =
-      purity.state === "passed"
+      purity === "passed"
         ? ["已复核通过", "ok"]
-        : purity.state === "failed"
+        : purity === "failed"
           ? ["复核不合格", "danger"]
           : ["已跳过", "warn"];
   }
@@ -182,6 +197,17 @@ export function useReadouts(): Partial<Record<ObjectId, [string, Tone]>> {
       `识别度 ${t} / 100 · 命中 ${signals.data.hits.length} 项`,
       t <= 30 ? "ok" : t <= 60 ? "warn" : "danger",
     ];
+  }
+
+  if (egress.data) {
+    const rows = egress.data.items.filter((i) => i.state !== "unknown");
+    const bad = rows.filter((i) => i.state !== "pass").length;
+    out.egress =
+      rows.length === 0
+        ? ["都查不了", ""]
+        : bad === 0
+          ? [`${rows.length} 项都对得上`, "ok"]
+          : [`${bad} / ${rows.length} 项对不上`, bad > 1 ? "danger" : "warn"];
   }
 
   const st = gate.data;

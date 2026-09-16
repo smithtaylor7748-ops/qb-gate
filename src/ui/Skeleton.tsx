@@ -5,14 +5,17 @@ interface Props {
 }
 
 /** 加载占位。有它才能把「加载中」和「没有数据」在视觉上分开。 */
-export default function Skeleton({ className = 'h-4 w-full', lines = 1 }: Props) {
+export default function Skeleton({
+  className = "h-4 w-full",
+  lines = 1,
+}: Props) {
   if (lines > 1) {
     return (
       <div className="flex flex-col gap-2" aria-hidden="true">
         {Array.from({ length: lines }, (_, i) => (
           <span
             key={i}
-            className={`skeleton h-4 ${i === lines - 1 ? 'w-2/5' : 'w-full'}`}
+            className={`skeleton h-4 ${i === lines - 1 ? "w-2/5" : "w-full"}`}
           />
         ))}
       </div>

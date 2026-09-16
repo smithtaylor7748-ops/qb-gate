@@ -1,13 +1,16 @@
-import { useId, useState, type ReactNode } from 'react';
-import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { AlertCircle, FolderOpen } from 'lucide-react';
-import Button from './Button';
+import { useId, useState, type ReactNode } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { AlertCircle, FolderOpen } from "lucide-react";
+import Button from "./Button";
 
 interface FieldProps {
   label: ReactNode;
   hint?: ReactNode;
   error?: string;
-  children: (props: { id: string; 'aria-invalid': boolean | undefined }) => ReactNode;
+  children: (props: {
+    id: string;
+    "aria-invalid": boolean | undefined;
+  }) => ReactNode;
   className?: string;
 }
 
@@ -18,14 +21,20 @@ interface FieldProps {
  * 嵌套关联在多数读屏器上能用，但一旦控件不是直接子元素就断，而且
  * `.k` 是给指标块用的类名，语义上不是 label。
  */
-export function Field({ label, hint, error, children, className = '' }: FieldProps) {
+export function Field({
+  label,
+  hint,
+  error,
+  children,
+  className = "",
+}: FieldProps) {
   const id = useId();
   return (
     <div className={className}>
       <label className="field-label" htmlFor={id}>
         {label}
       </label>
-      {children({ id, 'aria-invalid': error ? true : undefined })}
+      {children({ id, "aria-invalid": error ? true : undefined })}
       {error ? (
         <p className="field-error">
           <AlertCircle size={11} aria-hidden="true" />
@@ -45,7 +54,7 @@ interface TextFieldProps {
   placeholder?: string;
   hint?: ReactNode;
   error?: string;
-  type?: 'text' | 'password';
+  type?: "text" | "password";
   disabled?: boolean;
   className?: string;
 }
@@ -57,7 +66,7 @@ export function TextField({
   placeholder,
   hint,
   error,
-  type = 'text',
+  type = "text",
   disabled,
   className,
 }: TextFieldProps) {
@@ -72,7 +81,7 @@ export function TextField({
           placeholder={placeholder}
           disabled={disabled}
           spellCheck={false}
-          autoComplete={type === 'password' ? 'off' : undefined}
+          autoComplete={type === "password" ? "off" : undefined}
           onChange={(e) => onChange(e.target.value)}
         />
       )}
@@ -86,7 +95,7 @@ interface PathFieldProps {
   onChange: (v: string) => void;
   hint?: ReactNode;
   /** 选目录还是选文件。启动脚本是文件，其余两个是目录。 */
-  kind?: 'directory' | 'file';
+  kind?: "directory" | "file";
   disabled?: boolean;
 }
 
@@ -102,7 +111,7 @@ export function PathField({
   value,
   onChange,
   hint,
-  kind = 'directory',
+  kind = "directory",
   disabled,
 }: PathFieldProps) {
   const [picking, setPicking] = useState(false);
@@ -111,11 +120,11 @@ export function PathField({
     setPicking(true);
     try {
       const picked = await openDialog({
-        directory: kind === 'directory',
+        directory: kind === "directory",
         multiple: false,
         defaultPath: value || undefined,
       });
-      if (typeof picked === 'string') onChange(picked);
+      if (typeof picked === "string") onChange(picked);
     } catch {
       // 用户取消或者对话框起不来，保持原值即可，不打扰。
     } finally {
@@ -164,17 +173,23 @@ interface PortFieldProps {
  * 旧代码用 `type="text"` + `Number(e.target.value) || 0`：输入字母**静默变成 0**，
  * 用户看着自己打的字消失，也不知道为什么。这里用 number 并校验范围。
  */
-export function PortField({ label, value, onChange, hint, disabled }: PortFieldProps) {
+export function PortField({
+  label,
+  value,
+  onChange,
+  hint,
+  disabled,
+}: PortFieldProps) {
   const [raw, setRaw] = useState<string | null>(null);
   const shown = raw ?? String(value);
   const n = Number(shown);
-  const invalid = shown !== '' && (!Number.isInteger(n) || n < 1 || n > 65535);
+  const invalid = shown !== "" && (!Number.isInteger(n) || n < 1 || n > 65535);
 
   return (
     <Field
       label={label}
       hint={hint}
-      error={invalid ? '端口要是 1–65535 之间的整数' : undefined}
+      error={invalid ? "端口要是 1–65535 之间的整数" : undefined}
     >
       {(p) => (
         <input
@@ -205,7 +220,12 @@ interface CheckboxProps {
   disabled?: boolean;
 }
 
-export function Checkbox({ checked, onChange, children, disabled }: CheckboxProps) {
+export function Checkbox({
+  checked,
+  onChange,
+  children,
+  disabled,
+}: CheckboxProps) {
   return (
     <label className="checkbox">
       <input

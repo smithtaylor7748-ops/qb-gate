@@ -364,30 +364,24 @@ export function ExternalsBlock() {
  */
 export function VersionHistoryBlock() {
   const toast = useToast();
-  const [app] = useState<ManagedApp>("claude-code");
-  const [rows, setRows] = useState<VersionEntry[] | null>(null);
+  const app: ManagedApp = "claude-code";
+  // ⛔ 走资源层，不要在这里 `useState` + `useEffect` 自己取。
+  //
+  // 自己取的那一版有两个毛病：升级是在同一页的另一张卡上按的，
+  // `AFTER.install` 管不到组件内部的 state，于是**升完级这张表不变** ——
+  // 刚被归档的那一份要切走再切回来才出现；而且 `catch { setRows([]) }`
+  // 把「读不出」显示成了「版本库是空的」，正是 §7.20「读不出版本 ≠ 没装」
+  // 那条教训的同一个形状。
+  const history = useResource("versions", R.versions);
+  const rows = history.data ?? null;
   const [busy, setBusy] = useState("");
   const [ask, setAsk] = useState<VersionEntry | null>(null);
-
-  async function load() {
-    try {
-      setRows(await api.managedHistory(app));
-    } catch {
-      setRows([]);
-    }
-  }
-
-  useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [app]);
 
   async function rollback(v: VersionEntry) {
     setBusy(v.version);
     try {
       toast.ok(await api.managedRollback(app, v.version));
       invalidate(...AFTER.install);
-      await load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -404,7 +398,11 @@ export function VersionHistoryBlock() {
         下次启动才生效。
       </p>
 
-      {rows === null ? (
+      {history.error ? (
+        /* ⛔「读不出」不能显示成「空的」。读不出时下面那句「升级过一次
+           之后这里才会有东西」是句假话，而使用者会照着它去等。 */
+        <p className="notice notice--danger">读不出版本库：{history.error}</p>
+      ) : rows === null ? (
         <p className="notice">读取中…</p>
       ) : rows.length === 0 ? (
         <EmptyState title="版本库是空的">

@@ -1660,6 +1660,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
+name = "httpdate"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
+
+[[package]]
 name = "hyper"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1672,6 +1678,7 @@ dependencies = [
  "http",
  "http-body",
  "httparse",
+ "httpdate",
  "itoa",
  "pin-project-lite",
  "smallvec",
@@ -2956,7 +2963,7 @@ dependencies = [
 
 [[package]]
 name = "qb-accounts"
-version = "0.13.0"
+version = "0.22.6"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -2973,11 +2980,15 @@ dependencies = [
 
 [[package]]
 name = "qb-app"
-version = "0.13.0"
+version = "0.22.6"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
+ "futures-util",
  "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "qb-accounts",
  "qb-contract",
  "qb-extensions",
@@ -2988,6 +2999,7 @@ dependencies = [
  "qb-platform",
  "qb-probe",
  "qb-relay",
+ "qb-station",
  "qb-sysenv",
  "reqwest 0.12.28",
  "rusqlite",
@@ -3002,7 +3014,7 @@ dependencies = [
 
 [[package]]
 name = "qb-contract"
-version = "0.13.0"
+version = "0.22.6"
 dependencies = [
  "serde",
  "serde_json",
@@ -3011,7 +3023,7 @@ dependencies = [
 
 [[package]]
 name = "qb-extensions"
-version = "0.13.0"
+version = "0.22.6"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3038,7 +3050,7 @@ dependencies = [
 
 [[package]]
 name = "qb-foundation"
-version = "0.13.0"
+version = "0.22.6"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3052,10 +3064,11 @@ dependencies = [
 
 [[package]]
 name = "qb-gate"
-version = "0.13.0"
+version = "0.22.6"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
+ "glob",
  "hex",
  "qb-accounts",
  "qb-app",
@@ -3096,7 +3109,7 @@ dependencies = [
 
 [[package]]
 name = "qb-install"
-version = "0.13.0"
+version = "0.22.6"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3114,7 +3127,7 @@ dependencies = [
 
 [[package]]
 name = "qb-iplock"
-version = "0.13.0"
+version = "0.22.6"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3135,7 +3148,7 @@ dependencies = [
 
 [[package]]
 name = "qb-launch"
-version = "0.13.0"
+version = "0.22.6"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3153,7 +3166,7 @@ dependencies = [
 
 [[package]]
 name = "qb-platform"
-version = "0.13.0"
+version = "0.22.6"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3176,7 +3189,7 @@ dependencies = [
 
 [[package]]
 name = "qb-probe"
-version = "0.13.0"
+version = "0.22.6"
 dependencies = [
  "chrono",
  "qb-foundation",
@@ -3190,7 +3203,7 @@ dependencies = [
 
 [[package]]
 name = "qb-relay"
-version = "0.13.0"
+version = "0.22.6"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3206,7 +3219,7 @@ dependencies = [
 
 [[package]]
 name = "qb-station"
-version = "0.13.0"
+version = "0.22.6"
 dependencies = [
  "chrono",
  "qb-contract",
@@ -3218,7 +3231,7 @@ dependencies = [
 
 [[package]]
 name = "qb-sysenv"
-version = "0.13.0"
+version = "0.22.6"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3441,6 +3454,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
@@ -3460,12 +3474,14 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams 0.4.2",
  "web-sys",
  "webpki-roots",
 ]
@@ -3506,7 +3522,7 @@ dependencies = [
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-streams",
+ "wasm-streams 0.5.0",
  "web-sys",
 ]
 
@@ -3628,9 +3644,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.44"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6725596c3f2c3a0aef021139e145d4eafe314a6623e4680ca83852b2c67ab2ba"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
  "once_cell",
@@ -4681,7 +4697,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -5440,6 +5456,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81941cd78d0c92026c33e5e01312845a4cb1e9af3407f9134b100dd03144103e"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wasm-streams"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15053d8d85c7eccdbefef60f06769760a563c7f0a9d6902a13d35c7800b0ad65"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

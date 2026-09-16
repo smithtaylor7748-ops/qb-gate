@@ -16,6 +16,15 @@ import {
 
 export const RELAY_BASE = "/relays";
 
+/**
+ * 旧那套「供应商 / 凭证 / 环境」的入口。
+ *
+ * 中转站页去掉外壳分页栏之后，旧页面只剩深链接进得去。这个路径是
+ * **不指定服务商**的那一个 —— 没有它，旧页面只有知道某个服务商 id
+ * 的人才进得去，而站点目前还只能从那儿添。
+ */
+export const RELAY_LEGACY = RELAY_BASE + "/providers";
+
 export interface NavEntry {
   path: string;
   name: string;
@@ -65,6 +74,10 @@ export const LEGACY_REDIRECTS: [string, string][] = [
   ["/environment", "/"],
   ["/security", "/"],
   ["/workspace", "/"],
+  // 0.20.0 删掉了「管理账户」那一页：使用者要的「管理」就是删除，而删除
+  // 现在直接长在总览的槽位横条上。那一页原来独有的「官方目录里的 API 配置」
+  // 搬进了总览（`OfficialConfigResidue`），所以这里只需要把地址接住。
+  ["/accounts", "/"],
   ["/official", "/"],
 ];
 

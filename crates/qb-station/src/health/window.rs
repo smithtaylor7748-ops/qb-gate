@@ -23,7 +23,13 @@ use crate::station::model::UsageRow;
 pub struct Window {
     pub requests: u64,
     pub failures: u64,
+    /// 窗口里**报了成败**的行数。`requests` 减掉它就是「站点没说」的那些。
+    pub status_rows: u64,
     /// 成功率。窗口里一条记录都没有时是 `None`,不是 100%。
+    ///
+    /// **分母是 `status_rows`,不是 `requests`。** 消费日志里没扣到钱的失败
+    /// 请求很可能压根不出现,拿 `requests` 当分母会让每一家站点都是 100% ——
+    /// 而这个数正是智能调度里「稳」那一维的输入。
     pub success_rate: Option<f64>,
     /// 缓存命中率 = Σ缓存读 ÷ Σ输入总量。**只累加两者都取证到的行。**
     pub cache_hit_rate: Option<f64>,
@@ -31,9 +37,101 @@ pub struct Window {
     /// P95 比均值有用得多:长尾才是「这站有时候卡死」的真相,
     /// 均值会被大量正常请求稀释掉。
     pub ttft_p95_ms: Option<u64>,
+    /// 每个输出 token 的生成耗时。Σ总耗时 ÷ Σ输出 token。
+    pub ms_per_token: Option<f64>,
+    /// 体验分:**这条线跑完一次典型回答大概要多久**(毫秒,越小越好)。
+    ///
+    /// ⛔ 排序用它,不要用 `ttft_p95_ms`。
+    ///
+    /// # 为什么不能只看首字
+    ///
+    /// 实测(使用者自己的 sub2guard 外挂,2026-09-08 ㉚):
+    ///
+    /// | 账号 | 首字 p50 | ms/token | 一次回答 |
+    /// |---|---|---|---|
+    /// | 2690 | **1.4 秒(全组最快)** | 107.9 | **95.8 秒** |
+    /// | 2681 | 4.7 秒 | 21.1 | 快 5 倍 |
+    ///
+    /// 按首字排,2690 一直排第一,而使用者报的「卡」就是它 —— 卡在首字**之后**。
+    /// 首字慢一点但生成快 5 倍的那条被压在第三,拿不到流量。
+    ///
+    /// 算不出来时回落到 `ttft_p95_ms`:比「什么证据都没有」强,
+    /// 只是看不见首字之后的卡顿。
+    pub experience_ms: Option<f64>,
     pub tokens: Option<u64>,
     pub cost: Option<f64>,
+    /// 这个窗口里四类 token 各用了多少。
+    ///
+    /// ⛔ **比价必须按它加权。** 一条线「输入便宜、输出翻五倍」,另一条
+    /// 「输入贵、输出不翻倍」—— 谁便宜完全取决于你的输入输出比。
+    /// 只比一个总倍率答不了这个问题。
+    pub mix: TokenMix,
 }
+
+/// 四类 token 各自的用量。**每一类都可能没取证到。**
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TokenMix {
+    pub input: Option<u64>,
+    pub cache_read: Option<u64>,
+    pub cache_write: Option<u64>,
+    pub output: Option<u64>,
+}
+
+impl TokenMix {
+    /// 四类占比,顺序同 `pricing::PriceCategory::ALL`。
+    ///
+    /// 四类**都要取证到**才给占比:少一类就把分母算小,剩下几类的权重被抬高,
+    /// 加权出来的单价整个偏掉。
+    pub fn shares(&self) -> Option<[f64; 4]> {
+        let (i, r, w, o) = (
+            self.input?,
+            self.cache_read?,
+            self.cache_write?,
+            self.output?,
+        );
+        let total = (i + r + w + o) as f64;
+        (total > 0.0).then(|| {
+            [
+                i as f64 / total,
+                r as f64 / total,
+                w as f64 / total,
+                o as f64 / total,
+            ]
+        })
+    }
+
+    /// 「新对话」的占比:**没有缓存读**。
+    ///
+    /// 开一轮新对话时上游那边还没有这段上下文的缓存,所以缓存读为零、
+    /// 缓存写照付。一条靠高缓存命中撑起来的便宜线,在新对话的第一轮上
+    /// 并不便宜 —— 界面要能分开看这两种口径。
+    pub fn fresh_conversation(&self) -> Option<[f64; 4]> {
+        let (i, r, w, o) = (
+            self.input?,
+            self.cache_read?,
+            self.cache_write?,
+            self.output?,
+        );
+        // 原本读缓存的那部分,新对话里要当成未缓存输入付一次,并写一次缓存。
+        let input = i + r;
+        let total = (input + w + o) as f64;
+        (total > 0.0).then(|| {
+            [
+                input as f64 / total,
+                0.0,
+                w as f64 / total,
+                o as f64 / total,
+            ]
+        })
+    }
+}
+
+/// 一次「典型回答」按多少个输出 token 算。
+///
+/// 它只决定「首字」和「生成速度」在体验分里的配比,**不影响相对快慢** ——
+/// 两条线谁快谁慢跟这个数取多少无关,它只是把两个量纲接到一起。
+/// 500 取自使用者本站 `usage_logs` 近 7 天的平均输出长度(541,中位数 200)。
+pub const TYPICAL_OUTPUT_TOKENS: f64 = 500.0;
 
 pub const HOUR_MS: i64 = 3_600_000;
 pub const DAY_MS: i64 = 86_400_000;
@@ -57,6 +155,10 @@ pub(super) fn aggregate(rows: &[UsageRow], now_ms: i64, span_ms: i64) -> Window 
     let mut cost_sum = 0.0f64;
     let mut cost_rows = 0u64;
     let mut ttft: Vec<u64> = Vec::new();
+    let mut gen_ms: u64 = 0;
+    let mut gen_tokens: u64 = 0;
+    let (mut mix_in, mut mix_read, mut mix_write, mut mix_out) = (0u64, 0u64, 0u64, 0u64);
+    let (mut has_in, mut has_read, mut has_write, mut has_out) = (false, false, false, false);
 
     for r in rows {
         // 左端开、右端闭。时间戳在未来的行直接丢 —— 时钟漂移或者站点回了个
@@ -65,8 +167,12 @@ pub(super) fn aggregate(rows: &[UsageRow], now_ms: i64, span_ms: i64) -> Window 
             continue;
         }
         w.requests += 1;
-        if !r.ok {
-            w.failures += 1;
+        // 没报成败的行不进成功率的分子分母 —— 它在缓存、首字、花费上仍然算数。
+        if r.status_reported {
+            w.status_rows += 1;
+            if !r.ok {
+                w.failures += 1;
+            }
         }
         if let (Some(read), Some(total)) = (r.cache_read, r.input_total()) {
             cache_read_sum += read;
@@ -84,10 +190,34 @@ pub(super) fn aggregate(rows: &[UsageRow], now_ms: i64, span_ms: i64) -> Window 
         if let Some(ms) = r.first_token_ms {
             ttft.push(ms);
         }
+        // 生成速度:两项都要取证到才累加。少一边算出来的 ms/token 是假的。
+        if let (Some(total), Some(out)) = (r.total_ms, r.output) {
+            if out > 0 {
+                gen_ms += total;
+                gen_tokens += out;
+            }
+        }
+        // 四类用量各自累加。哪一类一行都没报过,那一类就是「没取证到」。
+        if let Some(v) = r.input_uncached {
+            mix_in += v;
+            has_in = true;
+        }
+        if let Some(v) = r.cache_read {
+            mix_read += v;
+            has_read = true;
+        }
+        if let Some(v) = r.cache_write {
+            mix_write += v;
+            has_write = true;
+        }
+        if let Some(v) = r.output {
+            mix_out += v;
+            has_out = true;
+        }
     }
 
-    if w.requests > 0 {
-        w.success_rate = Some((w.requests - w.failures) as f64 / w.requests as f64);
+    if w.status_rows > 0 {
+        w.success_rate = Some((w.status_rows - w.failures) as f64 / w.status_rows as f64);
     }
     // 分母为 0 时是 `None` 而不是 0.0:有记录但输入量全是 0,说明这批行的 token
     // 字段没取证到,算不出命中率。给个 0% 等于污蔑这家站不做缓存。
@@ -105,6 +235,22 @@ pub(super) fn aggregate(rows: &[UsageRow], now_ms: i64, span_ms: i64) -> Window 
         w.ttft_p50_ms = Some(percentile(&ttft, 50));
         w.ttft_p95_ms = Some(percentile(&ttft, 95));
     }
+    if gen_tokens > 0 {
+        w.ms_per_token = Some(gen_ms as f64 / gen_tokens as f64);
+    }
+    // 体验分 = 首字 P95 + 每 token 耗时 × 典型回答长度。
+    // 算不出生成速度时回落到纯首字 —— 比没有证据强,只是看不见后半段的卡顿。
+    w.mix = TokenMix {
+        input: has_in.then_some(mix_in),
+        cache_read: has_read.then_some(mix_read),
+        cache_write: has_write.then_some(mix_write),
+        output: has_out.then_some(mix_out),
+    };
+    w.experience_ms = match (w.ttft_p95_ms, w.ms_per_token) {
+        (Some(t), Some(mpt)) => Some(t as f64 + mpt * TYPICAL_OUTPUT_TOKENS),
+        (Some(t), None) => Some(t as f64),
+        _ => None,
+    };
     w
 }
 
@@ -127,6 +273,7 @@ mod tests {
         UsageRow {
             at_ms,
             ok: true,
+            status_reported: true,
             ..Default::default()
         }
     }
@@ -141,6 +288,7 @@ mod tests {
             first_token_ms: Some(frt),
             cost: Some(0.01),
             ok: true,
+            status_reported: true,
             ..Default::default()
         }
     }
@@ -232,6 +380,184 @@ mod tests {
         let w = aggregate(&rows, now, HOUR_MS);
         assert_eq!((w.requests, w.failures), (4, 1));
         assert_eq!(w.success_rate, Some(0.75));
+    }
+
+    #[test]
+    fn a_log_that_never_reports_status_yields_no_success_rate_rather_than_100_percent() {
+        // `/api/log/self` 是消费日志:没扣到钱的失败请求很可能压根不出现。
+        // 拿行数当分母的话,每一家站点都是 100% —— 而这个数正是智能调度里
+        // 「稳」那一维的输入,等于凭空替所有站点作证,最弱项规则再也卡不到可靠性。
+        let now = 10 * HOUR_MS;
+        let rows: Vec<UsageRow> = (1..=5)
+            .map(|i| UsageRow {
+                at_ms: now - i,
+                cost: Some(0.01),
+                first_token_ms: Some(300),
+                ok: true,
+                status_reported: false,
+                ..Default::default()
+            })
+            .collect();
+        let w = aggregate(&rows, now, HOUR_MS);
+        assert_eq!(w.requests, 5);
+        assert_eq!(w.status_rows, 0);
+        assert_eq!(w.success_rate, None, "没报成败却给出了成功率");
+        // 但这些行在别的维度上仍然是有效证据 —— 不能整行作废。
+        assert_eq!(w.ttft_p50_ms, Some(300));
+        assert_eq!(w.cost, Some(0.05));
+    }
+
+    #[test]
+    fn success_rate_ignores_rows_whose_status_was_never_reported() {
+        // 混着来的时候,分母只能是报了成败的那几行。
+        let now = 10 * HOUR_MS;
+        let mut bad = row(now - 1);
+        bad.ok = false;
+        let silent = UsageRow {
+            at_ms: now - 2,
+            ok: true,
+            status_reported: false,
+            ..Default::default()
+        };
+        let rows = [row(now - 3), bad, silent];
+        let w = aggregate(&rows, now, HOUR_MS);
+        assert_eq!((w.requests, w.status_rows, w.failures), (3, 2, 1));
+        assert_eq!(w.success_rate, Some(0.5));
+    }
+
+    #[test]
+    fn the_token_mix_is_what_makes_two_pricing_shapes_comparable() {
+        // 一条「输入便宜、输出翻五倍」，一条「输入贵、输出不翻倍」——
+        // 谁便宜取决于输入输出比，只比一个总倍率答不了。
+        let now = 10 * HOUR_MS;
+        let rows = [UsageRow {
+            at_ms: now - 1,
+            input_uncached: Some(600),
+            cache_read: Some(300),
+            cache_write: Some(100),
+            output: Some(1000),
+            ok: true,
+            status_reported: true,
+            ..Default::default()
+        }];
+        let w = aggregate(&rows, now, HOUR_MS);
+        let s = w.mix.shares().unwrap();
+        assert!((s[0] - 0.3).abs() < 1e-9);
+        assert!((s[3] - 0.5).abs() < 1e-9, "输出占一半");
+        assert!((s.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_fresh_conversation_has_no_cache_reads() {
+        // 靠高缓存命中撑起来的便宜线，在新对话第一轮上并不便宜 ——
+        // 那段上下文上游还没缓存过。
+        let now = 10 * HOUR_MS;
+        let rows = [UsageRow {
+            at_ms: now - 1,
+            input_uncached: Some(200),
+            cache_read: Some(800),
+            cache_write: Some(0),
+            output: Some(0),
+            ok: true,
+            status_reported: true,
+            ..Default::default()
+        }];
+        let w = aggregate(&rows, now, HOUR_MS);
+        let normal = w.mix.shares().unwrap();
+        let fresh = w.mix.fresh_conversation().unwrap();
+        assert!((normal[1] - 0.8).abs() < 1e-9, "平时八成走缓存读");
+        assert_eq!(fresh[1], 0.0, "新对话不该有缓存读");
+        assert!((fresh[0] - 1.0).abs() < 1e-9, "那八成要按未缓存输入付");
+    }
+
+    #[test]
+    fn a_missing_category_voids_the_mix_rather_than_skewing_it() {
+        // 少一类就把分母算小，剩下几类的权重被抬高，加权单价整个偏掉。
+        let now = 10 * HOUR_MS;
+        let rows = [UsageRow {
+            at_ms: now - 1,
+            input_uncached: Some(100),
+            cache_read: None,
+            cache_write: Some(0),
+            output: Some(100),
+            ok: true,
+            status_reported: true,
+            ..Default::default()
+        }];
+        let w = aggregate(&rows, now, HOUR_MS);
+        assert_eq!(w.mix.shares(), None);
+        assert_eq!(w.mix.fresh_conversation(), None);
+    }
+
+    #[test]
+    fn the_fastest_first_token_can_still_be_the_slowest_answer() {
+        // 实测(sub2guard ㉚):2690 首字全组最快,却是使用者报「卡」的那一条 ——
+        // 它 107.9 ms/token,一次回答要吐 95.8 秒;2681 首字慢 3 倍但快 5 倍。
+        // 只按首字排会把最卡的排第一。
+        let now = 10 * HOUR_MS;
+        let quick_start = UsageRow {
+            at_ms: now - 1,
+            first_token_ms: Some(1_400),
+            total_ms: Some(95_800),
+            output: Some(500),
+            ok: true,
+            status_reported: true,
+            ..Default::default()
+        };
+        let quick_finish = UsageRow {
+            at_ms: now - 2,
+            first_token_ms: Some(4_700),
+            total_ms: Some(19_000),
+            output: Some(500),
+            ok: true,
+            status_reported: true,
+            ..Default::default()
+        };
+        let a = aggregate(&[quick_start], now, HOUR_MS);
+        let b = aggregate(&[quick_finish], now, HOUR_MS);
+
+        // 首字：a 快得多。
+        assert!(a.ttft_p95_ms < b.ttft_p95_ms);
+        // 体验分：b 才是真的快。**排序要用这个。**
+        assert!(
+            b.experience_ms < a.experience_ms,
+            "体验分没把「首字之后的卡顿」算进去：a={:?} b={:?}",
+            a.experience_ms,
+            b.experience_ms
+        );
+    }
+
+    #[test]
+    fn without_generation_evidence_the_score_falls_back_to_first_token() {
+        // 比「什么证据都没有」强,只是看不见首字之后的卡顿。
+        let now = 10 * HOUR_MS;
+        let r = UsageRow {
+            at_ms: now - 1,
+            first_token_ms: Some(800),
+            ok: true,
+            status_reported: true,
+            ..Default::default()
+        };
+        let w = aggregate(&[r], now, HOUR_MS);
+        assert_eq!(w.ms_per_token, None);
+        assert_eq!(w.experience_ms, Some(800.0));
+    }
+
+    #[test]
+    fn zero_output_tokens_do_not_become_an_infinite_generation_speed() {
+        let now = 10 * HOUR_MS;
+        let r = UsageRow {
+            at_ms: now - 1,
+            first_token_ms: Some(800),
+            total_ms: Some(5_000),
+            output: Some(0),
+            ok: true,
+            status_reported: true,
+            ..Default::default()
+        };
+        let w = aggregate(&[r], now, HOUR_MS);
+        assert_eq!(w.ms_per_token, None);
+        assert_eq!(w.experience_ms, Some(800.0));
     }
 
     #[test]

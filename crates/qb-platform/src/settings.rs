@@ -82,6 +82,32 @@ pub struct Settings {
     ///
     /// 具体设哪几个变量见 `launch::TELEMETRY_OFF`，界面上原样列出来供核对。
     pub disable_telemetry: bool,
+
+    /// 启动面板时，把**系统时区**对齐到出口 IP 的归属地。
+    ///
+    /// **默认 true** —— 这是使用者明确要的（「时区对齐应该是本项目的默认启动功能」）。
+    /// 已经一致时直接跳过，不做任何动作、也不弹 UAC；只有真的不一致才切，
+    /// 而切时区需要管理员权限，那一次会弹一个 UAC。
+    ///
+    /// 查不到出口 IP、或者对照表里没有那个时区时**不切也不猜**，只在日志里记一句
+    /// （`sysenv::iana_to_windows` 返回 `None` 就报错）。
+    pub align_timezone_on_start: bool,
+
+    /// 启动面板时，把**区域格式**（日期、数字、货币）对齐到出口 IP 的归属地。
+    ///
+    /// **默认 true**：`Set-Culture` 不需要管理员权限、不用重启，改完之后新开的
+    /// 程序就读到新值 —— 代价小到可以默认开。
+    pub align_locale_on_start: bool,
+
+    /// 启动面板时，把**显示语言**对齐到出口 IP 的归属地。
+    ///
+    /// **默认 false，跟上面两个不一样。** 理由是代价完全不同：它要先装好对应的
+    /// 语言包，而且**要注销一次才生效**。默认开的话，使用者装完面板第二天发现
+    /// 系统提示要注销，或者语言包没装、设了等于没设 —— 两种都属于
+    /// 「突然发生一件我没要求的事」，正是这个文件开头那条默认值规矩要挡的。
+    ///
+    /// 要用的人自己在设置里打开，界面上把「要语言包、要注销」写在开关旁边。
+    pub align_display_language_on_start: bool,
 }
 
 impl Default for Settings {
@@ -93,6 +119,10 @@ impl Default for Settings {
             country_allowlist: Vec::new(),
             hook_enabled: false,
             disable_telemetry: false,
+            align_timezone_on_start: true,
+            align_locale_on_start: true,
+            // 要语言包 + 要注销，代价跟上面两个不是一个量级 —— 见字段上的说明。
+            align_display_language_on_start: false,
         }
     }
 }

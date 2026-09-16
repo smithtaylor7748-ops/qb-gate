@@ -1,4 +1,5 @@
 import { call } from "./ipc";
+import type { Ipv6Status } from "./generated/Ipv6Status";
 
 // ------------------------------------------------------------------ 类型
 //
@@ -21,6 +22,8 @@ import type { ApplyReport } from "./generated/ApplyReport";
 import type { AssetItem } from "./generated/AssetItem";
 import type { AuthStyle } from "./generated/AuthStyle";
 import type { BackupEntry } from "./generated/BackupEntry";
+import type { BrowserAudit } from "./generated/BrowserAudit";
+import type { BrowserExtension } from "./generated/BrowserExtension";
 import type { CategoryListing } from "./generated/CategoryListing";
 import type { Check } from "./generated/Check";
 import type { CheckItem } from "./generated/CheckItem";
@@ -29,12 +32,15 @@ import type { Checkup } from "./generated/Checkup";
 import type { ClaudeInstall } from "./generated/ClaudeInstall";
 import type { CleanupReport } from "./generated/CleanupReport";
 import type { CreateOutcome } from "./generated/CreateOutcome";
+import type { DeleteOutcome } from "./generated/DeleteOutcome";
 import type { DependencyCheck } from "./generated/DependencyCheck";
 import type { DesktopState } from "./generated/DesktopState";
 import type { DnsReport } from "./generated/DnsReport";
+import type { EgressChecks } from "./generated/EgressChecks";
 import type { EnvHit } from "./generated/EnvHit";
 import type { Evidence } from "./generated/Evidence";
 import type { ExternalMethod } from "./generated/ExternalMethod";
+import type { FirewallRule } from "./generated/FirewallRule";
 import type { GateStatus } from "./generated/GateStatus";
 import type { GateTarget } from "./generated/GateTarget";
 import type { HookStatus } from "./generated/HookStatus";
@@ -43,6 +49,7 @@ import type { InstallProbe } from "./generated/InstallProbe";
 import type { InstallResult } from "./generated/InstallResult";
 import type { InstallTarget } from "./generated/InstallTarget";
 import type { IpInfo } from "./generated/IpInfo";
+import type { IpLookupReport } from "./generated/IpLookupReport";
 import type { KillReport } from "./generated/KillReport";
 import type { KillRole } from "./generated/KillRole";
 import type { KillTarget } from "./generated/KillTarget";
@@ -55,15 +62,26 @@ import type { ManagedExternal } from "./generated/ManagedExternal";
 import type { ManagedProbe } from "./generated/ManagedProbe";
 import type { ManagedStatus } from "./generated/ManagedStatus";
 import type { MigrateReport } from "./generated/MigrateReport";
+import type { NetAdapter } from "./generated/NetAdapter";
 import type { OfficialCatalogStatus } from "./generated/OfficialCatalogStatus";
 import type { PackageProbe } from "./generated/PackageProbe";
 import type { PanelVerdict } from "./generated/PanelVerdict";
 import type { PluginState } from "./generated/PluginState";
 import type { PluginStatus } from "./generated/PluginStatus";
+import type { PolicyScope } from "./generated/PolicyScope";
+import type { PolicyValue } from "./generated/PolicyValue";
 import type { Preset } from "./generated/Preset";
 import type { Profile } from "./generated/Profile";
 import type { ProfileStore } from "./generated/ProfileStore";
+import type { AccountProbe } from "./generated/AccountProbe";
+import type { AccountProbeState } from "./generated/AccountProbeState";
 import type { Progress } from "./generated/Progress";
+import type { ProxyState } from "./generated/ProxyState";
+import type { PurgeAction } from "./generated/PurgeAction";
+import type { PurgeCategory } from "./generated/PurgeCategory";
+import type { PurgeItem } from "./generated/PurgeItem";
+import type { PurgeReport } from "./generated/PurgeReport";
+import type { PurgeTarget } from "./generated/PurgeTarget";
 import type { PurityCriteria } from "./generated/PurityCriteria";
 import type { RelayTarget } from "./generated/RelayTarget";
 import type { Resolver } from "./generated/Resolver";
@@ -80,7 +98,13 @@ import type { StepRecord } from "./generated/StepRecord";
 import type { StepState } from "./generated/StepState";
 import type { SwitchReport } from "./generated/SwitchReport";
 import type { SyncReport } from "./generated/SyncReport";
+import type { TavernCandidate } from "./generated/TavernCandidate";
 import type { TavernConfig } from "./generated/TavernConfig";
+import type { TavernEvidence } from "./generated/TavernEvidence";
+import type { TavernSurvey } from "./generated/TavernSurvey";
+import type { TokenBucket } from "./generated/TokenBucket";
+import type { TokenSummary } from "./generated/TokenSummary";
+import type { TokenUsage } from "./generated/TokenUsage";
 import type { Trace } from "./generated/Trace";
 import type { TraceReport } from "./generated/TraceReport";
 import type { UpdateStatus } from "./generated/UpdateStatus";
@@ -94,11 +118,15 @@ import type { WireApi } from "./generated/WireApi";
 import type { UpgradeChannel as Channel } from "./generated/UpgradeChannel";
 
 export type {
+  AccountProbe,
+  AccountProbeState,
   AccountsReport,
   ApplyReport,
   AssetItem,
   AuthStyle,
   BackupEntry,
+  BrowserAudit,
+  BrowserExtension,
   CategoryListing,
   Check,
   CheckItem,
@@ -107,12 +135,15 @@ export type {
   ClaudeInstall,
   CleanupReport,
   CreateOutcome,
+  DeleteOutcome,
   DependencyCheck,
   DesktopState,
   DnsReport,
+  EgressChecks,
   EnvHit,
   Evidence,
   ExternalMethod,
+  FirewallRule,
   GateStatus,
   GateTarget,
   HookStatus,
@@ -133,15 +164,24 @@ export type {
   ManagedProbe,
   ManagedStatus,
   MigrateReport,
+  NetAdapter,
   OfficialCatalogStatus,
   PackageProbe,
   PanelVerdict,
   PluginState,
   PluginStatus,
+  PolicyScope,
+  PolicyValue,
   Preset,
   Profile,
   ProfileStore,
   Progress,
+  ProxyState,
+  PurgeAction,
+  PurgeCategory,
+  PurgeItem,
+  PurgeReport,
+  PurgeTarget,
   PurityCriteria,
   RelayTarget,
   Resolver,
@@ -158,7 +198,13 @@ export type {
   StepState,
   SwitchReport,
   SyncReport,
+  TavernCandidate,
   TavernConfig,
+  TavernEvidence,
+  TavernSurvey,
+  TokenBucket,
+  TokenSummary,
+  TokenUsage,
   Trace,
   TraceReport,
   UpdateStatus,
@@ -231,6 +277,7 @@ export const api = {
 
   // 探测
   probeIp: () => call<IpInfo>("probe_ip"),
+  lookupIp: (ip: string) => call<IpLookupReport>("probe_ip_lookup", { ip }),
   probePurity: () => call<PanelVerdict>("probe_purity"),
   probeDns: () => call<DnsReport>("probe_dns"),
   purityCriteria: () => call<PurityCriteria>("purity_criteria"),
@@ -274,6 +321,57 @@ export const api = {
    */
   accountsSwitch: (label: string, desktop: boolean) =>
     call<SwitchReport>("accounts_switch", { label, desktop }),
+  /**
+   * 删掉一个槽位。**不可恢复**，那个账户在这台机器上要重新登录一次。
+   *
+   * 当前激活的槽位删不了（后端拒），要先切到别的账户 ——
+   * 删了它会留下一个悬空的 `claude-profile`，而没有任何东西会去修它。
+   *
+   * - `dropDesktop`：连 `%APPDATA%\Claude-<标签>` 一起删。
+   *   不删的话，以后建同名槽位会静默继承那一份旧的桌面端身份。
+   */
+  accountsDelete: (label: string, dropDesktop: boolean) =>
+    call<DeleteOutcome>("accounts_delete", { label, dropDesktop }),
+  /**
+   * 这个槽位用掉了多少 token。零网络请求 —— 只读槽位目录里的会话转写
+   * （`projects\<项目>\<会话>.jsonl`），跟额度那两个窗口同一条口径。
+   *
+   * **只覆盖这个槽位目录里的会话**：没经过面板、直接用官方默认目录
+   * `~\.claude` 跑的不在内。界面上要写明这一点。
+   */
+  accountsTokens: (label: string) =>
+    call<TokenUsage>("accounts_tokens", { label }),
+  /**
+   * 用量小结：用了多少 token、缓存命中多少、缓存省下多少钱。
+   *
+   * `days`：`1` = 今天，`7` = 含今天的最近七天，`0` = 全部。
+   * 那个美元数是**缓存省下的**（这些 token 按整价重读要多花多少），
+   * **不是你花了多少** —— 订阅账户付的是月费。
+   */
+  accountsTokenSummary: (label: string, days: number) =>
+    call<TokenSummary>("accounts_token_summary", { label, days }),
+  /**
+   * 「这个账户现在还能用吗」—— 拿槽位里的令牌向官方发**一次**最小认证请求。
+   *
+   * ⛔ 这是面板唯一一处带着官方身份对外发请求的地方。它打的是公开的
+   * `/v1/models`：不查额度、不打模型、不写回任何东西；本地令牌已过期时
+   * 连请求都不发（免得把必然的 401 报成假警报）。
+   * **调用之前必须已经拿到使用者当次的点击。**
+   */
+  accountProbe: (label: string) =>
+    call<AccountProbe>("account_probe", { label }),
+  /**
+   * 出口一致性：跟当前出口 IP 对不上的那些东西。
+   *
+   * `country` 从 `R.ip` 那份读数里来 —— 出口 IP 全项目只探一处，
+   * 这条命令自己不发探测。没测过就传 `null`，那一项会如实报「查不了」。
+   */
+  egressChecks: (country: string | null) =>
+    call<EgressChecks>("egress_checks_scan", { country }),
+  /** 修某一项（WebRTC / DoH 策略）。**调用之前必须已经拿到使用者当次的点击。** */
+  egressFix: (id: string) => call<string>("egress_checks_fix", { id }),
+  /** 撤销面板刚才改的那一项。 */
+  egressUndo: (id: string) => call<string>("egress_checks_undo", { id }),
 
   // 托管安装（v0.9.0）
   /** 托管根目录在哪、Claude Code 与 Codex 装没装、什么版本。 */
@@ -298,6 +396,26 @@ export const api = {
    */
   managedRollback: (which: ManagedApp, version: string) =>
     call<string>("managed_rollback", { which, version }),
+
+  // 完全卸载（0.19.0）
+  /**
+   * 完全卸载之前的**只读盘点**：这个软件在本机的全部落点，按类分好，
+   * 每一项带绝对路径与归属依据。**只看不动。**
+   *
+   * 跟 `managedExternals` 的分界线：那个保留托管那份、只清多余副本；
+   * 这个连托管那份、版本库、配置、认证、环境变量、账户槽位一起算进来。
+   */
+  purgePlan: (target: PurgeTarget) =>
+    call<PurgeItem[]>("purge_plan", { target }),
+  /**
+   * **执行**完全卸载。调用之前界面必须已经让使用者看过盘点、输入了确认词 ——
+   * 后端不会再问第二次。
+   *
+   * ⚠ 会关掉全部 Claude、摘执行锁、删文件与账户槽位，**不可恢复**。
+   * 返回里的 `left` 是复扫之后还剩下的：空 = 真的清干净了。
+   */
+  purgeExecute: (target: PurgeTarget) =>
+    call<PurgeReport>("purge_execute", { target }),
 
   relayPresets: (target: RelayTarget) =>
     call<Preset[]>("relay_presets", { target }),
@@ -336,6 +454,8 @@ export const api = {
   profileApply: (id: string) => call<ApplyReport>("profile_apply", { id }),
 
   settingsLoad: () => call<Settings>("settings_load"),
+  ipv6Status: () => call<Ipv6Status>("ipv6_status"),
+  ipv6Set: (disable: boolean) => call<Ipv6Status>("ipv6_set", { disable }),
   settingsSave: (next: Settings) => call<Settings>("settings_save", { next }),
 
   progressLoad: () => call<Progress>("progress_load"),
@@ -354,6 +474,56 @@ export const api = {
   killswitchPreview: () => call<KillReport>("killswitch_preview"),
   killswitchExecute: () => call<KillReport>("killswitch_execute"),
 
+  // 出站锁 / 系统代理 / 浏览器隐私面（0.19.0，「两个口子」）
+  //
+  // ⚠ 会改系统的那几条**只能由点击触发**。别从任何自动路径调它们 ——
+  // 定时器、启动流程、看门狗都不行。Rust 侧 `commands/network.rs` 的文件头
+  // 写着同一句：那条约束只能在调用侧保证。
+
+  /** 当前由面板加的出站规则。**只列面板自己加的那些。** */
+  firewallRules: () => call<FirewallRule[]>("firewall_rules"),
+  /** 本机网卡。面板**不替你判断**哪块是物理网卡、哪块是 TUN。 */
+  firewallAdapters: () => call<NetAdapter[]>("firewall_adapters"),
+  /**
+   * 给一个 exe 加出站阻止规则，点名的每块网卡各一条。
+   *
+   * ⚠ 规则**不随面板退出而消失**：面板关了、卸载了它还在，
+   * 浏览器可能因此上不了网。卸载面板之前请先撤销（DISCLAIMER §5.2）。
+   */
+  firewallBlock: (exe: string, interfaces: string[]) =>
+    call<FirewallRule[]>("firewall_block", { exe, interfaces }),
+  /** 一键撤销面板加过的全部规则，返回删掉了几条。 */
+  firewallRevokeAll: () => call<number>("firewall_revoke_all"),
+
+  proxyRead: () => call<ProxyState>("proxy_read"),
+  /** 面板动手之前那一份原值。`null` = 没改过，界面不该显示「还原」。 */
+  proxyBackup: () => call<ProxyState | null>("proxy_backup"),
+  /**
+   * 改系统代理，返回改之前那一份。
+   *
+   * ⚠ **整机设置**：所有跟随系统代理的程序都会变，不只是那一个浏览器，
+   * 改错会当场断网。调用之前界面必须已经把这件事说全。
+   */
+  proxyApply: (next: ProxyState) => call<ProxyState>("proxy_apply", { next }),
+  /** 回滚到面板动手之前那一份。没有备份时报错，不静默成功。 */
+  proxyRollback: () => call<string>("proxy_rollback"),
+
+  /**
+   * Chrome 隐私面的**只读**审计：策略、WebRTC、扩展的高风险权限。
+   *
+   * 扩展那一项**只报告** —— 面板没有禁用或删除扩展的入口，这是有意的。
+   */
+  browserAudit: () => call<BrowserAudit>("browser_audit"),
+  /**
+   * 把 WebRTC 收紧到 `disable_non_proxied_udp`（只影响当前用户）。
+   *
+   * ⛔ 返回的话里带着「注册表里有值 ≠ 策略已生效」——
+   * **界面照原样显示，不许改写成「已生效」。** 面板读不到 chrome://policy。
+   */
+  browserWebrtcHarden: () => call<string>("browser_webrtc_harden"),
+  /** 撤销上面那条。只删面板设的那条（HKCU），整机策略一个字不碰。 */
+  browserWebrtcClear: () => call<string>("browser_webrtc_clear"),
+
   // 插件
   pluginList: () => call<PluginStatus[]>("plugin_list"),
   pluginCatalogStatus: () =>
@@ -363,6 +533,9 @@ export const api = {
   tavernConfig: () => call<TavernConfig>("tavern_config"),
   tavernConfigSave: (cfg: TavernConfig) =>
     call<void>("tavern_config_save", { cfg }),
+  /** 在本机找酒馆与桥接。只读，不写配置 —— 采用哪一条由使用者点。 */
+  tavernLocate: (deep: boolean) =>
+    call<TavernSurvey>("tavern_locate", { deep }),
 
   // 酒馆资产
   tavernAssets: () => call<CategoryListing[]>("tavern_assets"),

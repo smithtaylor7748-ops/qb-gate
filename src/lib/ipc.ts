@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import { DEMO_ENABLED, demoCall } from "./demo";
+import { DEMO_ENABLED, demoCall, MissingDemoCommand } from "./demo";
 import { toIpcError } from "./ipcError";
 import { demoWorkspaceCall } from "./workspaceDemo";
 
@@ -44,8 +44,9 @@ async function demoDispatch<T>(
   args?: Record<string, unknown>,
 ): Promise<T> {
   try {
-    return await demoCall<T>(cmd);
-  } catch {
+    return await demoCall<T>(cmd, args);
+  } catch (error) {
+    if (!(error instanceof MissingDemoCommand)) throw error;
     return (await demoWorkspaceCall(cmd, args ?? {})) as T;
   }
 }

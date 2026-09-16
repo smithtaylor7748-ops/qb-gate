@@ -1,11 +1,12 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { AlertTriangle } from 'lucide-react';
-import Button from './Button';
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { AlertTriangle } from "lucide-react";
+import Button from "./Button";
 
 interface ModalProps {
   open: boolean;
   onClose: () => void;
   title: ReactNode;
+  headerActions?: ReactNode;
   icon?: ReactNode;
   danger?: boolean;
   children?: ReactNode;
@@ -17,8 +18,17 @@ interface ModalProps {
    *
    * 默认那档 560px 是照确认框量的 —— 一句后果说明加两个按钮。
    * 拿它装 DNS 的解析器清单会变成一根面条，人得在小窗里滚半天。
+   *
+   * `form` 880px：两列表单（中转站的添加 / 编辑）。860 那档差一点，
+   * 两列各 420 加间距就顶到边了。
+   *
+   * `huge` 1180px：带曲线和宽表的弹窗（请求日志）。日志表有七列，
+   * 窄下去每一列都在换行，读数对不齐就没法横着比。
+   *
+   * ⛔ 四档都写成 `min(…, calc(100vw - 32px))` —— 手机宽度上
+   * 一律退回满屏减边距，不许溢出。
    */
-  size?: 'default' | 'wide';
+  size?: "default" | "wide" | "form" | "huge";
 }
 
 /**
@@ -32,12 +42,13 @@ export function Modal({
   open,
   onClose,
   title,
+  headerActions,
   icon,
   danger = false,
   children,
   footer,
   dismissible = true,
-  size = 'default',
+  size = "default",
 }: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -65,14 +76,14 @@ export function Modal({
   useEffect(() => {
     if (!open || !dismissible) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      const all = document.querySelectorAll('dialog[open]');
+      if (e.key !== "Escape") return;
+      const all = document.querySelectorAll("dialog[open]");
       if (all[all.length - 1] !== ref.current) return;
       e.preventDefault();
       onClose();
     };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
   }, [open, dismissible, onClose]);
 
   if (!open) return null;
@@ -80,7 +91,7 @@ export function Modal({
   return (
     <dialog
       ref={ref}
-      className={size === 'wide' ? 'modal modal--wide' : 'modal'}
+      className={size === "default" ? "modal" : `modal modal--${size}`}
       aria-labelledby={titleId}
       onKeyDown={(e) => {
         // Esc 自己处理，**不依赖原生的 cancel 事件**。
@@ -89,7 +100,7 @@ export function Modal({
         // 而它在这个环境里实测不触发：keydown 收得到 Escape，cancel 却一次都没发。
         // 弹窗关不掉是个很难受的失败 —— 破坏性操作的确认框把人困住 ——
         // 所以这里直接接管，preventDefault 顺带避免原生行为再触发一次。
-        if (e.key !== 'Escape') return;
+        if (e.key !== "Escape") return;
         e.preventDefault();
         e.stopPropagation();
         if (dismissible) onClose();
@@ -106,10 +117,17 @@ export function Modal({
       }}
     >
       <div className="modal-head">
-        <h2 id={titleId} className={`modal-title${danger ? ' modal-title--danger' : ''}`}>
-          {icon ?? (danger ? <AlertTriangle size={16} aria-hidden="true" /> : null)}
+        <h2
+          id={titleId}
+          className={`modal-title${danger ? " modal-title--danger" : ""}`}
+        >
+          {icon ??
+            (danger ? <AlertTriangle size={16} aria-hidden="true" /> : null)}
           {title}
         </h2>
+        {headerActions && (
+          <div className="modal-head-actions">{headerActions}</div>
+        )}
       </div>
       <div className="modal-body">{children}</div>
       {footer && <div className="modal-foot">{footer}</div>}
@@ -143,18 +161,18 @@ export function ConfirmDialog({
   onConfirm,
   title,
   children,
-  confirmLabel = '确认',
-  cancelLabel = '取消',
+  confirmLabel = "确认",
+  cancelLabel = "取消",
   danger = false,
   loading = false,
   confirmWord,
 }: ConfirmProps) {
-  const [typed, setTyped] = useState('');
+  const [typed, setTyped] = useState("");
   const inputId = useId();
 
   // 每次打开都清空，避免上一次输过的确认词还留着。
   useEffect(() => {
-    if (open) setTyped('');
+    if (open) setTyped("");
   }, [open]);
 
   const ready = !confirmWord || typed.trim() === confirmWord;
@@ -172,7 +190,7 @@ export function ConfirmDialog({
             {cancelLabel}
           </Button>
           <Button
-            variant={danger ? 'danger' : 'primary'}
+            variant={danger ? "danger" : "primary"}
             onClick={onConfirm}
             disabled={!ready}
             loading={loading}

@@ -37,6 +37,7 @@ pub enum StationKind {
 /// 三个都是 `Option<bool>`:`None` = 还没探过,跟「探过了,没有」是两回事。
 /// 混成 `false` 的话,界面会把「还没测」显示成「不支持」,用户会以为这站废了。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct Protocols {
     pub anthropic: Option<bool>,
     pub openai_chat: Option<bool>,
@@ -173,7 +174,20 @@ pub struct UsageRow {
     pub total_ms: Option<u64>,
     /// 实扣金额(站内计费单位)。
     pub cost: Option<f64>,
+    /// 这一条成没成功。**只有 [`status_reported`](Self::status_reported)
+    /// 为真时才作数。**
     pub ok: bool,
+    /// 源头到底报没报这一条的成败。
+    ///
+    /// **不能省。** `/api/log/self` 是一份**消费**日志:没扣到钱的失败请求
+    /// 很可能压根不出现在里面。那样一来「成功率」算出来永远是 100%,
+    /// 而它正是智能调度里「稳」那一维的输入 —— 等于凭空替每一家站点作证,
+    /// 还让最弱项规则永远卡不到可靠性上。
+    ///
+    /// 源头没报时这里是 `false`,聚合会**不给成功率**(`None`,界面显示「—」),
+    /// 而不是给一个好看的数。缓存命中率、首字延迟、花费不受影响 ——
+    /// 那几项这一行仍然是有效证据。
+    pub status_reported: bool,
 }
 
 impl UsageRow {

@@ -1,18 +1,5 @@
-/**
- * 四项检查的动作唯一定义处。
- *
- * 同一个检测有两个入口：安全页的面板，和总览评分那四格里的「就地检测」。
- * 动作本身（刷新 → 读刚回来的值 → 记进度 → toast）要是各写一遍迟早会漂 ——
- * 一边记了进度另一边没记，评分就会取决于你是从哪儿点的。
- *
- * ⚠ **串行，不并发。** 正在跑的那一项记在会话态里，只有一个槽，
- * 所以结构上不可能两项同时跑。DNS 那项约 6 秒（10 个探针域名各等 3 秒上限），
- * 并发省不了多少，却会让进度文字变成几件事同时闪。
- *
- * ⚠ 四项里只有 `dns` 和 `iplock` 记进度。`purity` 的结论**只能人工给**
- * （见 `score.ts::purityItem`：`probe_purity` 的 `passed` 结构上永远是 false），
- * 刷新自测不等于复核通过；`signals` 干脆没有自己的进度步骤，它归在
- * `environment` 那一步里（`steps.ts` 的五个 key 一个都不能多）。
+/** Five checks share a serialized runner. A complete batch also includes local
+ * environment details and retains each failure while continuing later checks.
  */
 import { useCallback } from "react";
 
@@ -30,7 +17,19 @@ import {
 } from "../../lib/store";
 import { useToast } from "../../ui";
 
-export type CheckId = "purity" | "dns" | "signals" | "iplock";
+export const CHECK_IDS = [
+  "purity",
+  "dns",
+  "signals",
+  "iplock",
+  "egress",
+] as const;
+export type CheckId = (typeof CHECK_IDS)[number];
+export type CheckRun = {
+  completed: CheckId[];
+  failed: Partial<Record<CheckId, string>>;
+};
+const BATCH = "security.batch";
 
 /** 跑哪一项。空串 = 没在跑。会话态，所以两个消费者看到的是同一个。 */
 const RUNNING = "security.running";
@@ -42,6 +41,7 @@ export const CHECK_LABEL: Record<CheckId, string> = {
   dns: "DNS 泄露",
   signals: "环境体检",
   iplock: "IP 锁",
+  egress: "出口一致性",
 };
 
 /** 跑这一项时进度条上那句话。 */
@@ -50,6 +50,7 @@ const PHASE: Record<CheckId, string> = {
   dns: "正在查 DNS 泄露（约 6 秒）…",
   signals: "正在扫描环境信号…",
   iplock: "正在读门禁状态…",
+  egress: "正在比较出口与浏览器策略…",
 };
 
 export interface Check {
@@ -66,8 +67,8 @@ export interface Check {
 }
 
 export type Checks = Record<CheckId, Check> & {
-  /** 依次跑完四项。某一项失败不影响后面的。 */
-  runAll: () => Promise<void>;
+  /** 依次跑完五项。某一项失败不影响后面的。 */
+  runAll: () => Promise<CheckRun>;
   /** 有检测在跑。 */
   busy: boolean;
   /** 正在跑的那一项的进度文字。空串 = 没在跑。 */
@@ -77,20 +78,26 @@ export type Checks = Record<CheckId, Check> & {
 export function useChecks(): Checks {
   const toast = useToast();
   const [running] = useSession<CheckId | "">(RUNNING, "");
+  const [batch] = useSession(BATCH, false);
   const [failed] = useSession<Partial<Record<CheckId, string>>>(FAILED, {});
 
   // 这五个 `useResource` 在这里只为拿 `data`（判断「检测过没有」）。
   // 刷新一律走模块级的 `refresh(key)`，免得每个 run 都要多带一个参数。
   const ip = useResource("ip", R.ip);
-  const purity = useResource("purity", R.purity);
   const dns = useResource("dns", R.dns);
   const signals = useResource("signals", R.signals);
   const gate = useResource("gate", R.gate);
+  const egress = useResource("egress", R.egress);
+  useResource("checkup", R.checkup);
 
   const run = useCallback(
-    async (id: CheckId) => {
+    async (id: CheckId, inBatch = false) => {
       // 读实时值，不读 render 快照 —— `runAll` 串到第二项时闭包里那份还是旧的。
-      if (getSession<CheckId | "">(RUNNING, "")) return;
+      if (
+        getSession<CheckId | "">(RUNNING, "") ||
+        (!inBatch && getSession(BATCH, false))
+      )
+        return;
       setSession(RUNNING, id);
       setSession(FAILED, {
         ...getSession<Partial<Record<CheckId, string>>>(FAILED, {}),
@@ -112,19 +119,34 @@ export function useChecks(): Checks {
     [toast],
   );
 
-  const runAll = useCallback(async () => {
-    for (const id of ["iplock", "purity", "signals", "dns"] as CheckId[]) {
-      await run(id);
+  const runAll = useCallback(async (): Promise<CheckRun> => {
+    if (getSession(BATCH, false) || getSession<CheckId | "">(RUNNING, "")) {
+      return { completed: [], failed: {} };
+    }
+    setSession(BATCH, true);
+    const result: CheckRun = { completed: [], failed: {} };
+    try {
+      for (const id of CHECK_IDS) {
+        await run(id, true);
+        const error = getSession<Partial<Record<CheckId, string>>>(FAILED, {})[
+          id
+        ];
+        if (error) result.failed[id] = error;
+        else result.completed.push(id);
+      }
+      return result;
+    } finally {
+      setSession(BATCH, false);
     }
   }, [run]);
 
   const has: Record<CheckId, boolean> = {
-    // 纯净度自测要两个接口都回来了才算「测过」—— 少一个的话三项硬指标里
-    // 至少有一项是空的，界面会显示成一排「—」，那不叫检测过。
-    purity: !!ip.data && !!purity.data,
+    // IP、系数和住宅判定来自同一份读数，避免第二次联网失败否定第一次结果。
+    purity: !!ip.data && !ip.error,
     dns: !!dns.data,
     signals: !!signals.data,
     iplock: !!gate.data,
+    egress: !!egress.data,
   };
 
   const one = (id: CheckId): Check => ({
@@ -133,7 +155,7 @@ export function useChecks(): Checks {
     run: () => run(id),
     running: running === id,
     done: has[id],
-    error: failed[id],
+    error: id === "purity" ? ip.error : failed[id],
   });
 
   return {
@@ -141,8 +163,9 @@ export function useChecks(): Checks {
     dns: one("dns"),
     signals: one("signals"),
     iplock: one("iplock"),
+    egress: one("egress"),
     runAll,
-    busy: running !== "",
+    busy: running !== "" || batch,
     phase: running ? PHASE[running] : "",
   };
 }
@@ -153,13 +176,12 @@ type Toast = ReturnType<typeof useToast>;
 
 const BODY: Record<CheckId, (toast: Toast) => Promise<void>> = {
   /**
-   * 面板自测：刷新出口 IP 与纯净度两个接口，**不记进度**。
+   * 面板自测：一次请求取得出口 IP、系数与住宅判定，**不改人工结论**。
    * 通过与否由使用者自己去 IPQS / ippure 核对后勾选（`judgePurity`）。
    */
   async purity(toast) {
     await refresh("ip");
-    await refresh("purity");
-    toast.info("自测已刷新 —— 结论仍要你自己去两家站点核对");
+    toast.info("本机 IP 自测完成");
   },
 
   async dns(toast) {
@@ -187,8 +209,13 @@ const BODY: Record<CheckId, (toast: Toast) => Promise<void>> = {
 
   async signals(toast) {
     await refresh("signals");
+    await refresh("checkup");
     const r = peek<ScanResult>("signals");
     if (r) toast.ok(`识别度 ${r.total} / 100 · 命中 ${r.hits.length} 项`);
+  },
+
+  async egress() {
+    await refresh("egress");
   },
 
   async iplock(toast) {
@@ -241,6 +268,7 @@ export async function judgePurity(
   pass: boolean,
   ip: string | undefined,
 ): Promise<void> {
+  if (pass && !ip) throw new Error("先检测当前出口 IP，再记录人工复核结果");
   if (pass) {
     await markStep(
       "purity",

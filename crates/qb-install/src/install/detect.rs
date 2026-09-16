@@ -144,14 +144,12 @@ struct MsixPackage {
 async fn msix_desktop() -> Option<MsixPackage> {
     const SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
-try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }
 $p = @(Get-AppxPackage | Where-Object { $_.Publisher -like '*Anthropic*' -and $_.Name -like '*Claude*' } | ForEach-Object {
   [pscustomobject]@{ Version = [string]$_.Version; InstallLocation = [string]$_.InstallLocation }
 })
 ConvertTo-Json -InputObject $p -Compress
 "#;
-    let out = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+    let out = crate::process::powershell_tokio(SCRIPT)
         .output()
         .await
         .ok()?;

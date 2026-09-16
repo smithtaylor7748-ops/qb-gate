@@ -1,0 +1,1231 @@
+<title>QB Gate 中转站</title>
+<style>
+:root{
+  --bg:#f6f3ee; --surface:#fffefa; --surface-2:#f2eee7;
+  --border:#e3ddd2; --border-strong:#c9beae;
+  --text:#302b25; --text-2:#675d51; --text-3:#786d60;
+  --accent:#b55232; --accent-bg:#f9eae1; --accent-border:#e7bdab;
+  --ok:#3b7247; --ok-bg:#eef5ed; --ok-border:#bad1b9;
+  --warn:#87570d; --warn-bg:#fff1d7; --warn-border:#dec596;
+  --danger:#ac3934; --danger-bg:#fbeceb; --danger-border:#e8bdb9;
+  --mono:ui-monospace,"Cascadia Mono","Consolas",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue","Noto Sans",Arial,sans-serif;
+  --r-sm:6px; --r-md:8px; --r-lg:12px;
+  --fast:120ms; --base:200ms; --ease:cubic-bezier(.16,1,.3,1);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#171410; --surface:#211d18; --surface-2:#29231d;
+    --border:#3c332a; --border-strong:#5b4e40;
+    --text:#f0e9df; --text-2:#c0b5a6; --text-3:#a49b8e;
+    --accent:#e18a65; --accent-bg:#38251b; --accent-border:#72503a;
+    --ok:#8bc18c; --ok-bg:#1d2a1b; --ok-border:#385631;
+    --warn:#e4b269; --warn-bg:#352817; --warn-border:#68502e;
+    --danger:#ef9385; --danger-bg:#381e1b; --danger-border:#754036;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#171410; --surface:#211d18; --surface-2:#29231d;
+  --border:#3c332a; --border-strong:#5b4e40;
+  --text:#f0e9df; --text-2:#c0b5a6; --text-3:#a49b8e;
+  --accent:#e18a65; --accent-bg:#38251b; --accent-border:#72503a;
+  --ok:#8bc18c; --ok-bg:#1d2a1b; --ok-border:#385631;
+  --warn:#e4b269; --warn-bg:#352817; --warn-border:#68502e;
+  --danger:#ef9385; --danger-bg:#381e1b; --danger-border:#754036;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px;line-height:1.5}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r-sm)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* 外壳 */
+.qb-shell{display:flex;min-height:100vh}
+.qb-sidebar{width:228px;flex:none;padding:26px 16px 16px;border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column}
+.qb-brand{display:flex;align-items:center;gap:11px;font-size:20px;font-weight:650;padding:0 8px 24px;text-decoration:none;color:inherit}
+.qb-mark{position:relative;width:37px;height:39px;border-radius:11px;background:var(--accent);color:var(--surface);font-size:26px;font-weight:700;display:grid;place-items:center;flex:none}
+.qb-mark span{position:absolute;font-size:17px;right:1px;bottom:-4px}
+.qb-brand small{display:block;font-size:10px;font-weight:400;letter-spacing:1px;color:var(--text-2);margin-top:2px}
+.qb-search{display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-md);padding:9px;font-size:11px;color:var(--text-2);margin-bottom:24px;width:100%}
+.qb-search kbd{margin-left:auto;font-size:10px;font-family:var(--sans);color:var(--text-3)}
+.qb-nav{display:flex;flex-direction:column;gap:7px}
+.qb-nav a{display:flex;align-items:center;gap:13px;padding:12px;border-radius:10px;border:1px solid transparent;color:var(--text-2);text-decoration:none;transition:background var(--fast)}
+.qb-nav a small{display:block;font-size:10px;color:var(--text-3);margin-top:2px;font-weight:400}
+.qb-nav a:hover{background:var(--surface-2);color:var(--text)}
+.qb-nav a.active{color:var(--accent);background:var(--accent-bg);font-weight:600;border-color:var(--accent-border)}
+.qb-nav a.active small{color:var(--accent)}
+.qb-nav .ico{width:19px;flex:none;text-align:center;font-size:15px}
+.qb-foot{margin-top:auto;display:flex;flex-wrap:wrap;align-items:center;gap:7px;padding:16px 8px 0;font-size:10px;color:var(--text-2)}
+.qb-dot{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+.qb-foot select{width:100%;margin-top:7px;border:0;background:transparent;color:var(--text-2);font:inherit}
+.qb-content{flex:1;min-width:0;display:flex;flex-direction:column}
+.qb-topbar{display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--border);background:var(--surface)}
+.qb-topbar .hist{display:flex;align-items:center;gap:4px;color:var(--text-2);font-size:13px}
+.qb-topbar .hist b{font-weight:500;color:var(--text);margin-left:6px}
+.qb-icobtn{width:26px;height:26px;border:0;background:transparent;border-radius:var(--r-sm);color:var(--text-3);display:grid;place-items:center}
+.qb-icobtn:hover{background:var(--surface-2);color:var(--text)}
+.qb-main{flex:1;padding:16px 18px 40px}
+.qb-page{max-width:1180px;margin:0 auto}
+
+.pg-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:11px}
+.pg-head h1{font-size:15px;font-weight:600;margin:0}
+.pg-head .count{margin-left:auto;font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums}
+
+.ctl{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:10px}
+.seg{display:inline-flex;border:1px solid var(--border-strong);border-radius:var(--r-md);overflow:hidden;background:var(--surface)}
+.seg button{border:0;background:transparent;padding:6px 11px;font-size:11.5px;color:var(--text-2);border-left:1px solid var(--border-strong)}
+.seg button:first-child{border-left:0}
+.seg button:hover:not([aria-pressed="true"]):not(:disabled){background:var(--surface-2);color:var(--text)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--surface);font-weight:500}
+.seg .n{font-size:10px;opacity:.75;margin-left:5px;font-variant-numeric:tabular-nums}
+.btn{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-2);border-radius:var(--r-md);padding:5px 11px;font-size:11.5px;transition:background var(--fast),color var(--fast)}
+.btn:hover:not(:disabled){background:var(--surface-2);color:var(--text)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn--p{background:var(--accent);border-color:var(--accent);color:var(--surface);font-weight:500}
+.btn--p:hover:not(:disabled){filter:brightness(1.07);color:var(--surface)}
+.btn--d{color:var(--danger);border-color:var(--danger-border)}
+.btn--icon{padding:5px 8px}
+.grow{flex:1}
+
+/* 总览 */
+.ov{display:flex;gap:9px;align-items:stretch;margin-bottom:10px;flex-wrap:wrap}
+.ov-main{flex:1 1 420px;min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:11px 13px}
+.ov-side{flex:0 0 172px;display:flex;flex-direction:column;gap:7px;align-content:flex-start}
+.now{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding-bottom:9px;border-bottom:1px solid var(--border);margin-bottom:10px}
+.now .eyebrow{font-size:9.5px;color:var(--accent);letter-spacing:.5px}
+.now .name{font-size:13px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-bottom:10px}
+.kpi{background:var(--surface-2);border-radius:var(--r-md);padding:9px 11px;display:flex;gap:9px;align-items:flex-start}
+.kpi .ic{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-size:13px;flex:none}
+.kpi .k{font-size:9.5px;color:var(--text-3);display:block}
+.kpi .v{font-size:18px;font-weight:500;font-variant-numeric:tabular-nums;line-height:1.25;display:block}
+.kpi .s{font-size:9.5px;color:var(--text-3);display:block;margin-top:1px}
+.rangebar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.rangebar label{font-size:9.5px;color:var(--text-3)}
+.rangebar select{width:auto;font-size:11px;padding:4px 8px}
+.legend{display:flex;gap:11px;flex-wrap:wrap;margin-top:5px;font-size:9.5px;color:var(--text-3)}
+.legend i{display:inline-block;width:10px;height:2px;vertical-align:middle;margin-right:4px}
+
+.launch{display:flex;align-items:center;justify-content:center;gap:6px;background:var(--accent);border:1px solid var(--accent);color:var(--surface);border-radius:var(--r-md);padding:11px 8px;font-size:12.5px;font-weight:500;text-align:center;line-height:1.3}
+.launch:hover:not(:disabled){filter:brightness(1.07)}
+.launch:disabled{background:var(--surface-2);border-color:var(--border);color:var(--text-3);cursor:not-allowed;font-weight:400}
+.sched{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-2);border-radius:var(--r-md);padding:11px 8px;font-size:12px}
+.sched:hover{background:var(--surface-2);color:var(--text)}
+.sched small{font-size:9.5px;color:var(--text-3)}
+.sched[aria-pressed="true"]{background:var(--ok-bg);border-color:var(--ok);color:var(--ok);font-weight:500}
+.sched[aria-pressed="true"] small{color:var(--ok)}
+.pill .live{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block;margin-right:5px;animation:pulse 1.8s var(--ease) infinite}
+.sched .live{width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:5px;animation:pulse 1.8s var(--ease) infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.72)}}
+.schedcfg{display:flex;flex-direction:column;align-items:center;gap:2px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);border-radius:var(--r-md);padding:7px 8px;font-size:11.5px;transition:background var(--fast)}
+.schedcfg:hover{background:var(--surface-2);color:var(--text)}
+.schedcfg span{font-size:9.5px;color:var(--text-3);text-align:center;line-height:1.35}
+
+/* 站点与线路 */
+.sites{display:flex;flex-direction:column;gap:9px;position:relative}
+.sites.sched-on .site{border-color:var(--ok-border);box-shadow:inset 3px 0 0 var(--ok)}
+.site{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden}
+.site-hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--surface-2);padding:7px 12px;border-bottom:1px solid var(--border);font-size:12px}
+.site-hd .url{font-size:10.5px;color:var(--text-3)}
+.site-hd .bal{margin-left:auto;font-size:10.5px;color:var(--text-3)}
+.row{display:block;width:100%;text-align:left;background:transparent;border-top:1px solid var(--border);padding:9px 12px;cursor:pointer;transition:background var(--fast)}
+.site .row:first-of-type{border-top:0}
+.row:hover{background:var(--surface-2)}
+.row.on{background:var(--accent-bg)}
+.row.on:hover{background:var(--accent-bg)}
+.sched-on .row.on{background:var(--ok-bg)}
+.row-top{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:7px}
+.row .gname{font-size:12.5px;font-weight:500}
+.quick{display:flex;flex-wrap:wrap;gap:0}
+.quick div{padding-right:16px;margin-right:16px;border-right:1px solid var(--border);line-height:1.3}
+.quick div:last-child{border-right:0;margin-right:0;padding-right:0}
+.quick .k{display:block;font-size:9.5px;color:var(--text-3)}
+.quick .v{font-size:12.5px;font-variant-numeric:tabular-nums}
+.acts{display:flex;gap:5px;margin-left:auto}
+.pill{font-size:10px;border-radius:5px;padding:1px 6px;border:1px solid transparent;white-space:nowrap}
+.pill--ok{background:var(--ok-bg);color:var(--ok);border-color:var(--ok-border)}
+.pill--warn{background:var(--warn-bg);color:var(--warn);border-color:var(--warn-border)}
+.pill--danger{background:var(--danger-bg);color:var(--danger);border-color:var(--danger-border)}
+.pill--accent{background:var(--accent-bg);color:var(--accent);border-color:var(--accent-border)}
+.pill--unknown{color:var(--text-3);border:1px dashed var(--border-strong)}
+.pill--neutral{background:var(--surface-2);color:var(--text-2);border-color:var(--border)}
+.strike{text-decoration:line-through;color:var(--text-3)}
+.dash{color:var(--text-3)}
+.empty{background:var(--surface);border:1px dashed var(--border-strong);border-radius:var(--r-lg);padding:26px 18px;text-align:center;color:var(--text-2);font-size:12px}
+.empty h3{margin:0 0 5px;font-size:14px;color:var(--text)}
+.empty p{margin:0 0 12px}
+
+/* 表 */
+.tw{border:1px solid var(--border);border-radius:var(--r-md);overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:520px}
+th,td{text-align:left;padding:6px 11px;font-size:11px;border-top:1px solid var(--border)}
+thead th{border-top:0;background:var(--surface-2);font-size:10px;font-weight:400;color:var(--text-3)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+tbody tr.bad{background:var(--danger-bg)}
+
+/* 弹窗 */
+dialog{border:1px solid var(--border-strong);border-radius:var(--r-lg);background:var(--surface);color:var(--text);padding:0;max-width:calc(100vw - 24px);max-height:calc(100vh - 32px);overflow:visible}
+dialog::backdrop{background:rgba(23,20,16,.5)}
+.m-wide{width:min(880px,calc(100vw - 24px))}
+.m-full{width:min(1180px,calc(100vw - 24px))}
+.m-sm{width:min(430px,calc(100vw - 24px))}
+.m-hd{display:flex;align-items:center;gap:9px;padding:11px 15px;border-bottom:1px solid var(--border)}
+.m-hd h2{margin:0;font-size:14px;font-weight:500}
+.m-tile{width:26px;height:26px;border-radius:7px;background:var(--accent-bg);color:var(--accent);display:grid;place-items:center;font-size:14px;flex:none}
+.m-body{padding:13px 15px;overflow:auto;max-height:min(60vh,540px)}
+.m-ft{display:flex;gap:8px;justify-content:flex-end;padding:10px 15px;border-top:1px solid var(--border);background:var(--surface-2);flex-wrap:wrap}
+.strip{display:flex;gap:20px;flex-wrap:wrap;row-gap:9px;padding:10px 15px;background:var(--surface-2);border-bottom:1px solid var(--border)}
+.strip .cap{width:100%;font-size:9.5px;color:var(--text-3);margin:0 0 -3px}
+.kv{line-height:1.35}
+.kv .k{display:block;font-size:9.5px;color:var(--text-3)}
+.kv .v{font-size:14px;font-variant-numeric:tabular-nums}
+.split{display:flex;flex-wrap:wrap;border-bottom:1px solid var(--border)}
+.split .l{flex:1 1 320px;min-width:0;padding:10px 15px 9px;border-right:1px solid var(--border)}
+.split .r{flex:0 0 240px;padding:10px 15px 9px}
+.tokbar{display:flex;height:8px;border-radius:4px;overflow:hidden;margin-bottom:8px}
+.tokgrid{display:grid;grid-template-columns:auto minmax(0,1fr) auto 34px;gap:5px 8px;align-items:center;font-size:11px}
+.tokgrid .sw{width:7px;height:7px;border-radius:2px}
+.tokgrid .n{text-align:right;font-variant-numeric:tabular-nums}
+.tokgrid .p{text-align:right;color:var(--text-3);font-variant-numeric:tabular-nums}
+.tot{margin-top:8px;padding-top:7px;border-top:1px solid var(--border);font-size:11px}
+.tot div{display:flex;justify-content:space-between;margin-bottom:3px;color:var(--text-2)}
+.tot b{font-weight:400;color:var(--text);font-variant-numeric:tabular-nums}
+.note{font-size:10px;color:var(--text-3);margin:7px 0 0}
+.warnbox{display:flex;gap:7px;align-items:flex-start;background:var(--warn-bg);border:1px solid var(--warn-border);border-radius:var(--r-sm);padding:6px 9px;font-size:10.5px;color:var(--warn);margin-bottom:8px}
+
+/* 表单 */
+.field{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
+.field>span:first-child{font-size:9.5px;color:var(--text-3)}
+.hint{font-size:10px;color:var(--text-3)}
+input,select,textarea{font:inherit;font-size:12px;color:var(--text);background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-md);padding:6px 9px;width:100%}
+textarea{font-family:var(--mono);font-size:11px;resize:vertical}
+input::placeholder,textarea::placeholder{color:var(--text-3)}
+.row2{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.sub{border-left:2px solid var(--accent-border);padding-left:12px;margin:-4px 0 12px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.tip{display:flex;gap:7px;align-items:flex-start;margin:0 0 4px;font-size:10.5px;color:var(--text-3);line-height:1.55}
+.sect{margin:18px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border);font-size:11.5px;color:var(--text-2);font-weight:500}
+.withbtn{display:flex;gap:7px}
+.withbtn input{flex:1;min-width:0}
+.sbtn{flex:none;width:36px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-3);border-radius:var(--r-md);display:grid;place-items:center;font-size:14px}
+.sbtn:hover{background:var(--surface-2);color:var(--text)}
+.sbtn.accent{color:var(--accent);border-color:var(--accent-border)}
+.sbtn.accent:hover{background:var(--accent-bg)}
+.probe{border:1px solid var(--border);border-radius:var(--r-md);background:var(--surface-2);padding:8px 11px;margin-bottom:13px;display:flex;flex-direction:column;gap:5px}
+.probe.idle{color:var(--text-3);font-size:10.5px;line-height:1.55}
+.prow{display:flex;gap:9px;align-items:flex-start;font-size:10.5px}
+.prow .pk{flex:0 0 62px;color:var(--text-3)}
+.prow .pv{flex:1;min-width:0;color:var(--text)}
+.prow .src{color:var(--text-3);font-size:9.5px}
+.prow .warnt{color:var(--warn)}
+.check{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-2);margin-bottom:12px}
+.check input{width:auto}
+.check.sm{font-size:10.5px;margin:0}
+.todo{font-size:9px;color:var(--text-3);border:1px solid var(--border);border-radius:4px;padding:0 4px}
+.jsonhd{display:flex;align-items:center;gap:9px;margin-bottom:9px;font-size:11.5px;color:var(--text-2)}
+.toggles{display:flex;flex-wrap:wrap;gap:8px 16px;margin-bottom:9px}
+.jsonbox{border:1px solid var(--border-strong);border-radius:var(--r-md);overflow:hidden}
+.jsonbar{display:flex;align-items:center;gap:8px;padding:5px 10px;background:var(--surface-2);border-bottom:1px solid var(--border);font-size:10px}
+.jsonbar code{background:transparent;padding:0;color:var(--text-3)}
+.follow{color:var(--ok)}
+.relink{border:0;background:transparent;color:var(--accent);font-size:10px;text-decoration:underline;padding:0}
+.jsonbox textarea{border:0;border-radius:0;background:var(--surface)}
+details.withsw summary{display:flex;align-items:center;gap:8px}
+details.withsw summary input{width:auto;flex:none}
+.chip{border:1px solid var(--border-strong);background:var(--surface);border-radius:20px;padding:4px 11px;font-size:10.5px;color:var(--text-2)}
+.chip[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-bg);color:var(--accent)}
+.tri{display:flex;gap:10px;flex-wrap:wrap}
+.tri label{display:flex;flex-direction:column;gap:3px;font-size:10px;color:var(--text-3)}
+.tri select{width:124px}
+.keywrap{position:relative;display:block}
+.keywrap input{padding-right:36px}
+.eye{position:absolute;right:3px;top:50%;transform:translateY(-50%);border:0;background:transparent;color:var(--text-3);padding:5px 7px;font-size:14px;border-radius:var(--r-sm)}
+.eye:hover{color:var(--text);background:var(--surface-2)}
+.iconbtn{width:72px;height:72px;border-radius:16px;border:2px solid var(--border);color:#fff;font-size:30px;font-weight:600;display:grid;place-items:center;transition:border-color var(--fast)}
+.iconbtn:hover{border-color:var(--accent)}
+code{font-family:var(--mono);font-size:10.5px;background:var(--surface-2);padding:1px 4px;border-radius:4px}
+.toggles{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:9px}
+.tg{display:flex;align-items:center;gap:6px;border:1px solid var(--border-strong);border-radius:20px;padding:4px 11px;font-size:10.5px;color:var(--text-2);background:var(--surface)}
+.tg[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-bg);color:var(--accent)}
+.tg .box{width:11px;height:11px;border-radius:3px;border:1px solid currentColor;display:grid;place-items:center;font-size:8px}
+details{border:1px solid var(--border);border-radius:var(--r-md);padding:9px 11px;margin-bottom:12px;background:var(--surface)}
+summary{cursor:pointer;font-size:11.5px;color:var(--text-2);list-style:none}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"▸ ";color:var(--text-3)}
+details[open] summary::before{content:"▾ "}
+details[open] summary{margin-bottom:10px}
+.jsonerr{font-size:10.5px;color:var(--danger);margin:5px 0 0}
+.jsonok{font-size:10.5px;color:var(--ok);margin:5px 0 0}
+.mm{width:100%;border-collapse:collapse;min-width:420px}
+.mm th,.mm td{border-top:1px solid var(--border);padding:4px 6px;font-size:10.5px}
+.mm thead th{border-top:0;color:var(--text-3);font-weight:400;font-size:9.5px}
+.mm input,.mm select{padding:4px 7px;font-size:11px}
+.checks{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px}
+.checks label{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2)}
+.checks input{width:auto}
+.floors{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+.rank{display:flex;flex-direction:column;gap:7px}
+.rankrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:8px 11px}
+.rankrow.win{border-color:var(--ok-border);background:var(--ok-bg)}
+.rankrow .pos{font-size:11px;color:var(--text-3);width:16px;font-variant-numeric:tabular-nums}
+.sc{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text-2)}
+.sc .bar{width:34px;height:4px;border-radius:2px;background:var(--surface-2);overflow:hidden}
+.sc .bar i{display:block;height:4px;border-radius:2px;background:var(--ok)}
+.sc.weak{color:var(--warn)}.sc.weak .bar i{background:var(--warn)}
+.sc .v{font-variant-numeric:tabular-nums;color:var(--text)}
+.audit{display:flex;flex-direction:column;gap:7px}
+.auditrow{display:flex;align-items:center;gap:9px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:8px 11px;font-size:11.5px}
+.auditrow.never{border-style:dashed}
+
+#toasts{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:7px;z-index:99;max-width:min(340px,calc(100vw - 32px))}
+.toast{background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-md);padding:8px 12px;font-size:11.5px;box-shadow:0 2px 10px rgba(23,20,16,.13)}
+.toast.ok{border-color:var(--ok-border);color:var(--ok);background:var(--ok-bg)}
+.toast.warn{border-color:var(--warn-border);color:var(--warn);background:var(--warn-bg)}
+
+@media (max-width:1020px){
+  .qb-sidebar{width:72px;padding:26px 10px 16px;align-items:center}
+  .qb-nav a>span,.qb-brand>span:last-child,.qb-search span,.qb-search kbd,.qb-foot{display:none}
+  .qb-nav a{justify-content:center;padding:11px 0;width:52px}
+  .qb-search{justify-content:center;margin-bottom:18px}
+}
+@media (max-width:640px){
+  .qb-main{padding:12px 12px 32px}
+  .ov-side{flex:1 1 100%;flex-direction:row}
+  .sched{min-height:0}
+  .acts{margin-left:0;width:100%}
+  .quick div{border-right:0;margin-right:0;padding-right:14px}
+  .split .l{border-right:0;border-bottom:1px solid var(--border)}
+  .split .r{flex:1 1 100%}
+}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+</style>
+
+<div class="qb-shell">
+  <aside class="qb-sidebar">
+    <a class="qb-brand" href="#" onclick="return false"><span class="qb-mark">Q<span>↗</span></span><span>QB Gate<small>你的 AI 工作空间</small></span></a>
+    <button class="qb-search" onclick="toast('原型里没做搜索')"><span style="font-size:14px">⌕</span><span>搜索与快速跳转</span><kbd>⌃ K</kbd></button>
+    <nav class="qb-nav" aria-label="主导航">
+      <a href="#" onclick="return notImpl('官方账户')"><span class="ico">⚿</span><span>官方账户<small>剩 18 天</small></span></a>
+      <a href="#" class="active" aria-current="page" onclick="return false"><span class="ico">⇄</span><span>中转站<small>7 条线路</small></span></a>
+      <a href="#" onclick="return notImpl('软件')"><span class="ico">▣</span><span>软件<small>都已装</small></span></a>
+      <a href="#" onclick="return notImpl('扩展')"><span class="ico">◈</span><span>扩展<small>运行中</small></span></a>
+      <a href="#" onclick="return notImpl('设置')"><span class="ico">⚙</span><span>设置<small>偏好、备份与帮助</small></span></a>
+    </nav>
+    <div class="qb-foot">
+      <span class="qb-dot"></span><span>本地工作空间</span>
+      <label class="sr" for="theme">主题</label>
+      <select id="theme" onchange="setTheme(this.value)">
+        <option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option>
+      </select>
+    </div>
+  </aside>
+
+  <div class="qb-content">
+    <header class="qb-topbar">
+      <div class="hist">
+        <button class="qb-icobtn" aria-label="返回" onclick="toast('原型里没做历史')">←</button>
+        <button class="qb-icobtn" aria-label="前进" onclick="toast('原型里没做历史')">→</button>
+        <b>中转站</b>
+      </div>
+      <span class="grow"></span>
+      <span class="pill pill--neutral">原型 · 演示数据</span>
+    </header>
+    <main class="qb-main"><div class="qb-page">
+      <div class="pg-head"><h1>中转站</h1><span class="count" id="pgcount"></span></div>
+      <div id="pane"></div>
+    </div></main>
+  </div>
+</div>
+
+<dialog id="dlgSched" class="m-wide" aria-labelledby="dlgSchedTitle"></dialog>
+<dialog id="dlgRoute" class="m-wide" aria-labelledby="dlgRouteTitle"></dialog>
+<dialog id="dlgLog" class="m-full" aria-labelledby="dlgLogTitle"></dialog>
+<dialog id="dlgConfirm" class="m-sm" aria-labelledby="dlgConfirmTitle"></dialog>
+<div id="toasts" aria-live="polite"></div>
+
+<script>
+/* ===================== 数据 ===================== */
+const CLIENTS=[
+ {id:"claude-code",name:"Claude Code",short:"Claude Code",proto:"anthropic"},
+ {id:"claude-desktop",name:"Claude 桌面端",short:"桌面端",proto:"anthropic"},
+ {id:"codex",name:"Codex",short:"Codex",proto:"openai"}];
+const SITES=[
+ {id:"s1",name:"摸鱼 API",url:"api.moxi.example/v1"},
+ {id:"s2",name:"DeepSeek",url:"api.deepseek.com/anthropic"},
+ {id:"s3",name:"云雀中转",url:"api.yunque.example/v1"}];
+const KEYS=[
+ {id:"k1",site:"s1",label:"工作用 Key",mask:"····3f9a"},
+ {id:"k2",site:"s1",label:"备用 Key",mask:"····7c21"},
+ {id:"k3",site:"s2",label:"DS 官方 Key",mask:"····a04e"},
+ {id:"k4",site:"s3",label:"云雀 Key",mask:"····be55"}];
+/* ⛔ 只收厂商公开文档里的直连地址，第三方中转站一个都不预置 */
+const PRESETS=[
+ {id:"anthropic",n:"Anthropic 官方",url:"https://api.anthropic.com",proto:"anthropic",cat:"官方",c:"#b55232"},
+ {id:"openai",n:"OpenAI 官方",url:"https://api.openai.com/v1",proto:"openai",cat:"官方",c:"#3b7247"},
+ {id:"deepseek",n:"DeepSeek",url:"https://api.deepseek.com/anthropic",proto:"anthropic",cat:"直连",c:"#4a6fa5"},
+ {id:"kimi",n:"Kimi",url:"https://api.moonshot.cn/anthropic",proto:"anthropic",cat:"直连",c:"#2d2d2d"},
+ {id:"glm",n:"智谱 GLM",url:"https://open.bigmodel.cn/api/anthropic",proto:"anthropic",cat:"直连",c:"#3a6ea5"},
+ {id:"minimax",n:"MiniMax",url:"https://api.minimax.chat/v1",proto:"openai",cat:"直连",c:"#87570d"},
+ {id:"qwen",n:"通义千问",url:"https://dashscope.aliyuncs.com/compatible-mode/v1",proto:"openai",cat:"直连",c:"#5b4ea8"},
+ {id:"ark",n:"火山方舟",url:"https://ark.cn-beijing.volces.com/api/v3",proto:"openai",cat:"直连",c:"#ac3934"},
+ {id:"silicon",n:"硅基流动",url:"https://api.siliconflow.cn/v1",proto:"openai",cat:"直连",c:"#6d4b9e"},
+ {id:"zhipu4v",n:"智谱开放平台",url:"https://open.bigmodel.cn/api/paas/v4",proto:"openai",cat:"直连",c:"#3a6ea5"}];
+let seq=100;
+/* 线路属于某个软件 —— 账户按软件独立，站点共用 */
+let ROUTES=[
+ {id:"r1",client:"claude-code",site:"s1",group:"低价组",key:"k1",rate:.20,mult:1.30,fold:5,vol:245,proto:{a:true,r:null,c:null},audit:"09-13 22:10",trust:61},
+ {id:"r2",client:"claude-code",site:"s1",group:"官方直连组",key:null,rate:1.00,mult:null,fold:null,vol:0,proto:{a:true,r:true,c:null}},
+ {id:"r3",client:"claude-code",site:"s1",group:"高速组",key:"k2",rate:.55,mult:1.00,fold:1,vol:96,proto:{a:true,r:null,c:null},audit:"09-14 06:40",trust:88},
+ {id:"r4",client:"claude-code",site:"s2",group:"默认分组",key:"k3",rate:.30,mult:null,fold:null,vol:31,proto:{a:true,r:false,c:false},noCache:true},
+ {id:"r5",client:"claude-desktop",site:"s1",group:"低价组",key:"k1",rate:.20,mult:1.30,fold:5,vol:14,proto:{a:true,r:null,c:null},audit:"09-12 19:02",trust:61},
+ {id:"r6",client:"claude-desktop",site:"s3",group:"标准组",key:"k4",rate:.80,mult:null,fold:null,vol:0,proto:{a:true,r:null,c:null}},
+ {id:"r7",client:"codex",site:"s3",group:"标准组",key:"k4",rate:.80,mult:1.00,fold:1,vol:58,proto:{a:null,r:true,c:true},audit:"09-14 04:15",trust:74},
+ {id:"r8",client:"codex",site:"s1",group:"官方直连组",key:null,rate:1.00,mult:null,fold:null,vol:0,proto:{a:true,r:true,c:null}}];
+let CURRENT={"claude-code":"r1","claude-desktop":null,"codex":"r7"};
+let SCHED={on:false,axes:{cheap:true,fast:true,stable:true},floors:{succ:"",ttft:"",rate:""}};
+let UI={tab:"routes",client:"claude-code",range:"24h",gran:"hour",
+        log:{route:null,range:"24h",onlyBad:false,model:"all"}};
+
+/* 日志：确定性生成，带 token —— 路由能从响应的 usage 里读到，所以四个总量都能跟着时间范围走 */
+const MODELS={anthropic:["claude-sonnet-4.5","claude-opus-5","claude-haiku-4-5"],
+              openai:["gpt-5.6-sol","gpt-5.6-mini"]};
+const rng=s=>{let x=s>>>0;return()=>{x=(x*1664525+1013904223)>>>0;return x/4294967296}};
+const LOGS={};
+for(const r of ROUTES){
+  const rand=rng(r.id.charCodeAt(1)*7919+131), rows=[];
+  const pool=MODELS[CLIENTS.find(c=>c.id===r.client).proto];
+  const base=r.vol?1200+rand()*1600:0, succ=r.vol?(r.id==="r3"?.994:r.id==="r5"?.928:.978):1;
+  /* vol = 每天多少发，所以间隔由 vol 决定 —— 忙的线就是比闲的线密 */
+  const mean=r.vol?86400000/r.vol:0;
+  let t=Date.now();
+  for(let i=0;r.vol&&i<r.vol*7;i++){                 /* 铺满 7 天，时间筛选才有意义 */
+    t-=Math.max(1000,Math.round(rand()*2*mean));
+    const x=rand(), bad=x>succ;
+    const status=bad?(x>0.995?500:429):200;
+    const inp=Math.round(900+rand()*34000), out=Math.round(90+rand()*2600);
+    const cr=r.noCache?0:Math.round(rand()*rand()*54000), cw=r.noCache?0:Math.round(rand()*5200);
+    /* 实扣是**站点账单报回来的那个数**，不是我们算的 —— 界面只负责加总 */
+    const cost=((inp+cr*.1+cw*1.25+out*(r.fold||1))/1e6)*((r.mult?r.rate*r.mult:r.rate)??1);
+    rows.push({t,model:pool[Math.floor(rand()*pool.length)],status,
+      ttft:status===200?Math.round(base*.4+rand()*base*1.25):null,
+      total:status===500?null:Math.round(1600+rand()*36000),
+      retry:status===429?Math.round(10+rand()*25):null,
+      tok:{in:inp,out,cr,cw},cost});
+  }
+  LOGS[r.id]=rows;
+}
+
+/* ===================== 工具 ===================== */
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const site=id=>SITES.find(s=>s.id===id)||{name:"（站点已删除）",url:""};
+const keyOf=id=>KEYS.find(k=>k.id===id);
+const client=id=>CLIENTS.find(c=>c.id===id);
+const routesOf=c=>ROUTES.filter(r=>r.client===c);
+const routeById=id=>ROUTES.find(r=>r.id===id);
+const label=r=>r?site(r.site).name+" · "+(r.group||"默认分组"):null;
+const pct=v=>v==null?'<span class="dash">—</span>':(v*100).toFixed(1)+"%";
+const sec=ms=>ms==null?'<span class="dash">—</span>':(ms/1000).toFixed(2)+"s";
+const hhmm=t=>{const d=new Date(t);return [d.getHours(),d.getMinutes(),d.getSeconds()].map(n=>String(n).padStart(2,"0")).join(":")};
+const md=t=>{const d=new Date(t);return (d.getMonth()+1)+"-"+String(d.getDate()).padStart(2,"0")};
+const mtok=n=>n>=1e6?(n/1e6).toFixed(2)+"M":n>=1e3?(n/1e3).toFixed(2)+"K":String(n);
+const RANGES=[["1h","近 1 小时",1],["24h","近 24 小时",24],["7d","近 7 天",168],["all","全部",1e9]];
+const hoursOf=k=>RANGES.find(x=>x[0]===k)[2];
+const nameOf=k=>RANGES.find(x=>x[0]===k)[1];
+
+function toast(msg,kind){
+  const el=document.createElement("div");
+  el.className="toast"+(kind?" "+kind:""); el.textContent=msg;
+  $("#toasts").append(el);
+  setTimeout(()=>{el.style.opacity="0";el.style.transition="opacity 300ms";setTimeout(()=>el.remove(),320)},2600);
+}
+const notImpl=n=>{toast("原型只做了中转站这一页（"+n+" 没做）");return false};
+const setTheme=v=>v==="system"?document.documentElement.removeAttribute("data-theme")
+                              :document.documentElement.setAttribute("data-theme",v);
+
+const realRate=r=>r.rate==null?null:(r.mult?r.rate*r.mult:r.rate);
+function rateCell(r){
+  if(r.rate!=null&&r.mult!=null&&r.mult>0){
+    if(Math.abs(r.mult-1)<=.05) return "×"+r.rate.toFixed(2)+' <span class="pill pill--ok">已核实</span>';
+    return '<span class="strike">×'+r.rate.toFixed(2)+'</span> <b style="font-weight:500;color:var(--danger)">×'+
+           (r.rate*r.mult).toFixed(2)+'</b> <span class="pill pill--danger">实测</span>';
+  }
+  return (r.rate==null?'<span class="dash">—</span>':"×"+r.rate.toFixed(2))+
+         ' <span style="font-size:9.5px;color:var(--text-3)">标称·未核实</span>';
+}
+function protoPills(r){
+  return [["a","Anthropic"],["r","Responses"],["c","Chat"]].map(([k,n])=>{
+    const v=r.proto[k];
+    return v===true?'<span class="pill pill--ok">'+n+"</span>"
+         : v===false?'<span class="pill pill--danger">'+n+" 不支持</span>"
+         : '<span class="pill pill--unknown">'+n+" 未探测</span>";
+  }).join(" ");
+}
+/* 实扣直接取站点账单报的数，界面不自己算 */
+const costOf=(r,x)=>x.cost;
+function rowsIn(r,range){
+  const from=Date.now()-hoursOf(range)*3600000;
+  return (LOGS[r.id]||[]).filter(x=>x.t>=from);
+}
+function agg(r,range){
+  const rows=rowsIn(r,range);
+  if(!rows.length) return null;
+  const ok=rows.filter(x=>x.status===200);
+  const tt=ok.map(x=>x.ttft).filter(x=>x!=null).sort((a,b)=>a-b);
+  const tot=rows.map(x=>x.total).filter(x=>x!=null);
+  const T={in:0,out:0,cr:0,cw:0}; let cost=0;
+  for(const x of rows){ T.in+=x.tok.in;T.out+=x.tok.out;T.cr+=x.tok.cr;T.cw+=x.tok.cw; cost+=costOf(r,x); }
+  const cacheable=T.in+T.cr;
+  return {rows,req:rows.length,fail:rows.length-ok.length,
+    succ:ok.length/rows.length,
+    cache:(r.noCache||!cacheable)?null:T.cr/cacheable,
+    p50:tt.length?tt[Math.floor(tt.length*.5)]:null,
+    p95:tt.length?tt[Math.min(tt.length-1,Math.floor(tt.length*.95))]:null,
+    slow:tt.length?tt[tt.length-1]:null,
+    avg:tot.length?tot.reduce((a,b)=>a+b,0)/tot.length:null,
+    tok:T,tokSum:T.in+T.out+T.cr+T.cw,cost};
+}
+/* 三维评分：跟池里最好那条的比值 */
+function scores(r,range){
+  const a=agg(r,range); if(!a) return null;
+  const peers=routesOf(r.client).map(x=>agg(x,range)).filter(Boolean);
+  if(!peers.length) return null;
+  const cpt=x=>x.tokSum?x.cost/x.tokSum:null;
+  const exp=x=>x.p95==null?null:x.p95;
+  const bestC=Math.min(...peers.map(cpt).filter(v=>v!=null));
+  const bestF=Math.min(...peers.map(exp).filter(v=>v!=null));
+  const bestS=Math.max(...peers.map(x=>x.succ));
+  return {cheap:cpt(a)?Math.min(1,bestC/cpt(a)):null,
+          fast:exp(a)?Math.min(1,bestF/exp(a)):null,
+          stable:bestS?Math.min(1,a.succ/bestS):null};
+}
+
+/* ===================== 骨架 ===================== */
+/* 没有子菜单栏：调度设置挂在调度按钮底下，站点检验并进每条账户行。 */
+function render(){
+  $("#pgcount").textContent=SITES.length+" 站点 · "+ROUTES.length+" 线路";
+  $("#pane").innerHTML=viewRoutes();
+}
+
+/* ---------- 线路页 ---------- */
+function viewRoutes(){
+  const mine=routesOf(UI.client), cur=routeById(CURRENT[UI.client]), c=client(UI.client);
+  let out='<div class="ctl"><div class="seg" role="group" aria-label="软件">';
+  for(const cl of CLIENTS)
+    out+='<button aria-pressed="'+(UI.client===cl.id)+'" onclick="switchClient(\''+cl.id+'\')">'+
+         cl.short+'<span class="n">'+routesOf(cl.id).length+"</span></button>";
+  out+='</div><span class="grow"></span><button class="btn btn--p" onclick="openRoute(null)">＋ 添加线路</button></div>';
+
+  /* ---- 总览：正在路由 + 四个总量 + 时间范围 + 曲线 ---- */
+  const all=mine.flatMap(r=>rowsIn(r,UI.range).map(x=>({r,x})));
+  let REQ=all.length, COST=0, AVG=[], T={in:0,out:0,cr:0,cw:0};
+  for(const {r,x} of all){ COST+=costOf(r,x); if(x.total!=null)AVG.push(x.total);
+    T.in+=x.tok.in;T.out+=x.tok.out;T.cr+=x.tok.cr;T.cw+=x.tok.cw; }
+  const TOKSUM=T.in+T.out+T.cr+T.cw;
+  const avg=AVG.length?AVG.reduce((a,b)=>a+b,0)/AVG.length:null;
+  const ca=cur?agg(cur,UI.range):null;
+
+  out+='<div class="ov"><div class="ov-main">';
+  out+='<div class="now"><span class="eyebrow">正在路由</span>'+
+    (cur?'<span class="name">'+esc(label(cur))+"</span>"+
+         (rankOf(cur.id)?'<span class="pill pill--accent">池中第 '+rankOf(cur.id)+"</span>":"")+
+         '<span class="grow"></span>'+
+         '<span style="font-size:10.5px;color:var(--text-3)">倍率 '+rateCell(cur)+"</span>"+
+         '<span style="font-size:10.5px;color:var(--text-3)">本段实扣 <b style="font-weight:500;color:var(--text);font-variant-numeric:tabular-nums">'+
+           (ca?ca.cost.toFixed(4):"—")+"</b></span>"
+       :'<span class="name" style="color:var(--text-3)">还没选上游 —— 点下面任意一行即可</span>')+"</div>";
+
+  out+='<div class="kpis">'+
+    kpi("▤","var(--accent-bg)","var(--accent)","总请求数",REQ.toLocaleString(),nameOf(UI.range)+"内")+
+    kpi("◱","var(--warn-bg)","var(--warn)","总 Token",mtok(TOKSUM),
+        "输入 "+mtok(T.in)+" · 输出 "+mtok(T.out)+" · 缓存 "+mtok(T.cr+T.cw))+
+    kpi("◎","var(--ok-bg)","var(--ok)","总消费",COST.toFixed(4),
+        "站点账单报的实扣，逐条相加")+
+    kpi("◷","var(--surface-2)","var(--text-2)","平均耗时",avg==null?"—":(avg/1000).toFixed(2)+"s",
+        REQ?"取到耗时的 "+AVG.length+" 条":"本段没有请求")+
+    "</div>";
+
+  out+='<div class="rangebar"><label for="rg">时间范围</label>'+
+    '<select id="rg" onchange="UI.range=this.value;render()">'+
+      RANGES.map(([k,n])=>'<option value="'+k+'" '+(UI.range===k?"selected":"")+">"+n+"</option>").join("")+"</select>"+
+    '<span class="grow"></span><label for="gr">粒度</label>'+
+    '<select id="gr" onchange="UI.gran=this.value;render()">'+
+      '<option value="hour" '+(UI.gran==="hour"?"selected":"")+">按小时</option>"+
+      '<option value="day" '+(UI.gran==="day"?"selected":"")+">按天</option></select></div>";
+
+  out+=chart(all.map(o=>o.x),440,44);
+  out+='<div class="legend"><span>'+nameOf(UI.range)+" · "+(UI.gran==="hour"?"每小时一格":"每天一格")+"</span>"+
+    '<span class="grow"></span><span><i style="background:var(--accent)"></i>请求量</span>'+
+    '<span><i style="background:var(--warn)"></i>首字 P95</span><span>各按自己的量程</span></div></div>';
+
+  /* ---- 右列：启动 · 调度启停 · 调度设置入口 ---- */
+  out+='<div class="ov-side">'+
+    '<button class="launch" '+(cur?"":"disabled")+' onclick="doLaunch()">▷ 启动 '+esc(c.short)+"</button>"+
+    '<button class="sched" aria-pressed="'+SCHED.on+'" onclick="toggleSched()">'+
+      (SCHED.on?'<span><span class="live"></span>调度中</span><small>'+esc(axesText())+" · 迟滞 8% · 点此停止</small>"
+               :"<span>⚡ 启动智能调度</span><small>按当前口径自动挑上游</small>")+
+    "</button>"+
+    '<button class="schedcfg" onclick="openSched()">⚙ 调度设置<span>'+esc(axesText())+
+      (SCHED.floors.succ||SCHED.floors.ttft||SCHED.floors.rate?" · 有底线":" · 无底线")+"</span></button>"+
+    "</div></div>";
+
+  /* ---- 站点 → 线路 ---- */
+  if(!mine.length){
+    out+='<div class="empty"><h3>'+esc(c.name)+" 底下还没有中转站账户</h3>"+
+      "<p>账户按软件分开 —— 在别的软件下加过的，这里看不到。<br>站点（域名）是共用的，加账户时直接选。</p>"+
+      '<button class="btn btn--p" onclick="openRoute(null)">＋ 添加第一条线路</button></div>';
+  } else {
+    const bySite=[];
+    for(const r of mine){ let g=bySite.find(x=>x.id===r.site); if(!g){g={id:r.site,rows:[]};bySite.push(g);} g.rows.push(r); }
+    out+='<div class="sites'+(SCHED.on?" sched-on":"")+'">';
+    for(const s of bySite){
+      out+='<article class="site"><div class="site-hd"><b style="font-weight:500">'+esc(site(s.id).name)+"</b>"+
+           '<span class="url">'+esc(site(s.id).url)+"</span>"+
+           (SCHED.on?'<span class="pill pill--ok">调度中</span>':"")+
+           '<span class="bal">余额 站点未提供</span></div>';
+      for(const r of s.rows) out+=rowHtml(r);
+      out+="</article>";
+    }
+    out+="</div>";
+  }
+  return out;
+}
+const kpi=(ic,bg,fg,k,v,s)=>
+  '<div class="kpi"><span class="ic" style="background:'+bg+';color:'+fg+'">'+ic+"</span><span>"+
+  '<span class="k">'+k+'</span><span class="v">'+v+'</span><span class="s">'+esc(s)+"</span></span></div>";
+
+/* 整行可点 —— 没有小圆点。⛔ 必须是 div：<button> 里套 <button> 会被解析器提前闭合外层，
+   名字、动作、读数格会散成三段（v1 就是这么坏的）。 */
+function rowHtml(r){
+  const on=CURRENT[r.client]===r.id, a=agg(r,UI.range), sc=SCHED.on?scores(r,UI.range):null;
+  const cell=(k,v)=>"<div><span class=\"k\">"+k+'</span><span class="v">'+v+"</span></div>";
+  return '<div class="row'+(on?" on":"")+'" role="radio" tabindex="0" aria-checked="'+on+'"'+
+    ' onclick="pickRoute(\''+r.id+'\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();pickRoute(\''+r.id+'\')}"'+
+    ' title="'+(on?"已是当前上游":"切到这条上游（下一次请求生效）")+'">'+
+    '<span class="row-top">'+
+      '<span class="gname">'+esc(r.group||"默认分组")+"</span>"+
+      (r.fold!=null&&r.fold>1?'<span class="pill pill--warn">翻倍 ×'+r.fold+"</span>":"")+
+      (r.key?"":'<span class="pill pill--unknown">没绑令牌</span>')+
+      (on?(SCHED.on?'<span class="pill pill--ok">调度选中'+(sc?" · 最弱项 "+minScore(sc).toFixed(2):"")+"</span>"
+                  :'<span class="pill pill--accent">当前上游</span>'):"")+
+      (SCHED.on&&!on&&sc?'<span class="pill pill--neutral">最弱项 '+minScore(sc).toFixed(2)+"</span>":"")+
+      (SCHED.on&&!on&&!sc?'<span class="pill pill--unknown">缺数据，未参与排序</span>':"")+
+      auditPill(r)+
+      '<span class="acts">'+
+        '<button class="btn btn--p" onclick="event.stopPropagation();launchFrom(\''+r.id+'\')">启动</button>'+
+        '<button class="btn" title="跑一轮站点检验（真花钱）" onclick="event.stopPropagation();runAudit(\''+r.id+'\')">检验</button>'+
+        '<button class="btn btn--icon" title="'+(a?"请求日志":"还没有请求记录")+'" '+(a?"":"disabled")+
+          ' onclick="event.stopPropagation();openLog(\''+r.id+'\')">▤</button>'+
+        '<button class="btn btn--icon" title="编辑" onclick="event.stopPropagation();openRoute(\''+r.id+'\')">✎</button>'+
+        '<button class="btn btn--icon btn--d" title="移除" onclick="event.stopPropagation();askRemove(\''+r.id+'\')">🗑</button>'+
+      "</span></span>"+
+    '<span class="quick">'+
+      cell("倍率",rateCell(r))+
+      cell("成功率",a?pct(a.succ):'<span class="dash">—</span>')+
+      cell("缓存命中",a?pct(a.cache):'<span class="dash">—</span>')+
+      cell("首字 P95",a?sec(a.p95):'<span class="dash">—</span>')+
+      cell("本段请求",a?a.req.toLocaleString():'<span class="dash">—</span>')+
+      cell("本段实扣",a?a.cost.toFixed(4):'<span class="dash">—</span>')+
+      cell("上次检验",r.audit?esc(r.audit):'<span class="dash">从没检验过</span>')+
+    "</span></div>";
+}
+/* 站点检验并进账户行。⛔「从没检验过」是独立状态（虚线），不写成 0 分 —— 0 是断言。 */
+function auditPill(r){
+  if(r.mult==null) return '<span class="pill pill--unknown">从没检验过</span>';
+  return Math.abs(r.mult-1)<=.05
+    ? '<span class="pill pill--ok">六项都对得上 · 可信度 '+(r.trust??"—")+"</span>"
+    : '<span class="pill pill--danger">倍率对不上 ×'+r.mult.toFixed(2)+" · 可信度 "+(r.trust??"—")+"</span>";
+}
+function runAudit(id){
+  const r=routeById(id);
+  toast("原型不真跑检验 —— 真跑要向 "+site(r.site).name+" 发六轮请求，每轮都计费","warn");
+}
+const minScore=sc=>Math.min(...Object.keys(SCHED.axes).filter(k=>SCHED.axes[k]).map(k=>sc[k]).filter(v=>v!=null).concat([1]));
+function weakest(sc){let w=null,m=2;for(const k in sc){if(sc[k]!=null&&sc[k]<m){m=sc[k];w=k}}return w}
+
+/* 曲线：请求量 + 首字 P95，各按自己的量程；没请求的格子断开 */
+function chart(rows,w,h){
+  if(!rows.length) return '<div style="height:'+h+'px;display:grid;place-items:center;border:1px dashed var(--border);border-radius:var(--r-sm);font-size:10.5px;color:var(--text-3)">这段时间没有经过本机路由的请求</div>';
+  const now=Date.now(), step=UI.gran==="day"?24:1;
+  const span=Math.min(hoursOf(UI.range),24*30), N=Math.max(2,Math.ceil(span/step));
+  const b=Array.from({length:N},()=>[]);
+  for(const r of rows){const age=(now-r.t)/3600000; if(age>=0&&age<span) b[N-1-Math.floor(age/step)].push(r);}
+  const cnt=b.map(x=>x.length), maxC=Math.max(1,...cnt);
+  const p95=b.map(x=>{const v=x.map(y=>y.ttft).filter(y=>y!=null).sort((a,b)=>a-b);
+    return v.length?v[Math.min(v.length-1,Math.floor(v.length*.95))]:null});
+  const maxT=Math.max(1,...p95.filter(x=>x!=null));
+  const X=i=>i*(w/(N-1)), Y=(v,m)=>h-4-(v/m)*(h-9);
+  const pts=cnt.map((c,i)=>X(i).toFixed(1)+","+Y(c,maxC).toFixed(1)).join(" ");
+  let segs=[],cur=[];
+  p95.forEach((v,i)=>{if(v==null){if(cur.length>1)segs.push(cur);cur=[]}else cur.push(X(i).toFixed(1)+","+Y(v,maxT).toFixed(1))});
+  if(cur.length>1)segs.push(cur);
+  return '<svg viewBox="0 0 '+w+" "+h+'" width="100%" height="'+h+'" preserveAspectRatio="none" role="img" style="display:block">'+
+    "<title>所选时段的请求量与首字延迟</title>"+
+    '<path d="M0,'+(h-4)+" L"+pts.replace(/ /g," L")+" L"+w+","+(h-4)+' Z" fill="var(--accent-bg)"></path>'+
+    '<polyline points="'+pts+'" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-linejoin="round" vector-effect="non-scaling-stroke"></polyline>'+
+    segs.map(s=>'<polyline points="'+s.join(" ")+'" fill="none" stroke="var(--warn)" stroke-width="1.1" vector-effect="non-scaling-stroke"></polyline>').join("")+"</svg>";
+}
+
+/* ---------- 智能调度 ---------- */
+function axesText(){const n={cheap:"便宜",fast:"快",stable:"稳"};
+  const on=Object.keys(SCHED.axes).filter(k=>SCHED.axes[k]);
+  return on.length?on.map(k=>n[k]).join("+"):"（一项都没勾）"}
+function rankList(){
+  const on=Object.keys(SCHED.axes).filter(k=>SCHED.axes[k]);
+  return routesOf(UI.client).map(r=>{const sc=scores(r,UI.range);
+    const v=sc?on.map(k=>sc[k]).filter(x=>x!=null):[];
+    return {r,sc,score:v.length?Math.min(...v):null}})
+    .sort((a,b)=>(b.score??-1)-(a.score??-1))}
+const rankOf=id=>{const i=rankList().findIndex(x=>x.r.id===id&&x.score!=null);return i<0?null:i+1};
+const winner=()=>{const l=rankList().filter(x=>x.score!=null);return l.length?l[0].r:null};
+
+function preset(k){
+  if(k==="code"){SCHED.axes={cheap:false,fast:true,stable:true};SCHED.floors={succ:"",ttft:"3000",rate:""}}
+  if(k==="batch"){SCHED.axes={cheap:true,fast:false,stable:false};SCHED.floors={succ:"0.95",ttft:"",rate:""}}
+  if(k==="chat"){SCHED.axes={cheap:false,fast:true,stable:false};SCHED.floors={succ:"0.99",ttft:"",rate:""}}
+  drawSched();render();toast("已套用预设");
+}
+function scoreBars(sc){
+  if(!sc) return '<span style="font-size:10px;color:var(--text-3)">没有账单数据</span>';
+  const N={cheap:"便宜",fast:"快",stable:"稳"}, w=weakest(sc);
+  return Object.keys(N).map(k=>sc[k]==null
+    ? '<span class="sc">'+N[k]+' <span class="dash">没有数据</span></span>'
+    : '<span class="sc'+(k===w?" weak":"")+'">'+N[k]+'<span class="bar"><i style="width:'+
+      Math.round(sc[k]*100)+'%"></i></span><span class="v">'+sc[k].toFixed(2)+"</span></span>").join("");
+}
+
+/* ---------- 智能调度设置（弹窗） ---------- */
+function openSched(){ drawSched(); $("#dlgSched").showModal(); }
+function drawSched(){
+  const AX={cheap:"便宜",fast:"快",stable:"稳"}, list=rankList(), able=list.filter(x=>x.score!=null);
+  let h='<div class="m-hd"><span class="m-tile">⚡</span><h2 id="dlgSchedTitle">智能调度</h2>'+
+    (SCHED.on?'<span class="pill pill--ok"><span class="live"></span>运行中</span>':"")+
+    '<span class="grow"></span><span class="pill pill--neutral">'+esc(client(UI.client).name)+"</span>"+
+    '<button class="qb-icobtn" aria-label="关闭" onclick="dlgSched.close()">✕</button></div><div class="m-body">';
+
+  h+='<p style="margin:0 0 11px;font-size:11px;color:var(--text-3)">规则：<b style="font-weight:500;color:var(--text-2)">勾的几项里，最弱的那一项最好的那条赢</b>。三项是复选框不是推子 —— 推子显示 50% 的精度，而那个精度不存在：三条线稳定度都在 91~92 时，把「稳」从 0 拉到 100，排名一个字不变。</p>';
+
+  h+='<div class="field"><span>口径 · 可单选也可多选</span><div class="checks">'+
+     Object.keys(AX).map(k=>'<label><input type="checkbox" style="width:auto" '+(SCHED.axes[k]?"checked":"")+
+     ' onchange="SCHED.axes.'+k+'=this.checked;drawSched();render()"> '+AX[k]+"</label>").join("")+"</div></div>";
+
+  h+='<div class="field"><span>底线 · 先筛掉再排序，留空 = 不设</span><div class="row2">'+
+     '<label class="field" style="margin:0"><span>成功率 ≥</span><input value="'+esc(SCHED.floors.succ)+
+       '" placeholder="例如 0.95" oninput="SCHED.floors.succ=this.value"></label>'+
+     '<label class="field" style="margin:0"><span>首字 P95 ≤ 毫秒</span><input value="'+esc(SCHED.floors.ttft)+
+       '" placeholder="例如 3000" oninput="SCHED.floors.ttft=this.value"></label>'+
+     '<label class="field" style="margin:0"><span>真实倍率 ≤</span><input value="'+esc(SCHED.floors.rate)+
+       '" placeholder="例如 0.5" oninput="SCHED.floors.rate=this.value"></label></div>'+
+     '<span class="hint">底线卡到一条不剩时<b style="font-weight:500">不许死局</b> —— 照常走，但每行标「没过线 + 差在哪」。</span></div>';
+
+  h+='<div class="field"><span>预设</span><div class="chips">'+
+     '<button class="chip" onclick="preset(\'code\')">写代码 · 稳+快 · 首字 ≤3s</button>'+
+     '<button class="chip" onclick="preset(\'batch\')">跑批量 · 便宜 · 成功率 ≥95%</button>'+
+     '<button class="chip" onclick="preset(\'chat\')">对话 · 快 · 成功率 ≥99%</button></div></div>';
+
+  h+='<div class="field"><span>赛道 · '+esc(client(UI.client).short)+" · "+nameOf(UI.range)+"</span>";
+  if(!list.length){
+    h+='<p class="hint" style="margin:0">这个软件底下还没有线路。</p>';
+  } else {
+    h+='<div class="rank">';
+    list.forEach((x,i)=>{
+      h+='<div class="rankrow'+(i===0&&x.score!=null?" win":"")+'"><span class="pos">'+
+        (x.score==null?"—":i+1)+"</span>"+
+        '<span style="font-size:12px;min-width:140px">'+esc(label(x.r))+"</span>"+
+        '<span style="display:flex;gap:11px;flex-wrap:wrap">'+scoreBars(x.sc)+'</span><span class="grow"></span>'+
+        (x.score==null?'<span class="pill pill--unknown">缺数据，未参与排序</span>'
+          :'<span style="font-size:11px;color:var(--text-2)">最弱项 <b style="font-weight:500;color:var(--text);font-variant-numeric:tabular-nums">'+
+            x.score.toFixed(2)+"</b></span>")+
+        (i===0&&SCHED.on&&x.score!=null?' <span class="pill pill--ok">调度选中</span>':"")+"</div>";
+    });
+    h+="</div>";
+  }
+  h+='<span class="hint">评分是<b style="font-weight:500">跟池里最好那条的比值</b>，不是池内 min-max —— min-max 在两条线的池子里永远输出 1.0 和 0.0，迟滞门槛就永远失效了。「缺数据」不写成 0 分：0 是断言，没有数据是还没有断言。</span></div>';
+
+  h+="</div>"+'<div class="m-ft">'+
+    '<span style="font-size:10.5px;color:var(--text-3);margin-right:auto">迟滞 8% —— 挑战者要领先现任 8% 才换，因为换上游会作废 prompt 缓存</span>'+
+    '<button class="btn" onclick="dlgSched.close()">关闭</button>'+
+    (SCHED.on?'<button class="btn btn--d" onclick="toggleSched();drawSched()">停止调度</button>'
+             :'<button class="btn btn--p" '+(able.length?"":"disabled")+' onclick="toggleSched();drawSched()">启动智能调度</button>')+
+    "</div>";
+  $("#dlgSched").innerHTML=h;
+}
+
+/* ===================== 动作 ===================== */
+function switchClient(id){
+  UI.client=id;render();
+  const cur=routeById(CURRENT[id]);
+  toast("切到 "+client(id).name+" 的工作区 · "+routesOf(id).length+" 条账户"+(cur?" · 当前上游 "+label(cur):" · 还没选上游"));
+}
+function pickRoute(id){
+  const r=routeById(id);
+  if(SCHED.on){toast("智能调度中，手动指定被它接管。要自己选就先停调度。","warn");return}
+  CURRENT[r.client]=id;render();
+  toast("上游已排队："+label(r)+" —— 下一次请求生效，正在飞的那一发不受影响。","ok");
+}
+function toggleSched(){
+  SCHED.on=!SCHED.on;
+  if(SCHED.on){
+    const w=winner();
+    if(w){CURRENT[UI.client]=w.id;toast("智能调度已启动 · 按 "+axesText()+" 选中 "+label(w),"ok")}
+    else toast("智能调度已启动，但没有可排序的线路 —— 照常运行，不制造死局。","warn");
+  } else toast("智能调度已停止，手动指定解锁");
+  render();
+}
+function doLaunch(){
+  const cur=routeById(CURRENT[UI.client]);
+  if(!cur){toast("先点一行选上游","warn");return}
+  toast("已启动 "+client(UI.client).name+" · 走 "+label(cur),"ok");
+}
+/* 行上的启动一定先切过去，再启动 */
+function launchFrom(id){
+  const r=routeById(id), was=CURRENT[r.client];
+  CURRENT[r.client]=id;
+  if(SCHED.on){SCHED.on=false;render();
+    toast("已停止智能调度并切到 "+label(r)+"，然后启动 "+client(r.client).name,"ok");return}
+  render();
+  toast(was===id?"已启动 "+client(r.client).name+" · 走 "+label(r)
+                :"已切到 "+label(r)+" 并启动 "+client(r.client).name,"ok");
+}
+
+/* ---------- 添加 / 编辑线路 ----------
+   结构照 cc-switch 的 ProviderForm（MIT, Copyright 2025 Jason Young, farion1231/cc-switch）：
+   预设 → 基础信息 → 上游格式/认证字段/模型映射 → 配置 JSON（六个快捷开关）→ 计费配置。
+   六个开关的配置键取自它的 CommonConfigEditor.tsx:72-140。 */
+const CLAUDE_ROLES=["Sonnet","Opus","Fable","Haiku","Subagent"];
+const API_FORMATS=[
+  ["anthropic","Anthropic Messages（原生）"],
+  ["openai-chat","OpenAI Chat Completions（需转换）"],
+  ["openai-responses","OpenAI Responses API（需转换）"],
+  ["gemini","Gemini Native generateContent（需转换）"]];
+const CODEX_FORMATS=[
+  ["openai-chat","Chat Completions"],
+  ["openai-responses","Responses"],
+  ["anthropic","Anthropic Messages（伪装成 Claude Code）"]];
+/* ⛔ 取消勾选时那一项从配置里整个删掉；env 空了连 env 一起删 —— cc-switch 的招牌交互 */
+const QUICK=[
+  {k:"hideAttribution",n:"隐藏署名",
+   set:c=>{c.attribution={commit:"",pr:""}}, del:c=>{delete c.attribution}},
+  {k:"teammates",n:"启用 Teammates",env:"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",val:"1",todo:1},
+  {k:"enableToolSearch",n:"启用工具搜索",env:"ENABLE_TOOL_SEARCH",val:"true",todo:1},
+  {k:"effortMax",n:"最大思考强度",env:"CLAUDE_CODE_EFFORT_LEVEL",val:"max",todo:1},
+  {k:"disableAutoUpgrade",n:"禁用自动升级",env:"DISABLE_AUTOUPDATER",val:"1"},
+  {k:"disableArtifact",n:"禁用 Artifact",env:"CLAUDE_CODE_DISABLE_ARTIFACT",val:"1",todo:1}];
+const ICON_COLORS=["#b55232","#3b7247","#87570d","#675d51","#ac3934"];
+let draft=null;
+function openRoute(id){
+  const r=id?routeById(id):null, isCodex=(r?r.client:UI.client)==="codex";
+  const common={newSite:true,newKey:true,preset:"custom",fullUrl:false,jsonDirty:false,probe:null,
+    siteName:"",siteUrl:"",siteNotes:"",siteWeb:"",iconColor:ICON_COLORS[0],
+    keyLabel:"",keyVal:"",showKey:false,
+    apiFormat:isCodex?"openai-responses":"anthropic",
+    authField:"ANTHROPIC_AUTH_TOKEN",
+    mapping:[],fallback:"",fallbackM1:false,
+    useCommon:false,on:{},json:"",
+    pricing:{custom:false,mult:"",source:"inherit"}};
+  draft=r?{...r,proto:{...r.proto},...common,
+           siteName:site(r.site).name,siteUrl:"https://"+site(r.site).url,
+           keyVal:r.key?"":"" ,keyLabel:r.key?keyOf(r.key).label:""}
+         :{id:null,client:UI.client,site:SITES[0].id,group:"",key:null,rate:"",
+           mult:null,fold:null,vol:0,proto:{a:null,r:null,c:null},...common};
+  QUICK.forEach(q=>draft.on[q.k]=q.k==="disableAutoUpgrade");
+  syncJson();drawRoute();$("#dlgRoute").showModal();
+}
+/* 从表单反推出配置 JSON —— 开关一动它就变；手改过就停止跟随，直到点「跟随表单」 */
+function syncJson(){
+  const d=draft;
+  if(d.jsonDirty) return;
+  const c={env:{}};
+  const u=(d.siteUrl||"").trim();
+  if(u) c.env.ANTHROPIC_BASE_URL=u;
+  c.env[d.authField]=d.keyVal||"";
+  for(const q of QUICK){
+    if(!d.on[q.k]) continue;
+    if(q.set) q.set(c); else c.env[q.env]=q.val;
+  }
+  if(!Object.keys(c.env).length) delete c.env;   /* env 空了连 env 一起删 */
+  draft.json=JSON.stringify(c,null,2);
+}
+
+function drawRoute(){
+  const d=draft, isCodex=d.client==="codex";
+  const fmts=isCodex?CODEX_FORMATS:API_FORMATS;
+  const prob=jsonProblem(d.json);
+  const nm=(d.siteName||"").trim();
+  const cfgPath=isCodex?"~\\.codex\\config.toml":"~\\.claude\\settings.json";
+
+  let h='<div class="m-hd"><h2 id="dlgRouteTitle">'+(d.id?"编辑":"添加")+" "+esc(client(d.client).name)+
+    ' 中转站</h2><span class="grow"></span>'+
+    '<button class="qb-icobtn" aria-label="关闭" onclick="dlgRoute.close()">✕</button></div><div class="m-body">';
+
+  /* 预设：一排胶囊，第一颗「自定义配置」；★ = 厂商公开端点 */
+  h+='<div class="chips">'+
+     '<button class="chip" aria-pressed="'+(d.preset==="custom")+'" onclick="pickPreset(&#39;custom&#39;)">自定义配置</button>'+
+     PRESETS.filter(function(p){return isCodex?p.proto==="openai":p.proto==="anthropic"})
+       .map(function(p){return '<button class="chip" aria-pressed="'+(d.preset===p.id)+
+         '" title="'+esc(p.url)+'" onclick="pickPreset(&#39;'+p.id+'&#39;)">'+esc(p.n)+" ★</button>"}).join("")+
+     "</div>"+
+     '<p class="tip"><span>💡</span><span>第三方中转站不在预设里 —— 各家地址自己在变、很多要登录后台才看得到。预置一个记错的地址，你会当成官方推荐，排查时先怀疑自己的 Key。</span></p>';
+
+  /* 图标 */
+  h+='<div style="display:flex;justify-content:center;margin:4px 0 16px">'+
+     '<button class="iconbtn" style="background:'+d.iconColor+'22;color:'+d.iconColor+
+     '" title="点击更换颜色" onclick="cycleColor()">'+esc(nm?nm.slice(0,1):"?")+"</button></div>";
+
+  /* 站点名 / 备注 / 官网 */
+  h+='<div class="row2"><label class="field"><span>站点名</span>'+
+     '<input list="sitelist" value="'+esc(d.siteName)+'" placeholder="随便起，只是备注" oninput="draft.siteName=this.value;drawRoute()">'+
+     '<datalist id="sitelist">'+SITES.map(function(s){return '<option value="'+esc(s.name)+'">'}).join("")+"</datalist></label>"+
+     '<label class="field"><span>备注</span><input value="'+esc(d.siteNotes)+
+     '" placeholder="例如：公司专用账号 / 年付到 2027-03" oninput="draft.siteNotes=this.value"></label></div>'+
+     '<label class="field"><span>官网 / 控制台链接</span><input value="'+esc(d.siteWeb)+
+     '" placeholder="https://" oninput="draft.siteWeb=this.value"></label>';
+
+  /* 接入 */
+  h+='<p class="sect">接入</p>'+
+     '<label class="field"><span>分组名</span><input value="'+esc(d.group)+
+     '" placeholder="照站点后台那个分组名填" oninput="draft.group=this.value">'+
+     '<span class="hint">一把 key 只绑一个分组 —— 要用这个站点的另一个分组，就再加一把 key</span></label>'+
+     '<label class="field"><span>API Key</span><span class="withbtn">'+
+     '<input type="'+(d.showKey?"text":"password")+'" autocomplete="off" value="'+esc(d.keyVal)+
+     '" placeholder="sk-…" oninput="draft.keyVal=this.value;syncJson();liveJson()">'+
+     '<button class="sbtn" aria-label="'+(d.showKey?"隐藏":"显示明文")+'" title="'+(d.showKey?"隐藏":"显示明文")+
+     '" onclick="draft.showKey=!draft.showKey;drawRoute()">'+(d.showKey?"◉":"◎")+"</button></span></label>"+
+     '<label class="field"><span>API 端点</span><span class="withbtn">'+
+     '<input value="'+esc(d.siteUrl)+'" placeholder="https://…" oninput="draft.siteUrl=this.value;syncJson();liveJson()">'+
+     '<button class="sbtn accent" aria-label="测一下这个端点" title="测一下这个端点（会发一发真请求）" onclick="probeEndpoint()">⚡</button></span></label>'+
+     '<label class="check"><input type="checkbox" '+(d.fullUrl?"checked":"")+
+     ' onchange="draft.fullUrl=this.checked;syncJson();drawRoute()"> 完整 URL 端点模式</label>'+
+     '<p class="hint" style="margin:-6px 0 12px">开了「完整 URL」就原样用这个地址，不追加 '+
+     (isCodex?"/responses":"/v1/messages")+"</p>"+probeBlock();
+
+  /* 高级选项（默认收起） */
+  h+="<details><summary>高级选项</summary>"+
+     '<div class="row2"><label class="field"><span>上游格式</span>'+
+     '<select onchange="draft.apiFormat=this.value;drawRoute()">'+
+     fmts.map(function(f){return '<option value="'+f[0]+'" '+(d.apiFormat===f[0]?"selected":"")+">"+esc(f[1])+"</option>"}).join("")+
+     "</select></label>"+
+     (!isCodex||d.apiFormat==="anthropic"
+       ? '<label class="field"><span>认证字段</span>'+
+         '<select onchange="draft.authField=this.value;syncJson();drawRoute()">'+
+         '<option value="ANTHROPIC_AUTH_TOKEN" '+(d.authField==="ANTHROPIC_AUTH_TOKEN"?"selected":"")+">ANTHROPIC_AUTH_TOKEN（默认）</option>"+
+         '<option value="ANTHROPIC_API_KEY" '+(d.authField==="ANTHROPIC_API_KEY"?"selected":"")+">ANTHROPIC_API_KEY</option></select>"+
+         '<span class="hint">选择写入配置的认证环境变量名</span></label>'
+       :"")+"</div>"+
+     '<div class="row2"><label class="field"><span>倍率兜底 · 站点没开 /api/pricing 时才用</span><input value="'+
+       esc(d.rate===""||d.rate==null?"":String(d.rate))+'" placeholder="留空 —— 优先用站点公布的" oninput="draft.rate=this.value">'+
+       '<span class="hint">⛔ 这是<b style="font-weight:500">你自己填的</b>，不是站点公布的。能拉到 /api/pricing 就以站点的为准，界面会标明来源 —— 手填的数会让「计费翻倍」变成猜的。</span></label>'+
+     '<label class="field"><span>默认兜底模型</span><input value="'+esc(d.fallback)+
+       '" placeholder="映射没匹配上时用它" oninput="draft.fallback=this.value"></label></div>'+
+     /* 模型映射 */
+     '<div class="field"><span style="display:flex;align-items:center;gap:8px">模型映射'+
+     '<span class="grow"></span><button class="btn" onclick="applyAll()">一键设置</button></span>'+
+     '<p class="hint" style="margin:0 0 7px">默认<b style="font-weight:500">原样透传</b> —— 客户端要 claude-sonnet-4.5、站点给 claude-sonnet-4.5，不用填。映射是<b style="font-weight:500">例外</b>：上游根本没有 Claude 模型时才把角色指过去。</p>'+
+     '<div class="tw"><table class="mm"><thead><tr>'+
+     (isCodex?"<th>菜单显示名</th><th>实际请求模型</th><th>上下文窗口</th><th>思考等级</th><th></th>"
+             :"<th>模型角色</th><th>显示名称</th><th>实际请求模型</th><th>声明支持 1M</th><th></th>")+
+     "</tr></thead><tbody>"+
+     (d.mapping.length?d.mapping.map(function(m,i){
+        return "<tr>"+(isCodex
+          ? '<td><input value="'+esc(m.a)+'" placeholder="GPT-5.6 Sol" oninput="draft.mapping['+i+'].a=this.value"></td>'+
+            '<td><input value="'+esc(m.b)+'" placeholder="gpt-5.6-sol" oninput="draft.mapping['+i+'].b=this.value"></td>'+
+            '<td><input value="'+esc(m.c)+'" placeholder="200000" oninput="draft.mapping['+i+'].c=this.value"></td>'+
+            '<td><select onchange="draft.mapping['+i+'].d=this.value">'+["低","中","高"].map(function(x){
+              return '<option '+(m.d===x?"selected":"")+">"+x+"</option>"}).join("")+"</select></td>"
+          : '<td><select onchange="draft.mapping['+i+'].a=this.value">'+CLAUDE_ROLES.map(function(x){
+              return '<option '+(m.a===x?"selected":"")+">"+x+"</option>"}).join("")+"</select></td>"+
+            '<td><input value="'+esc(m.b)+'" placeholder="例如 DeepSeek V4 Pro" title="留空 = 不显示在 /model 菜单" oninput="draft.mapping['+i+'].b=this.value"></td>'+
+            '<td><input value="'+esc(m.c)+'" placeholder="deepseek-chat" oninput="draft.mapping['+i+'].c=this.value"></td>'+
+            '<td style="text-align:center"><input type="checkbox" style="width:auto" '+(m.d?"checked":"")+' onchange="draft.mapping['+i+'].d=this.checked"></td>')+
+          '<td><button class="btn btn--icon btn--d" onclick="draft.mapping.splice('+i+',1);drawRoute()">✕</button></td></tr>'}).join("")
+      :'<tr><td colspan="5" style="color:var(--text-3);text-align:center;padding:12px">没有映射 —— 原样透传</td></tr>')+
+     "</tbody></table></div>"+
+     '<button class="btn" style="margin-top:8px;align-self:flex-start" onclick="addMap()">＋ 加一行映射</button></div>'+
+     /* 站点还支持哪些协议 */
+     '<div class="field"><span>协议 · 手动改</span>'+
+     '<p class="hint" style="margin:0 0 7px">正常情况下点 ⚡ 让它自己探，这里不用动。<b style="font-weight:500">只在探不出来、而你确知答案时才改</b> —— 「不知道」和「不支持」是两回事，标成不支持这个站在那个软件底下就彻底看不见了。</p>'+
+     '<div class="tri">'+tri3("a","Anthropic Messages")+tri3("r","OpenAI Responses")+tri3("c","OpenAI Chat")+"</div></div>"+
+     "</details>";
+
+  /* 配置 JSON */
+  h+='<div class="jsonhd"><span>配置 JSON</span><span class="grow"></span>'+
+     '<label class="check sm"><input type="checkbox" '+(d.useCommon?"checked":"")+
+       ' onchange="draft.useCommon=this.checked;drawRoute()"> 应用通用配置</label>'+
+     '<button class="btn" onclick="toast(&#39;通用配置片段是全局的，原型没做那个子窗&#39;)">编辑通用配置</button></div>'+
+     '<div class="toggles">'+QUICK.map(function(q){return '<label class="check sm"><input type="checkbox" '+
+       (d.on[q.k]?"checked":"")+" onchange=\"draft.on['"+q.k+"']=this.checked;syncJson();drawRoute()\"> "+
+       esc(q.n)+(q.todo?' <span class="todo">待查证</span>':"")+"</label>"}).join("")+"</div>"+
+     '<div class="jsonbox"><div class="jsonbar"><code>'+esc(cfgPath)+"</code><span class=\"grow\"></span>"+
+       (d.jsonDirty?'<button class="relink" onclick="syncJson();draft.jsonDirty=false;drawRoute()">已手改 · 点此跟随表单</button>'
+                   :'<span class="follow">✓ 跟随表单</span>')+"</div>"+
+     '<textarea rows="8" spellcheck="false" oninput="draft.json=this.value;draft.jsonDirty=true;liveJson()">'+esc(d.json)+"</textarea></div>"+
+     '<p id="jmsg" class="'+(prob?"jsonerr":"jsonok")+'">'+(prob?esc(prob):"JSON 格式正确")+"</p>"+
+     '<p class="hint" style="margin:5px 0 14px">取消勾选时那一项<b style="font-weight:500">从配置里整个删掉</b>，不是写个空值；<code>env</code> 空了连 <code>env</code> 一起删。</p>';
+
+  /* 计费配置 */
+  h+='<details class="withsw"><summary>计费配置<span class="grow"></span>'+
+     '<input type="checkbox" '+(d.pricing.custom?"checked":"")+
+     ' onclick="event.stopPropagation()" onchange="draft.pricing.custom=this.checked;drawRoute()"></summary>'+
+     (d.pricing.custom?'<div class="row2">'+
+       '<label class="field"><span>成本倍率</span><input value="'+esc(d.pricing.mult)+
+         '" placeholder="留空使用全局默认（1）" oninput="draft.pricing.mult=this.value">'+
+         '<span class="hint">实际成本 = 基础成本 × 倍率，支持小数如 1.5</span></label>'+
+       '<label class="field"><span>计费模式</span><select onchange="draft.pricing.source=this.value">'+
+         [["inherit","继承全局默认"],["request","请求模型"],["response","返回模型"]].map(function(o){
+           return '<option value="'+o[0]+'" '+(d.pricing.source===o[0]?"selected":"")+">"+o[1]+"</option>"}).join("")+"</select>"+
+         '<span class="hint">选择按请求模型还是返回模型进行定价匹配</span></label></div>'
+      :'<p class="hint" style="margin:0">跟随全局默认。站点公布的倍率会在检验时从 /api/pricing 自动拉。</p>')+
+     "</details>";
+
+  h+='</div><div class="m-ft"><button class="btn" onclick="dlgRoute.close()">取消</button>'+
+     '<button class="btn btn--p" onclick="saveRoute()">'+(d.id?"保存":"＋ 添加")+"</button></div>";
+  $("#dlgRoute").innerHTML=h;
+}
+function tri3(k,n){
+  const d=draft;
+  return '<label><span>'+n+'</span><select onchange="draft.proto.'+k+
+    '=this.value===&#39;&#39;?null:this.value===&#39;y&#39;;drawRoute()">'+
+    '<option value="" '+(d.proto[k]==null?"selected":"")+'>不知道</option>'+
+    '<option value="y" '+(d.proto[k]===true?"selected":"")+'>支持</option>'+
+    '<option value="n" '+(d.proto[k]===false?"selected":"")+'>不支持</option></select></label>';
+}
+/* 探测结果区。⛔ 三态照旧：探通=支持，上游明确拒绝=不支持，探不出来=不知道。 */
+function probeBlock(){
+  const p=draft.probe;
+  if(!p) return '<div class="probe idle">还没探过 —— 填好端点和 Key，点 <b>⚡</b> 让它自己认协议和倍率，不用你手填</div>';
+  if(p.busy) return '<div class="probe idle">正在探…… 三种协议各发一发最小请求</div>';
+  const one=function(k,n){
+    const v=p.proto[k];
+    return v===true?'<span class="pill pill--ok">'+n+" 支持</span>"
+         : v===false?'<span class="pill pill--danger">'+n+" 不支持</span>"
+         : '<span class="pill pill--unknown">'+n+" 没探出来</span>";
+  };
+  let h='<div class="probe"><div class="prow"><span class="pk">协议</span><span class="pv">'+
+    one("a","Anthropic")+" "+one("r","Responses")+" "+one("c","Chat")+"</span></div>";
+  h+='<div class="prow"><span class="pk">计费</span><span class="pv">'+
+    (p.rates?"×"+p.rates.model.toFixed(2)+" 输入 · "+
+       (p.rates.comp>1?'<b style="font-weight:500;color:var(--warn)">输出翻倍 ×'+p.rates.comp+"</b>":"输出不翻倍")+
+       " · 缓存读 ×"+p.rates.cache+
+       ' <span class="src">来自站点 /api/pricing</span>'
+     :'<span class="dash">站点没开 /api/pricing</span> <span class="src">只能用高级里的兜底值，并会标明是你填的</span>')+"</span></div>";
+  h+='<div class="prow"><span class="pk">模型</span><span class="pv">'+
+    (p.models?p.models+' 个 <span class="src">已填进映射表的下拉</span>':'<span class="dash">拉不到目录</span>')+"</span></div>";
+  if(p.problem) h+='<div class="prow"><span class="pk">没探出来的</span><span class="pv"><span class="warnt">'+esc(p.problem)+"</span></span></div>";
+  h+='<div class="prow"><span class="pk"></span><span class="pv"><span class="src">'+p.at+
+     ' · 探不出来的那几项留「不知道」，不猜成「不支持」</span></span></div></div>';
+  return h;
+}
+function probeEndpoint(){
+  const u=(draft.siteUrl||"").trim();
+  if(!u){toast("先填 API 端点","warn");return}
+  draft.probe={busy:true};drawRoute();
+  setTimeout(function(){
+    const anth=/anthropic/i.test(u), v1=/\/v1\b/.test(u);
+    const known=/anthropic\.com|openai\.com|deepseek|moonshot|bigmodel/i.test(u);
+    draft.probe={
+      busy:false,
+      at:new Date().toLocaleTimeString(),
+      proto:anth?{a:true,r:false,c:false}:v1?{a:null,r:true,c:true}:{a:true,r:null,c:null},
+      /* 官方直连不开 New API 的 /api/pricing —— 拉不到就如实说拉不到 */
+      rates:known?null:{model:0.20,comp:5,cache:0.1},
+      models:known?0:47,
+      problem:anth?null:(v1?"Anthropic Messages 没探出来：没带 Key 时上游直接 401，分不清是不支持还是没授权":null)
+    };
+    /* 探测结果写回三态；探不出来的保持 null */
+    draft.proto={...draft.probe.proto};
+    if(draft.probe.rates) draft.rate=String(draft.probe.rates.model);
+    drawRoute();
+    toast("探完了 —— "+(draft.probe.rates?"协议和倍率都拿到了":"协议拿到了，倍率要站点开 /api/pricing"),
+          draft.probe.rates?"ok":"warn");
+  },700);
+}
+function addMap(){
+  draft.mapping.push(draft.client==="codex"?{a:"",b:"",c:"",d:"中"}:{a:"Sonnet",b:"",c:"",d:false});
+  drawRoute();
+}
+function applyAll(){
+  if(!draft.fallback.trim()){toast("先填「默认兜底模型」，一键设置会把它套到每一行","warn");return}
+  if(!draft.mapping.length){toast("还没有映射行，先加一行","warn");return}
+  draft.mapping.forEach(function(m){m.c=draft.fallback.trim()});
+  drawRoute();toast("已把模型名称应用到所有角色");
+}
+function cycleColor(){
+  const i=ICON_COLORS.indexOf(draft.iconColor);
+  draft.iconColor=ICON_COLORS[(i+1)%ICON_COLORS.length];drawRoute();
+}
+/* JSON 校验：要能分清尾逗号 / 键没引号 / 括号没闭合 / 值没引号，
+   只说一句「格式错误」等于没说。 */
+function jsonProblem(s){
+  if(!s.trim()) return null;
+  try{JSON.parse(s);return null}catch(e){
+    if(/,\s*[}\]]/.test(s)) return "多了一个尾逗号 —— JSON 不许在 } 或 ] 前留逗号";
+    if(/[{,]\s*[A-Za-z_]\w*\s*:/.test(s)) return "键没加引号 —— JSON 的键必须是双引号字符串";
+    const ob=(s.match(/{/g)||[]).length, cb=(s.match(/}/g)||[]).length;
+    if(ob!==cb) return ob>cb?"少了 "+(ob-cb)+" 个 }":"多了 "+(cb-ob)+" 个 }";
+    const sb=(s.match(/\[/g)||[]).length, eb=(s.match(/\]/g)||[]).length;
+    if(sb!==eb) return sb>eb?"少了 "+(sb-eb)+" 个 ]":"多了 "+(eb-sb)+" 个 ]";
+    if(/:\s*[A-Za-z][\w.-]*\s*[,}]/.test(s)) return "值没加引号 —— 字符串值也要用双引号";
+    return "JSON 解析失败："+e.message;
+  }
+}
+function liveJson(){
+  const p=jsonProblem(draft.json), el=document.getElementById("jmsg");
+  if(!el)return; el.className=p?"jsonerr":"jsonok"; el.textContent=p||"JSON 格式正确";
+}
+function pickPreset(id){
+  draft.preset=id;
+  const p=PRESETS.find(x=>x.id===id);
+  if(p){ draft.newSite=true; draft.siteName=p.n; draft.siteUrl=p.url; draft.siteWeb="";
+    draft.apiFormat=p.proto==="anthropic"?"anthropic":"openai-responses";
+    /* 预设是厂商自己公布的端点，才敢标「支持」；手填地址一律留「不知道」 */
+    draft.proto=p.proto==="anthropic"?{a:true,r:null,c:null}:{a:null,r:true,c:null}; }
+  else { draft.proto={a:null,r:null,c:null}; }   /* 自定义配置 */
+  syncJson();drawRoute();
+}
+function saveRoute(){
+  const d=draft;
+  const p=jsonProblem(d.json); if(p){toast("配置 JSON 有问题："+p,"warn");return}
+  const nm=(d.siteName||"").trim(), url=(d.siteUrl||"").trim();
+  if(!nm){toast("站点名要填","warn");return}
+  if(!url){toast("API 端点要填","warn");return}
+  /* 站点（域名）三个软件共用：同名的就复用，不重复建 */
+  let st=SITES.find(x=>x.name===nm);
+  if(!st){ st={id:"s"+(++seq),name:nm,url:url.replace(/^https?:\/\//,"")}; SITES.push(st); }
+  else st.url=url.replace(/^https?:\/\//,"");
+  let keyId=d.id?routeById(d.id).key:null;
+  if(d.keyVal){
+    keyId="k"+(++seq);
+    KEYS.push({id:keyId,site:st.id,label:(d.keyLabel||d.group||"默认").trim()+" Key",
+               mask:"····"+(d.keyVal.slice(-4)||"0000")});
+  }
+  const rate=d.rate===""||d.rate==null?null:Number(d.rate);
+  if(rate!=null&&(!isFinite(rate)||rate<=0)){toast("倍率要是个大于 0 的数，留空表示站点没提供","warn");return}
+  if(d.id){
+    const r=routeById(d.id);
+    Object.assign(r,{site:st.id,group:d.group,key:keyId,rate,proto:{...d.proto}});
+    toast("已保存："+label(r),"ok");
+  } else {
+    const r={id:"r"+(++seq),client:d.client,site:st.id,group:d.group,key:keyId,rate,
+             mult:null,fold:null,vol:0,proto:{...d.proto}};
+    ROUTES.push(r); LOGS[r.id]=[];
+    toast("已添加："+label(r)+" —— 只在 "+client(r.client).name+" 底下","ok");
+  }
+  $("#dlgRoute").close(); render();
+}
+
+/* ---------- 移除 ---------- */
+let pending=null;
+function askRemove(id){
+  pending=id; const r=routeById(id);
+  $("#dlgConfirm").innerHTML=
+   '<div class="m-hd"><span class="m-tile" style="background:var(--danger-bg);color:var(--danger)">!</span>'+
+     '<h2 id="dlgConfirmTitle">移除 '+esc(r.group||"默认分组")+"</h2></div>"+
+   '<div class="m-body"><p style="margin:0;font-size:12px">要移除 <b style="font-weight:500">'+esc(label(r))+
+     "</b> 吗？只从 "+esc(client(r.client).name)+" 底下移除 —— 站点和 Key 都还在，别的软件底下的同名账户也不受影响。</p></div>"+
+   '<div class="m-ft"><button class="btn" onclick="dlgConfirm.close()">取消</button>'+
+     '<button class="btn btn--d" onclick="doRemove()">移除</button></div>';
+  $("#dlgConfirm").showModal();
+}
+function doRemove(){
+  const r=routeById(pending);
+  ROUTES=ROUTES.filter(x=>x.id!==pending);
+  if(CURRENT[r.client]===pending)CURRENT[r.client]=null;
+  $("#dlgConfirm").close();render();
+  toast("已移除 "+label(r)+"；站点与 Key 保留");
+}
+
+/* ---------- 日志弹窗 ---------- */
+function openLog(id){UI.log={route:id,range:"24h",onlyBad:false,model:"all"};drawLog();$("#dlgLog").showModal()}
+function drawLog(){
+  const r=routeById(UI.log.route), c=client(r.client);
+  let rows=rowsIn(r,UI.log.range);
+  if(UI.log.model!=="all") rows=rows.filter(x=>x.model===UI.log.model);
+  const bad=rows.filter(x=>x.status>=400), shown=UI.log.onlyBad?bad:rows;
+  const tt=rows.map(x=>x.ttft).filter(x=>x!=null).sort((a,b)=>a-b);
+  const tot=rows.map(x=>x.total).filter(x=>x!=null).sort((a,b)=>a-b);
+  const q=(a,p)=>a.length?a[Math.min(a.length-1,Math.floor(a.length*p))]:null;
+  const codes={}; bad.forEach(x=>codes[x.status]=(codes[x.status]||0)+1);
+  const models=[...new Set((LOGS[r.id]||[]).map(x=>x.model))];
+  const T={in:0,out:0,cr:0,cw:0}; let cost=0;
+  for(const x of rows){T.in+=x.tok.in;T.out+=x.tok.out;T.cr+=x.tok.cr;T.cw+=x.tok.cw;cost+=costOf(r,x)}
+  const sum=T.in+T.out+T.cr+T.cw;
+  const oldest=rows.length?Math.min(...rows.map(x=>x.t)):null;
+  const capped=rows.length>=1400;
+  const TK=[["cr","缓存读","var(--ok)"],["in","输入","var(--accent)"],["cw","缓存写","var(--text-2)"],["out","输出","var(--warn)"]];
+  const save=UI.gran; UI.gran=UI.log.range==="7d"||UI.log.range==="all"?"day":"hour";
+  const svg=chart(rows,440,44); UI.gran=save;
+
+  $("#dlgLog").innerHTML=
+  '<div class="m-hd"><span class="m-tile">▤</span><h2 id="dlgLogTitle">'+esc(label(r))+"</h2>"+
+    (CURRENT[r.client]===r.id?'<span class="pill pill--accent">当前上游</span>':"")+
+    '<span class="pill pill--neutral">'+esc(c.name)+"</span><span class=\"grow\"></span>"+
+    '<button class="qb-icobtn" aria-label="关闭" onclick="dlgLog.close()">✕</button></div>'+
+  '<div class="strip"><p class="cap">线路配置</p>'+
+    '<span class="kv"><span class="k">倍率</span><span class="v">'+rateCell(r)+"</span></span>"+
+    '<span class="kv"><span class="k">绑定 Key</span><span class="v" style="font-size:12.5px">'+
+      (r.key?esc(keyOf(r.key).label)+' <span style="font-size:10px;color:var(--text-3)">'+keyOf(r.key).mask+"</span>":'<span class="dash">还没绑</span>')+"</span></span>"+
+    '<span class="kv"><span class="k">协议</span><span class="v" style="font-size:10.5px">'+protoPills(r)+"</span></span>"+
+    '<span class="kv"><span class="k">站点</span><span class="v" style="font-size:12.5px">'+esc(site(r.site).url)+"</span></span></div>"+
+
+  '<div class="split"><div class="l">'+
+    '<div class="strip" style="background:transparent;border:0;padding:0;margin-bottom:9px;gap:18px">'+
+      '<span class="kv"><span class="k">请求</span><span class="v">'+rows.length+"</span></span>"+
+      '<span class="kv"><span class="k">成功</span><span class="v" style="color:var(--ok)">'+(rows.length-bad.length)+"</span></span>"+
+      '<span class="kv"><span class="k">失败 '+(Object.keys(codes).map(k=>k+"×"+codes[k]).join(" ")||"—")+
+        '</span><span class="v" style="color:'+(bad.length?"var(--danger)":"var(--text)")+'">'+bad.length+"</span></span>"+
+      '<span class="kv"><span class="k">首字 P50</span><span class="v">'+sec(q(tt,.5))+"</span></span>"+
+      '<span class="kv"><span class="k">P95</span><span class="v">'+sec(q(tt,.95))+"</span></span>"+
+      '<span class="kv"><span class="k">最慢</span><span class="v" style="color:var(--warn)">'+sec(tt[tt.length-1]??null)+"</span></span>"+
+      '<span class="kv"><span class="k">耗时中位</span><span class="v">'+sec(q(tot,.5))+"</span></span></div>"+
+    svg+
+    '<div class="legend"><span>'+nameOf(UI.log.range)+"</span><span class=\"grow\"></span>"+
+      '<span><i style="background:var(--accent)"></i>请求量</span>'+
+      '<span><i style="background:var(--warn)"></i>首字 P95</span><span>断开 = 那格没请求</span></div></div>'+
+  '<div class="r"><p class="cap" style="margin:0 0 7px;font-size:9.5px;color:var(--text-3)">Token · '+nameOf(UI.log.range)+"</p>"+
+    (sum?'<div class="tokbar">'+TK.map(([k,,col])=>T[k]?'<span style="width:'+(T[k]/sum*100)+'%;background:'+col+'"></span>':"").join("")+"</div>"+
+      '<div class="tokgrid">'+TK.map(([k,n,col])=>'<span class="sw" style="background:'+col+'"></span>'+
+        '<span style="color:var(--text-2)">'+n+"</span>"+
+        (r.noCache&&(k==="cr"||k==="cw")?'<span class="n dash">未提供</span><span class="p"></span>'
+          :'<span class="n">'+mtok(T[k])+'</span><span class="p">'+Math.round(T[k]/sum*100)+"%</span>")).join("")+"</div>"+
+      '<div class="tot"><div>合计<b>'+mtok(sum)+"</b></div><div>本段实扣<b>"+cost.toFixed(4)+
+        "</b></div><div>每 1M 实扣<b>"+(cost/(sum/1e6)).toFixed(4)+"</b></div></div>"
+     :'<p style="margin:0;font-size:10.5px;color:var(--text-3)">这段时间没有请求。</p>')+
+    '<p class="note">四类<b style="font-weight:500">分开</b>记 —— 合成一个总数会把「输出翻五倍」藏掉。</p></div></div>'+
+
+  '<div class="m-body">'+
+    (capped?'<div class="warnbox"><span>⚠</span><span>只回溯到 '+(oldest?md(oldest)+" "+hhmm(oldest).slice(0,5):"—")+
+      '，本机只保留最近 2000 条请求日志，更早的已经裁掉。上面这些数只覆盖这一段，<b style="font-weight:500">不代表那段时间里只有这么多请求</b>。</span></div>':"")+
+    '<div style="display:flex;align-items:center;gap:7px;margin-bottom:8px;flex-wrap:wrap">'+
+      '<div class="seg">'+RANGES.map(([k,n])=>'<button aria-pressed="'+(UI.log.range===k)+
+        '" onclick="UI.log.range=\''+k+'\';drawLog()">'+n.replace("近 ","")+"</button>").join("")+
+        '<button onclick="toast(\'原型没做自定义时间段\')">自定义</button></div>'+
+      '<div class="seg"><button aria-pressed="'+(!UI.log.onlyBad)+'" onclick="UI.log.onlyBad=false;drawLog()">全部 '+rows.length+"</button>"+
+        '<button aria-pressed="'+UI.log.onlyBad+'" onclick="UI.log.onlyBad=true;drawLog()">只看失败 '+bad.length+"</button></div>"+
+      '<select style="width:auto" onchange="UI.log.model=this.value;drawLog()"><option value="all">模型 全部</option>'+
+        models.map(m=>'<option value="'+esc(m)+'" '+(UI.log.model===m?"selected":"")+">"+esc(m)+"</option>").join("")+"</select>"+
+      '<span class="grow"></span><button class="btn" onclick="toast(\'已刷新（原型数据不变）\')">刷新</button></div>'+
+    '<div class="tw"><table><thead><tr><th>时间</th><th>模型</th><th class="num">状态</th>'+
+      '<th class="num">首字</th><th class="num">耗时</th><th class="num">Token</th><th class="num">Retry-After</th></tr></thead><tbody>'+
+      (shown.length?shown.slice(0,60).map(x=>'<tr'+(x.status>=400?' class="bad"':"")+
+        '><td style="color:var(--text-2);font-variant-numeric:tabular-nums">'+md(x.t)+" "+hhmm(x.t)+"</td>"+
+        '<td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.model)+"</td>"+
+        '<td class="num" style="color:'+(x.status===200?"var(--ok)":"var(--danger)")+'">'+x.status+"</td>"+
+        '<td class="num">'+sec(x.ttft)+'</td><td class="num">'+sec(x.total)+"</td>"+
+        '<td class="num">'+mtok(x.tok.in+x.tok.out+x.tok.cr+x.tok.cw)+"</td>"+
+        '<td class="num">'+(x.retry==null?'<span class="dash">—</span>':'<span style="color:var(--warn)">'+x.retry+"s</span>")+"</td></tr>").join("")
+       :'<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:18px">这段时间没有请求记录</td></tr>')+
+      "</tbody></table></div>"+
+    '<p class="note">只记状态码、时延、模型、token 数，<b style="font-weight:500">不记正文</b>。取不到写「—」，不拿 0 顶上。</p>'+
+    '<p class="note">这里没有「来源／客户端」筛选：弹窗已经在 '+esc(c.name)+" 底下，全是它的记录。</p></div>"+
+  '<div class="m-ft"><button class="btn" onclick="dlgLog.close();openRoute(\''+r.id+'\')">编辑这条线路</button>'+
+    '<button class="btn" onclick="dlgLog.close()">关闭</button></div>';
+}
+
+render();
+document.addEventListener("keydown",e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();toast("原型里没做搜索")}
+});
+</script>

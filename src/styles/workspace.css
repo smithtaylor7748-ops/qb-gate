@@ -1,66 +1,6 @@
-/* QB Gate workspace: warm surfaces, explicit themes and keyboard-first controls. */
-:root {
-  color-scheme: dark;
-  --text-3: #a49b8e;
-}
-:root[data-theme="light"] {
-  color-scheme: light;
-  --bg: #f6f3ee;
-  --surface: #fffefa;
-  --surface-2: #f2eee7;
-  --border: #e3ddd2;
-  --border-strong: #c9beae;
-  --text: #302b25;
-  --text-2: #675d51;
-  --text-3: #786d60;
-  --accent: #b55232;
-  --accent-bg: #f9eae1;
-  --accent-border: #e7bdab;
-  --ok: #3b7247;
-  --ok-bg: #eef5ed;
-  --ok-border: #bad1b9;
-  --warn: #87570d;
-  --warn-bg: #fff1d7;
-  --warn-border: #dec596;
-  --danger: #ac3934;
-  --danger-bg: #fbeceb;
-  --danger-border: #e8bdb9;
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --bg: #171410;
-  --surface: #211d18;
-  --surface-2: #29231d;
-  --border: #3c332a;
-  --border-strong: #5b4e40;
-  --text: #f0e9df;
-  --text-2: #c0b5a6;
-  --text-3: #a49b8e;
-  --accent: #e18a65;
-  --accent-bg: #38251b;
-  --accent-border: #72503a;
-  --ok: #8bc18c;
-  --ok-bg: #1d2a1b;
-  --ok-border: #385631;
-  --warn: #e4b269;
-  --warn-bg: #352817;
-  --warn-border: #68502e;
-  --danger: #ef9385;
-  --danger-bg: #381e1b;
-  --danger-border: #754036;
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    color-scheme: light;
-    --bg: #f6f3ee;
-    --surface: #fffefa;
-    --surface-2: #f2eee7;
-    --text: #302b25;
-    --text-2: #675d51;
-    --text-3: #786d60;
-    --accent: #b55232;
-  }
-}
+/* QB Gate 工作区的布局与组件。
+   颜色与主题只在 tokens.css 里定义，这里只引用变量 —— 在这里再写一组色值，
+   就是把 D1 修掉的「两套令牌并存」原样请回来。 */
 body {
   margin: 0;
   font-family: Inter, "Segoe UI", "Microsoft YaHei UI", sans-serif;
@@ -305,9 +245,23 @@ summary {
   overflow: auto;
   flex: 1;
   scroll-behavior: auto;
+  /* ⛔ 这一行决定「窗口里有几根滚动条」，不许删。
+     `overflow: auto` 只管得住普通流里的内容。**绝对定位的后代认的是最近的
+     已定位祖先** —— 这一行不在时，`.qb-page` / `.qb-content` / `.qb-shell`
+     一路都是 `static`，那个祖先就成了 `<body>`：后代整个逃出这个滚动容器，
+     按它在流里的静态位置落到文档坐标上，再也不被 `overflow` 裁掉。
+     实测（0.19.0，1280×860）：软件页 `ExternalLink` 给读屏器的那个
+     `.sr-only`（「在系统浏览器中打开」）落在文档 1949px 处，把 100dvh 的
+     外壳撑成 1949px 的文档 —— 右边多出**第二根滚动条**，往下拖 1089px
+     全是空白。设置页同样中招（+257px）。
+     修的是这一类，不是那一个：任何 `.sr-only`、任何绝对定位的小工具，
+     只要落在折线以下就会复现。 */
+  position: relative;
 }
 .qb-page {
-  padding: 35px 38px 48px;
+  /* 上下收紧过一次（0.20.0）：总览要在默认窗口里一屏放完，
+     使用者的原话是「删除滑轨，用户不能用滚轮」。左右不动。 */
+  padding: 24px 38px 28px;
   max-width: 1480px;
   margin: auto;
 }
@@ -544,6 +498,23 @@ summary {
   font-weight: 400;
   white-space: nowrap;
 }
+/* 演示数据标记。侧栏收窄到只剩图标时它也要留着 ——
+   见 Shell.tsx 里那段说明：窄屏截图不该看起来像真实状态。 */
+.qb-demo-badge {
+  display: block;
+  margin: -14px 0 14px;
+  text-align: center;
+  color: var(--warn);
+  border: 1px solid var(--warn-border);
+  background: var(--warn-bg);
+  border-radius: 5px;
+  font-size: 10px;
+  padding: 2px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .qb-badge-warn {
   background: var(--warn-bg);
   border-color: var(--warn-border);
@@ -932,6 +903,86 @@ summary {
   accent-color: var(--accent);
   width: 15px;
   height: 15px;
+}
+input[type="checkbox"].ipv6-switch {
+  appearance: none;
+  width: 36px;
+  height: 21px;
+  flex-shrink: 0;
+  border-radius: 20px;
+  background: var(--border);
+  cursor: pointer;
+  position: relative;
+}
+input[type="checkbox"].ipv6-switch:checked {
+  background: var(--accent);
+}
+input[type="checkbox"].ipv6-switch::after {
+  content: "";
+  position: absolute;
+  width: 15px;
+  height: 15px;
+  top: 3px;
+  left: 3px;
+  border-radius: 50%;
+  background: var(--bg);
+}
+input[type="checkbox"].ipv6-switch:checked::after {
+  left: 18px;
+}
+input[type="checkbox"].ipv6-switch:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.purity-probe > .card-head > .card-actions {
+  flex: 1 1 320px;
+}
+.purity-probe-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.purity-probe-form .input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+}
+.modal-head-actions {
+  margin-left: auto;
+  min-width: 0;
+}
+.ipv6-control {
+  max-width: 300px;
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+.ipv6-details {
+  position: relative;
+  margin-top: 4px;
+}
+.ipv6-details > summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+}
+.ipv6-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 5;
+  width: min(360px, calc(100vw - 64px));
+  max-height: 50vh;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
 }
 .qb-diff {
   display: grid;
@@ -1670,4 +1721,443 @@ summary {
 }
 .qb-software .input {
   min-height: 36px;
+}
+
+/* 侧栏里账户那一项下面的两个子项（Claude / GPT）。
+   它们不是路由，只是切「看哪一边」，所以是 `button` 不是 `a`。
+   缩进对齐主项的图标右边，让人一眼看出从属关系。 */
+.qb-nav-sub {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 5px 12px 5px 46px;
+  border-radius: var(--radius-md);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+.qb-nav-sub:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.qb-nav-sub.on {
+  color: var(--accent);
+  font-weight: 500;
+}
+.qb-nav-sub:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* 官方账户：同一导航块内切平台，四个槽位配右侧启动及用量。 */
+.qb-account-nav {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.qb-account-nav.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+.qb-sidebar nav .qb-account-nav > a {
+  min-width: 0;
+  padding: 7px 4px;
+  border: 0;
+  background: transparent;
+}
+.qb-account-nav > a > svg {
+  flex-shrink: 0;
+}
+.qb-account-switch {
+  display: grid;
+  gap: 4px;
+}
+.qb-account-switch .qb-nav-sub {
+  margin: 0;
+  padding: 7px 4px;
+  width: 100%;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.qb-account-switch .qb-nav-sub.on {
+  border-color: var(--accent);
+  background: var(--surface);
+  color: var(--accent);
+}
+.account-workspace {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+}
+.account-workspace-right {
+  display: grid;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+.account-slots,
+.account-launch,
+.account-usage {
+  min-width: 0;
+  margin-bottom: 0;
+}
+.account-slots {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.account-usage .ustats {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.account-usage .notice {
+  overflow-wrap: anywhere;
+}
+.account-workspace .launchcol {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (max-width: 1020px) {
+  .qb-account-nav {
+    grid-template-columns: 1fr;
+    padding: 4px;
+  }
+  .qb-sidebar nav .qb-account-nav > a {
+    display: none;
+  }
+  .qb-account-switch .qb-nav-sub {
+    font-size: 10px;
+    padding: 7px 2px;
+  }
+}
+
+.qb-sidebar nav .qb-account-nav > a > svg {
+  display: none;
+}
+.qb-account-nav > a > span {
+  white-space: nowrap;
+}
+.account-usage .ustat {
+  padding: 6px 9px;
+}
+.account-usage > .notice {
+  font-size: 11px;
+}
+
+/* The official account workspace occupies the available window. Details live in
+   dialogs; all four rows and the launch/usage controls remain on this page. */
+html:has(.official-page),
+body:has(.official-page) {
+  /* Prevent the viewport's wheel overscroll bounce as well as normal scrolling. */
+  overscroll-behavior: none;
+}
+.qb-shell:has(.official-page) {
+  /* hidden still permits focus restoration to scroll this outer ancestor. */
+  overflow: clip;
+}
+.qb-main:has(.official-page) {
+  overflow: clip;
+  min-height: 0;
+}
+.qb-page:has(.official-page) {
+  height: 100%;
+  padding: 16px 24px;
+}
+.official-page {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  container-type: size;
+  container-name: accounts;
+}
+.official-score,
+.official-alert {
+  flex: none;
+}
+.official-alert {
+  padding: 5px 10px;
+  margin: 0;
+}
+.score-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.scorecell .notice {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-slot-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+.account-slot-list {
+  display: grid;
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+.account-slot-list .slotrow {
+  min-height: 0;
+  justify-content: center;
+}
+.account-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  flex: none;
+}
+.account-launch,
+.account-usage {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.account-launch > div:not(.card-head) {
+  min-height: 0;
+}
+.account-launch > div:has(.launchcol) {
+  flex: 1;
+}
+.account-launch .launchcol {
+  flex: 1;
+  min-height: 0;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+.account-launch .tile {
+  justify-content: center;
+}
+.account-usage .ustats {
+  flex: 1;
+  min-height: 0;
+  grid-auto-rows: minmax(0, 1fr);
+}
+.account-usage .ustat {
+  justify-content: center;
+  min-height: 0;
+}
+.usage-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.usage-heading .card-title,
+.account-usage .card-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+.usage-heading .card-title > svg,
+.account-usage .card-title > svg {
+  display: inline;
+  margin-right: 6px;
+}
+.usage-ranges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+.usage-heading .usage-ranges {
+  margin: 0 0 0 auto;
+}
+.usage-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  margin-top: 6px;
+}
+.codex-slot-identity {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-testid="codex-slot"] {
+  gap: 2px;
+}
+[data-testid="codex-slot"] > * {
+  flex-shrink: 0;
+}
+[data-testid="codex-slot"] .notice {
+  line-height: 16px;
+}
+[data-testid="codex-slot"] .btn--sm {
+  min-height: 26px;
+  padding-block: 3px;
+}
+.account-launch > div:has(.launchcol) {
+  gap: 6px;
+}
+.account-launch > div:has(.launchcol) > div {
+  margin: 0;
+}
+.account-launch > div:has(.launchcol) > div:last-child .btn {
+  min-height: 24px;
+  padding-block: 2px;
+}
+@container accounts (max-width: 850px) {
+  .official-score .card-head {
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+  .official-score .card-actions {
+    flex: 1;
+  }
+  .official-score .scorecell-weight {
+    display: none;
+  }
+  .official-score .scorecell {
+    padding: 5px 7px;
+  }
+  .account-workspace {
+    gap: 8px;
+  }
+  .account-workspace .card {
+    padding: 10px;
+  }
+  .account-workspace h2 {
+    font-size: 15px;
+  }
+  .account-slot-list .slotrow {
+    padding: 5px 7px;
+  }
+  .account-slot-list .slotrow-main {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .account-slot-list .slotrow-plan {
+    display: none;
+  }
+  .account-slot-list .slotrow-side > .pill {
+    display: none;
+  }
+  .account-slot-list .slotrow-label {
+    flex: 1;
+  }
+  .account-slot-list .gauge-reset,
+  .account-slot-list .gauge-binding {
+    display: none;
+  }
+  .account-slot-list .gauge-track {
+    min-width: 20px;
+  }
+  .account-launch .tile {
+    padding: 6px 4px;
+  }
+  .account-launch .tile-name {
+    font-size: 11px;
+  }
+  .account-launch .tile-note {
+    font-size: 10px;
+  }
+  .account-launch .tile-icon svg {
+    height: 15px;
+  }
+  .account-launch .card-head {
+    gap: 4px;
+  }
+  .usage-heading .usage-ranges {
+    margin-left: 0;
+  }
+  .account-usage .ustat-sub {
+    display: none;
+  }
+}
+@container accounts (max-height: 840px) {
+  .official-score {
+    padding: 10px 12px;
+  }
+  .official-score .scorecell .notice,
+  .official-score .scorecell > .btn,
+  .official-score > p {
+    display: none;
+  }
+  .official-score .scorecell {
+    padding: 4px 7px;
+  }
+  .official-score .score-grid {
+    margin-top: 6px;
+  }
+  .official-score .card-head {
+    margin-bottom: 4px;
+  }
+  .account-workspace .card {
+    padding: 10px;
+  }
+  .account-workspace h2 {
+    font-size: 15px;
+  }
+  .account-slot-list {
+    gap: 6px;
+  }
+  .account-slot-list .gauge-src {
+    display: none;
+  }
+  .account-usage .ustats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .account-usage .ustat {
+    padding: 4px;
+  }
+  .account-usage .ustat-sub {
+    display: none;
+  }
+  .account-usage .ustat-name {
+    font-size: 10px;
+  }
+  .account-usage .ustat-value {
+    font-size: 16px;
+  }
+  .account-launch .tile {
+    padding: 5px 4px;
+    gap: 2px;
+  }
+  .account-launch .tile-icon {
+    display: none;
+  }
+  .account-launch .tile-note {
+    font-size: 10px;
+  }
+  .account-launch .tile-name {
+    font-size: 11px;
+  }
+  .account-launch .notice {
+    font-size: 10px;
+  }
+  .account-launch .card-head {
+    margin-bottom: 6px;
+  }
+}
+@media (max-width: 780px) {
+  .qb-page:has(.official-page) {
+    padding: 10px;
+  }
 }

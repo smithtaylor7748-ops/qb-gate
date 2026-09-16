@@ -3,7 +3,18 @@ import type { Trace } from "./Trace";
 
 export type TraceReport = { traces: Array<Trace>, chrome_installed: boolean, chrome_path: string | null, chrome_running: boolean, 
 /**
- * Chrome 正在跑时它的资料文件被占着，扫不了。
- * **这时候要如实说「没扫」，不能报「没找到」** —— 那是两回事。
+ * 这一轮**有没有真的读开过** Chrome 的资料文件。
+ * `false` 时要如实说「没扫」，不能报「没找到」—— 那是两回事。
  */
-chrome_scanned: boolean, winget_available: boolean, };
+chrome_scanned: boolean, 
+/**
+ * 这一轮读开了几个资料文件。
+ */
+chrome_files_read: number, 
+/**
+ * 这一轮**打不开**几个（多半是 Chrome 正占着那一个）。
+ *
+ * ⛔ 大于 0 时界面必须说出口：`traces` 里没有 browser 那条，只覆盖
+ * 读得开的那部分，**不覆盖这几个**。
+ */
+chrome_files_locked: number, winget_available: boolean, };

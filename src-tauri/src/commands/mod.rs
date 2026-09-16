@@ -21,7 +21,12 @@ pub mod accounts;
 pub mod backup;
 pub mod gate;
 pub mod install;
+pub mod ipv6;
+pub mod network;
 pub mod plugins;
 pub mod probe;
+pub mod station;
 pub mod system;
 pub mod workspace;
+
+pub mod codex_commands;

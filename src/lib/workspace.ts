@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "../ui";
 import { DEMO_ENABLED } from "./demo";
-import { invalidateAll, res, useResource } from "./store";
+import { invalidateAll, invalidateAutomatic, res, useResource } from "./store";
 import { call } from "./ipc";
 import { toIpcError } from "./ipcError";
 import type { LaunchPlan } from "./generated/LaunchPlan";
@@ -120,7 +120,7 @@ export function useWorkspaceEvents() {
     let disposed = false;
     const pending = listen<{ revision: number }>(
       CHANNELS.workspace_changed,
-      () => invalidateAll(),
+      () => void invalidateAutomatic(),
     );
     void pending
       .then((stop) => {

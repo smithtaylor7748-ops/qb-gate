@@ -1,10 +1,13 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-export type ButtonVariant = 'default' | 'primary' | 'danger' | 'ghost';
+export type ButtonVariant = "default" | "primary" | "danger" | "ghost";
 
-interface Props extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className'> {
+interface Props extends Omit<
+  ButtonHTMLAttributes<HTMLButtonElement>,
+  "className"
+> {
   variant?: ButtonVariant;
-  size?: 'sm' | 'md';
+  size?: "sm" | "md";
   /**
    * 只让**这一个**按钮转圈并禁用。
    *
@@ -21,28 +24,28 @@ interface Props extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className
 }
 
 export default function Button({
-  variant = 'default',
-  size = 'md',
+  variant = "default",
+  size = "md",
   loading = false,
   icon,
   launch = false,
   block = false,
   disabled,
   children,
-  className = '',
-  type = 'button',
+  className = "",
+  type = "button",
   ...rest
 }: Props) {
   const cls = [
-    'btn',
+    "btn",
     `btn--${size}`,
-    variant !== 'default' && `btn--${variant}`,
-    launch && 'btn--launch',
-    block && 'w-full',
+    variant !== "default" && `btn--${variant}`,
+    launch && "btn--launch",
+    block && "w-full",
     className,
   ]
     .filter(Boolean)
-    .join(' ');
+    .join(" ");
 
   return (
     <button

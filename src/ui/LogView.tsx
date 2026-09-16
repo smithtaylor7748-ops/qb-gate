@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Check, Copy } from 'lucide-react';
-import Button from './Button';
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Check, Copy } from "lucide-react";
+import Button from "./Button";
 
 interface Props {
   lines: string[];
@@ -12,7 +12,15 @@ interface Props {
   errorHints?: string[];
 }
 
-const DEFAULT_ERROR_HINTS = ['错误', '失败', 'error', 'Error', 'ERROR', 'failed', 'FAIL'];
+const DEFAULT_ERROR_HINTS = [
+  "错误",
+  "失败",
+  "error",
+  "Error",
+  "ERROR",
+  "failed",
+  "FAIL",
+];
 
 /**
  * 日志窗。
@@ -23,7 +31,7 @@ const DEFAULT_ERROR_HINTS = ['错误', '失败', 'error', 'Error', 'ERROR', 'fai
 export default function LogView({
   lines,
   follow = false,
-  empty = '（暂无记录）',
+  empty = "（暂无记录）",
   actions,
   errorHints = DEFAULT_ERROR_HINTS,
 }: Props) {
@@ -38,7 +46,7 @@ export default function LogView({
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(lines.join('\n'));
+      await navigator.clipboard.writeText(lines.join("\n"));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -65,7 +73,7 @@ export default function LogView({
               )
             }
           >
-            {copied ? '已复制' : '复制全部'}
+            {copied ? "已复制" : "复制全部"}
           </Button>
         </span>
       </div>
@@ -76,7 +84,9 @@ export default function LogView({
               <div
                 key={i}
                 className={
-                  errorHints.some((h) => l.includes(h)) ? 'logview-line--error' : undefined
+                  errorHints.some((h) => l.includes(h))
+                    ? "logview-line--error"
+                    : undefined
                 }
               >
                 {l}

@@ -1,8 +1,10 @@
 import { CHANNELS } from "../lib/channels";
 import { listen } from "@tauri-apps/api/event";
-import { useAllTasks } from "../lib/tasks";
 import {
   Component,
+  Fragment,
+  lazy,
+  Suspense,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -17,18 +19,18 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
-import {
-  ArrowLeft,
-  ArrowRight,
-  Check,
-  Command,
-  History,
-  Search,
-} from "lucide-react";
+import { ArrowRight, Command, Search } from "lucide-react";
 import { LEGACY_REDIRECTS, NAV, RELAY_BASE } from "../lib/routes";
 import { api } from "../lib/api";
 import { R } from "../lib/resources";
-import { invalidateAll, res, useResource, useSession } from "../lib/store";
+import {
+  invalidateAll,
+  res,
+  setSession,
+  useResource,
+  useSession,
+} from "../lib/store";
+import { SIDES, SIDE_KEY, type Side } from "../lib/side";
 import { useSummaries } from "./sidebar";
 import {
   useAction,
@@ -36,25 +38,38 @@ import {
   useCatalog,
   useWorkspace,
   useWorkspaceEvents,
-  STATE_NAMES,
 } from "../lib/workspace";
 import { DEMO_ENABLED } from "../lib/demo";
 import { Button, Modal, ToastProvider } from "../ui";
 import AccountDialogs from "../pages/accounts/AccountDialogs";
 import Accounts from "./Accounts";
-import Official from "./Official";
-import Onboarding from "./Onboarding";
 import SecuritySheet from "./security/SecuritySheet";
-import RelayCenter from "./RelayCenter";
-import ExtensionCenter from "./ExtensionCenter";
-import Software from "./Software";
-import SettingsCenter from "./SettingsCenter";
+
+// 首屏只需要仪表盘（「/」）和两个全局小窗，其余六页各拆一个 chunk。
+// 不是点进去才下：模块一加载就排一个空闲回调把它们全部预取进来 ——
+// 首屏不用解析它们，点进去时也不用再等。
+const PAGES = {
+  onboarding: () => import("./Onboarding"),
+  relays: () => import("./RelayCenter"),
+  extensions: () => import("./ExtensionCenter"),
+  software: () => import("./Software"),
+  settings: () => import("./SettingsCenter"),
+};
+const Onboarding = lazy(PAGES.onboarding);
+const RelayCenter = lazy(PAGES.relays);
+const ExtensionCenter = lazy(PAGES.extensions);
+const Software = lazy(PAGES.software);
+const SettingsCenter = lazy(PAGES.settings);
+requestIdleCallback(
+  () => {
+    // 预取失败不在这里报：真点进那一页时 lazy 会再 import 一次，
+    // 失败会落到 Boundary 上，带着原因显示出来。
+    for (const load of Object.values(PAGES)) load().catch(() => {});
+  },
+  { timeout: 3000 },
+);
 
 // 不在侧栏里、但需要顶栏标题的路由。
-const EXTRA_TITLES: Record<string, string> = {
-  "/onboarding": "新手引导",
-  "/accounts": "账户槽位管理",
-};
 const positions = new Map<string, number>();
 class Boundary extends Component<{ children: ReactNode }, { error: string }> {
   state = { error: "" };
@@ -152,12 +167,10 @@ function RecoveryGuard({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 function Layout() {
-  const taskAction = useAction();
   const navigate = useNavigate();
   const location = useLocation();
   const main = useRef<HTMLElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [tasksOpen, setTasksOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [theme, setTheme] = useSession(
     "theme",
@@ -165,7 +178,6 @@ function Layout() {
   );
   const workspace = useWorkspace();
   const catalog = useCatalog();
-  const legacyTasks = useAllTasks();
   const accounts = useResource("accounts", R.accounts);
   useWorkspaceEvents();
   useEffect(() => {
@@ -203,18 +215,9 @@ function Layout() {
       if (element) positions.set(location.pathname, element.scrollTop);
     };
   }, [location.pathname]);
-  // 「/」要精确匹配，否则它会命中所有路径。
-  const active = NAV.find((n) =>
-    n.path === "/"
-      ? location.pathname === "/"
-      : location.pathname.startsWith(n.path),
-  );
   const summaries = useSummaries();
-  const operations = workspace.data?.operations ?? [];
-  const running = [
-    ...operations.filter((o) => o.status === "running"),
-    ...legacyTasks.filter(([, t]) => t.running),
-  ];
+  // 侧栏里那两个子项的高亮跟着它走；`Home` 读的是同一个键。
+  const [side] = useSession<Side>(SIDE_KEY, "claude");
   const results = [
     ...(catalog.data ?? []).map((m) => ({
       label: m.name,
@@ -255,6 +258,18 @@ function Layout() {
               QB Gate<small>你的 AI 工作空间</small>
             </span>
           </NavLink>
+          {/* 演示数据标记。**任何宽度都必须看得见** —— 它回答的是
+              「屏幕上这些数字是不是你的真实状态」。放进会随窄屏收起的
+              侧栏页脚里，窄屏截图就看不出这是演示数据了，而截图恰恰是
+              最容易被当成真实状态拿去用的东西。 */}
+          {DEMO_ENABLED && (
+            <span
+              className="qb-demo-badge"
+              title="界面上的数字全部是编造的演示数据"
+            >
+              演示数据
+            </span>
+          )}
           <button
             className="qb-search-trigger"
             onClick={() => setSearchOpen(true)}
@@ -267,17 +282,67 @@ function Layout() {
             {NAV.map(({ path, name, icon: Icon, hint }) => {
               const readout = summaries[path];
               return (
-                <NavLink key={path} to={path} end={path === "/"} title={name}>
-                  <Icon size={19} />
-                  <span>
-                    {name}
-                    <small
-                      className={readout ? "qb-nav-readout " + readout[1] : ""}
+                <Fragment key={path}>
+                  {path === "/" ? (
+                    <div
+                      className={
+                        "qb-account-nav" +
+                        (location.pathname === "/" ? " active" : "")
+                      }
                     >
-                      {readout ? readout[0] : hint}
-                    </small>
-                  </span>
-                </NavLink>
+                      <NavLink to="/" end title={name}>
+                        <Icon size={19} />
+                        <span>
+                          {name}
+                          <small className="qb-nav-readout">
+                            {side === "gpt"
+                              ? "桌面端账户"
+                              : (readout?.[0] ?? hint)}
+                          </small>
+                        </span>
+                      </NavLink>
+                      <div
+                        className="qb-account-switch"
+                        aria-label="官方账户平台"
+                      >
+                        {SIDES.map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            className={
+                              "qb-nav-sub" +
+                              (side === s.id && location.pathname === "/"
+                                ? " on"
+                                : "")
+                            }
+                            aria-pressed={side === s.id}
+                            title={s.hint}
+                            onClick={() => {
+                              setSession<Side>(SIDE_KEY, s.id);
+                              if (location.pathname !== "/") navigate("/");
+                            }}
+                          >
+                            {s.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <NavLink to={path} title={name}>
+                      <Icon size={19} />
+                      <span>
+                        {name}
+                        <small
+                          className={
+                            readout ? "qb-nav-readout " + readout[1] : ""
+                          }
+                        >
+                          {readout ? readout[0] : hint}
+                        </small>
+                      </span>
+                    </NavLink>
+                  )}
+                </Fragment>
               );
             })}
           </nav>
@@ -296,62 +361,49 @@ function Layout() {
           </div>
         </aside>
         <div className="qb-content">
-          <header className="qb-topbar">
-            <div className="qb-history">
-              <button aria-label="返回" onClick={() => navigate(-1)}>
-                <ArrowLeft size={17} />
-              </button>
-              <button aria-label="前进" onClick={() => navigate(1)}>
-                <ArrowRight size={17} />
-              </button>
-              <span>
-                {active?.name ?? EXTRA_TITLES[location.pathname] ?? "QB Gate"}
-              </span>
-            </div>
-            <div className="qb-top-actions">
-              {DEMO_ENABLED && <span className="qb-badge">演示数据</span>}
-              <button
-                onClick={() => setTasksOpen(true)}
-                className="qb-task-button"
-              >
-                <History size={16} />
-                任务中心{running.length > 0 && <b>{running.length}</b>}
-              </button>
-            </div>
-          </header>
           <main id="main-content" className="qb-main" ref={main} tabIndex={-1}>
             <div className="qb-page">
-              <Boundary key={location.pathname.split("/")[1]}>
-                <RecoveryGuard>
-                  <Routes>
-                    <Route path="/" element={<Accounts />} />
-                    <Route path="/onboarding" element={<Onboarding />} />
-                    {/* 槽位的逐项管理（桌面端独立资料、官方目录残留迁移）。
-                        不进侧栏 —— 低频，而且从总览「账户槽位 · 管理」进来就够。 */}
-                    <Route path="/accounts" element={<Official />} />
-                    <Route path="/relays/:id?" element={<RelayCenter />} />
-                    <Route
-                      path="/extensions/:id?"
-                      element={<ExtensionCenter />}
-                    />
-                    <Route path="/software" element={<Software />} />
-                    <Route
-                      path="/settings/:section?"
-                      element={<SettingsCenter />}
-                    />
-                    {/* 旧路径。托盘写死了 emit("workspace://navigate", "/relays")，
-                        书签和旧截图脚本也还指着这些地址。 */}
-                    {LEGACY_REDIRECTS.map(([from, to]) => (
+              {/* Suspense 必须在带 key 的 Boundary 外面。Boundary 按一级路径换 key，
+                  切页时整棵子树重建；Suspense 若在里面，每次都是「新挂上的」边界，
+                  React 会直接亮出 fallback。放在外面它一直在，路由自带的
+                  startTransition 才能让旧页面留到新 chunk 到齐。
+                  fallback 里不许有 h1：test:ui 以 `.qb-page h1` 出现作为页面就绪。 */}
+              <Suspense
+                fallback={
+                  <div className="qb-empty" role="status">
+                    正在打开页面…
+                  </div>
+                }
+              >
+                <Boundary key={location.pathname.split("/")[1]}>
+                  <RecoveryGuard>
+                    <Routes>
+                      <Route path="/" element={<Accounts />} />
+                      <Route path="/onboarding" element={<Onboarding />} />
+                      <Route path="/relays/:id?" element={<RelayCenter />} />
                       <Route
-                        key={from}
-                        path={from + "/*"}
-                        element={<Navigate to={to} replace />}
+                        path="/extensions/:id?"
+                        element={<ExtensionCenter />}
                       />
-                    ))}
-                    <Route path="*" element={<Navigate to="/" replace />} />
-                  </Routes>
-                </RecoveryGuard>
-              </Boundary>
+                      <Route path="/software" element={<Software />} />
+                      <Route
+                        path="/settings/:section?"
+                        element={<SettingsCenter />}
+                      />
+                      {/* 旧路径。托盘写死了 emit("workspace://navigate", "/relays")，
+                        书签和旧截图脚本也还指着这些地址。 */}
+                      {LEGACY_REDIRECTS.map(([from, to]) => (
+                        <Route
+                          key={from}
+                          path={from + "/*"}
+                          element={<Navigate to={to} replace />}
+                        />
+                      ))}
+                      <Route path="*" element={<Navigate to="/" replace />} />
+                    </Routes>
+                  </RecoveryGuard>
+                </Boundary>
+              </Suspense>
             </div>
           </main>
         </div>
@@ -394,69 +446,6 @@ function Layout() {
             </button>
           ))}
           {!results.length && <p className="qb-muted">没有找到匹配项目。</p>}
-        </div>
-      </Modal>
-      <Modal
-        open={tasksOpen}
-        onClose={() => setTasksOpen(false)}
-        title="任务中心"
-      >
-        <p className="qb-muted">
-          任务持续运行，切换页面不会取消。配置提交阶段不支持中断。
-        </p>
-        <div className="qb-task-list">
-          {legacyTasks.map(([id, t]) => (
-            <article key={id}>
-              <div>
-                <strong>{t.phase || id}</strong>
-                <span className="qb-badge">
-                  {t.running ? "运行中" : t.error ? "失败" : "完成"}
-                </span>
-              </div>
-              {t.running && <progress value={t.step} max={t.total || 1} />}
-              <p>{t.error}</p>
-              <details>
-                <summary>执行详情</summary>
-                <pre className="qb-code-preview">{t.log.join("\n")}</pre>
-              </details>
-            </article>
-          ))}
-          {operations.slice(0, 40).map((o) => (
-            <article key={o.id}>
-              <div>
-                <strong>{o.kind}</strong>
-                <span className="qb-badge">
-                  {STATE_NAMES[o.status] ?? o.status}
-                </span>
-              </div>
-              <p>{o.phase}</p>
-              {o.status === "running" && (
-                <progress value={o.progress} max={100} />
-              )}
-              <small>{new Date(o.started_at).toLocaleString()}</small>
-              {o.can_cancel && o.status === "running" && (
-                <Button
-                  size="sm"
-                  disabled={!!taskAction.pending}
-                  onClick={() =>
-                    void taskAction.run("cancel", () =>
-                      workspaceApi.cancelOperation(o.id),
-                    )
-                  }
-                >
-                  取消此任务
-                </Button>
-              )}
-              {o.detail && <p className="qb-error-text">{o.detail}</p>}
-            </article>
-          ))}
-          {operations.length === 0 && legacyTasks.length === 0 && (
-            <div className="qb-empty">
-              <Check size={24} />
-              <h3>暂时没有任务</h3>
-              <p>启动、诊断和安装的进度会出现在这里。</p>
-            </div>
-          )}
         </div>
       </Modal>
     </>

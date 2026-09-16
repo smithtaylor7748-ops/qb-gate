@@ -4,9 +4,9 @@ import { describeLease, holderNames, shortHolder } from "./lease";
 
 describe("租约持有者的显示名", () => {
   it("会话 id 只留时间戳那一段", () => {
-    expect(shortHolder("20260913-045632-ef2e6a0958ef48deb76f0b4d12ca77b1")).toBe(
-      "20260913-045632",
-    );
+    expect(
+      shortHolder("20260913-045632-ef2e6a0958ef48deb76f0b4d12ca77b1"),
+    ).toBe("20260913-045632");
   });
 
   it("不是会话 id 的名字原样保留", () => {
@@ -29,7 +29,10 @@ describe("租约持有者的显示名", () => {
       "claude-desktop",
     ];
     const out = describeLease(
-      { holder: ids.join("、"), holders: Object.fromEntries(ids.map((i) => [i, "Cli"])) },
+      {
+        holder: ids.join("、"),
+        holders: Object.fromEntries(ids.map((i) => [i, "Cli"])),
+      },
       "已租给",
     );
     expect(out?.text).toBe("已租给 20260912-171001 等 6 个");
@@ -39,11 +42,13 @@ describe("租约持有者的显示名", () => {
   });
 
   it("一两个持有者时把名字说全", () => {
-    expect(describeLease({ holders: { "claude-desktop": "Desktop" } }, "已租给")?.text).toBe(
-      "已租给 claude-desktop",
-    );
     expect(
-      describeLease({ holders: { official: "Cli", relay: "Cli" } }, "已放行给")?.text,
+      describeLease({ holders: { "claude-desktop": "Desktop" } }, "已租给")
+        ?.text,
+    ).toBe("已租给 claude-desktop");
+    expect(
+      describeLease({ holders: { official: "Cli", relay: "Cli" } }, "已放行给")
+        ?.text,
     ).toBe("已放行给 official、relay");
   });
 

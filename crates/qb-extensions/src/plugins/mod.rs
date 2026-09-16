@@ -5,6 +5,7 @@
 
 pub mod sillytavern;
 pub mod tavern_assets;
+pub mod tavern_locate;
 
 use serde::Serialize;
 use ts_rs::TS;

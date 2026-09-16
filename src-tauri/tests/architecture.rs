@@ -292,6 +292,44 @@ fn the_watchdog_still_routes_through_the_judge() {
     );
 }
 
+/// ⛔ 中转站的熔断**绝不许**触发官方账户槽位切换。
+///
+/// # 为什么这是一条测试而不是一条约定
+///
+/// 两件事在界面上长得很像（「这条不通了，换一条」），在后果上天差地别：
+///
+/// - 中转线路熔断 → 换一条**中转线路**。你自己买的 Key、第三方端点，
+///   Anthropic 那边看不见，换来换去没有任何风险；
+/// - 官方账户槽位切换 → 动的是**官方 OAuth 身份**。自动按额度 / 429 / 限流
+///   切槽位，正是 CLAUDE.md ⛔ 表里「自动换号」那一条：
+///   存在这条路径，「多槽位」的定位就从「管理你自己的账户」
+///   变成了「规避限制」。
+///
+/// 所以熔断那一侧（`qb-station`）**不许认识账户**。这一条钉的是：
+/// 它的依赖里没有 `qb-accounts`，也没有 `qb-launch`（槽位切换的执行方）。
+/// 认不出来，就写不出那句调用 —— 不是靠自觉，是编译期就做不到。
+///
+/// `crates_only_depend_downwards` 其实已经顺带拦住了这件事（两者同为 L3，
+/// 而 `ALLOWED_SIDEWAYS` 里没有这一对）。但那条测试的报错只会说
+/// 「同层依赖没登记」，**读不出这里的利害**；而且只要有人往
+/// `ALLOWED_SIDEWAYS` 里补一行，它就不响了。这一条不给那个出口。
+#[test]
+fn relay_breakers_can_never_reach_account_switching() {
+    let all = crate_deps();
+    let (_, station) = all
+        .iter()
+        .find(|(name, _)| name == "qb-station")
+        .expect("qb-station 不在 workspace 里了？");
+    for forbidden in ["qb-accounts", "qb-launch"] {
+        assert!(
+            !station.iter().any(|d| d == forbidden),
+            "qb-station 依赖了 {forbidden} —— 中转站的熔断因此够得着官方账户槽位。\n\
+             这两条路径必须在代码上隔死：熔断换的是中转线路，\n\
+             按额度 / 429 自动切官方槽位是 CLAUDE.md 明确不做的「自动换号」。"
+        );
+    }
+}
+
 /// 每个 crate 在哪一层。**只许往下依赖。**
 ///
 /// # 为什么 workspace 之外还要这一条
@@ -490,6 +528,68 @@ fn settings_writers_invalidate_the_cache() {
 {}
          加一句 `settings::invalidate_cache()`，否则 `settings::load()` 会继续
          返回旧值 —— 界面上改了，实际行为没变，而且不报任何错。",
+        offenders.join(
+            "
+"
+        )
+    );
+}
+
+/// ⛔ PowerShell 只能从 `process::powershell_std` / `powershell_tokio` 起。
+///
+/// # 漏掉的后果不是乱码，是功能静默失效
+///
+/// 面板拉起的 PowerShell 都带 `CREATE_NO_WINDOW`，没有控制台；没有控制台时
+/// `[Console]::OutputEncoding` 会落到系统代码页上，编不出来的字符被换成一个
+/// 字面的 `?` —— 字符在 PowerShell 那头就已经丢了，Rust 再怎么解码也回不来。
+///
+/// 2026-09-16 实测（zh-CN）：出站锁那一页整列网卡名都是 `???`，而那串问号会被
+/// 原样送回去当 `-InterfaceAlias`，规则落在一个不存在的接口上，界面却报
+/// 「已加 N 条」。**一个看起来生效、实际什么都没拦的功能。**
+///
+/// 这跟区域设置无关：`é` / `ü` / 西里尔字母在 CP437、CP850 上同样编不出来。
+/// 开源出去之后这是每一台机器的问题，所以用测试守着，不靠自觉。
+#[test]
+fn every_powershell_call_pins_its_output_encoding() {
+    /// 两处豁免，各有各的理由 —— 加第三处之前先想清楚。
+    const ALLOWED: &[&str] = &[
+        // 本体：`powershell_std` / `powershell_tokio` 就在这里。
+        "process.rs",
+        // 跑的是 Anthropic 自己的 install.ps1，走 `-File`：脚本内容是第三方的，
+        // 前奏塞不进去。改成 `-Command "& '<路径>'"` 又会把一个我们控制不了的
+        // 临时路径（可能带中文用户名、带单引号）拼进脚本串里，那是更大的口子。
+        // 它的输出是英文安装日志，只进日志、不参与任何判断。
+        "install_ops.rs",
+    ];
+
+    let mut offenders = Vec::new();
+    for (_module, paths) in module_files() {
+        for p in paths {
+            let Ok(text) = std::fs::read_to_string(&p) else {
+                continue;
+            };
+            if !text.contains("Command::new(\"powershell\")") {
+                continue;
+            }
+            let name = p
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            if ALLOWED.contains(&name.as_str()) {
+                continue;
+            }
+            offenders.push(p.display().to_string());
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "这些文件自己拉 PowerShell，没走 `process::powershell_std` / `powershell_tokio`：
+{}
+         改成那两个 —— 它们把 `-NoProfile -NonInteractive` 与 UTF-8 前奏一起钉死。
+         不钉的话，非 ASCII 的网卡名、用户名、路径会在 PowerShell 那头就变成 `?`，
+         而这类 bug 不报错：界面照常显示、操作照常「成功」，只是作用在一个
+         不存在的名字上。",
         offenders.join(
             "
 "

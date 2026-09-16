@@ -18,6 +18,34 @@ logged_in: boolean,
  */
 cli_days_left: number | null, account_uuid: string | null, 
 /**
+ * 登录邮箱。读自本槽位 `.claude.json` 的 `oauthAccount`，**不联网**。
+ * 详情页靠它区分两个槽位到底是不是同一个人。
+ */
+email: string | null, 
+/**
+ * 组织名。同上。
+ */
+org_name: string | null, 
+/**
+ * refreshToken 的到期时刻（本地时间，`YYYY-MM-DD HH:MM`）。
+ *
+ * 跟 `cli_days_left` 是同一个时间戳的两种说法：列表里「剩 N 天」够用，
+ * 详情页要给得出具体哪一天 —— 「剩 0 天」和「今晚 23:41 到期」
+ * 对使用者是两种紧迫程度。
+ */
+expires_at: string | null, 
+/**
+ * 槽位目录的绝对路径。
+ *
+ * 由后端给而不是让界面自己拼：路径怎么拼全项目只有 `AccountRoots` 一处。
+ */
+dir: string, 
+/**
+ * 桌面端资料目录的绝对路径（`%APPDATA%` 读得出来时才有）。
+ * 它**在不在**看 `desktop_profile`，这里只给路径。
+ */
+desktop_dir: string | null, 
+/**
  * 套餐，例如 `Claude Pro`。读自本槽位的 `.claude.json`，**不联网**。
  */
 plan: string | null, 

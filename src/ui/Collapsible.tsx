@@ -1,5 +1,5 @@
-import { useId, useState, type ReactNode } from 'react';
-import { ChevronRight } from 'lucide-react';
+import { useId, useState, type ReactNode } from "react";
+import { ChevronRight } from "lucide-react";
 
 interface Props {
   /** 触发行的文字。长说明统一用「为什么这么做？」这类问句。 */
@@ -20,7 +20,7 @@ export default function Collapsible({
   summary,
   children,
   defaultOpen = false,
-  className = '',
+  className = "",
 }: Props) {
   const [open, setOpen] = useState(defaultOpen);
   const bodyId = useId();
@@ -34,7 +34,11 @@ export default function Collapsible({
         aria-controls={bodyId}
         onClick={() => setOpen((v) => !v)}
       >
-        <ChevronRight size={13} className="collapsible-chevron" aria-hidden="true" />
+        <ChevronRight
+          size={13}
+          className="collapsible-chevron"
+          aria-hidden="true"
+        />
         {summary}
       </button>
       <div id={bodyId} className="collapsible-body" hidden={!open}>

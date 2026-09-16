@@ -1,17 +1,30 @@
 //! 槽位的用量与恢复时间。
 //!
-//! # 数据从哪来：两份**官方客户端自己写在本机的文件**
+//! # 数据从哪来：**官方客户端自己写在本机的文件**，两层来源三条路径
 //!
 //! 零网络请求、零接口调用。面板只是把官方客户端已经落盘的东西读出来显示。
 //!
 //! | 层 | 文件 | 内容 |
 //! |---|---|---|
-//! | 实时用量 | `%APPDATA%\Claude\plan-usage-history.json` | 桌面端每约 15 分钟追加一条 `{t, org, u:{fh, sd}}` |
+//! | 实时用量 · 当前槽位 | `%APPDATA%\Claude\plan-usage-history.json` | 桌面端每约 15 分钟追加一条 `{t, org, u:{fh, sd}}` |
+//! | 实时用量 · 其余槽位 | `%APPDATA%\Claude-<标签>\plan-usage-history.json` | 同上，那个槽位自己那一份 |
 //! | 恢复时刻 | 槽位的 `.claude.json` → `cachedUsageUtilization` | Claude Code 写下的 `resets_at` + `fetchedAtMs` |
 //!
 //! `fh` = 五小时窗口已用百分比，`sd` = 七天已用百分比。
 //! 归属靠 `samples[].org` 对上槽位 `oauthAccount.organizationUuid` ——
 //! 实测两个槽位的 org 不同，不会串。
+//!
+//! ## ⛔ 实时用量是两条路径，不是一条
+//!
+//! `%APPDATA%\Claude` 是个**联结点**，只指向当前槽位的桌面端资料目录；
+//! 别的槽位的历史在它自己的 `Claude-<标签>` 里。0.19.2 之前这里只读前者，
+//! 于是非当前槽位按 org 一条实时样本都匹配不上，退回十几天前的
+//! `cachedUsageUtilization`，界面打出「快照已过期」—— 而那个槽位的
+//! `Claude-<标签>\plan-usage-history.json` 十二分钟前刚写过。
+//! 症状是「数据明明是新的，面板说它过期」，根因是没去那个目录读。
+//!
+//! 两条路径对**当前**槽位会解析到同一个文件，所以合并之后必须按
+//! `(t, org)` 去重，见 [`dedupe`]。
 //!
 //! # 三条物理限制，界面必须如实呈现
 //!
@@ -34,7 +47,7 @@
 //! **所以不许预测「下次更新 12:52」**，只能说「约 15 分钟一次」。
 
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use ts_rs::TS;
 
 /// 五小时窗口的长度。
@@ -88,13 +101,16 @@ pub struct SlotUsage {
 
 /// 读一个槽位的用量。两源取时间戳大的那个。
 ///
+/// `histories` 是这个槽位的桌面端历史可能在的几份文件，由
+/// `AccountRoots::history_files` 给出。**不是一份** —— 理由见文件头。
+///
 /// `org` 是本槽位 `oauthAccount.organizationUuid`；没有就取不到桌面端那一层
-/// （匹配不上 = 不敢认，宁可只用缓存）。
-pub fn for_slot(appdata: Option<&Path>, slot_dir: &Path, org: Option<&str>) -> Option<SlotUsage> {
+/// （匹配不上 = 不敢认，宁可只用缓存）。org 过滤这道仍然留着：
+/// `Claude-<标签>` 里也可能混着别的账户在那个目录下用过时留下的样本，
+/// 实测 `Claude-main` 里就有 121 条属于另一个 org 的。
+pub fn for_slot(histories: &[PathBuf], slot_dir: &Path, org: Option<&str>) -> Option<SlotUsage> {
     let now = chrono::Utc::now().timestamp_millis();
-    let samples = appdata
-        .map(read_history)
-        .unwrap_or_default()
+    let samples = read_histories(histories)
         .into_iter()
         .filter(|s| org.is_some_and(|o| o == s.org))
         .collect::<Vec<_>>();
@@ -172,12 +188,35 @@ pub struct Sample {
     pub sd: i64,
 }
 
-fn read_history(appdata: &Path) -> Vec<Sample> {
-    let text = match std::fs::read_to_string(appdata.join("Claude/plan-usage-history.json")) {
-        Ok(t) => t,
-        Err(_) => return Vec::new(),
-    };
-    parse_history(&text)
+/// 读若干份历史文件并合并成一条时间序列。
+///
+/// 为什么是「若干份」而不是一份：见文件头「实时用量是两条路径」。
+/// 路径由 `AccountRoots::history_files` 拼好传进来 ——
+/// 「Claude 的目录名怎么拼」全项目只有那一处。
+///
+/// 读不出来的文件直接跳过（不存在、没权限、正在写）：这里的每一份都是
+/// **可选**的来源，少一份不是错误，只是少一层数据。
+fn read_histories(paths: &[PathBuf]) -> Vec<Sample> {
+    let mut all: Vec<Sample> = Vec::new();
+    for p in paths {
+        if let Ok(text) = std::fs::read_to_string(p) {
+            all.extend(parse_history(&text));
+        }
+    }
+    dedupe(all)
+}
+
+/// 按 `(t, org)` 去重，并重新按时间升序排好。
+///
+/// 当前槽位的两条路径落在同一个文件上，不去重就是每条样本来两份。
+/// 调用方靠 `last()` 拿最新一条，`infer_five_hour_reset` 按相邻样本的
+/// 差值找断崖 —— 成对的重复样本会在序列里插进一堆差值为 0 的邻居，
+/// 虽然造不出假的重置时刻，却让这条序列不再是「一条样本一个时刻」，
+/// 后面任何按相邻关系算的东西都得先怀疑它。
+pub fn dedupe(mut all: Vec<Sample>) -> Vec<Sample> {
+    all.sort_by(|a, b| a.t.cmp(&b.t).then_with(|| a.org.cmp(&b.org)));
+    all.dedup_by(|a, b| a.t == b.t && a.org == b.org);
+    all
 }
 
 /// 解析出来的样本**按时间升序**，调用方靠 `last()` 拿最新的一条。
@@ -402,5 +441,140 @@ mod tests {
         assert!(parse_history("not json").is_empty());
         assert!(parse_history(r#"{"samples":"nope"}"#).is_empty());
         assert_eq!(parse_cache("not json"), None);
+    }
+
+    // ------------------------------------------------ 两条路径（0.20.0）
+
+    /// 一个临时目录。⛔ 单测不许碰 `%LOCALAPPDATA%\ClaudeIpGate\`。
+    struct Dir(PathBuf);
+
+    impl Dir {
+        fn new(tag: &str) -> Self {
+            let d = std::env::temp_dir().join(format!(
+                "qbgate-usage-{tag}-{}-{}",
+                std::process::id(),
+                chrono::Local::now().format("%H%M%S%f")
+            ));
+            std::fs::create_dir_all(&d).unwrap();
+            Self(d)
+        }
+
+        fn write(&self, rel: &str, text: &str) -> PathBuf {
+            let p = self.0.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, text).unwrap();
+            p
+        }
+    }
+
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn history_json(org: &str, t: i64, fh: i64, sd: i64) -> String {
+        format!(
+            r#"{{"version":2,"samples":[{{"t":{t},"org":"{org}","u":{{"fh":{fh},"sd":{sd}}}}}]}}"#
+        )
+    }
+
+    /// 实机 2026-09-16 的形态：`Claude` 联结点里只有当前槽位那个 org 的样本，
+    /// 而 `main` 槽位自己的历史在 `Claude-main` 里，十二分钟前刚写过。
+    ///
+    /// 只读联结点那一份的话，`main` 一条实时样本都匹配不上，退回九月初的
+    /// 缓存，界面打「快照已过期」—— 数据是新的，只是没人去那个目录读。
+    #[test]
+    fn a_slot_reads_its_own_desktop_history_not_just_the_junction() {
+        let d = Dir::new("own-history");
+        let now = chrono::Utc::now().timestamp_millis();
+        // 联结点那份：别的槽位（org-b）的样本，更新。
+        let junction = d.write(
+            "Roaming/Claude/plan-usage-history.json",
+            &history_json("org-b", now - 5 * MIN, 44, 44),
+        );
+        // 这个槽位自己那份：org-a，十二分钟前。
+        let own = d.write(
+            "Roaming/Claude-main/plan-usage-history.json",
+            &history_json("org-a", now - 12 * MIN, 7, 58),
+        );
+        // 槽位缓存停在很久以前 —— 只读联结点时就是它被显示出来的。
+        let slot = d.0.join("claude-profile-main");
+        std::fs::create_dir_all(&slot).unwrap();
+        std::fs::write(
+            slot.join(".claude.json"),
+            format!(
+                r#"{{"cachedUsageUtilization":{{"fetchedAtMs":{},"utilization":{{
+                    "five_hour":{{"utilization":0}},"seven_day":{{"utilization":10}}}}}}}}"#,
+                now - 14 * 24 * 60 * MIN
+            ),
+        )
+        .unwrap();
+
+        let got = for_slot(&[junction, own], &slot, Some("org-a")).expect("两源都有，不该是 None");
+        assert_eq!(
+            got.source,
+            UsageSource::Desktop,
+            "自己那份历史是新的，不该退回十几天前的缓存"
+        );
+        assert!(got.age_minutes <= 13, "age={} 分钟", got.age_minutes);
+        assert_eq!(got.seven_day.as_ref().map(|w| w.used), Some(58));
+    }
+
+    /// 当前槽位的两条路径会解析到同一个文件（`Claude` 是指向
+    /// `Claude-<标签>` 的联结点），不去重就是每条样本来两份。
+    #[test]
+    fn the_same_history_read_twice_is_counted_once() {
+        let d = Dir::new("dedupe");
+        let text = r#"{"version":2,"samples":[
+            {"t":100,"org":"a","u":{"fh":10,"sd":1}},
+            {"t":200,"org":"a","u":{"fh":20,"sd":2}}
+        ]}"#;
+        let one = d.write("Roaming/Claude/plan-usage-history.json", text);
+        let two = d.write("Roaming/Claude-main/plan-usage-history.json", text);
+        let got = read_histories(&[one, two]);
+        assert_eq!(
+            got.iter().map(|x| x.t).collect::<Vec<_>>(),
+            vec![100, 200],
+            "同一条样本读两遍只能算一条"
+        );
+    }
+
+    /// 不同 org 同一时刻是两条不同的样本，不许被去重当成一条。
+    #[test]
+    fn dedupe_keys_on_org_too() {
+        let got = dedupe(vec![
+            Sample {
+                t: 100,
+                org: "a".into(),
+                fh: 1,
+                sd: 1,
+            },
+            Sample {
+                t: 100,
+                org: "b".into(),
+                fh: 2,
+                sd: 2,
+            },
+            Sample {
+                t: 100,
+                org: "a".into(),
+                fh: 1,
+                sd: 1,
+            },
+        ]);
+        assert_eq!(got.len(), 2);
+    }
+
+    /// 读不出来的路径是「少一层来源」，不是错误 —— 另一份照样要读出来。
+    #[test]
+    fn a_missing_history_file_is_skipped_not_fatal() {
+        let d = Dir::new("missing");
+        let there = d.write(
+            "Roaming/Claude-main/plan-usage-history.json",
+            &history_json("a", 100, 10, 1),
+        );
+        let gone = d.0.join("Roaming/Claude/plan-usage-history.json");
+        assert_eq!(read_histories(&[gone, there]).len(), 1);
     }
 }

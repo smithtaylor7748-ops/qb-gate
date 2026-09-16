@@ -25,6 +25,12 @@
       "passed": true
     },
     {
+      "route": "extensions/sillytavern",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 1180,
       "theme": "light",
@@ -55,6 +61,12 @@
       "passed": true
     },
     {
+      "route": "extensions/sillytavern",
+      "width": 944,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 944,
       "theme": "light",
@@ -85,6 +97,12 @@
       "passed": true
     },
     {
+      "route": "extensions/sillytavern",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 786,
       "theme": "light",
@@ -110,6 +128,12 @@
     },
     {
       "route": "extensions",
+      "width": 680,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "extensions/sillytavern",
       "width": 680,
       "theme": "light",
       "passed": true
@@ -145,6 +169,12 @@
       "passed": true
     },
     {
+      "route": "extensions/sillytavern",
+      "width": 1180,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 1180,
       "theme": "dark",
@@ -175,6 +205,12 @@
       "passed": true
     },
     {
+      "route": "extensions/sillytavern",
+      "width": 944,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 944,
       "theme": "dark",
@@ -200,6 +236,12 @@
     },
     {
       "route": "extensions",
+      "width": 786,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "extensions/sillytavern",
       "width": 786,
       "theme": "dark",
       "passed": true
@@ -235,6 +277,12 @@
       "passed": true
     },
     {
+      "route": "extensions/sillytavern",
+      "width": 680,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 680,
       "theme": "dark",
@@ -269,6 +317,13 @@
       "passed": true
     },
     {
+      "route": "extensions/sillytavern",
+      "width": 944,
+      "theme": "light",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 944,
       "theme": "light",
@@ -304,6 +359,13 @@
       "passed": true
     },
     {
+      "route": "extensions/sillytavern",
+      "width": 944,
+      "theme": "dark",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 944,
       "theme": "dark",
@@ -339,6 +401,13 @@
       "passed": true
     },
     {
+      "route": "extensions/sillytavern",
+      "width": 786,
+      "theme": "light",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 786,
       "theme": "light",
@@ -368,6 +437,13 @@
     },
     {
       "route": "extensions",
+      "width": 786,
+      "theme": "dark",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "extensions/sillytavern",
       "width": 786,
       "theme": "dark",
       "scale": 1.5,
@@ -393,13 +469,13 @@
       "passed": true
     },
     {
-      "route": "modal:IP 纯净度权重 353",
+      "route": "modal:IP 纯净度权重 30—",
       "width": 1180,
       "theme": "light",
       "passed": true
     },
     {
-      "route": "modal:DNS 泄露权重 252",
+      "route": "modal:DNS 泄露权重 202",
       "width": 1180,
       "theme": "light",
       "passed": true
@@ -412,6 +488,12 @@
     },
     {
       "route": "modal:IP 锁权重 20204",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "modal:出口一致性权重 10—还",
       "width": 1180,
       "theme": "light",
       "passed": true
@@ -429,13 +511,13 @@
       "passed": true
     },
     {
-      "route": "modal:IP 纯净度权重 353",
+      "route": "modal:IP 纯净度权重 30—",
       "width": 786,
       "theme": "light",
       "passed": true
     },
     {
-      "route": "modal:DNS 泄露权重 252",
+      "route": "modal:DNS 泄露权重 202",
       "width": 786,
       "theme": "light",
       "passed": true
@@ -448,6 +530,24 @@
     },
     {
       "route": "modal:IP 锁权重 20204",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "modal:出口一致性权重 10—还",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "software:chrome-audit",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "software:chrome-audit",
       "width": 786,
       "theme": "light",
       "passed": true
@@ -458,7 +558,12 @@
     "global search and browser back",
     "draft navigation persistence",
     "keyboard modal close",
-    "overview security modal"
+    "overview security modal",
+    "system theme matches explicit theme",
+    "desktop account pagination and safe login confirmation",
+    "five-item diagnostics and repair review",
+    "IPv6 default switch and per-adapter restore",
+    "equal fixed account columns and wheel immobility"
   ],
   "pageErrors": []
 }

@@ -30,15 +30,21 @@
  *
  * 1. **来源和时刻要标出来。** 两个槽位的来源经常不一样 —— 桌面端当前登录的
  *    那个有分钟级样本，别的槽位只有 Claude Code 留下的快照。
- * 2. **快照跨过窗口就不是当前值。** 五小时的快照放了六小时，它记的用量
- *    必然已经作废。这种情况显示「快照已过期」而不是那个数字 ——
+ * 2. **读数跨过窗口就不是当前值。** 五小时的读数放了六小时，它记的用量
+ *    必然已经作废。这种情况显示「读数已过期」而不是那个数字 ——
  *    显示旧数字会让人以为额度还剩那么多。
+ *
+ *    ⛔ **这条对两个来源一视同仁。** 0.19.2 之前只判 `source === "cache"`，
+ *    桌面端那一档再旧也理直气壮地当当前值显示。可是桌面端的样本
+ *    只在它运行时才写（`usage.rs` 文件头），关掉一天读数就冻在最后一条，
+ *    而那一天里窗口早就重置过了。过期就是过期，跟谁写的没关系；
+ *    来源仍然标出来，那决定的是使用者该去开桌面端还是去跑一次 Claude Code。
  * 3. **推算的恢复时刻要标「推算」。** 桌面端那份只有用量没有重置时刻，
  *    拿不到实测值时是从样本的断崖下跌反推的，误差约半个采样间隔。
  */
 import type { SlotUsage, UsageWindow } from "../../lib/api";
 
-/** 五小时窗口的分钟数。快照比这还旧，那份五小时读数必然跨过了窗口。 */
+/** 五小时窗口的分钟数。读数比这还旧，那份五小时读数必然跨过了窗口。 */
 const FIVE_HOUR_MIN = 5 * 60;
 const SEVEN_DAY_MIN = 7 * 24 * 60;
 
@@ -73,8 +79,13 @@ function tone(left: number): "ok" | "warn" | "danger" {
   return "danger";
 }
 
+/**
+ * 这份读数是不是已经跨过了那个窗口。
+ *
+ * 不分来源 —— 理由见文件头第 2 条。
+ */
 function expiredIn(usage: SlotUsage, limit: number): boolean {
-  return usage.source === "cache" && usage.age_minutes > limit;
+  return usage.age_minutes > limit;
 }
 
 function Gauge({
@@ -96,7 +107,7 @@ function Gauge({
     return (
       <span className="gauge gauge--dead">
         <span className="gauge-name">{name}</span>
-        <span className="gauge-note">快照已过期，不是当前值</span>
+        <span className="gauge-note">读数已过期，不是当前值</span>
       </span>
     );
   }
@@ -180,7 +191,7 @@ export default function SlotUsageBars({ usage }: { usage: SlotUsage }) {
         title={
           usage.source === "desktop"
             ? "Claude 桌面端每约 15 分钟往本机写一条样本。它没开的时候不写 —— 那期间的读数就停在最后一条。"
-            : "Claude Code 会话里留下的快照。这个槽位没在桌面端登录，拿不到实时样本。"
+            : "Claude Code 会话里留下的快照。这个槽位的桌面端历史里没有更新的样本 —— 它没在桌面端登录过，或者那阵子桌面端没开。"
         }
       >
         {SOURCE_NAME[usage.source]} · {fmtAge(usage.age_minutes)}

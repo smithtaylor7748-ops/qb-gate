@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ReactNode } from "react";
 
 interface RowProps {
   /** 左侧内容。 */
@@ -15,7 +15,7 @@ interface RowProps {
  * 红字、「合规边界」的四条编号列表 —— 那些没有右栏，用两栏容器只是借它的
  * 下边框，结果是文字莫名其妙贴在左边、编号和内容之间撑开一大片空白。
  */
-export function Row({ children, side, className = '' }: RowProps) {
+export function Row({ children, side, className = "" }: RowProps) {
   return (
     <div className={`row ${className}`}>
       <span className="row-main">{children}</span>
@@ -27,16 +27,16 @@ export function Row({ children, side, className = '' }: RowProps) {
 interface BulletProps {
   /** 编号或符号。不给就是一个圆点。 */
   marker?: ReactNode;
-  tone?: 'default' | 'warn' | 'danger';
+  tone?: "default" | "warn" | "danger";
   children: ReactNode;
 }
 
 /** 单条列表项：编号说明、findings 红字这类，没有右栏。 */
-export function Bullet({ marker, tone = 'default', children }: BulletProps) {
+export function Bullet({ marker, tone = "default", children }: BulletProps) {
   return (
-    <div className={`bullet${tone !== 'default' ? ` bullet--${tone}` : ''}`}>
+    <div className={`bullet${tone !== "default" ? ` bullet--${tone}` : ""}`}>
       <span className="bullet-marker" aria-hidden="true">
-        {marker ?? '·'}
+        {marker ?? "·"}
       </span>
       <span className="min-w-0">{children}</span>
     </div>

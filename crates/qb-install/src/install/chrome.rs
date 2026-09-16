@@ -20,6 +20,25 @@
 //! 为了一个是非题引入一个 SQLite 依赖不划算，而且 Cookie 的 value 是加密的、
 //! 我们也不该去碰 —— 扫字节既够用，又天然做不到「读出登录态」。
 //!
+//! # Chrome 开着照扫
+//!
+//! 原来这里是 `if !running { ...扫... }` —— 机器上只要有一个 chrome.exe
+//! 进程，痕迹这一整段就整个跳过。实机上这等于**功能永远用不上**：
+//! 会关心「浏览器里有没有 claude.ai」的人，浏览器基本一直开着。
+//!
+//! 而那个前提本身是错的。Windows 上 Chrome 打开 `Cookies` / `History` /
+//! `Preferences` 与 leveldb 用的是共享读，别的进程读得开；真正独占的只有
+//! leveldb 的 `LOCK`，而它 0 字节、本来也装不下东西，已经从扫描目标里排掉。
+//! 何况 [`file_contains`] 早就把「打不开」建模成 `None` 了 ——
+//! 逐个文件的兜底一直在，外面那层整段跳过是多余的，代价却是整件事作废。
+//!
+//! 所以现在照扫，读不开的逐个记进 [`TraceReport::chrome_files_locked`]。
+//! 「读了 N 个、没找到」和「一个都没读开」由此是两个数，界面分开说 ——
+//! 塌成一个 bool 就又回到了「没查显示成没问题」。
+//!
+//! ⚠ 全程只读，而且只做子串比对：读到一半被 Chrome 写花了，最坏也只是
+//! 一次漏报，不会写坏它的库，也读不出登录态。
+
 //! # 重装为什么只认 Chrome
 //!
 //! 使用者点名只弄谷歌浏览器。Edge、Firefox 一概不碰 ——
@@ -69,9 +88,16 @@ pub struct TraceReport {
     pub chrome_installed: bool,
     pub chrome_path: Option<String>,
     pub chrome_running: bool,
-    /// Chrome 正在跑时它的资料文件被占着，扫不了。
-    /// **这时候要如实说「没扫」，不能报「没找到」** —— 那是两回事。
+    /// 这一轮**有没有真的读开过** Chrome 的资料文件。
+    /// `false` 时要如实说「没扫」，不能报「没找到」—— 那是两回事。
     pub chrome_scanned: bool,
+    /// 这一轮读开了几个资料文件。
+    pub chrome_files_read: u32,
+    /// 这一轮**打不开**几个（多半是 Chrome 正占着那一个）。
+    ///
+    /// ⛔ 大于 0 时界面必须说出口：`traces` 里没有 browser 那条，只覆盖
+    /// 读得开的那部分，**不覆盖这几个**。
+    pub chrome_files_locked: u32,
     pub winget_available: bool,
 }
 
@@ -134,7 +160,7 @@ pub fn chrome_user_data() -> PathBuf {
 ///
 /// 按「目录里有没有 `Preferences`」认，不按名字猜 ——
 /// 名字规则是 Chrome 的内部实现，改过不止一次。
-fn chrome_profiles() -> Vec<PathBuf> {
+pub fn chrome_profiles() -> Vec<PathBuf> {
     let root = chrome_user_data();
     let Ok(rd) = std::fs::read_dir(&root) else {
         return Vec::new();
@@ -213,12 +239,52 @@ fn scan_targets(profile: &Path) -> Vec<PathBuf> {
             .filter(|p| p.is_file())
             .collect();
         files.sort();
+        // ⛔ 排掉 `LOCK`。它是 leveldb 的锁文件，0 字节、装不下任何东西，
+        // 而 Chrome 跑着时它是**独占锁**、必然打不开 —— 留着它，
+        // `chrome_files_locked` 每一轮都至少是个位数的噪声，
+        // 而这个数字存在的意义恰恰是「有货没读到」。
+        files.retain(|f| f.file_name().and_then(|n| n.to_str()) != Some("LOCK"));
         // 上限 40 个，够覆盖一个正常 Profile，也不至于把一个坏掉的
         // leveldb 目录（几千个碎片）变成一次几分钟的扫描。
         files.truncate(40);
         out.extend(files);
     }
     out.retain(|p| p.is_file());
+    out
+}
+
+/// 扫一个 Profile 的结果。
+struct ProfileScan {
+    /// 里面出现过 `claude.ai`。
+    hit: bool,
+    /// 这一轮读开了几个文件。
+    read: u32,
+    /// 这一轮打不开几个。**打不开不等于里面没有。**
+    locked: u32,
+}
+
+/// 在一个 Profile 里找 `claude.ai`，顺带数清这一轮的覆盖率。
+///
+/// ⛔ **命中之后不许提前跳出。** 提前跳出的话，后面那些还没数过的文件
+/// 既不计入 `read` 也不计入 `locked` —— 报出去的覆盖率就成了
+/// 「全都读到了」，而这个数字存在的唯一意义就是回答「有没有没读到的」。
+/// 一个 Profile 的目标文件不到 50 个、加起来个位数 MB，全扫完不值一提。
+fn scan_profile(profile: &Path) -> ProfileScan {
+    let mut out = ProfileScan {
+        hit: false,
+        read: 0,
+        locked: 0,
+    };
+    for f in scan_targets(profile) {
+        match file_contains(&f, NEEDLE) {
+            Some(true) => {
+                out.hit = true;
+                out.read += 1;
+            }
+            Some(false) => out.read += 1,
+            None => out.locked += 1,
+        }
+    }
     out
 }
 
@@ -229,8 +295,7 @@ async fn process_count(name: &str) -> Option<usize> {
     let script = format!(
         "$p = @(Get-CimInstance Win32_Process -Filter \"Name='{name}'\" | ForEach-Object {{ \"$($_.ProcessId)\" }}); ConvertTo-Json -InputObject @($p) -Compress"
     );
-    let out = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+    let out = crate::process::powershell_tokio(&script)
         .output()
         .await
         .ok()?;
@@ -343,39 +408,26 @@ pub async fn claude_traces() -> TraceReport {
     // ---- Chrome
     let chrome_path = chrome_exe();
     let running = process_count("chrome.exe").await.unwrap_or(0) > 0;
-    let mut scanned = false;
+    let mut read_total: u32 = 0;
+    let mut locked_total: u32 = 0;
 
-    if !running {
-        for profile in chrome_profiles() {
-            let name = profile
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("Profile")
-                .to_string();
-            let mut hit = false;
-            let mut opened_any = false;
-            for f in scan_targets(&profile) {
-                match file_contains(&f, NEEDLE) {
-                    Some(true) => {
-                        hit = true;
-                        opened_any = true;
-                        break;
-                    }
-                    Some(false) => opened_any = true,
-                    None => {}
-                }
-            }
-            if opened_any {
-                scanned = true;
-            }
-            if hit {
-                traces.push(Trace {
-                    kind: "browser",
-                    label: format!("Chrome 资料「{name}」里有 claude.ai 痕迹"),
-                    path: profile.display().to_string(),
-                    detail: "Cookie / 历史 / 本地存储里出现过 claude.ai".into(),
-                });
-            }
+    // ⛔ **不因为 Chrome 开着就整段跳过。** 见模块开头「Chrome 开着照扫」。
+    for profile in chrome_profiles() {
+        let name = profile
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Profile")
+            .to_string();
+        let scan = scan_profile(&profile);
+        read_total += scan.read;
+        locked_total += scan.locked;
+        if scan.hit {
+            traces.push(Trace {
+                kind: "browser",
+                label: format!("Chrome 资料「{name}」里有 claude.ai 痕迹"),
+                path: profile.display().to_string(),
+                detail: "Cookie / 历史 / 本地存储里出现过 claude.ai".into(),
+            });
         }
     }
 
@@ -384,7 +436,9 @@ pub async fn claude_traces() -> TraceReport {
         chrome_installed: chrome_path.is_some(),
         chrome_path: chrome_path.map(|p| p.display().to_string()),
         chrome_running: running,
-        chrome_scanned: scanned,
+        chrome_scanned: read_total > 0,
+        chrome_files_read: read_total,
+        chrome_files_locked: locked_total,
         winget_available: winget_available().await,
     }
 }
@@ -398,10 +452,7 @@ async fn registry_uninstall_hits() -> Vec<(String, String)> {
             Where-Object { $_.DisplayName -like '*Claude*' } | \
             ForEach-Object { \"$($_.DisplayName)|$($_.PSPath)\" }) }; \
         ConvertTo-Json -InputObject @($r) -Compress";
-    let out = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .output()
-        .await;
+    let out = crate::process::powershell_tokio(script).output().await;
     let Ok(out) = out else {
         return Vec::new();
     };
@@ -557,10 +608,7 @@ async fn kill_by_name(name: &str) {
         "Get-Process -Name '{}' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
         name.trim_end_matches(".exe")
     );
-    let _ = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()
-        .await;
+    let _ = crate::process::powershell_tokio(&script).output().await;
 }
 
 #[cfg(not(windows))]
@@ -694,5 +742,79 @@ mod tests {
             detail: "y".into(),
         });
         assert!(r.ever_logged_in());
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("qb-gate-profile-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("建测试 Profile");
+        d
+    }
+
+    /// ⛔ 命中之后不许提前收工 —— 覆盖率要把整个 Profile 数完。
+    ///
+    /// 回归测试：原来的写法是一命中就 `break`。那时候还没有覆盖率这回事，
+    /// 现在有了 —— 提前跳出会把没数过的文件算成「不存在」，于是面板报
+    /// 「全都读到了」，而实际上后面可能正锁着几个。这一条钉住的就是
+    /// 「`read + locked` 等于目标文件总数」。
+    #[test]
+    fn a_hit_does_not_stop_the_coverage_count() {
+        let d = scratch("hit");
+        std::fs::write(d.join("Preferences"), b"... claude.ai ...").unwrap();
+        std::fs::write(d.join("History"), b"nothing here").unwrap();
+        std::fs::write(d.join("Cookies"), b"nothing here either").unwrap();
+
+        let scan = scan_profile(&d);
+        assert!(scan.hit, "Preferences 里有 claude.ai，应该命中");
+        assert_eq!(scan.read, 3, "三个目标文件都要数进去，不许命中就跑");
+        assert_eq!(scan.locked, 0);
+
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// 一个都没有 claude.ai 时，`hit` 是 false，但覆盖率照样是满的。
+    ///
+    /// 「读了 3 个、没找到」和「一个都没读开」是两回事，界面按这两个数
+    /// 分别说话 —— 塌成一个 bool 就又回到了「没查显示成没问题」。
+    #[test]
+    fn a_clean_profile_is_scanned_not_skipped() {
+        let d = scratch("clean");
+        std::fs::write(d.join("Preferences"), b"nothing").unwrap();
+        std::fs::write(d.join("History"), b"nothing").unwrap();
+
+        let scan = scan_profile(&d);
+        assert!(!scan.hit);
+        assert_eq!(scan.read, 2);
+        assert_eq!(scan.locked, 0);
+
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// leveldb 的 `LOCK` 不是扫描目标。
+    ///
+    /// 它 0 字节、装不下任何东西，而 Chrome 跑着时是独占锁、必然打不开 ——
+    /// 留着它，`chrome_files_locked` 每一轮都带着一堆假噪声，
+    /// 而那个数字存在的意义恰恰是「有货没读到」。
+    #[test]
+    fn the_leveldb_lock_file_is_not_a_scan_target() {
+        let d = scratch("ldb");
+        let ldb = d.join("Local Storage").join("leveldb");
+        std::fs::create_dir_all(&ldb).unwrap();
+        std::fs::write(ldb.join("000005.ldb"), b"data").unwrap();
+        std::fs::write(ldb.join("LOCK"), b"").unwrap();
+        std::fs::write(ldb.join("CURRENT"), b"MANIFEST-000001").unwrap();
+
+        let names: Vec<String> = scan_targets(&d)
+            .iter()
+            .filter_map(|p| p.file_name()?.to_str().map(str::to_string))
+            .collect();
+        assert!(names.iter().any(|n| n == "000005.ldb"), "{names:?}");
+        assert!(names.iter().any(|n| n == "CURRENT"), "{names:?}");
+        assert!(
+            !names.iter().any(|n| n == "LOCK"),
+            "LOCK 不该在里面：{names:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -18,6 +18,7 @@ import {
   Waypoints,
 } from "lucide-react";
 import { Button, Modal } from "../ui";
+import StationCenter from "./station/StationCenter";
 import type { Preset } from "../lib/api";
 import { R as RES } from "../lib/resources";
 import { getSession, setSession, useResource, useSession } from "../lib/store";
@@ -75,9 +76,44 @@ const newEnvironment = (
   applied_revision: null,
   config_dir: "",
   config_state: "saved",
+  // 这一页建的都是直连站点的环境。走本机路由那个由中转站页面自己建，
+  // 它的每一项都是定死的，没有让人手配的余地。
+  via_router: false,
 });
 
+/**
+ * 中转站页。**一页，没有分页。**
+ *
+ * 页面本体见 `features/station/StationCenter.tsx`。
+ *
+ * 底下那一套「供应商 / 凭证 / 环境」（`RelayLegacy`）**先别删**：站点还得从
+ * 那儿添，§2.5 那个 880px 的添加/编辑弹窗还没做，删了就没有数据可显示。
+ * 但它不再挂在页面顶上 —— 只有深链接（`/relays/new`、`/relays/<id>`）走得到。
+ */
 export default function RelayCenter() {
+  // 带着 id 进来（`/relays/new`、`/relays/<id>`）说明是冲着某个服务商来的，
+  // 那才走底下那套「供应商 / 凭证 / 环境」。
+  //
+  // ⛔ **没有外壳分页栏。** 原型里中转站页就是一页，顶上不挂
+  // 「中转站 / 供应商与环境」那条 tab —— 站点是在添加线路的弹窗里选/建的。
+  // 旧那套只留深链接进得去，等 §2.5 那个 880px 弹窗做完就可以整个退休。
+  //
+  // 三个入口：
+  //
+  // | 路径 | 落到哪 |
+  // |---|---|
+  // | `/relays` | 中转站页（新的那一页） |
+  // | `/relays/new` | 旧那套的「添加服务商」编辑器 |
+  // | `/relays/<任何别的>` | 旧那套的列表；id 对不上就退到第一个服务商 |
+  //
+  // 最后一条就是「不指定服务商地进旧页面」的入口（`RELAY_LEGACY`）。
+  // 没有它的话，旧页面只有知道某个服务商 id 的人才进得去。
+  const { id: deepLink } = useParams();
+  if (deepLink !== undefined) return <RelayLegacy />;
+  return <StationCenter />;
+}
+
+function RelayLegacy() {
   const { id } = useParams();
   const navigate = useNavigate();
   const workspace = useWorkspace();
@@ -134,7 +170,7 @@ export default function RelayCenter() {
       </div>
       <header className="qb-page-heading">
         <div>
-          <h1>中转站</h1>
+          <h2>服务商与环境</h2>
           <p>服务商、API 凭证和独立使用环境，在一处管理。</p>
         </div>
         <Button

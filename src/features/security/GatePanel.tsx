@@ -43,6 +43,7 @@ import {
   TARGET_KIND_LABEL,
 } from "../../ui";
 import { recordGate, useChecks } from "./useChecks";
+import LogBand from "../overview/LogBand";
 
 /**
  * 一次门禁改动：跑动作 → 作废相关缓存 → 重读门禁 → 补记进度。
@@ -408,6 +409,11 @@ function CountryGate() {
 
 type LockDialog = null | "unlock" | "clean";
 
+/**
+ * 运行日志。0.20.0 从总览挪进这里 ——
+ * 它是总览上最长的一块，而那一页要回答的是「现在什么状态」；
+ * 日志是出了事才去翻的东西，翻它的人本来就已经在门禁这一档里了。
+ */
 export function LockPanel() {
   const { gate, busy, act } = useGateAction();
   const [dialog, setDialog] = useState<LockDialog>(null);
@@ -679,6 +685,9 @@ export function LockPanel() {
           正在运行的 exe，不允许删除它。关掉对应进程后再清一次即可。
         </p>
       </ConfirmDialog>
+
+      {/* 运行日志。0.20.0 从总览挪到这里 —— 见本函数上面那段说明。 */}
+      <LogBand />
     </>
   );
 }

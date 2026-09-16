@@ -7,6 +7,7 @@
 //! | 模块 | 机制 |
 //! |---|---|
 //! | [`acl`] | 给文件加/摘 Deny ExecuteFile |
+//! | [`firewall`] | 加/摘一条按 exe 限定的出站阻止规则（0.19.0） |
 //! | [`secret`] | DPAPI 封/解一串字节 |
 //! | [`signature`] | 问一个 exe 是谁签的 |
 //! | [`process`] | 隐藏窗口地起子进程、Job 对象 |
@@ -36,6 +37,7 @@ pub use qb_foundation::{audit, error, paths, sink};
 pub mod acl;
 pub mod config_io;
 pub mod endpoint;
+pub mod firewall;
 pub mod legacy;
 pub mod logging;
 pub mod operations;

@@ -33,6 +33,53 @@ pub struct DataBackup {
     #[serde(default)]
     pub plans: Vec<crate::domain::LaunchPlan>,
 }
+/// 数据库结构版本 = 迁移条数。
+pub const SCHEMA: u32 = MIGRATIONS.len() as u32;
+
+/// 迁移清单。第 `i` 条把库从版本 `i` 升到版本 `i+1`。
+///
+/// ⛔ **只许往后追加。已经发布过的那几条一个字都不许改。**
+///
+/// 改了的话：老库不会重跑它（`user_version` 早就越过去了），新库却按新写法建 ——
+/// 两边的表结构从此不一样，而且**谁都不会报错**。真正出问题的是几个月后
+/// 某条查询在一半人的机器上莫名其妙失败。
+///
+/// 要改结构就**再追加一条**。
+const MIGRATIONS: &[&str] = &[
+    // 1：最初那一版。
+    "CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS providers(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS credentials(id TEXT PRIMARY KEY,provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,body TEXT NOT NULL,sealed TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS environments(id TEXT PRIMARY KEY,provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,credential_id TEXT REFERENCES credentials(id) ON DELETE RESTRICT,body TEXT NOT NULL,hashes TEXT NOT NULL DEFAULT '{}');
+     CREATE TABLE IF NOT EXISTS installations(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS catalog(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS diagnostics(id TEXT PRIMARY KEY,body TEXT NOT NULL);",
+    // 2：中转站线路池 / 检验轮次 / 请求日志（0.14.0）。
+    //
+    // 都用 `(id, body)`，跟上面几张一样 —— 通用的 list/get/put/prune 因此直接可用。
+    // 线路**不加外键指向 providers**：站点被删时把线路留成孤儿是可恢复的，
+    // 而 RESTRICT 会让「删站点」从此失败，那是在改一个已经发布的行为。
+    "CREATE TABLE IF NOT EXISTS station_routes(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS station_audits(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS request_logs(id TEXT PRIMARY KEY,body TEXT NOT NULL);",
+    // 3：线路按软件独立（0.16.0）。
+    //
+    // 线路 id 从两段 `站点␟分组` 变成三段 `软件␟站点␟分组`，body 里多一个
+    // `client`。**老库里的线路全都是给 Claude Code 配的** —— 那时候面板只给
+    // 它接了线，所以整批落到 `claude-code`，跟 `Client` 的 `#[default]`
+    // 是同一个答案（两处对不上的话，反序列化补的值会和迁移写进去的打架）。
+    //
+    // `char(31)` 就是 `U+001F`，跟 `Route::make_id` 用的分隔符一致。
+    // SQLite 的 `UPDATE ... SET` 右侧读的是行的**旧值**，所以 `id` 和 `body`
+    // 在同一条语句里都还能拿到没改写的 `id`。
+    "UPDATE station_routes
+        SET body = json_set(body, '$.client', 'claude-code',
+                                  '$.id', 'claude-code' || char(31) || id),
+            id   = 'claude-code' || char(31) || id;",
+];
+
 impl Repository {
     pub fn open() -> Result<Self> {
         Self::open_in(&crate::paths::state_dir())
@@ -46,28 +93,43 @@ impl Repository {
         let version: u32 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .map_err(sql)?;
-        if version > 1 {
+        if version > SCHEMA {
             return Err(GateError::Other(
                 "此数据库由更新版本创建，请使用相应版本；数据未修改".into(),
             ));
         }
-        if version == 0 {
-            conn.execute_batch("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE;
-            CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS providers(id TEXT PRIMARY KEY,body TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS credentials(id TEXT PRIMARY KEY,provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,body TEXT NOT NULL,sealed TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS environments(id TEXT PRIMARY KEY,provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE RESTRICT,credential_id TEXT REFERENCES credentials(id) ON DELETE RESTRICT,body TEXT NOT NULL,hashes TEXT NOT NULL DEFAULT '{}');
-            CREATE TABLE IF NOT EXISTS installations(id TEXT PRIMARY KEY,body TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS catalog(id TEXT PRIMARY KEY,body TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,body TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,body TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS diagnostics(id TEXT PRIMARY KEY,body TEXT NOT NULL);
-            PRAGMA user_version=1; COMMIT;").map_err(sql)?;
+        if version < SCHEMA {
+            conn.execute_batch("PRAGMA journal_mode=WAL;")
+                .map_err(sql)?;
+            for (i, step) in MIGRATIONS.iter().enumerate() {
+                let target = i as u32 + 1;
+                if version >= target {
+                    continue;
+                }
+                // 一条迁移一个事务，并且**在同一个事务里**把 user_version 推上去。
+                // 分开写的话，中途断电会留下「表建好了但版本号没动」的库，
+                // 下次启动重跑同一条迁移 —— `CREATE TABLE IF NOT EXISTS` 撑得住，
+                // 但将来任何一条 `ALTER`/`UPDATE` 型迁移都会被跑第二遍。
+                conn.execute_batch(&format!(
+                    "BEGIN IMMEDIATE;
+{step}
+PRAGMA user_version={target};
+COMMIT;"
+                ))
+                .map_err(sql)?;
+            }
         }
         Ok(Self {
             conn,
             root: root.into(),
         })
+    }
+    /// 只给测试读结构版本用。
+    #[cfg(test)]
+    fn pragma_query_value_user_version(&self) -> Result<u32> {
+        self.conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .map_err(sql)
     }
     fn table(table: &str) -> Result<&str> {
         if [
@@ -79,6 +141,9 @@ impl Repository {
             "operations",
             "sessions",
             "diagnostics",
+            "station_routes",
+            "station_audits",
+            "request_logs",
         ]
         .contains(&table)
         {
@@ -455,6 +520,9 @@ impl Repository {
                         .display()
                         .to_string(),
                     config_state: "saved".into(),
+                    // 从老 profiles 迁上来的都是直连站点的环境 —— 本机路由那一条
+                    // 是后来才有的,迁移不该替使用者打开它。
+                    via_router: false,
                 })?;
             }
             self.set_meta(
@@ -650,6 +718,116 @@ mod tests {
         std::fs::create_dir_all(&p).unwrap();
         p
     }
+    #[test]
+    fn a_fresh_database_lands_on_the_latest_schema_and_reopening_is_a_no_op() {
+        let p = fixture();
+        let db = Repository::open_in(&p).unwrap();
+        let v: u32 = db
+            .conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, SCHEMA);
+        drop(db);
+        // 再开一次不该重跑任何迁移，也不该报错。
+        let again = Repository::open_in(&p).unwrap();
+        let v2: u32 = again.pragma_query_value_user_version().unwrap();
+        assert_eq!(v2, SCHEMA);
+    }
+
+    #[test]
+    fn an_old_database_is_upgraded_in_place_without_losing_its_rows() {
+        // 这是迁移框架存在的全部理由：老用户的库要能升上来，
+        // 而且升的过程中一行数据都不能掉。
+        let p = fixture();
+        {
+            let db = Repository::open_in(&p).unwrap();
+            db.put("providers", "p1", &serde_json::json!({"id":"p1"}))
+                .unwrap();
+            // 手工退回版本 1，装成一个 0.13.x 建的库。
+            db.conn
+                .execute_batch(
+                    "DROP TABLE IF EXISTS station_routes;
+                                DROP TABLE IF EXISTS station_audits;
+                                DROP TABLE IF EXISTS request_logs;
+                                PRAGMA user_version=1;",
+                )
+                .unwrap();
+        }
+        let db = Repository::open_in(&p).unwrap();
+        assert_eq!(db.pragma_query_value_user_version().unwrap(), SCHEMA);
+        // 老数据还在。
+        let got: serde_json::Value = db.get("providers", "p1").unwrap();
+        assert_eq!(got["id"], "p1");
+        // 新表能用了。
+        db.put("station_routes", "r1", &serde_json::json!({"id":"r1"}))
+            .unwrap();
+        let routes: Vec<serde_json::Value> = db.list("station_routes").unwrap();
+        assert_eq!(routes.len(), 1);
+    }
+
+    #[test]
+    fn old_routes_are_rehomed_under_claude_code_rather_than_left_without_a_client() {
+        // 0.16.0 把线路 id 从两段改成三段（`软件␟站点␟分组`）。老库里那些
+        // 线路全是给 Claude Code 配的 —— 迁移不把它们认领走的话，三个软件
+        // 分页一个都不会显示它们，看起来就是「升级之后线路全没了」。
+        let p = fixture();
+        {
+            let db = Repository::open_in(&p).unwrap();
+            db.put(
+                "station_routes",
+                "moxi\u{1f}低价组",
+                &serde_json::json!({"id":"moxi\u{1f}低价组","station_id":"moxi","group":"低价组"}),
+            )
+            .unwrap();
+            // 退回版本 2，装成一个 0.15.x 建的库（那时候表已经有了，只是没有 client）。
+            db.conn.execute_batch("PRAGMA user_version=2;").unwrap();
+        }
+        let db = Repository::open_in(&p).unwrap();
+        assert_eq!(db.pragma_query_value_user_version().unwrap(), SCHEMA);
+
+        let routes: Vec<serde_json::Value> = db.list("station_routes").unwrap();
+        assert_eq!(routes.len(), 1, "一条都不许掉");
+        let r = &routes[0];
+        assert_eq!(r["client"], "claude-code");
+        assert_eq!(r["id"], "claude-code\u{1f}moxi\u{1f}低价组");
+        // 主键也得跟着改写，否则 body 里的 id 和行的 id 对不上，
+        // 下一次 put 会照着新 id 再插一行，池子里出现两条同样的线。
+        let by_key: serde_json::Value = db
+            .get("station_routes", "claude-code\u{1f}moxi\u{1f}低价组")
+            .unwrap();
+        assert_eq!(by_key["station_id"], "moxi");
+        // 站点和分组一个字都没动 —— 站点是共享的，迁移只认领软件这一维。
+        assert_eq!(r["station_id"], "moxi");
+        assert_eq!(r["group"], "低价组");
+    }
+
+    #[test]
+    fn a_database_from_a_newer_build_is_refused_instead_of_being_downgraded() {
+        // 降级打开会让新版本写进去的字段被旧代码悄悄抹掉。
+        let p = fixture();
+        {
+            let db = Repository::open_in(&p).unwrap();
+            db.conn
+                .execute_batch(&format!("PRAGMA user_version={};", SCHEMA + 1))
+                .unwrap();
+        }
+        // 用 match：Repository 没有 Debug，unwrap_err 要求 Ok 侧有。
+        let err = match Repository::open_in(&p) {
+            Ok(_) => panic!("更新版本的库被降级打开了"),
+            Err(e) => e,
+        };
+        assert!(format!("{err}").contains("更新版本"), "{err}");
+    }
+
+    #[test]
+    fn the_migration_list_is_append_only_by_construction() {
+        // SCHEMA 就是迁移条数 —— 两者不可能对不上。
+        // 有人删掉一条迁移的话，SCHEMA 会**变小**，
+        // 于是所有已经升上去的库都会被判成「更新版本创建的」而拒绝打开。
+        assert_eq!(SCHEMA as usize, MIGRATIONS.len());
+        assert!(SCHEMA >= 2, "已经发布过版本 2，不许再变小");
+    }
+
     #[test]
     fn database_failure_rolls_back_files_and_metadata() {
         let p = fixture();

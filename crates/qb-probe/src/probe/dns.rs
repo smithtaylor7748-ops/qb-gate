@@ -119,7 +119,11 @@ async fn trigger_probes(id: &str, rep: &dyn ProgressSink) {
             &format!("解析第 {i} / {PROBE_COUNT} 个探针域名"),
         );
         let host = format!("{i}.{id}.bash.ws:80");
-        let _ = tokio::net::lookup_host(host).await;
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            tokio::net::lookup_host(host),
+        )
+        .await;
         tokio::time::sleep(std::time::Duration::from_millis(DELAY_BETWEEN_PROBES_MS)).await;
     }
 }
@@ -131,39 +135,37 @@ async fn fetch_results(id: &str) -> Result<Vec<BashWsEntry>> {
         .build()?;
     let url = format!("https://bash.ws/dnsleak/test/{id}?json");
     let text = c.get(&url).send().await?.error_for_status()?.text().await?;
-    Ok(serde_json::from_str(&text).unwrap_or_default())
+    Ok(serde_json::from_str(&text)?)
 }
 
 /// 网卡 DNS 配置。只读操作，走 PowerShell 比 GetAdaptersAddresses FFI 省两百行，
 /// 且没有安全影响。（ACL 那边不一样 —— 那是管控点，必须用 API，见 gate/acl.rs。）
 #[cfg(windows)]
-async fn adapter_resolvers() -> Vec<(String, String)> {
-    let Ok(out) = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Get-DnsClientServerAddress -AddressFamily IPv4 | \
-             Where-Object { $_.ServerAddresses.Count -gt 0 } | \
-             ForEach-Object { $n=$_.InterfaceAlias; $_.ServerAddresses | \
-             ForEach-Object { \"$n`t$_\" } }",
-        ])
-        .output()
-        .await
-    else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&out.stdout)
+async fn adapter_resolvers() -> Result<Vec<(String, String)>> {
+    let out = crate::process::powershell_tokio(
+        "$ErrorActionPreference = 'Stop'; Get-DnsClientServerAddress -AddressFamily IPv4 | \
+         Where-Object { $_.ServerAddresses.Count -gt 0 } | \
+         ForEach-Object { $n=$_.InterfaceAlias; $_.ServerAddresses | \
+         ForEach-Object { \"$n`t$_\" } }",
+    )
+    .output()
+    .await?;
+    if !out.status.success() {
+        return Err(crate::error::GateError::Other(
+            "网卡 DNS 配置读取失败，未判定为无泄露".into(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter_map(|l| l.split_once('\t'))
         .map(|(a, b)| (a.trim().to_string(), b.trim().to_string()))
         .filter(|(_, ip)| !ip.is_empty())
-        .collect()
+        .collect())
 }
 
 #[cfg(not(windows))]
-async fn adapter_resolvers() -> Vec<(String, String)> {
-    Vec::new()
+async fn adapter_resolvers() -> Result<Vec<(String, String)>> {
+    Ok(Vec::new())
 }
 
 pub async fn check(rep: &dyn ProgressSink) -> Result<DnsReport> {
@@ -176,7 +178,7 @@ pub async fn check(rep: &dyn ProgressSink) -> Result<DnsReport> {
     tokio::time::sleep(std::time::Duration::from_millis(WAIT_AFTER_PROBES_MS)).await;
 
     rep.phase(PROBE_COUNT.into(), "取回解析器清单");
-    let entries = fetch_results(&id).await.unwrap_or_default();
+    let entries = fetch_results(&id).await?;
 
     let mut egress_asn = None;
     let mut upstream_conclusion = None;
@@ -207,8 +209,8 @@ pub async fn check(rep: &dyn ProgressSink) -> Result<DnsReport> {
     }
 
     // 补上网卡配置里的解析器（去重）。
-    for (iface, ip) in adapter_resolvers().await {
-        if resolvers.iter().any(|r| r.address == ip) {
+    for (iface, ip) in adapter_resolvers().await? {
+        if resolvers.iter().any(|r| r.address == ip && r.from_adapter) {
             continue;
         }
         resolvers.push(Resolver {
@@ -223,7 +225,10 @@ pub async fn check(rep: &dyn ProgressSink) -> Result<DnsReport> {
         });
     }
 
-    let findings = evaluate(&resolvers);
+    let mut findings = evaluate(&resolvers);
+    if !resolvers.iter().any(|r| !r.from_adapter) {
+        findings.push("未收到权威服务器的真实解析回显，不能判定 DNS 无泄露".into());
+    }
     let (score, ethernet_safe) = score_report(&resolvers);
 
     Ok(DnsReport {

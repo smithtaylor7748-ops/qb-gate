@@ -27,7 +27,8 @@ MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件
 
 - 仓库：https://github.com/farion1231/cc-switch
 - 许可：**MIT**，Copyright (c) Jason Young
-- 用在：`crates/qb-relay/src/relay/`（`mod.rs` · `store.rs` · `presets.rs`）
+- 用在：`crates/qb-relay/src/relay/`（`mod.rs` · `store.rs` · `presets.rs`），
+  以及 v0.17.0 起的 `src/features/station/`（`RouteDialog.tsx` · `ConfigPane.tsx`）
 
 参考的是「多供应商 + 一键切换 + 直接写进 CLI 自己的配置文件」这套产品形态，
 以及原子写（临时文件 + 改名）与自动备份的做法。代码为独立实现，未复制。
@@ -41,10 +42,110 @@ MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件
 | Codex 侧按 `wire_api` 分 responses / chat 两类预设 | 这个分法是对的，照做 |
 | 「从当前配置导入」与编辑当前启用项时的回填 | `relay_import_live` |
 | Codex 写 `config.toml` + `auth.json` 两个文件的配置形态 | 端点结构参照其公开文档 |
+| **复合主键分区**（应用 + 供应商各一条） | `Route::make_id` 从两段变三段：`软件 + U+001F + 站点 + U+001F + 分组`。v0.16.0 之前少了软件那一段，在 Codex 底下加的线路会把 Claude Code 同名那条原地覆盖 |
+| **per-app 当前上游** | `ClientRouter` 按 `Client` 分别记 current / pending。共用一份的话，在 Codex 里切上游会把 Claude Code 的一起切掉 |
+| **`ProviderForm` 的表单形态** | 预设胶囊 + 72px 大图标 + 两列基本信息 +「接入」分节 + 收起的高级选项。见 `RouteDialog.tsx` |
+| **六个快捷开关的键名与判定条件** | 逐条对着 `src/components/providers/forms/CommonConfigEditor.tsx:72-170` 核过，见下面那张表。**键名照抄** —— 自己编一套的话，写进去的东西 Claude Code 根本不认，而界面上看起来一切正常 |
+| **模型映射的键集** | `src/components/providers/forms/hooks/useModelState.ts` 的 `ClaudeModelEnvField`：主模型 + Opus/Sonnet/Fable/Haiku 四档（各带一个 `_NAME` 显示名）+ `CLAUDE_CODE_SUBAGENT_MODEL` |
+| **`ANTHROPIC_SMALL_FAST_MODEL` 是旧键** | 同上文件里每次写模型都 `delete env.ANTHROPIC_SMALL_FAST_MODEL`。我们照做 —— 两个键都留着的话，客户端读哪个取决于它自己的优先级，而那个优先级我们看不见 |
+| **1M 上下文用模型名后缀，不是环境变量** | `CLAUDE_ONE_M_MARKER = "[1M]"`，读时大小写不敏感。当初查不到「1M」对应的变量名是因为根本没有那个变量 |
+| **Codex 的 1M 与思考等级** | `model_context_window = 1000000` 必须跟 `model_auto_compact_token_limit = 900000` 一起设（`CodexConfigSections.tsx`），`model_reasoning_effort` 取 minimal/low/medium/high。两项都只认第一个 `[section]` 之前那一段（`utils/providerConfigUtils.ts` 的 `getTopLevelEndIndex`） |
+| **取消勾选时删键、`env` 空了连 `env` 一起删** | `ConfigPane.tsx` 的 `setEnv`。留一个空的 `env: {}` 不影响运行，但会让「跟随表单」算出来的 JSON 跟手写的那份永远不相等 |
+
+六个开关的**判定条件**也照抄，而不是只抄键名 —— 这一条比键名更容易漏：
+
+| 开关 | 写什么 | 读的时候什么才算「开着」 |
+|---|---|---|
+| 隐藏 AI 署名 | `attribution = {commit:"", pr:""}` | **两项都是空串**。只判「`attribution` 在不在」的话，一个真的配了署名模板的人会显示成「已隐藏」，取消勾选把他的模板整个删掉 |
+| Teammates 模式 | `env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1"` | `"1"` 或数字 `1` |
+| 启用 Tool Search | `env.ENABLE_TOOL_SEARCH = "true"` | `"true"` 或 `"1"` |
+| 最大强度思考 | `env.CLAUDE_CODE_EFFORT_LEVEL = "max"` | **严格等于 `"max"`**。设成 `medium` 的人不该看到这个勾是开的，否则他一取消勾选就把自己的设置删掉了 |
+| 禁用自动升级 | `env.DISABLE_AUTOUPDATER = "1"` | `"1"` 或数字 `1` |
+| 禁用 Artifact 工具 | `env.CLAUDE_CODE_DISABLE_ARTIFACT = "1"` | `"1"` 或数字 `1` |
+
+取消勾选一律删键，**`env` 空了连 `env` 一起删** —— 留一个空的 `env: {}`
+不影响客户端运行，但会让「跟随表单」算出来的 JSON 跟手写的那份永远不相等。
+
+判定条件与 `[1M]` 标记的往返由 `src/lib/clientConfig.test.ts` 钉着（24 条）。
+「禁用 Artifact」那句说明（第三方网关用严格 JSON Schema 校验工具定义，
+Artifact 里的 `\p{..}` 正则会让每个请求 400）也来自 cc-switch 源码里的注释。
+
+**路径前缀区分客户端**（`/cd` 前缀认 Claude 桌面端）是本项目自己的做法，
+不是从 cc-switch 来的 —— 它没有本机路由这一层。这一条记在这里是因为
+「没抄什么」同样要写明：Claude Code 与桌面端走同一套 Anthropic 协议，
+协议上分不开，而 cc-switch 直接改客户端配置、不需要在运行期分辨来源。
 
 **MIT 允许直接复制源码**（保留版权声明即可）。本项目仍然选择独立实现，
 原因是 cc-switch 现在这部分已经和 SQLite DAO、本地代理层缠在一起，
 逐行搬进来的维护成本高于重写。
+
+### cockpit-tools —— 桌面端怎么接进中转（v0.18.0 追加）
+
+- 仓库：https://github.com/jlcodes99/cockpit-tools
+- 许可：**没有 LICENSE 文件**（仓库根目录唯一那个 LICENSE 是它 vendor 进来的
+  第三方 MIT 组件 `CLIProxyAPI` 的，不是它自己的协议）。
+  按本文件开头第 2 条：**保留全部权利，一行都不能抄**。
+- 读了：`src-tauri/src/modules/claude_desktop_gateway.rs`（561 行）与
+  `claude_account_desktop_profile.rs` 里写配置那几段。
+
+**参照的是「Claude 桌面端有哪个官方机制可以用」这一条信息，不是它的实现。**
+它让我知道该去桌面端的 `app.asar` 里找什么；找到之后，下面每一条都是
+**在桌面端自己的 bundle 里核实过的**（1.52386.6），代码是我们自己写的：
+
+| 从它那里知道的 | 我们怎么核实的 |
+|---|---|
+| 桌面端有个 `deploymentMode: "3p"` 的第三方网关模式 | `deploymentMode` / `inferenceProvider` / `inferenceGatewayBaseUrl` / `inferenceGatewayApiKey` / `inferenceGatewayAuthScheme` / `inferenceModels` / `supports1m` 七个键在 `app.asar` 里全部找得到 |
+| 配置写在 `claude_desktop_config.json` | 同上；这个文件同时装 `mcpServers`，所以只能并入 |
+
+**它没告诉我们、我们自己找到的**：`CLAUDE_USER_DATA_DIR` 这个环境变量。
+cockpit 走的是「让桌面端自己算 3p 目录」那条路（它观察到的目录名是
+`Claude-3p`，而那个字符串在 bundle 里根本不存在）；我们直接用桌面端主进程
+启动时第一件事读的那个变量，优先级更高、目录由面板说了算，
+跟 Claude Code 的 `CLAUDE_CONFIG_DIR` 是同一个形状。
+
+**明确没抄的**：
+
+- 它那个**每个账号一个本地 HTTP 网关**（`tiny_http` 监听随机端口，转发时做
+  模型改名）。我们已经有本机路由了，而且是**一个端口服务三个软件、靠路径
+  前缀区分**（`/cd`）—— 再按账号起一堆监听是另一套架构，不是这里缺的东西；
+- 它写的 `disableDeploymentModeChooser` 与 `coworkEgressAllowedHosts: ["*"]`。
+  前者从使用者手里拿走一个开关，后者放宽一道安全限制 —— 见 CLAUDE.md 那一节；
+- 界面排法。cockpit 的布局本项目在 0.14.0 就参考过（`qb-relay/src/relay/mod.rs`
+  的模块头写着），同样**一行代码都没有复制**。
+
+### station-monitor-standalone —— 计费核验的算法思路（v0.16.0 追加）
+
+- 来源：**使用者本人的项目**（从「账号工具箱」拆出来的独立版中转站监控）。
+  不是第三方开源件，没有许可问题；记在这里是因为硬约束
+  「抄了什么、没抄什么、为什么没抄，都要写进 ATTRIBUTION.md」。
+- 用在：`qb-station::station::pricing::measured_multiplier` 与
+  `qb-station::station::audit::EvidenceLevel`。
+
+**参照了什么**
+
+| 它那边 | 我们这边 |
+|---|---|
+| `official_cost` / `original_cost` / `actual_cost` **三个数分开算**，`base_price_ratio` 与 `observed_multiplier` 各答各的问题 | `measured_multiplier` —— 实扣 ÷ Σ(实际 token × 官方单价) |
+| 单价**从实扣反推**（`recorded_cost × 1e6 ÷ tokens`），不听站点自己报 | 分子取账单实扣、分母取官方价，两头都不是站点公布的倍率 |
+| `evidence_level` 四档 `sufficient` / `partial` / `insufficient` / `conflict` | `EvidenceLevel` 同样四档、同样命名 |
+| `CACHE_ATTENTION_THRESHOLD = 0.80` | `audit::CACHE_ATTENTION_THRESHOLD` |
+| `PRICE_STALE_AFTER_DAYS = 180` | `pricing::STALE_AFTER_DAYS` |
+
+**没参照什么，以及为什么**
+
+- **付费探针那一套**（`station_responses_billing_probe`：冷/热前缀构造、
+  余额前后对比、账单行与探针配对）没有搬。它要真发好几发计费请求，
+  而本项目的检验目前走的是「读站点自己的账单日志」这条零成本路径。
+  等要做真探针时再回去看它。
+- **`budget_estimate`（1 元预算推演）** 与 **结构化注意项**
+  （`code`/`level`/`fact`/`impact`/`next_step`/`evidence_refs` 八字段）
+  没有搬 —— 本项目的检验报告目前只回六项 + 可信度 + 证据档次。
+
+**实现是自己写的**：那边是 Python + `Decimal`，这边是 Rust + `f64`，
+并且加了一条那边没有的硬规矩 —— **四类 token 缺任何一类就返回 `None`**，
+因为少一类会把分母算小、倍率被系统性抬高，而那正好是「这家在超收」的方向。
+
+---
 
 ### Cockpit Tools —— ⛔ 只看界面，一行代码都不许抄
 
@@ -276,8 +377,14 @@ URL 类只留 `scheme://host`（路径里可能带 token）。
 
 **没有采纳的部分**：cac 的设备指纹伪装（UUID / 主机名 / MAC 改写）与
 强制流量绑定代理。前者与本项目「不为规避封禁而设计」的定位冲突
-（DISCLAIMER 第 95、98、101 行），后者会让本项目变成「内置代理功能」，
-与 DISCLAIMER 第 107 行直接矛盾。
+（按 DISCLAIMER 里「不承诺防封」那几句去搜，**别记行号** —— 行号每改一次就漂）；
+后者是**把整机流量强制走代理**，会让本项目变成「内置代理功能」，与 DISCLAIMER
+第 5 节矛盾。
+
+> **0.19.0 补一句**：面板确实加了「浏览器出站锁」，但它跟 cac 那套不是一回事 ——
+> 只给使用者点名的**那一个**浏览器 exe 加**出站**防火墙规则，不接管整机流量、
+> 不自己当代理、不做转发。边界写在 `CLAUDE.md` 的「两个口子」一节，
+> 对外措辞在 DISCLAIMER §5.2。
 
 ### clash-claude-fix — DoH / WebRTC 的判定点
 
@@ -348,6 +455,42 @@ ippure 与 FuckClaude 都提到：Claude Code 在 `ANTHROPIC_BASE_URL` 指向中
 不会改掉精选目录里这两个固定版本（见 `extensions::check_updates`）。需要新版本的人
 自己从来源手动导入，导入进来的是一条独立记录，不影响这张表里核对过的那一版。
 
+## 使用者自己的两个项目（同一著作权人，不是第三方）
+
+中转站的计费核验与调度口径来自维护者自己的两个既有项目。**著作权同属一人**，
+不受「没有 LICENSE = 保留全部权利」那条约束——那条针对的是上游第三方。
+即便如此，这里仍按规矩记清楚拿了什么：
+
+### `station-monitor-standalone`（账号工具箱拆出的中转站监控）
+
+拿的是**方法，不是代码**——全部用 Rust 重写，一行 Python 都没有搬：
+
+| 拿来的 | 落在哪 |
+|---|---|
+| 真实倍率 = `站点单价 × 标称倍率 ÷ 官方单价`，**四类各算各的** | `station::pricing::verdicts` |
+| 官方价目要带 `source` / `verified_at`，超期标 stale（原值 180 天） | `pricing::STALE_AFTER_DAYS` |
+| 跨币种不比（`requires_currency_conversion`） | `PriceStatus::CurrencyMismatch` |
+| New API 的四类倍率字段（`model_ratio` / `completion_ratio` / `cache_ratio` / `create_cache_ratio` / `model_price`） | `pricing::parse_station_pricing` |
+| 缓存命中低于 0.80 该提醒（`CACHE_ATTENTION_THRESHOLD`） | `audit::CACHE_ATTENTION_THRESHOLD` |
+| **证据档次与可信度分开**（`evidence_level`：sufficient/partial/insufficient/conflict） | `audit::EvidenceLevel` |
+
+`gpt-5.6-sol` 那条价目是维护者自己核对过的（2026-08-28），原样沿用并保留了来源链接。
+
+**没拿的**：那个项目的 `server.py` 有 11,008 行，覆盖邮箱、TOTP、局域网传输、
+账号巡检等等——那些不在 QB Gate 的范围内，一概没看也没搬。
+
+### `sub2guard`（207 服务器上的调度外挂）
+
+拿的是两条**实测结论**，都写进了代码注释里当依据：
+
+1. **只看首字会选中最卡的那条。** 实测 2690 首字 1.4 秒全组最快、107.9 ms/token、
+   一次回答 95.8 秒；2681 首字 4.7 秒却快 5 倍。修法是体验分 =
+   `首字 + 每 token 耗时 × 典型回答长度`（落在 `Window::experience_ms`）；
+2. **排序指标只统计成功的请求**，所以挂掉的线路会顶着上周的好成绩排前面
+   （㉙）。QB Gate 侧对应的是 `UsageRow::status_reported` 与熔断器。
+
+峰时倍率 1.5 倍浮动「取 max 才是上界」也来自那份档案（`StationRates::peak_rate`）。
+
 ## 评估过但没有采用
 
 ### 订阅指引（Subscription Guide）— MIT，已移除
@@ -364,3 +507,10 @@ v0.12.0 的重构里带进来一份 3,310 行的订阅指引组件（`src/subscr
 SillyTavern 是外部 AGPL-3.0 应用。QB Gate 接入用户已有安装，不捆绑应用本体；本项目仍按 GPL-3.0-or-later 发布。
 
 [docs/dependencies.json](docs/dependencies.json) 记录依赖名称、版本、来源和许可声明；[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) 包含可获得的原始版权及许可文本，并随安装包提供。缺少随包许可文件时的补充文本固定到上游提交，记录于 docs/license-supplements.json。构建和测试依赖也一并列出。
+
+
+### 0.22.0：Codex 桌面账户管理
+
+按使用者给出的 [Cockpit Tools](https://github.com/jlcodes99/cockpit-tools) README 了解其账户管理、独立实例及用量展示思路。该项目采用 CC BY-NC-SA 4.0；本次没有复制其源码。
+
+登录存储依据 [OpenAI Codex Authentication](https://developers.openai.com/codex/auth/)；桌面端的 `CODEX_HOME` 与 `CODEX_ELECTRON_USER_DATA_PATH` 行为在本机已安装的 Microsoft Store 版本 26.908.9136.0 中核对。窗口控制、独立目录、凭据元信息解析和本地 rollout 统计由本项目独立实现。桌面窗口目录参数属于当前客户端实现，后续版本需继续验证。

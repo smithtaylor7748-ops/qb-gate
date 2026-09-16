@@ -1,218 +1,504 @@
-/**
- * 总览的 GPT 侧。
- *
- * # 为什么要跟 Claude 分开
- *
- * 原来的 2×2 启动宫格里，Claude Code、Claude 桌面端、酒馆、Codex 挤在一起，
- * 而左边的账户槽位**只对 Claude 有效**。于是「槽位切换 + 启动」这个组合
- * 对 Codex 那一格是无意义的，可它长得和另外三格一模一样。
- *
- * 分开之后每一侧只讲自己的事：Claude 侧是「用哪个账户、起哪个客户端」，
- * GPT 侧是「Codex 装了吗、归不归门禁管、走哪个中转站」。
- *
- * # 这一侧没有账户槽位，是对的
- *
- * 账户槽位换的是 `claude-profile` 目录联结点，Codex 的凭证在 `~/.codex`，
- * 完全是另一套。**不要在这里放一个长得像槽位的东西** —— 那会让人以为
- * 切换会连 Codex 一起切。Codex 侧真正的「切换」是中转站，所以这里给的是
- * 当前中转站与一个跳转入口。
- */
-
-import { Settings2, SquareTerminal } from "lucide-react";
-
-import { type LaunchTarget } from "../../lib/api";
-import { Link } from "react-router-dom";
-import { useWorkspace, workspaceApi, type Client } from "../../lib/workspace";
-import { AFTER, R } from "../../lib/resources";
-import { invalidate, useResource } from "../../lib/store";
-import { endTask, resetTask, useTask } from "../../lib/tasks";
+/** Codex desktop: official login slots, explicit switching, local rollout usage. */
+import { useEffect, useState } from "react";
 import {
-  Button,
-  Card,
-  ExternalLink,
-  Metric,
-  Pill,
-  Row,
-  useToast,
-} from "../../ui";
-import { openSecurity } from "../security/SecuritySheet";
+  Gauge,
+  MonitorSmartphone,
+  Power,
+  Plus,
+  RefreshCw,
+  Trash2,
+  Users,
+} from "lucide-react";
+import { CODEX_R, codexApi } from "../../lib/codexAccounts";
+import type { CodexSlot } from "../../lib/generated/CodexSlot";
+import type { CodexUsage } from "../../lib/generated/CodexUsage";
+import { useResource, useSession } from "../../lib/store";
+import { Button, Card, ConfirmDialog, Modal, Pill, useToast } from "../../ui";
 
-import Tile from "./Tile";
-
-const CODEX_HOME = "https://github.com/openai/codex";
+const PER_PAGE = 4;
+const short = (n: number) =>
+  new Intl.NumberFormat("zh-CN", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(n);
 
 export default function GptBand() {
+  const accounts = useResource("codexAccounts", CODEX_R.accounts);
+  const desktop = useResource("codexDesktop", CODEX_R.desktop);
   const toast = useToast();
-
-  const sw = useResource("software", R.software);
-  const settings = useResource("settings", R.settings);
-  const workspace = useWorkspace();
-  const codexTask = useTask("launch-codex");
-
-  const gated = settings.data?.codex_under_gate ?? false;
-  const codex = sw.data?.codex;
-
-  /**
-   * Codex 那边正在跑的会话用的是谁。
-   *
-   * 旧实现读的是 `relay.json` 里的 `active` 标记 —— 那个文件自迁移之后
-   * **再没人写过**（`relay::store::save()` 全项目零调用者），显示的永远是
-   * 迁移那一刻的旧值，用户在中转站页改完也不会变。
-   *
-   * 新系统没有「全局激活」这个概念：每次启动都显式挑一个使用环境。所以唯一
-   * 还有「当前」语义的东西，就是**正在跑的那个会话的身份**。没有会话在跑就
-   * 如实说没在跑，不假装有一个当前值。
-   */
-  const codexSession = workspace.data?.sessions.find(
-    (s) => s.context.client === "codex" && s.state === "running",
+  const [pageRaw, setPage] = useSession("home.codex.page", -1);
+  const [adding, setAdding] = useState(false);
+  const [label, setLabel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [ask, setAsk] = useState<
+    | { id: string; label: string; action: "switch" | "launch" | "archive" }
+    | { action: "close" }
+    | null
+  >(null);
+  const slots = accounts.data?.slots ?? [];
+  const active = slots.find((s) => s.active);
+  const ownedProcess = desktop.data?.processes.some(
+    (p) =>
+      p.pid === accounts.data?.launched_pid &&
+      p.started === accounts.data?.launched_at,
   );
-  const codexEnvironment = workspace.data?.environments.find(
-    (e) => e.id === codexSession?.context.identity_id,
+  const runningSlot = ownedProcess
+    ? slots.find((s) => s.id === accounts.data?.launched_id)
+    : undefined;
+  const pages = Math.max(1, Math.ceil(slots.length / PER_PAGE));
+  const autoPage = Math.floor(
+    Math.max(
+      0,
+      slots.findIndex((s) => s.active),
+    ) / PER_PAGE,
   );
-  const activeRelay =
-    codexSession?.context.identity_kind === "relay"
-      ? workspace.data?.providers.find(
-          (p) => p.id === codexEnvironment?.provider_id,
-        )
-      : undefined;
+  const page = Math.min(pageRaw < 0 ? autoPage : pageRaw, pages - 1);
 
-  async function launchCodex() {
-    const target: LaunchTarget = "codex";
-    resetTask("launch-codex");
+  async function reload() {
+    await accounts.refresh();
+    await desktop.refresh();
+  }
+  async function create() {
+    setBusy(true);
+    setError("");
     try {
-      await workspaceApi.launch(target as Client, "official", "");
-      endTask("launch-codex");
-      toast.ok("Codex 会话已启动");
-      invalidate(...AFTER.lease);
+      const id = await codexApi.create(label);
+      await accounts.refresh();
+      setAdding(false);
+      setPage(Math.floor(slots.length / PER_PAGE));
+      setAsk({ id, label: label.trim(), action: "launch" });
+      setLabel("");
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      endTask("launch-codex", msg);
-      toast.error(msg);
+      setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setBusy(false);
     }
   }
+  async function confirm() {
+    if (!ask) return;
+    setBusy(true);
+    setError("");
+    try {
+      if (ask.action === "close") await codexApi.close();
+      else await codexApi[ask.action](ask.id);
+      await reload();
+      toast.ok(
+        ask.action === "close"
+          ? "Codex 桌面端已关闭，账户与登录资料已保留"
+          : ask.action === "launch"
+            ? "Codex 桌面端已打开，请在官方窗口完成登录"
+            : ask.action === "switch"
+              ? "账户已切换，点击右侧启动"
+              : "槽位已移除，登录资料保留在本机归档中",
+      );
+      setAsk(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const open = (slot: CodexSlot, action: "switch" | "launch" | "archive") => {
+    setError("");
+    setAsk({ id: slot.id, label: slot.label, action });
+  };
 
   return (
-    <Card
-      title="GPT · OpenAI"
-      className="mb-3"
-      actions={
-        <span className="notice">
-          {gated ? "归 IP 门禁管" : "不归 IP 门禁管"}
-        </span>
-      }
-    >
-      <div className="grid gap-4 md:grid-cols-2">
-        {/* ------------------------------------------------ 左：状态 */}
-        <div className="min-w-0">
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Metric label="Codex CLI" loading={sw.loading && !sw.data}>
-              {codex?.installed ? (
-                <>
-                  {codex.version ?? "已安装"}
-                  <Pill tone="ok">已装</Pill>
-                </>
-              ) : (
-                <Pill tone="default">未安装</Pill>
-              )}
-            </Metric>
-            <Metric
-              label="中转站"
-              loading={workspace.loading && !workspace.data}
-            >
-              {!codexSession
-                ? "未在运行"
-                : activeRelay
-                  ? activeRelay.name
-                  : "官方直连"}
-            </Metric>
-          </div>
-
-          <Row
-            className="mt-2"
-            side={
+    <>
+      <div className="account-workspace" data-testid="codex-accounts">
+        <Card
+          className="account-slots"
+          title={
+            <>
+              <Users size={14} />
+              账户槽位
+            </>
+          }
+          actions={
+            <div className="flex gap-1.5">
               <Button
                 size="sm"
-                icon={<Settings2 size={13} />}
-                onClick={() => openSecurity("lock")}
+                icon={<RefreshCw size={12} />}
+                aria-label="刷新 Codex 账户"
+                loading={accounts.loading}
+                onClick={() =>
+                  void reload().catch((e) => toast.error(String(e)))
+                }
+              />
+              <Button
+                size="sm"
+                icon={<Plus size={12} />}
+                onClick={() => {
+                  setError("");
+                  setAdding(true);
+                }}
               >
-                门禁范围
+                新建
               </Button>
-            }
-          >
-            <span>
-              {gated ? "Codex 已纳入 IP 门禁" : "Codex 当前不归 IP 门禁管"}
-            </span>
-            <span className="notice">
-              {gated
-                ? "出口 IP 不在白名单时，codex 会被系统拒绝执行 —— 跟 claude.exe 一样。"
-                : "默认如此。打开开关之后它才会跟 claude.exe 一样被加执行锁。"}
-            </span>
-          </Row>
-
-          <Row
-            className="mt-1"
-            side={
-              <Link className="btn btn--sm" to="/relays">
-                中转站
-              </Link>
-            }
-          >
-            <span>Codex 的凭证与中转站配置</span>
-            <span className="notice">
-              写 <code>~/.codex/config.toml</code> 与 <code>auth.json</code>
-              ，增量改、自动备份。
-              <strong>它跟左边 Claude 的账户槽位是两套东西</strong>—— 槽位换的是{" "}
-              <code>claude-profile</code> 联结点，不会动 Codex。
-            </span>
-          </Row>
-        </div>
-
-        {/* ------------------------------------------------ 右：启动 */}
-        <div className="flex min-w-0 flex-col gap-2 md:border-l md:border-line md:pl-4">
-          <div className="mb-1 flex items-center gap-2">
-            <h2 className="card-title">
-              <SquareTerminal size={14} aria-hidden="true" />
-              启动
-            </h2>
-            <span className="notice ml-auto">
-              {gated ? "门禁不过就不起" : "不验 IP，直接起"}
-            </span>
-          </div>
-
-          <div className="tilegrid">
-            <Tile
-              icon={<SquareTerminal size={18} />}
-              name="Codex"
-              note={
-                codex?.installed
-                  ? gated
-                    ? "已纳入 IP 门禁 · 15 秒一次"
-                    : "不归 IP 门禁管"
-                  : "本机没装，先去「环境与安装」"
-              }
-              task={codexTask}
-              disabled={!codex?.installed}
-              onClick={() => void launchCodex()}
-            />
-          </div>
-
-          {!codex?.installed && (
-            <Link className="btn btn--sm mt-1" to="/software">
-              去安装 Codex
-            </Link>
+            </div>
+          }
+        >
+          {accounts.error && (
+            <p role="alert" className="notice notice--danger">
+              {accounts.error}
+            </p>
           )}
-
-          <p className="notice mt-1">
-            npm 全局装出来的是 <code>codex.cmd</code> 批处理，不是 exe。
-            给批处理加执行锁能挡住 <code>codex</code> 这个命令本身，
-            但挡不住有人直接去调它内部那个 node 脚本 —— 这一层解决不了，
-            界面如实说明。
-          </p>
-          <p className="notice">
-            <ExternalLink href={CODEX_HOME}>Codex 官方仓库</ExternalLink>
-          </p>
+          {!slots.length && (
+            <div className="py-4">
+              <h3>登录你的 Codex 账户</h3>
+              <p className="notice mt-2">
+                新建槽位后，在 Codex 桌面端选择「使用 ChatGPT
+                登录」。每个槽位单独保存登录状态。
+              </p>
+              <p className="notice mt-2">
+                现有 Codex 的默认账户和会话保留原处。
+              </p>
+            </div>
+          )}
+          <div className="account-slot-list">
+            {slots.slice(page * PER_PAGE, (page + 1) * PER_PAGE).map((s) => (
+              <div
+                key={s.id}
+                className={"slotrow" + (s.active ? " slotrow--active" : "")}
+                data-testid="codex-slot"
+              >
+                <div className="slotrow-main">
+                  <strong className="slotrow-label">{s.label}</strong>
+                  <span className="slotrow-side">
+                    {s.active ? (
+                      <Pill tone="accent">当前槽位</Pill>
+                    ) : (
+                      <Button
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => open(s, "switch")}
+                      >
+                        切换
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      disabled={busy || !desktop.data?.executable}
+                      onClick={() => open(s, "launch")}
+                    >
+                      {s.logged_in ? "打开" : "登录"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      aria-label={`移除 Codex ${s.label}`}
+                      icon={<Trash2 size={12} />}
+                      disabled={busy || s.active}
+                      onClick={() => open(s, "archive")}
+                    />
+                  </span>
+                </div>
+                <p
+                  className="notice codex-slot-identity"
+                  title={`${s.email ?? "尚未读取到账户邮箱"}${s.plan ? ` · ${s.plan}` : ""}`}
+                >
+                  {s.email ?? "尚未读取到账户邮箱"}
+                  {s.plan ? ` · ${s.plan}` : ""}
+                </p>
+                <span
+                  className={`notice ${s.logged_in ? "text-[var(--ok)]" : ""}`}
+                >
+                  {s.auth_state}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="account-pagination">
+            <span className="notice">{slots.length} 个槽位 · 每页 4 个</span>
+            {pages > 1 && (
+              <span className="pager ml-auto">
+                {Array.from({ length: pages }, (_, i) => (
+                  <button
+                    key={i}
+                    className="pager-btn"
+                    type="button"
+                    aria-label={`Codex 第 ${i + 1} 页`}
+                    aria-current={page === i}
+                    onClick={() => setPage(i)}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+              </span>
+            )}
+          </div>
+        </Card>
+        <div className="account-workspace-right">
+          <Card
+            className="account-launch"
+            title="Codex 桌面端"
+            actions={
+              <Pill tone={desktop.data?.executable ? "ok" : "default"}>
+                {desktop.data?.running
+                  ? "运行中"
+                  : desktop.data?.executable
+                    ? "未运行"
+                    : "未检测到"}
+              </Pill>
+            }
+          >
+            {desktop.error && (
+              <p role="alert" className="notice notice--danger">
+                {desktop.error}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="primary"
+                icon={<MonitorSmartphone size={20} />}
+                className="flex-1 justify-center"
+                disabled={busy || !active || !desktop.data?.executable}
+                onClick={() => active && open(active, "launch")}
+              >
+                {active?.logged_in ? "启动 Codex 桌面端" : "打开桌面端并登录"}
+              </Button>
+              <Button
+                variant="danger"
+                icon={<Power size={16} />}
+                disabled={busy || !desktop.data?.running}
+                onClick={() => {
+                  setError("");
+                  setAsk({ action: "close" });
+                }}
+              >
+                一键关闭
+              </Button>
+            </div>
+            <p className="notice mt-2">
+              {active ? `当前槽位：${active.label}` : "先新建一个账户槽位"}
+              {desktop.data?.version ? ` · v${desktop.data.version}` : ""}
+            </p>
+            <p className="notice mt-2">
+              切换或启动前会关闭已打开的 Codex
+              桌面端，正在运行的任务会中断，请先保存。
+            </p>
+            <p className="notice mt-1">
+              桌面端独立启动，不沿用 Codex CLI 的 IP 执行锁。
+            </p>
+          </Card>
+          <CodexUsageCard
+            slot={runningSlot ?? active}
+            running={!!runningSlot}
+          />
         </div>
       </div>
+      <Modal
+        open={adding}
+        onClose={() => !busy && setAdding(false)}
+        title="新建 Codex 账户槽位"
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void create();
+          }}
+          className="flex flex-col gap-3"
+        >
+          <label htmlFor="codex-label">账户名称</label>
+          <input
+            id="codex-label"
+            className="input"
+            value={label}
+            maxLength={40}
+            autoFocus
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="例如：个人账户"
+          />
+          <p className="notice">
+            下一步打开官方桌面端登录，不需要填写密码或粘贴 Token。
+          </p>
+          {error && (
+            <p role="alert" className="notice notice--danger">
+              {error}
+            </p>
+          )}
+          <Button
+            type="submit"
+            variant="primary"
+            loading={busy}
+            disabled={!label.trim()}
+          >
+            新建并登录
+          </Button>
+        </form>
+      </Modal>
+      <ConfirmDialog
+        open={!!ask}
+        onCancel={() => !busy && setAsk(null)}
+        onConfirm={() => void confirm()}
+        loading={busy}
+        title={
+          ask?.action === "close"
+            ? "关闭 Codex 桌面端？"
+            : ask?.action === "archive"
+              ? `移除 ${ask.label}？`
+              : `${ask?.action === "switch" ? "切换到" : "打开"} ${ask?.label ?? ""}？`
+        }
+        confirmLabel={
+          ask?.action === "close"
+            ? "确认关闭"
+            : ask?.action === "archive"
+              ? "移除并保留归档"
+              : ask?.action === "switch"
+                ? "关闭桌面端并切换"
+                : "关闭旧窗口并打开"
+        }
+        danger
+      >
+        <p>
+          {ask?.action === "close"
+            ? "将关闭所有 Codex 桌面端窗口及其正在运行的任务，请先保存工作。账户槽位、登录资料和历史会话会保留。"
+            : ask?.action === "archive"
+              ? "槽位从列表移除，登录资料和会话保留在本机归档中。"
+              : "会先关闭所有 Codex 桌面端窗口及其正在运行的任务。请确认当前工作已经保存，再继续。"}
+        </p>
+        {error && (
+          <p role="alert" className="notice notice--danger mt-2">
+            {error}
+          </p>
+        )}
+      </ConfirmDialog>
+    </>
+  );
+}
+
+function CodexUsageCard({
+  slot,
+  running,
+}: {
+  slot?: CodexSlot;
+  running: boolean;
+}) {
+  const [details, setDetails] = useState(false);
+  const [days, setDays] = useState(1);
+  const [revision, setRevision] = useState(0);
+  const [data, setData] = useState<CodexUsage | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    let pending = false;
+    setData(null);
+    setError("");
+    if (!slot) return;
+    const load = async () => {
+      if (pending) return;
+      pending = true;
+      setBusy(true);
+      try {
+        const next = await codexApi.usage(slot.id, days);
+        if (!cancelled) {
+          setData(next);
+          setError("");
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        pending = false;
+        if (!cancelled) setBusy(false);
+      }
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [slot?.id, days, revision]);
+  return (
+    <Card
+      className="account-usage"
+      title={
+        <>
+          <Gauge size={14} />
+          {slot ? `${slot.label} 的用量` : "当前账户的用量"}
+        </>
+      }
+    >
+      <p className="notice usage-identity">
+        {running ? "当前启动账户" : "所选槽位历史 · 未检测到运行"}
+      </p>
+      <div className="usage-ranges">
+        {(
+          [
+            [1, "今天"],
+            [7, "7 天"],
+            [0, "全部"],
+          ] as const
+        ).map(([d, n]) => (
+          <Button
+            key={d}
+            size="sm"
+            variant={days === d ? "primary" : "default"}
+            onClick={() => setDays(d)}
+          >
+            {n}
+          </Button>
+        ))}
+        <Button
+          size="sm"
+          aria-label="刷新 Codex 用量"
+          icon={<RefreshCw size={12} />}
+          loading={busy}
+          onClick={() => setRevision((n) => n + 1)}
+        />
+      </div>
+      {error && (
+        <p role="alert" className="notice notice--danger">
+          {error}
+        </p>
+      )}
+      <div className="ustats">
+        {[
+          ["输入", data?.input],
+          ["输出", data?.output],
+          ["缓存读取", data?.cached],
+          ["合计", data?.total],
+        ].map(([name, n]) => (
+          <div key={String(name)} className="ustat">
+            <span className="ustat-name">{name}</span>
+            <span className="ustat-value">
+              {typeof n === "number" ? short(n) : "—"}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="usage-footer">
+        <span className="notice">
+          {data && (data.files_failed > 0 || data.incomplete > 0)
+            ? "统计不完整"
+            : "本机记录 · 每分钟刷新"}
+        </span>
+        <Button size="sm" variant="ghost" onClick={() => setDetails(true)}>
+          统计说明
+        </Button>
+      </div>
+      <Modal
+        open={details}
+        onClose={() => setDetails(false)}
+        title="Codex 用量明细"
+      >
+        <p className="notice mt-2">
+          {data
+            ? `${data.sessions} 个会话 · ${data.checked_at} 更新`
+            : "登录并使用该槽位后显示用量"}{" "}
+          · 每分钟刷新
+        </p>
+        <p className="notice mt-1">
+          仅统计该槽位的本机会话；缓存已包含在输入中。订阅剩余额度以官方桌面端为准。
+        </p>
+        {!!data && (data.files_failed > 0 || data.incomplete > 0) && (
+          <p className="notice notice--warn mt-1">
+            统计不完整：{data.files_failed} 个文件未读，{data.incomplete}{" "}
+            条记录无法核算。
+          </p>
+        )}
+      </Modal>
     </Card>
   );
 }

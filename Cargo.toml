@@ -32,7 +32,7 @@ resolver = "2"
 members = ["src-tauri", "crates/*"]
 
 [workspace.package]
-version = "0.13.0"
+version = "0.22.6"
 edition = "2021"
 rust-version = "1.88"
 license = "GPL-3.0-or-later"
@@ -71,10 +71,24 @@ tokio = { version = "1", features = [
   "rt-multi-thread",
   "macros",
   "process",
+  # 本机路由要监听 127.0.0.1 —— `net` 给 TcpListener，`io-util` 给
+  # hyper-util 的 TokioIo。跟 windows 那组一样，features 在 workspace 里是并集。
+  "net",
+  "io-util",
 ] }
+# 本机路由（127.0.0.1 反代）。这几个**早就在依赖树里**了 —— reqwest 自己就用
+# hyper 1.x。这里只是把它们提成直接依赖并打开服务端那几个 feature，
+# 不引入任何新的第三方来源，所以 cargo-deny 的 sources / licenses 不受影响。
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+futures-util = { version = "0.3", default-features = false }
 reqwest = { version = "0.12", features = [
   "json",
   "rustls-tls",
+  # 本机路由要把上游的响应**流式**转回客户端。整包收完再转的话，
+  # SSE 会一直卡到最后一个 token 才吐出来，而且首字延迟根本量不到。
+  "stream",
 ], default-features = false }
 ts-rs = { version = "11", features = ["serde-compat"] }
 sha2 = "0.10"

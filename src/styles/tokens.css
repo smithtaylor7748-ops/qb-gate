@@ -1,44 +1,74 @@
 /**
- * 设计令牌。
+ * 设计令牌。**颜色与主题只在这个文件里定义**，别的样式表只引用变量。
  *
- * 颜色部分从旧 `src/styles.css` 逐行搬过来，**一个 hex 都没有改**，
- * 包括 `prefers-color-scheme: light` 那一整段覆盖。跟随系统，不加手动开关。
+ * # 为什么只剩一套（D1，2026-09-14）
  *
- * 原来缺的四类（间距 / 字号 / 圆角 / 动效）在下面补齐 ——
- * 它们是替掉页面里九十来处内联 `style={{marginTop: 9}}` 的前提。
+ * 原来有两套色值：这里一套（从旧 `src/styles.css` 搬来，深色为底，
+ * `prefers-color-scheme: light` 覆盖浅色），`workspace.css` 顶上又一套
+ * （`data-theme` 手选）。手选「浅色 / 深色」时后者整套生效，看不出问题；
+ * **默认的「跟随系统」两边都不完整命中** —— `data-theme="system"` 哪个属性选择器
+ * 都不中：系统浅色时背景、正文、强调色来自 workspace，边框和状态色来自这里；
+ * 系统深色时几乎整套是这里的旧色。`test:ui` 的截图全在手选主题下拍，所以一直是绿的。
+ *
+ * 留哪套是使用者定的：workspace 那套。实测对比度（WCAG AA 小字要 ≥ 4.5）：
+ *
+ *   组合                        留下的这套 浅 / 深    旧的那套 浅 / 深
+ *   `--text-3` 压 `--surface`   5.01 / 6.11          3.64 / 3.43
+ *   `--surface` 压 `--accent`   4.93 / 6.40          3.90 / 4.49
+ *
+ * `--text-3` 就是侧栏 10px 提示字的颜色。中转站草图（V24）用的是旧的那套 ——
+ * 照草图做新页面时颜色一律引用这里的变量，**不要从草图里抄 hex**。
+ *
+ * # 三种状态，一个机制
+ *
+ *   跟随系统 + 系统深色   → `:root`
+ *   跟随系统 + 系统浅色   → 媒体查询那一块
+ *   手选浅色             → `:root[data-theme="light"]`
+ *   手选深色             → `:root`（媒体查询那块用 `:not([data-theme="dark"])` 让开）
+ *
+ * 浅色写了两遍：CSS 没法把「媒体查询成立」和「属性选择器成立」写成一个「或」。
+ * **两份必须一字不差** —— `scripts/ui-regression.mjs` 逐个令牌比对「跟随系统」
+ * 与手选主题，改了一份忘了另一份当场红。
+ *
+ * # 其余几类
+ *
+ * 间距 / 字号 / 圆角 / 动效在下面补齐 —— 它们是替掉页面里九十来处内联
+ * `style={{marginTop: 9}}` 的前提。
  *
  * 分两层写是有原因的：
- *   1. `:root` 里是**原始变量名**（`--bg` `--accent` …），媒体查询覆盖的是它们；
+ *   1. `:root` 里是**原始变量名**（`--bg` `--accent` …），主题覆盖的是它们；
  *   2. `@theme inline` 把 Tailwind 的颜色名映射到 `var(--bg)` 这类引用上。
  * `inline` 意味着 `bg-surface` 编译成 `background-color: var(--surface)` 而不是
- * 复制一份色值 —— 所以浅色覆盖对所有工具类同样生效，只需要写一遍。
+ * 复制一份色值 —— 所以主题切换对所有工具类同样生效，只需要写一遍。
  */
 
 :root {
-  --bg: #14110e;
-  --surface: #1c1916;
-  --surface-2: #232019;
-  --border: #322d26;
-  --border-strong: #453e34;
-  --text: #f0ece4;
-  --text-2: #a9a196;
-  --text-3: #756d62;
+  color-scheme: dark;
 
-  --accent: #c96442;
-  --accent-bg: #2a1a13;
-  --accent-border: #6b3a26;
+  --bg: #171410;
+  --surface: #211d18;
+  --surface-2: #29231d;
+  --border: #3c332a;
+  --border-strong: #5b4e40;
+  --text: #f0e9df;
+  --text-2: #c0b5a6;
+  --text-3: #a49b8e;
 
-  --ok: #6fbf73;
-  --ok-bg: #16240f;
-  --ok-border: #2f5225;
+  --accent: #e18a65;
+  --accent-bg: #38251b;
+  --accent-border: #72503a;
 
-  --warn: #e0a44a;
-  --warn-bg: #2a1f0e;
-  --warn-border: #5c4520;
+  --ok: #8bc18c;
+  --ok-bg: #1d2a1b;
+  --ok-border: #385631;
 
-  --danger: #e2645c;
-  --danger-bg: #2c1414;
-  --danger-border: #6b2b28;
+  --warn: #e4b269;
+  --warn-bg: #352817;
+  --warn-border: #68502e;
+
+  --danger: #ef9385;
+  --danger-bg: #381e1b;
+  --danger-border: #754036;
 
   --mono: ui-monospace, "Cascadia Mono", "Consolas", monospace;
 
@@ -53,33 +83,71 @@
   --duration-base: 200ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
-  /* 侧栏宽度，窄屏收成图标条时改这一个值。 */
-  --sidebar-w: 232px;
-  --sidebar-w-narrow: 56px;
+  /* 这里原来还有 `--sidebar-w: 232px` / `--sidebar-w-narrow: 56px`，注释写着
+     「窄屏收成图标条时改这一个值」。**没有任何地方引用它们**，真实侧栏是
+     workspace.css 里写死的 228px / 72px —— 照这条注释去改只会什么都不发生。删了。 */
 }
 
+/* 跟随系统，系统是浅色。与下面「手选浅色」那块必须一字不差。 */
 @media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f5f3ee;
-    --surface: #ffffff;
-    --surface-2: #faf8f4;
-    --border: #e2ddd3;
-    --border-strong: #cdc6b8;
-    --text: #23201b;
-    --text-2: #5f5850;
-    --text-3: #8d857a;
-    --accent-bg: #fbeee8;
-    --accent-border: #e5c2b2;
-    --ok: #3d7a41;
-    --ok-bg: #eef6ec;
-    --ok-border: #bcd9b8;
-    --warn: #8a5d12;
-    --warn-bg: #fbf1de;
-    --warn-border: #e3ce9e;
-    --danger: #a83a33;
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+
+    --bg: #f6f3ee;
+    --surface: #fffefa;
+    --surface-2: #f2eee7;
+    --border: #e3ddd2;
+    --border-strong: #c9beae;
+    --text: #302b25;
+    --text-2: #675d51;
+    --text-3: #786d60;
+
+    --accent: #b55232;
+    --accent-bg: #f9eae1;
+    --accent-border: #e7bdab;
+
+    --ok: #3b7247;
+    --ok-bg: #eef5ed;
+    --ok-border: #bad1b9;
+
+    --warn: #87570d;
+    --warn-bg: #fff1d7;
+    --warn-border: #dec596;
+
+    --danger: #ac3934;
     --danger-bg: #fbeceb;
     --danger-border: #e8bdb9;
   }
+}
+
+/* 手选浅色，不管系统是什么。与上面媒体查询那块必须一字不差。 */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f6f3ee;
+  --surface: #fffefa;
+  --surface-2: #f2eee7;
+  --border: #e3ddd2;
+  --border-strong: #c9beae;
+  --text: #302b25;
+  --text-2: #675d51;
+  --text-3: #786d60;
+
+  --accent: #b55232;
+  --accent-bg: #f9eae1;
+  --accent-border: #e7bdab;
+
+  --ok: #3b7247;
+  --ok-bg: #eef5ed;
+  --ok-border: #bad1b9;
+
+  --warn: #87570d;
+  --warn-bg: #fff1d7;
+  --warn-border: #dec596;
+
+  --danger: #ac3934;
+  --danger-bg: #fbeceb;
+  --danger-border: #e8bdb9;
 }
 
 @theme inline {

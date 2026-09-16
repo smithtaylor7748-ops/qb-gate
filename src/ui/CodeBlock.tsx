@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from 'react';
-import { Check, Copy } from 'lucide-react';
-import Button from './Button';
+import { useState, type ReactNode } from "react";
+import { Check, Copy } from "lucide-react";
+import Button from "./Button";
 
 interface Props {
   text: string;
@@ -38,7 +38,7 @@ export default function CodeBlock({
     }
   }
 
-  const lines = text.split('\n');
+  const lines = text.split("\n");
 
   return (
     <div className="codeblock">
@@ -58,11 +58,14 @@ export default function CodeBlock({
               )
             }
           >
-            {copied ? '已复制' : '复制'}
+            {copied ? "已复制" : "复制"}
           </Button>
         </span>
       </div>
-      <pre className="codeblock-body" style={maxHeight ? { maxHeight } : undefined}>
+      <pre
+        className="codeblock-body"
+        style={maxHeight ? { maxHeight } : undefined}
+      >
         {lines.map((line, i) => (
           <div className="codeblock-line" key={i}>
             {showLineNumbers && (
@@ -70,7 +73,7 @@ export default function CodeBlock({
                 {i + 1}
               </span>
             )}
-            <span>{line || ' '}</span>
+            <span>{line || " "}</span>
           </div>
         ))}
       </pre>

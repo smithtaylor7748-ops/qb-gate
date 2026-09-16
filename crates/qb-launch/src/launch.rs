@@ -35,7 +35,7 @@ impl LaunchTarget {
         match self {
             LaunchTarget::ClaudeCode => "Claude Code",
             LaunchTarget::ClaudeDesktop => "Claude 桌面端",
-            LaunchTarget::Codex => "Codex",
+            LaunchTarget::Codex => "Codex 桌面端",
         }
     }
 
@@ -54,10 +54,8 @@ impl LaunchTarget {
     /// 「等等看」的实际含义就是让它在无法核实的网络上继续跑。
     pub fn watch_mode(self) -> WatchMode {
         match self {
-            // Codex 跟 Claude Code 一样是控制台程序，冻得住，
-            // 使用 Cli 档；当前严格规则下未知 IP 同样立即关闭。
-            LaunchTarget::ClaudeCode | LaunchTarget::Codex => WatchMode::Cli,
-            LaunchTarget::ClaudeDesktop => WatchMode::Desktop,
+            LaunchTarget::ClaudeCode => WatchMode::Cli,
+            LaunchTarget::ClaudeDesktop | LaunchTarget::Codex => WatchMode::Desktop,
         }
     }
 
@@ -183,10 +181,12 @@ pub fn resolve(target: LaunchTarget) -> Result<PathBuf> {
         }),
         // 与检测共用同一份候选路径表，免得「检测到的那份」和「启动的那份」
         // 不是同一个。
-        LaunchTarget::Codex => crate::install::detect::codex_candidates()
-            .into_iter()
-            .find(|p| p.is_file())
-            .ok_or_else(|| GateError::Other("找不到 Codex，请先在「环境与安装」里装好。".into())),
+        LaunchTarget::Codex => crate::install::codex_desktop::detect()?
+            .executable
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                GateError::Other("未找到 Codex 桌面端，请先安装 Microsoft Store 桌面应用。".into())
+            }),
     }
 }
 

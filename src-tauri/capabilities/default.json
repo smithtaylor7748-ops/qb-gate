@@ -6,7 +6,10 @@
   "permissions": [
     "core:default",
     "core:event:default",
-    "opener:allow-open-url",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }, { "url": "http://127.0.0.1:*" }]
+    },
     "dialog:allow-open"
   ]
 }

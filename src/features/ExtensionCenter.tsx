@@ -483,6 +483,8 @@ function ExtensionDetail({ manifest: m }: { manifest: ExtensionManifest }) {
                           applied_revision: null,
                           config_dir: "",
                           config_state: "saved",
+                          // 模板建的是直连那家服务商的环境，不走本机路由。
+                          via_router: false,
                         }),
                       "独立环境已创建",
                     )

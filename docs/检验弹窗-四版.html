@@ -1,0 +1,525 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>站点检验弹窗 · 四版</title>
+<!--
+  站点检验弹窗的四个方案，给使用者挑。
+
+  ⛔ 颜色一律来自真的 tokens.css（下面那行 link）——
+  一个 hex 都不在这个文件里，也就不可能像 V24 草图那样把旧配色抄进来。
+  选定之后往 StationAudit.tsx 搬时，样式是照抄，不用重新配色。
+
+  数据形状照 generated/ 里的真类型：
+    AuditRound  at_ms / checks[6] / trust 0-100 / mult / evidence / rates[4]
+    AuditCheck  kind / claimed / previous / measured / verdict
+    CategoryVerdict  category / station_ratio / station_price / basis_kind / official / basis
+
+  ⛔ 这张表**不下判定**。它曾经有 real_multiplier 和 advertised 两栏，
+  写着「真实倍率 = 站点单价 × 标称倍率 ÷ 官方单价」—— 而真实调用路径上
+  官方价会被约掉，算出来的恒等于站点自己公布的两个数相乘。站点说它便宜，
+  表就说它便宜，而 20 条单测全绿。0.16.0 把那两栏整个删了。
+
+  两套口径各占一列，**互不换算**：
+    New API 系  → station_ratio（相对它自己配额基准的倍率）
+    sub2api 系  → station_price（绝对单价，美元／百万 token）
+  使用者原话：「newapi 是可以这样算，但 sub2api 不是，
+  sub2api 的单价就是官方单价。」
+
+  「这家到底收了几倍」只有 AuditRound.mult 答得了 ——
+  分子是账单实扣、分母是同一批 token 按官方价算出来的成本，
+  两头都不是站点公布的数。
+
+  两个样例是**故意都给 29 分**的：
+    证据不足  → 该再跑一轮
+    证据充分  → 该换站
+  可信度一样、该做的事完全相反 —— 这正是 evidence 必须跟 trust 一起显示的理由。
+-->
+<link rel="stylesheet" href="/src/styles/tokens.css" />
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Arial, sans-serif;
+  }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 18px 16px 60px; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .lede { font-size: 11.5px; color: var(--text-3); margin: 0 0 14px; line-height: 1.7; }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .seg button { border: 0; background: transparent; padding: 6px 12px; font-size: 11.5px; color: var(--text-2); border-left: 1px solid var(--border-strong); }
+  .seg button:first-child { border-left: 0; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--surface); font-weight: 500; }
+  .seg small { display: block; font-size: 9px; opacity: .8; font-weight: 400; }
+
+  /* 弹窗外形，照 ui/Modal 的 size="wide" */
+  .dlg { width: 100%; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface); overflow: hidden; }
+  .dlg-hd { display: flex; align-items: center; gap: 9px; padding: 11px 15px; border-bottom: 1px solid var(--border); }
+  .dlg-hd h2 { margin: 0; font-size: 14px; font-weight: 500; }
+  .dlg-bd { padding: 14px 15px; }
+  .tile { width: 26px; height: 26px; border-radius: 7px; background: var(--accent-bg); color: var(--accent); display: grid; place-items: center; font-size: 14px; flex: none; }
+  .grow { flex: 1; }
+
+  .pill { font-size: 10px; border-radius: 5px; padding: 1px 7px; border: 1px solid transparent; white-space: nowrap; }
+  .p-ok { background: var(--ok-bg); color: var(--ok); border-color: var(--ok-border); }
+  .p-warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-border); }
+  .p-bad { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
+  .p-neutral { background: var(--surface-2); color: var(--text-2); border-color: var(--border); }
+  .p-acc { background: var(--accent-bg); color: var(--accent); border-color: var(--accent-border); }
+  .p-unk { color: var(--text-3); border: 1px dashed var(--border-strong); }
+  .dim { color: var(--text-3); }
+  .num { font-variant-numeric: tabular-nums; }
+  .strike { text-decoration: line-through; color: var(--text-3); }
+  .btn { border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-2); border-radius: 8px; padding: 5px 11px; font-size: 11.5px; }
+  .btn:hover { background: var(--surface-2); color: var(--text); }
+  .btn-p { background: var(--accent); border-color: var(--accent); color: var(--surface); font-weight: 500; }
+
+  /* 可信度环 */
+  .ring { position: relative; width: 84px; height: 84px; flex: none; }
+  .ring svg { transform: rotate(-90deg); display: block; }
+  .ring .mid { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; line-height: 1.1; }
+  .ring .mid b { font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .ring .mid span { font-size: 9px; color: var(--text-3); display: block; }
+
+  .note { font-size: 10.5px; color: var(--text-3); line-height: 1.65; margin: 8px 0 0; }
+  .tw { border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; }
+  th, td { text-align: left; padding: 6px 11px; font-size: 11.5px; border-top: 1px solid var(--border); }
+  thead th { border-top: 0; background: var(--surface-2); font-size: 10px; font-weight: 400; color: var(--text-3); }
+  td.r, th.r { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.bad td { background: var(--danger-bg); }
+  .sect { margin: 18px 0 9px; font-size: 11.5px; color: var(--text-2); font-weight: 500; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
+
+  /* 条子 */
+  .barrow { display: grid; grid-template-columns: 96px 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); }
+  .barrow:first-of-type { border-top: 0; }
+  .track { position: relative; height: 22px; background: var(--surface-2); border-radius: 5px; overflow: hidden; }
+  .track i { position: absolute; top: 0; bottom: 0; left: 0; display: block; border-radius: 5px; }
+  .track .claimed { background: var(--border-strong); }
+  .track .measured { background: var(--accent); opacity: .85; height: 10px; top: 6px; }
+  .track .over { background: var(--danger); opacity: .85; height: 10px; top: 6px; }
+  .tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--text-3); opacity: .5; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }
+  .card { border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; background: var(--surface); }
+  .card.bad { border-color: var(--danger-border); background: var(--danger-bg); }
+  .card.unk { border-style: dashed; }
+  .card .k { font-size: 9.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; display: block; }
+  .card .v { font-size: 15px; font-variant-numeric: tabular-nums; }
+  .card .s { font-size: 10px; color: var(--text-3); display: block; margin-top: 2px; }
+
+  .rail { display: flex; gap: 12px; flex-wrap: wrap; }
+  .rail .left { flex: 0 0 158px; display: flex; flex-direction: column; gap: 5px; }
+  .rail .right { flex: 1 1 320px; min-width: 0; }
+  .rd { text-align: left; border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 7px 9px; }
+  .rd[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-bg); }
+  .rd b { font-size: 12px; font-weight: 500; display: block; }
+  .rd small { font-size: 9.5px; color: var(--text-3); }
+
+  .delta { display: flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
+  .delta .from { color: var(--text-3); font-size: 11px; }
+  .delta .to { font-size: 13px; }
+  .arrow { color: var(--text-3); font-size: 10px; }
+
+  .lead { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 12px 14px; border-radius: 10px; margin-bottom: 12px; }
+  .lead.bad { background: var(--danger-bg); border: 1px solid var(--danger-border); }
+  .lead.unk { background: var(--surface-2); border: 1px dashed var(--border-strong); }
+  .lead h3 { margin: 0 0 3px; font-size: 15px; font-weight: 600; }
+  .lead p { margin: 0; font-size: 11px; color: var(--text-2); line-height: 1.6; max-width: 52ch; }
+  details { border: 1px solid var(--border); border-radius: 8px; padding: 8px 11px; margin-top: 8px; background: var(--surface); }
+  summary { cursor: pointer; font-size: 11.5px; color: var(--text-2); list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: "▸ "; color: var(--text-3); }
+  details[open] summary::before { content: "▾ "; }
+</style>
+
+<div class="wrap">
+  <h1>站点检验弹窗 · 四版</h1>
+  <p class="lede">
+    四种<b>读法</b>，不是四种配色 —— 配色都来自真的 <code>tokens.css</code>。<br />
+    两个样例<b>可信度都是 29</b>：一个证据不足（该再跑一轮），一个证据充分（该换站）。
+    切着看，能看出哪一版把这个区别说清楚了。
+  </p>
+
+  <div class="bar">
+    <div class="seg" id="vtabs" role="group" aria-label="方案"></div>
+    <span class="grow"></span>
+    <div class="seg" id="ctabs" role="group" aria-label="样例"></div>
+  </div>
+
+  <div id="stage"></div>
+</div>
+
+<script>
+/* ---------------------------------------------------------------- 数据 */
+const KIND = {
+  "rate": "倍率", "cache-hit": "缓存命中", "context-window": "上下文窗口",
+  "max-output": "最大输出", "first-token": "首字延迟", "success-rate": "成功率",
+};
+const CAT = { "input": "输入", "cache-read": "缓存读", "cache-write": "缓存写", "output": "输出" };
+const EV = {
+  sufficient: ["证据充分", "六项都测到了 —— 这个分数下得了结论。低分就是这站有问题。", "p-bad"],
+  partial: ["证据部分", "测到了一半 —— 结论要弱一档。", "p-warn"],
+  insufficient: ["证据不足", "没测到的太多 —— 该再跑一轮，不是该换站。", "p-unk"],
+  conflict: ["证据打架", "几项互相矛盾 —— 先查链路，别急着下结论。", "p-warn"],
+};
+
+const CASES = {
+  thin: {
+    label: "证据不足", hint: "只测到两项",
+    route: "摸鱼 API · DS 低价组", at: "09-14 21:33",
+    trust: 29, evidence: "insufficient", mult: 1.30,
+    checks: [
+      { kind: "rate", claimed: 0.12, previous: null, measured: 0.156, verdict: "differs" },
+      { kind: "cache-hit", claimed: null, previous: null, measured: 0.49, verdict: "unmeasured" },
+      { kind: "context-window", claimed: null, previous: null, measured: null, verdict: "unmeasured" },
+      { kind: "max-output", claimed: null, previous: null, measured: null, verdict: "unmeasured" },
+      { kind: "first-token", claimed: null, previous: null, measured: 1550, verdict: "unmeasured" },
+      { kind: "success-rate", claimed: null, previous: null, measured: null, verdict: "unmeasured" },
+    ],
+    rates: [
+      // New API 系：公布的是**倍率**，绝对单价那一格是空的。
+      // ⛔ 不拿倍率乘官方价凑一个出来 —— 那正是当年那条静默失效的入口。
+      // 这家没公布输出倍率，那三格如实留空：不知道 ≠ 没翻倍。
+      { category: "input", station_ratio: 0.12, station_price: null, basis_kind: "ratios", official: 3.0, basis: "published" },
+      { category: "cache-read", station_ratio: null, station_price: null, basis_kind: "ratios", official: 0.30, basis: "derived" },
+      { category: "cache-write", station_ratio: null, station_price: null, basis_kind: "ratios", official: 3.75, basis: "derived" },
+      { category: "output", station_ratio: null, station_price: null, basis_kind: "ratios", official: 15.0, basis: "published" },
+    ],
+    rounds: [{ at: "09-14 21:33", trust: 29, evidence: "insufficient" }],
+  },
+  thick: {
+    label: "证据充分", hint: "六项全测到",
+    route: "摸鱼 API · 低价组", at: "09-14 22:10",
+    trust: 29, evidence: "sufficient", mult: 1.32,
+    checks: [
+      { kind: "rate", claimed: 0.20, previous: 0.24, measured: 0.264, verdict: "differs" },
+      { kind: "cache-hit", claimed: 0.90, previous: 0.62, measured: 0.61, verdict: "differs" },
+      { kind: "context-window", claimed: 200000, previous: 128000, measured: 128000, verdict: "differs" },
+      { kind: "max-output", claimed: 64000, previous: 8192, measured: 8192, verdict: "differs" },
+      { kind: "first-token", claimed: null, previous: 1900, measured: 1840, verdict: "matches" },
+      { kind: "success-rate", claimed: 0.99, previous: 0.982, measured: 0.982, verdict: "matches" },
+    ],
+    rates: [
+      // sub2api 系：公布的是**绝对单价**，倍率那一格是空的。
+      // 输出那一行是这家的问题所在：前三类都打两折，输出却按官方原价收 ——
+      // 只报一个总倍率的话，这件事会被整个藏掉。
+      { category: "input", station_ratio: null, station_price: 0.60, basis_kind: "absolute-prices", official: 3.0, basis: "published" },
+      { category: "cache-read", station_ratio: null, station_price: 0.06, basis_kind: "absolute-prices", official: 0.30, basis: "derived" },
+      { category: "cache-write", station_ratio: null, station_price: 0.75, basis_kind: "absolute-prices", official: 3.75, basis: "derived" },
+      { category: "output", station_ratio: null, station_price: 15.0, basis_kind: "absolute-prices", official: 15.0, basis: "published" },
+    ],
+    rounds: [
+      { at: "09-14 22:10", trust: 29, evidence: "sufficient" },
+      { at: "09-13 22:10", trust: 41, evidence: "partial" },
+      { at: "09-11 08:02", trust: 66, evidence: "partial" },
+    ],
+  },
+};
+
+/* ---------------------------------------------------------------- 工具 */
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const DASH = '<span class="dim">—</span>';
+
+/** ⛔ null 一律「—」，绝不写 0 —— 0 是断言，没测到不是。 */
+function fmt(v, kind) {
+  if (v == null) return DASH;
+  switch (kind) {
+    case "rate": return "×" + v.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+    case "cache-hit":
+    case "success-rate": return (v * 100).toFixed(1) + "%";
+    case "context-window":
+    case "max-output": return v >= 1000 ? (v / 1000).toFixed(v % 1000 ? 1 : 0) + "K" : String(v);
+    case "first-token": return (v / 1000).toFixed(2) + "s";
+    default: return String(v);
+  }
+}
+/** 上一轮没有时写「首次检验」—— ⛔ 不画成 0。 */
+const prev = (c) => (c.previous == null ? '<span class="dim">首次检验</span>' : fmt(c.previous, c.kind));
+const vpill = (v) =>
+  v === "differs" ? '<span class="pill p-bad">对不上</span>'
+  : v === "matches" ? '<span class="pill p-ok">相符</span>'
+  : '<span class="pill p-unk">没测到</span>';
+
+function ring(trust, tone) {
+  const R = 36, C = 2 * Math.PI * R;
+  const on = (trust / 100) * C;
+  return `<div class="ring">
+    <svg width="84" height="84" viewBox="0 0 84 84">
+      <circle cx="42" cy="42" r="${R}" fill="none" stroke="var(--surface-2)" stroke-width="8"></circle>
+      <circle cx="42" cy="42" r="${R}" fill="none" stroke="var(--${tone})" stroke-width="8"
+        stroke-linecap="round" stroke-dasharray="${on.toFixed(1)} ${(C - on).toFixed(1)}"></circle>
+    </svg>
+    <span class="mid"><b>${trust}</b><span>可信度</span></span>
+  </div>`;
+}
+
+/**
+ * 站点公布的四类价 · 对照官方价。**只做展示，不下判定。**
+ *
+ * ⛔ 两套口径各占一列，谁填了显示谁，**互不换算**。换算要除以官方价，
+ * 而那正是当年「官方价被约掉」那条静默失效的入口。
+ *
+ * ⛔「倍率不是一个数」—— 四类分开看，只报一个总倍率会把「输出翻五倍」藏掉。
+ */
+const BASIS_KIND = {
+  ratios: { head: "站点倍率", pill: "倍率口径", note: "这家公布的是相对它自己配额基准的倍率 —— 这一列是它自己说的，不是量出来的。" },
+  "absolute-prices": { head: "站点单价", pill: "绝对单价口径", note: "这家公布的是绝对单价（美元／百万 token），折扣在分组上。右边那一列是它除以官方单价 —— 官方价真的参与了这个数。" },
+  "per-request": { head: "站点单价", pill: "按次计费", note: "这家按次计费，四类 token 的口径整个不适用 —— 不是「没公布」。" },
+  unknown: { head: "站点价", pill: "没公布", note: "这家没公布价目表，或者表里没有这个模型。⛔ 空着不等于免费，也不等于倍率 1.0 —— 是不知道。" },
+};
+
+function rateTable(d) {
+  const kind = d.rates[0] ? d.rates[0].basis_kind : "unknown";
+  const b = BASIS_KIND[kind] || BASIS_KIND.unknown;
+  const abs = kind === "absolute-prices";
+  const rows = d.rates.map((r) => {
+    const mine = abs ? r.station_price : r.station_ratio;
+    const rel = abs && r.station_price != null && r.official ? r.station_price / r.official : null;
+    // 这一类比别的贵得多才标红。⛔ 标红的依据是**同一家自己四类之间的落差**,
+    // 不是跟别家比 —— 跟别家比要先知道别家的口径,而那正是两套不可比的地方。
+    const worst = abs
+      ? d.rates.map((x) => (x.station_price != null && x.official ? x.station_price / x.official : null))
+      : d.rates.map((x) => x.station_ratio);
+    const lo = Math.min(...worst.filter((v) => v != null));
+    const me = abs ? rel : r.station_ratio;
+    const fold = me != null && isFinite(lo) && me > lo * 1.5;
+    return `<tr class="${fold ? "bad" : ""}">
+      <td>${CAT[r.category]}</td>
+      <td class="r">${mine == null ? DASH : (abs ? "$" : "×") + (+mine.toFixed(4))}</td>
+      <td class="r">${r.official == null ? DASH : "$" + r.official}</td>
+      <td class="r">${abs
+        ? (rel == null ? DASH : "<b>×" + (+rel.toFixed(2)) + "</b>")
+        : (r.basis == null ? DASH : r.basis === "published" ? '<span class="pill p-ok">官方标过</span>' : '<span class="pill p-warn">推出来的</span>')}</td>
+    </tr>`;
+  }).join("");
+  return `<div class="tw"><table>
+    <thead><tr><th>类别</th><th class="r">${b.head}</th><th class="r">官方单价</th><th class="r">${abs ? "相对官方" : "官方价来源"}</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>
+    <p class="note"><span class="pill p-neutral">${b.pill}</span> ${b.note}
+    四类分开看 —— 只报一个总倍率，「输入便宜、输出翻五倍」这种结构会被整个藏掉，
+    而真实用量里输出往往才是花钱的大头。
+    「这家到底收了几倍」不在这张表上，在上面那个<b>实测倍率</b>里：
+    分子是账单实扣、分母是同一批 token 按官方价算出来的成本，两头都不是站点公布的数。</p>`;
+}
+
+function head(title) {
+  return `<div class="dlg-hd"><span class="tile">🔬</span><h2>${esc(title)}</h2>
+    <span class="grow"></span><button class="btn">重新检验</button>
+    <button class="btn">✕</button></div>`;
+}
+
+/* ---------------------------------------------------------------- A · 判决书 */
+function viewA(d) {
+  const ev = EV[d.evidence];
+  const bad = d.checks.filter((c) => c.verdict === "differs");
+  const ok = d.checks.filter((c) => c.verdict === "matches");
+  const unk = d.checks.filter((c) => c.verdict === "unmeasured");
+  const conclusive = d.evidence === "sufficient";
+  const lead = conclusive
+    ? { cls: "bad", h: `这站有问题 —— ${bad.length} 项对不上`, p: "六项都测到了，所以这个分数下得了结论。真实倍率已经按实测值参与排序和底线筛选；要不要继续用它是你的决定，面板不替你拉黑。" }
+    : { cls: "unk", h: "还不能下结论 —— 证据不足", p: `六项里只测到 ${6 - unk.length} 项。分数低是因为没测到的太多，不是因为这站被查出什么。该做的是再跑一轮，不是换站。` };
+
+  return `${head("站点检验 · " + d.route)}<div class="dlg-bd">
+    <div class="lead ${lead.cls}">
+      ${ring(d.trust, conclusive ? "danger" : "text-3")}
+      <div>
+        <h3>${lead.h}</h3>
+        <p>${lead.p}</p>
+        <div style="margin-top:7px;display:flex;gap:6px;flex-wrap:wrap">
+          <span class="pill ${ev[2]}">${ev[0]}</span>
+          <span class="pill p-acc">实扣是标称的 ×${d.mult}</span>
+          <span class="pill p-unk">${d.at}</span>
+        </div>
+      </div>
+    </div>
+
+    ${bad.length ? `<div class="sect">对不上的 ${bad.length} 项</div>
+    <div class="cards">${bad.map((c) => `
+      <div class="card bad">
+        <span class="k">${KIND[c.kind]}</span>
+        <div class="delta">
+          <span class="from strike">${fmt(c.claimed, c.kind)}</span>
+          <span class="arrow">→</span>
+          <span class="to"><b>${fmt(c.measured, c.kind)}</b></span>
+        </div>
+        <span class="s">上次 ${prev(c)}</span>
+      </div>`).join("")}</div>` : ""}
+
+    ${ok.length || unk.length ? `<details>
+      <summary>其余 ${ok.length + unk.length} 项（${ok.length} 项相符、${unk.length} 项没测到）</summary>
+      <div class="cards">${[...ok, ...unk].map((c) => `
+        <div class="card ${c.verdict === "unmeasured" ? "unk" : ""}">
+          <span class="k">${KIND[c.kind]} ${vpill(c.verdict)}</span>
+          <span class="v">${fmt(c.measured, c.kind)}</span>
+          <span class="s">标称 ${fmt(c.claimed, c.kind)} · 上次 ${prev(c)}</span>
+        </div>`).join("")}</div>
+      <p class="note">没测到的不算「对不上」—— 它只压低可信度。</p>
+    </details>` : ""}
+
+    <div class="sect">四类价目对照</div>
+    ${rateTable(d)}
+  </div>`;
+}
+
+/* ---------------------------------------------------------------- B · 证据表 */
+function viewB(d) {
+  const ev = EV[d.evidence];
+  const rows = d.checks.map((c) => {
+    const diff = c.claimed != null && c.measured != null && c.claimed !== 0
+      ? ((c.measured - c.claimed) / c.claimed) * 100 : null;
+    return `<tr class="${c.verdict === "differs" ? "bad" : ""}">
+      <td>${KIND[c.kind]}</td>
+      <td class="r">${fmt(c.claimed, c.kind)}</td>
+      <td class="r">${prev(c)}</td>
+      <td class="r"><b>${fmt(c.measured, c.kind)}</b></td>
+      <td class="r">${diff == null ? DASH : (diff > 0 ? "+" : "") + diff.toFixed(0) + "%"}</td>
+      <td>${vpill(c.verdict)}</td>
+    </tr>`;
+  }).join("");
+
+  return `${head("站点检验 · " + d.route)}<div class="dlg-bd">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:9px 12px;background:var(--surface-2);border-radius:9px;margin-bottom:12px">
+      <span style="font-size:22px;font-weight:500" class="num">${d.trust}</span>
+      <span style="font-size:10px;color:var(--text-3)">可信度<br>满分 100</span>
+      <span style="width:1px;height:26px;background:var(--border)"></span>
+      <span><span class="pill ${ev[2]}">${ev[0]}</span>
+        <span style="font-size:10.5px;color:var(--text-3);margin-left:6px">${ev[1]}</span></span>
+      <span class="grow"></span>
+      <span class="pill p-acc">实扣 ×${d.mult}</span>
+      <span class="pill p-unk">${d.at}</span>
+    </div>
+
+    <div class="sect">六项证据</div>
+    <div class="tw"><table>
+      <thead><tr><th>项目</th><th class="r">标称</th><th class="r">上次</th><th class="r">实测</th><th class="r">差</th><th>判定</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <p class="note">可信度 = 相符的那几项 ÷ <b>全部六项</b>，分母不是「测到的那几项」——
+    所以没测到会压低分数。这是故意的：测得少本来就不该给高分。</p>
+
+    <div class="sect">四类价目对照</div>
+    ${rateTable(d)}
+  </div>`;
+}
+
+/* ---------------------------------------------------------------- C · 对照条 */
+function viewC(d) {
+  const ev = EV[d.evidence];
+  const rows = d.checks.map((c) => {
+    if (c.claimed == null && c.measured == null) {
+      return `<div class="barrow">
+        <span style="font-size:11.5px">${KIND[c.kind]}</span>
+        <span class="dim" style="font-size:10.5px">这一轮没量到 —— 不画条子，画了就是编一个数</span>
+        <span>${vpill(c.verdict)}</span></div>`;
+    }
+    const top = Math.max(c.claimed ?? 0, c.measured ?? 0) * 1.15 || 1;
+    const cw = ((c.claimed ?? 0) / top) * 100;
+    const mw = ((c.measured ?? 0) / top) * 100;
+    const over = c.claimed != null && c.measured != null && c.measured > c.claimed * 1.05;
+    return `<div class="barrow">
+      <span style="font-size:11.5px">${KIND[c.kind]}<br><span class="dim" style="font-size:9.5px">上次 ${prev(c)}</span></span>
+      <span class="track">
+        ${c.claimed == null ? "" : `<i class="claimed" style="width:${cw.toFixed(1)}%"></i>`}
+        ${c.measured == null ? "" : `<i class="${over ? "over" : "measured"}" style="width:${mw.toFixed(1)}%"></i>`}
+        ${c.claimed == null ? "" : `<span class="tick" style="left:${cw.toFixed(1)}%"></span>`}
+      </span>
+      <span style="min-width:132px;text-align:right">
+        <span class="num" style="font-size:12px">${fmt(c.measured, c.kind)}</span>
+        <span class="dim num" style="font-size:10px"> / 标称 ${fmt(c.claimed, c.kind)}</span><br>
+        ${vpill(c.verdict)}
+      </span></div>`;
+  }).join("");
+
+  return `${head("站点检验 · " + d.route)}<div class="dlg-bd">
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      ${ring(d.trust, d.evidence === "sufficient" ? "danger" : "text-3")}
+      <div style="flex:1;min-width:200px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px">
+          <span class="pill ${ev[2]}">${ev[0]}</span>
+          <span class="pill p-acc">实扣 ×${d.mult}</span>
+          <span class="pill p-unk">${d.at}</span>
+        </div>
+        <p class="note" style="margin:0">${ev[1]}</p>
+      </div>
+    </div>
+
+    <div class="sect">粗条 = 站点标称，细条 = 这一轮实测。细条越过竖线就是收多了</div>
+    ${rows}
+
+    <div class="sect">四类价目对照</div>
+    ${rateTable(d)}
+  </div>`;
+}
+
+/* ---------------------------------------------------------------- D · 轮次对比 */
+function viewD(d) {
+  const ev = EV[d.evidence];
+  const rows = d.checks.map((c) => {
+    const moved = c.previous != null && c.measured != null && c.previous !== c.measured;
+    const worse = moved && ((c.kind === "rate" || c.kind === "first-token") ? c.measured > c.previous : c.measured < c.previous);
+    return `<tr class="${c.verdict === "differs" ? "bad" : ""}">
+      <td>${KIND[c.kind]}</td>
+      <td class="r dim">${fmt(c.claimed, c.kind)}</td>
+      <td class="r">
+        <span class="delta" style="justify-content:flex-end">
+          <span class="from">${prev(c)}</span>
+          <span class="arrow">${moved ? (worse ? "↘" : "↗") : "→"}</span>
+          <span class="to"><b>${fmt(c.measured, c.kind)}</b></span>
+        </span>
+      </td>
+      <td>${vpill(c.verdict)}</td>
+    </tr>`;
+  }).join("");
+
+  return `${head("站点检验 · " + d.route)}<div class="dlg-bd">
+    <div class="rail">
+      <div class="left">
+        <span class="k dim" style="font-size:9.5px;text-transform:uppercase;letter-spacing:.05em">检验历史</span>
+        ${d.rounds.map((r, i) => `<button class="rd" aria-pressed="${i === 0}">
+          <b>${r.at}</b>
+          <small>可信度 ${r.trust} · ${EV[r.evidence][0]}</small>
+        </button>`).join("")}
+        ${d.rounds.length === 1 ? '<p class="note">只有一轮 —— 看不出是越来越离谱还是在收敛。再跑一轮才有趋势。</p>' : ""}
+      </div>
+      <div class="right">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <span class="num" style="font-size:22px;font-weight:500">${d.trust}</span>
+          <span style="font-size:10px;color:var(--text-3)">可信度</span>
+          <span class="pill ${ev[2]}">${ev[0]}</span>
+          <span class="grow"></span>
+          <span class="pill p-acc">实扣 ×${d.mult}</span>
+        </div>
+        <p class="note" style="margin:0 0 10px">${ev[1]}</p>
+
+        <div class="tw"><table>
+          <thead><tr><th>项目</th><th class="r">标称</th><th class="r">上次 → 这次</th><th>判定</th></tr></thead>
+          <tbody>${rows}</tbody></table></div>
+        <p class="note">箭头只比「上次 → 这次」，跟标称无关 —— 一家越收越贵的站，
+        即使每一轮都「对不上」，方向本身也是情报。</p>
+
+        <div class="sect">四类价目对照</div>
+        ${rateTable(d)}
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---------------------------------------------------------------- 外壳 */
+const VIEWS = [
+  ["A", "判决书", "结论优先，对不上的摊开、其余折起来", viewA],
+  ["B", "证据表", "六项一张密表，标称/上次/实测/差一眼对齐", viewB],
+  ["C", "对照条", "标称与实测画成条子，超收是看出来的", viewC],
+  ["D", "轮次对比", "左边历史、右边上次→这次，看趋势", viewD],
+];
+let vi = 0, ci = "thin";
+
+function render() {
+  document.getElementById("vtabs").innerHTML = VIEWS.map((v, i) =>
+    `<button aria-pressed="${i === vi}" onclick="pickView(${i})">${v[0]} · ${v[1]}<small>${v[2]}</small></button>`).join("");
+  document.getElementById("ctabs").innerHTML = Object.entries(CASES).map(([k, c]) =>
+    `<button aria-pressed="${k === ci}" onclick="pickCase('${k}')">${c.label}<small>${c.hint}</small></button>`).join("");
+  document.getElementById("stage").innerHTML = `<div class="dlg">${VIEWS[vi][3](CASES[ci])}</div>`;
+}
+function pickView(i) { vi = i; render(); }
+function pickCase(k) { ci = k; render(); }
+render();
+</script>

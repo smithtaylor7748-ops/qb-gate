@@ -15,6 +15,7 @@ import { useState } from "react";
 import { Square } from "lucide-react";
 
 import { api, type KillReport } from "../../lib/api";
+import Tile from "./Tile";
 import { AFTER } from "../../lib/resources";
 import { invalidate } from "../../lib/store";
 import { endTask, resetTask, useTask } from "../../lib/tasks";
@@ -27,13 +28,42 @@ import {
   EVIDENCE_LABEL,
 } from "../../ui";
 
-export default function KillBar() {
+/**
+ * 0.20.0 加的第二种长相：**跟三个启动磁贴排在同一格网格里**。
+ *
+ * 使用者要「原来的这种按钮，四个，把一键关闭所有 claude 也放进去」——
+ * 起和收本来就是同一件事的两头，四块一格 2×2 也正好把右栏填满。
+ * 判定、确认框、收完重新上锁那一套一个字没动，换的只是这一个入口的外观。
+ *
+ * ⚠ 名字必须一直是「一键关闭所有 Claude」。它收的是**两边**的进程
+ * （判据是双重证据，桌面端、Claude Code 会话、酒馆桥接都在内），
+ * 不许因为这块贴现在长在 Claude 那一侧就改成「关闭本页」之类。
+ */
+export default function KillBar({
+  variant = "bar",
+}: {
+  variant?: "bar" | "tile";
+} = {}) {
   const toast = useToast();
   const previewTask = useTask("killswitch-preview");
+  /**
+   * ⛔ 执行那一步的任务态也要拿出来渲染。
+   *
+   * 0.20.0 之前只渲染 `previewTask`：扫描失败看得见，**真正的关闭失败
+   * 只进一个会自己消失的 toast**。而 `Tile.tsx` 的文件头写着
+   * 「失败则整贴变红并留住错误原文（toast 会自己消失，错误不能只靠它）」——
+   * 一键关闭恰恰是最不能只靠 toast 的那一个：没关掉的进程还连着旧账户，
+   * 而界面上看不出来。
+   */
+  const executeTask = useTask("killswitch-execute");
 
   const [busy, setBusy] = useState(false);
   const [kill, setKill] = useState<KillReport | null>(null);
   const [killing, setKilling] = useState(false);
+
+  // 两步合成一个对外的「忙 / 出错」：扫描和执行对使用者是同一件事。
+  const shown = executeTask.error ? executeTask : previewTask;
+  const working = busy || killing;
 
   async function previewKill() {
     setBusy(true);
@@ -75,22 +105,39 @@ export default function KillBar() {
 
   return (
     <>
-      <button
-        type="button"
-        className="killbar mt-1"
-        disabled={busy}
-        onClick={previewKill}
-      >
-        <Square size={13} aria-hidden="true" />
-        {busy ? "扫描进程中…" : "一键关闭所有 Claude"}
-      </button>
-      <p className="notice notice--danger text-center">
-        只收满足双重证据的进程，绝不按进程名杀。
-        <strong>会连这个面板正在服务的 Claude Code 会话一起收掉。</strong>
-        收完会重新上锁，<strong>但你原来的租约会还给你</strong>（出口 IP
-        仍合格的话）。
-        {previewTask.error && ` ${previewTask.error}`}
-      </p>
+      {variant === "tile" ? (
+        <Tile
+          icon={<Square size={18} />}
+          name="一键关闭所有 Claude"
+          note="只收双重证据的进程 · 连本会话一起收"
+          task={killing ? { ...executeTask, running: true } : shown}
+          disabled={working}
+          onClick={previewKill}
+        />
+      ) : (
+        <>
+          <button
+            type="button"
+            className="killbar mt-1"
+            disabled={working}
+            onClick={previewKill}
+          >
+            <Square size={13} aria-hidden="true" />
+            {busy
+              ? "扫描进程中…"
+              : killing
+                ? "正在关闭…"
+                : "一键关闭所有 Claude"}
+          </button>
+          <p className="notice notice--danger text-center">
+            只收满足双重证据的进程，绝不按进程名杀。
+            <strong>会连这个面板正在服务的 Claude Code 会话一起收掉。</strong>
+            收完会重新上锁，<strong>但你原来的租约会还给你</strong>（出口 IP
+            仍合格的话）。
+            {shown.error && ` ${shown.error}`}
+          </p>
+        </>
+      )}
 
       <ConfirmDialog
         open={kill !== null}

@@ -23,6 +23,11 @@ pub async fn probe_ip() -> Result<probe::ip::IpInfo> {
 }
 
 #[tauri::command]
+pub async fn probe_ip_lookup(ip: String) -> Result<probe::ip_lookup::IpLookupReport> {
+    probe::ip_lookup::lookup(&ip).await
+}
+
+#[tauri::command]
 pub async fn probe_purity() -> Result<probe::verdict::PanelVerdict> {
     let info = probe::ip::ip_info().await?;
     Ok(probe::verdict::evaluate(&info))

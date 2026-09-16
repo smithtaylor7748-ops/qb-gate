@@ -1,6 +1,6 @@
-import { openUrl } from '@tauri-apps/plugin-opener';
-import { ExternalLink as Icon } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { ExternalLink as Icon } from "lucide-react";
+import type { ReactNode } from "react";
 
 interface Props {
   href: string;
@@ -21,7 +21,12 @@ interface Props {
  * 这里 `href` 写真地址（右键复制、悬停预览都对），点击时拦下来交给
  * 系统浏览器打开 —— WebView 里直接导航会把面板自己顶掉。
  */
-export default function ExternalLink({ href, children, asButton = false, className = '' }: Props) {
+export default function ExternalLink({
+  href,
+  children,
+  asButton = false,
+  className = "",
+}: Props) {
   return (
     <a
       href={href}

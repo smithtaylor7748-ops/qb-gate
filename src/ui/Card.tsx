@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import type { Tone } from './labels';
+import type { ReactNode } from "react";
+import type { Tone } from "./labels";
 
 interface Props {
   /** 标题走 `<h2>`，卡片内部**不再出现标题标签** —— 旧代码卡中卡加 h2，
@@ -12,19 +12,21 @@ interface Props {
   children?: ReactNode;
   className?: string;
   /** 标题渲染成哪一级。默认 h2；嵌在别的区块里时给 h3。 */
-  as?: 'h2' | 'h3';
+  as?: "h2" | "h3";
 }
 
 export default function Card({
   title,
   icon,
   actions,
-  tone = 'default',
+  tone = "default",
   children,
-  className = '',
-  as: Heading = 'h2',
+  className = "",
+  as: Heading = "h2",
 }: Props) {
-  const cls = ['card', tone !== 'default' && `card--${tone}`, className].filter(Boolean).join(' ');
+  const cls = ["card", tone !== "default" && `card--${tone}`, className]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <section className={cls}>

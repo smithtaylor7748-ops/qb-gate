@@ -27,17 +27,23 @@
  *    记下的结论。
  */
 
-import type { GateStatus, DnsReport, Progress } from './api';
-import { describeLease } from './lease';
-import type { ScanResult } from './signals';
+import type {
+  GateStatus,
+  DnsReport,
+  EgressChecks,
+  Progress,
+  IpInfo,
+} from "./api";
+import { describeLease } from "./lease";
+import type { ScanResult } from "./signals";
 
-export type Band = 'good' | 'fair' | 'poor';
+export type Band = "good" | "fair" | "poor";
 
 export interface ScoreItem {
-  id: 'purity' | 'dns' | 'signals' | 'iplock';
+  id: "purity" | "dns" | "signals" | "iplock" | "egress";
   label: string;
   weight: number;
-  /** 得分，0..weight。`null` = 这一项还没检测过，不计入总分。 */
+  /** 得分，0..weight。`null` = 缺少检测或复核依据，不计入总分。 */
   earned: number | null;
   detail: string;
 }
@@ -51,50 +57,74 @@ export interface Score {
   total: number | null;
   band: Band;
   items: ScoreItem[];
+  /** 已取得自测读数的项数，与具备完整计分依据的项数分开。 */
+  measured: number;
   assessed: number;
   missing: number;
 }
 
-/** 权重表。加起来正好 100。 */
+/**
+ * 权重表。加起来正好 100。
+ *
+ * 0.20.0 加了第五项「出口一致性」，10 分从纯净度（35 → 30）和 DNS（25 → 20）
+ * 各拿 5 分。它给得最少是有理由的：五行里有三行是浏览器策略，只报告或只写
+ * 当前用户的注册表，跟前四项的份量不是一个量级；但它抓的是**面板显示的出口
+ * 不是请求实际走的那个**，那件事一旦成立，前面四项全都建立在一个错的 IP 上。
+ */
 const WEIGHTS = {
-  purity: 35,
-  dns: 25,
+  purity: 30,
+  dns: 20,
   signals: 20,
   iplock: 20,
+  egress: 10,
 } as const;
 
 export const BAND_LABEL: Record<Band, string> = {
-  good: '良好',
-  fair: '尚可',
-  poor: '偏差',
+  good: "良好",
+  fair: "尚可",
+  poor: "偏差",
 };
 
-export const BAND_TONE: Record<Band, 'ok' | 'warn' | 'danger'> = {
-  good: 'ok',
-  fair: 'warn',
-  poor: 'danger',
+export const BAND_TONE: Record<Band, "ok" | "warn" | "danger"> = {
+  good: "ok",
+  fair: "warn",
+  poor: "danger",
 };
 
 export function bandOf(total: number | null): Band {
-  if (total === null) return 'fair';
-  if (total >= 85) return 'good';
-  if (total >= 60) return 'fair';
-  return 'poor';
+  if (total === null) return "fair";
+  if (total >= 85) return "good";
+  if (total >= 60) return "fair";
+  return "poor";
 }
 
 interface Inputs {
   progress: Progress;
+  ip?: IpInfo;
+  ipError?: string;
   dns?: DnsReport;
   signals?: ScanResult;
   gate?: GateStatus;
+  egress?: EgressChecks;
 }
 
-export function computeScore({ progress, dns, signals, gate }: Inputs): Score {
+export function computeScore({
+  progress,
+  ip,
+  ipError,
+  dns,
+  signals,
+  gate,
+  egress,
+}: Inputs): Score {
   const items: ScoreItem[] = [
-    purityItem(progress),
+    ipError
+      ? { ...purityItem(progress), detail: "本机 IP 自测失败，请重试" }
+      : purityItem(progress, ip),
     dnsItem(dns),
     signalsItem(signals),
     lockItem(gate),
+    egressItem(egress),
   ];
 
   const done = items.filter((i) => i.earned !== null);
@@ -109,6 +139,8 @@ export function computeScore({ progress, dns, signals, gate }: Inputs): Score {
     total,
     band: bandOf(total),
     items,
+    measured: [!!ip?.ip && !ipError, dns, signals, gate, egress].filter(Boolean)
+      .length,
     assessed: done.length,
     missing: items.length - done.length,
   };
@@ -116,32 +148,51 @@ export function computeScore({ progress, dns, signals, gate }: Inputs): Score {
 
 // ------------------------------------------------------------ 逐项
 
-function purityItem(progress: Progress): ScoreItem {
-  const rec = progress.steps['purity'];
-  const base = { id: 'purity' as const, label: 'IP 纯净度', weight: WEIGHTS.purity };
+function purityItem(progress: Progress, ip?: IpInfo): ScoreItem {
+  const rec = progress.steps["purity"];
+  const base = {
+    id: "purity" as const,
+    label: "IP 纯净度",
+    weight: WEIGHTS.purity,
+  };
 
-  // 真值在人工判定里 —— probe_purity 的 passed 结构上永远是 false。
-  if (!rec || rec.state === 'pending') {
-    return { ...base, earned: null, detail: '还没复核过' };
+  // 自测读数与人工复核分别展示，不把未复核误报成检测失败。
+  if (!ip?.ip) {
+    return { ...base, earned: null, detail: "尚未检测本机 IP" };
   }
-  if (rec.state === 'skipped') {
-    return { ...base, earned: null, detail: '已跳过，不计入总分' };
+  if (!rec || rec.state === "pending") {
+    return { ...base, earned: null, detail: "自测完成，待人工复核" };
   }
-  if (rec.state === 'failed' || rec.risk === 'high') {
-    return { ...base, earned: 0, detail: rec.detail || '不合格' };
+  if (rec.state === "skipped") {
+    return { ...base, earned: null, detail: "已跳过，不计入总分" };
+  }
+  if (rec.state === "failed" || rec.risk === "high") {
+    return { ...base, earned: 0, detail: rec.detail || "不合格" };
+  }
+  if (!rec.detail?.includes(`（${ip.ip}）`)) {
+    const previousIp = rec.detail?.match(/（([^（）]+)）/)?.[1];
+    return {
+      ...base,
+      earned: null,
+      detail: previousIp
+        ? "出口已变化，请复核当前 IP"
+        : "自测完成，请复核当前 IP",
+    };
   }
   // 「注意」档给八折：过了，但用户自己记了个风险。
-  const ratio = rec.risk === 'medium' ? 0.8 : 1;
+  const ratio = rec.risk === "medium" ? 0.8 : 1;
   return {
     ...base,
     earned: Math.round(base.weight * ratio),
-    detail: rec.detail || '已复核通过',
+    detail: rec.detail || "已复核通过",
   };
 }
 
 function dnsItem(dns?: DnsReport): ScoreItem {
-  const base = { id: 'dns' as const, label: 'DNS 泄露', weight: WEIGHTS.dns };
-  if (!dns) return { ...base, earned: null, detail: '还没检测过' };
+  const base = { id: "dns" as const, label: "DNS 泄露", weight: WEIGHTS.dns };
+  if (!dns) return { ...base, earned: null, detail: "还没检测过" };
+  if (!dns.resolvers.some((r) => !r.from_adapter))
+    return { ...base, earned: null, detail: "未收到真实解析回显，结果不完整" };
   // DnsReport.score 已经是 100 分制且方向一致（高了好）。
   return {
     ...base,
@@ -155,11 +206,11 @@ function dnsItem(dns?: DnsReport): ScoreItem {
 
 function signalsItem(signals?: ScanResult): ScoreItem {
   const base = {
-    id: 'signals' as const,
-    label: '中文环境',
+    id: "signals" as const,
+    label: "中文环境",
     weight: WEIGHTS.signals,
   };
-  if (!signals) return { ...base, earned: null, detail: '还没检测过' };
+  if (!signals) return { ...base, earned: null, detail: "还没检测过" };
   // 方向相反：total 越低越好，所以取补数。
   return {
     ...base,
@@ -169,18 +220,28 @@ function signalsItem(signals?: ScanResult): ScoreItem {
 }
 
 function lockItem(gate?: GateStatus): ScoreItem {
-  const base = { id: 'iplock' as const, label: 'IP 锁', weight: WEIGHTS.iplock };
-  if (!gate) return { ...base, earned: null, detail: '还没读到门禁状态' };
+  const base = {
+    id: "iplock" as const,
+    label: "IP 锁",
+    weight: WEIGHTS.iplock,
+  };
+  if (!gate) return { ...base, earned: null, detail: "还没读到门禁状态" };
 
   const total = gate.targets.length;
   if (total === 0) {
-    return { ...base, earned: null, detail: '没有找到可执行副本' };
+    return { ...base, earned: null, detail: "没有找到可执行副本" };
   }
 
   // 租约期内是**故意解锁**的，不该因此扣分 —— 那正是面板放行的结果。
-  const lease = describeLease(gate.lease, '已放行给');
+  const lease = describeLease(gate.lease, "已放行给");
   if (lease) {
-    return { ...base, earned: base.weight, detail: lease.text };
+    const complete =
+      gate.stale_copies.length === 0 && gate.allowlist.length > 0;
+    return {
+      ...base,
+      earned: complete ? base.weight : Math.round(base.weight / 2),
+      detail: lease.text + (complete ? "" : " · 执行锁覆盖不完整"),
+    };
   }
 
   const locked = gate.targets.filter((t) => t.locked).length;
@@ -192,7 +253,55 @@ function lockItem(gate?: GateStatus): ScoreItem {
 
   const bits = [`${locked} / ${total} 已锁`];
   if (stale > 0) bits.push(`${stale} 个残留副本可绕过`);
-  if (gate.allowlist.length === 0) bits.push('白名单为空');
+  if (gate.allowlist.length === 0) bits.push("白名单为空");
 
-  return { ...base, earned: Math.round(base.weight * ratio), detail: bits.join(' · ') };
+  return {
+    ...base,
+    earned: Math.round(base.weight * ratio),
+    detail: bits.join(" · "),
+  };
+}
+
+/**
+ * 出口一致性。
+ *
+ * 判定在 Rust（`EgressChecks::ratio`）：`pass` 满分、`warn` 半分、`fail` 零分，
+ * 而 **`unknown` 从分子分母里一起去掉** —— 跟本文件顶上那条「分母只算已检测项」
+ * 是同一个道理，只是下沉了一层。全都查不出来时 `ratio` 回 `null`，
+ * 这一项就整个不计入总分。
+ */
+function egressItem(egress?: EgressChecks): ScoreItem {
+  const base = {
+    id: "egress" as const,
+    label: "出口一致性",
+    weight: WEIGHTS.egress,
+  };
+  if (!egress) return { ...base, earned: null, detail: "还没检测过" };
+
+  const counted = egress.items.filter((i) => i.state !== "unknown");
+  if (counted.length === 0) {
+    return {
+      ...base,
+      earned: null,
+      detail: `${egress.items.length} 项都查不了`,
+    };
+  }
+  const got = counted.reduce(
+    (a, i) => a + (i.state === "pass" ? 1 : i.state === "warn" ? 0.5 : 0),
+    0,
+  );
+  const bad = counted.filter((i) => i.state !== "pass").length;
+  const unknown = egress.items.length - counted.length;
+  return {
+    ...base,
+    earned: Math.round((got / counted.length) * base.weight),
+    detail: [
+      bad === 0
+        ? `${counted.length} 项都对得上`
+        : `${bad} / ${counted.length} 项对不上`,
+      unknown > 0 ? `${unknown} 项查不了` : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  };
 }

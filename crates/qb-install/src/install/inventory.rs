@@ -774,6 +774,33 @@ mod tests {
     }
 
     #[test]
+    fn relocated_unicode_roots_share_detection_launch_and_lock_inventory() {
+        let t = Tree::new("用户 O'Brien [二号]");
+        let managed = t.file(r"工具目录 [自选]\claude-code\claude.exe");
+        let native = t.file(r"另一个用户\.local\bin\claude.exe");
+        let scoop = t.file(r"外置 Scoop\apps\claude-code\current\claude.exe");
+        let path_copy = t.file(r"自选 PATH\claude.exe");
+        let roots = Roots {
+            home: Some(t.base.join("另一个用户")),
+            managed: Some(t.base.join("工具目录 [自选]")),
+            scoop: Some(t.base.join("外置 Scoop")),
+            path_dirs: vec![t.base.join("自选 PATH")],
+            ..Roots::default()
+        };
+        let locked = lockable_paths(&roots);
+        for expected in [&managed, &native, &scoop, &path_copy] {
+            assert!(
+                locked.iter().any(|(p, _)| same_path(p, expected)),
+                "missing {}",
+                expected.display()
+            );
+        }
+        assert!(same_path(&preferred_exe(&roots).unwrap(), &managed));
+        assert_eq!(locked.len(), 4);
+        assert_eq!(scan(&roots).len(), 4);
+    }
+
+    #[test]
     fn a_winget_only_machine_launches_the_copy_it_locks() {
         // 回归：原来上锁表有 WinGet、启动表没有 —— 只用 winget 装的人被锁在门外。
         let t = Tree::new("winget");

@@ -18,8 +18,8 @@ pub use qb_foundation::{audit, error, paths, sink};
 #[cfg(windows)]
 pub use qb_platform::acl;
 pub use qb_platform::{
-    config_io, endpoint, legacy, logging, operations, panic_hook, process, progress, readiness,
-    repository, secret, sessions, settings, signature,
+    config_io, endpoint, firewall, legacy, logging, operations, panic_hook, process, progress,
+    readiness, repository, secret, sessions, settings, signature,
 };
 
 // 契约层（L0.5）。`crate::domain::*` 在命令层出现几十次，同样原样再导出。
@@ -32,7 +32,7 @@ pub use qb_iplock::gate;
 pub use qb_launch::{killswitch, launch};
 pub use qb_probe::probe;
 pub use qb_relay::relay;
-pub use qb_station::{health, station};
+pub use qb_station::{health, router, schedule, station};
 pub use qb_sysenv::sysenv;
 
 pub mod app;
@@ -145,23 +145,78 @@ pub fn run() {
             commands::gate::watchdog_start,
             commands::gate::watchdog_stop,
             commands::probe::probe_ip,
+            commands::probe::probe_ip_lookup,
+            commands::ipv6::ipv6_status,
+            commands::ipv6::ipv6_set,
             commands::probe::probe_purity,
             commands::probe::probe_dns,
             commands::probe::purity_criteria,
+            // 中转站（0.14.0）。启停本机路由、线路池、请求日志、健康度与排序。
+            commands::station::station_router_start,
+            commands::station::station_router_stop,
+            commands::station::station_router_status,
+            commands::station::station_select_route,
+            commands::station::station_launch,
+            commands::station::station_schedules,
+            commands::station::station_schedule_set,
+            commands::station::station_probe,
+            commands::station::station_client_config,
+            commands::station::station_client_config_save,
+            commands::station::station_routes,
+            commands::station::station_put_route,
+            commands::station::station_remove_route,
+            commands::station::station_logs,
+            commands::station::station_refresh_health,
+            commands::station::station_decide,
+            commands::station::station_audits,
+            commands::station::station_run_audit,
+            commands::station::station_models,
+            commands::station::station_refresh_prices,
+            commands::station::station_prices,
             commands::install::detect_software,
             commands::install::install_probe,
             commands::install::install_run,
             commands::install::claude_traces,
             commands::install::chrome_reinstall,
             commands::system::launch_claude,
+            commands::codex_commands::codex_accounts,
+            commands::codex_commands::codex_desktop_status,
+            commands::codex_commands::codex_close,
+            commands::codex_commands::codex_create,
+            commands::codex_commands::codex_switch,
+            commands::codex_commands::codex_launch,
+            commands::codex_commands::codex_archive,
+            commands::codex_commands::codex_usage,
             commands::accounts::accounts_list,
             commands::accounts::accounts_create,
+            commands::accounts::accounts_delete,
+            commands::accounts::accounts_tokens,
+            commands::accounts::accounts_token_summary,
+            commands::accounts::account_probe,
             commands::accounts::accounts_switch,
             commands::install::managed_status,
             commands::install::managed_probe_dir,
             commands::install::managed_set_dir,
             commands::install::managed_externals,
             commands::install::managed_cleanup,
+            commands::install::purge_plan,
+            commands::install::purge_execute,
+            // 「两个口子」与浏览器隐私面（0.19.0）。会改系统的那几条
+            // **只能由点击触发** —— 别把它们接到任何定时器或启动流程上。
+            commands::network::firewall_rules,
+            commands::network::firewall_adapters,
+            commands::network::firewall_block,
+            commands::network::firewall_revoke_all,
+            commands::network::proxy_read,
+            commands::network::proxy_backup,
+            commands::network::proxy_apply,
+            commands::network::proxy_rollback,
+            commands::network::browser_audit,
+            commands::network::browser_webrtc_harden,
+            commands::network::browser_webrtc_clear,
+            commands::network::egress_checks_scan,
+            commands::network::egress_checks_fix,
+            commands::network::egress_checks_undo,
             commands::system::relay_presets,
             commands::system::settings_load,
             commands::system::settings_save,
@@ -191,6 +246,7 @@ pub fn run() {
             commands::plugins::plugin_stop,
             commands::plugins::tavern_config,
             commands::plugins::tavern_config_save,
+            commands::plugins::tavern_locate,
             commands::plugins::tavern_assets,
             commands::plugins::tavern_backup,
             commands::plugins::tavern_backups,
@@ -208,6 +264,24 @@ pub fn run() {
                 app.state::<AppState>()
                     .set_refresh_ui(std::sync::Arc::new(move || tray::refresh(&handle)));
             }
+            // 每次启动拉一轮官方价目。
+            //
+            // **后台跑，不挡启动**：拉不到就继续用内置快照（见
+            // `station_refresh_prices`），面板照常打开。价目是「查套路」算真实
+            // 倍率的分母，隔一阵子官方调一次价，不更新的话会把调价冤枉成造假。
+            tauri::async_runtime::spawn(async {
+                match commands::station::station_refresh_prices().await {
+                    Ok(v) if v.live_models > 0 => {
+                        audit::write(&format!("已更新官方价目：{} 个模型", v.live_models))
+                    }
+                    Ok(v) => {
+                        for p in &v.problems {
+                            audit::write(&format!("官方价目沿用内置快照：{p}"));
+                        }
+                    }
+                    Err(e) => audit::write(&format!("官方价目更新失败，沿用内置快照：{e}")),
+                }
+            });
             if !startup::initialize(app.handle()).ready {
                 if let Err(e) = tray::init(app.handle()) {
                     audit::write(&format!("托盘建立失败：{e}"));
@@ -234,10 +308,26 @@ pub fn run() {
             // 锁上之后 open_authorized 一定过不了（IP 不可能在空名单里），
             // 用户就被自己的工具关在门外了。空名单 = 还没配置好，
             // 这时候什么都不做才是对的。
-            match gate::allowlist::read() {
+            // 先重建执行锁，再等待网卡切换；UAC 等待不能留下一扇无监督的门。
+            let restore_lease = match gate::allowlist::read() {
                 Ok(list) if !list.is_empty() => {
                     let _ = gate::lock_all();
-
+                    true
+                }
+                _ => {
+                    audit::write("白名单为空，启动时不上锁（首次运行请先添加当前 IP）");
+                    false
+                }
+            };
+            // 网卡切换先完成，再恢复租约/启动监督，避免启动时的短暂断网被误判。
+            // 后台等待 UAC，窗口仍可打开；错误在 IP 纯净度中可见。
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                {
+                    use tauri::Manager;
+                    commands::ipv6::apply_on_start(&handle.state::<AppState>()).await;
+                }
+                if restore_lease {
                     // 关好门之后，再看上次退出时门是不是开着的。
                     //
                     // **顺序不能反。** 「先别关门等我查完 IP」会在查询的那几秒里
@@ -248,7 +338,7 @@ pub fn run() {
                     // 租约随进程没了，桌面端 Code 页从此开不了新会话
                     // （`Claude Code couldn't start`），而且**没有任何东西会去救** ——
                     // `watchdog::decide` 要求 `lease_held` 才会走 `ReclaimLease`。
-                    let handle = app.handle().clone();
+                    let handle = handle.clone();
                     tauri::async_runtime::spawn(async move {
                         use tauri::Manager;
                         let st = handle.state::<AppState>();
@@ -265,18 +355,45 @@ pub fn run() {
                         }
                     });
                 }
-                _ => {
-                    audit::write("白名单为空，启动时不上锁（首次运行请先添加当前 IP）");
+                {
+                    use tauri::Manager;
+                    app::start_watchdog(
+                        gate::watchdog::WatchMode::Cli,
+                        &handle.state::<AppState>(),
+                        Some(handle.clone()),
+                    );
+                    // 智能调度是**落盘的承诺**：上次开着的，这次起来要接着跑。
+                    // 不接回去的话，使用者重启一次面板，调度就悄悄停了 ——
+                    // 而界面上那个开关还是「开」的（它读的是同一张表）。
+                    if commands::station::station_schedules()
+                        .map(|all| all.iter().any(|s| s.enabled))
+                        .unwrap_or(false)
+                    {
+                        commands::station::start_scheduler(
+                            &handle.state::<AppState>(),
+                            Some(handle.clone()),
+                        );
+                    }
                 }
-            }
-            {
-                use tauri::Manager;
-                app::start_watchdog(
-                    gate::watchdog::WatchMode::Cli,
-                    &app.state::<AppState>(),
-                    Some(app.handle().clone()),
-                );
-            }
+                // 启动对齐：把时区 / 区域格式对到出口 IP 的归属地。
+                //
+                // **后台跑，不挡启动。** 它要先查一次出口 IP（要联网），
+                // 放在主线程上等于拿网络延迟给窗口出现的时间封顶。
+                //
+                // **放在就绪判定之后。** 首次运行、面板还没配置好时什么都不该做 ——
+                // 那时读到的是默认值（时区对齐是开的），照做就会在使用者还没同意过
+                // 任何事之前弹一个 UAC 去改系统时区。跟上面「白名单为空就不上锁」
+                // 是同一条理由：还没配置好 = 现在什么都不做才是对的。
+                //
+                // 已经一致的机器上这里不产生任何动作（见 `locale_ops::decide` 的第一条），
+                // 所以「默认开」不等于每次开面板都折腾一遍系统。每一项做没做、
+                // 为什么没做，`align_on_start` 自己会写进审计日志。
+                tauri::async_runtime::spawn(async {
+                    if let Err(e) = usecase::locale_ops::align_on_start().await {
+                        audit::write(&format!("启动对齐失败：{e}"));
+                    }
+                });
+            });
             // 托盘：不打开主窗口也能看状态、切账户、切中转站。
             // 建不起来不该让整个程序起不来 —— 有些精简版 Windows 没有
             // 通知区域，那时候面板本身仍然完全可用。

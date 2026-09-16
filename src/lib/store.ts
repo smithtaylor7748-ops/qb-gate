@@ -42,6 +42,8 @@ export interface ResourceState<T> {
   neverLoaded: boolean;
 }
 const definitions = new Map<string, ResourceDef<unknown>>();
+// IPC cannot be aborted. Invalidated measurements must not return to disk later.
+const generations = new Map<string, number>();
 
 // ------------------------------------------------------- 跨重启的结果缓存
 
@@ -84,7 +86,9 @@ function hydrate(key: string, def: ResourceDef<unknown>): void {
 function fetcherFor<T>(key: string, def: ResourceDef<T>): () => Promise<T> {
   if (!def.options.persist) return def.fetcher;
   return async () => {
+    const generation = generations.get(key) ?? 0;
     const data = await def.fetcher();
+    if ((generations.get(key) ?? 0) !== generation) return data;
     const at = Date.now();
     measured.set(key, at);
     try {
@@ -127,32 +131,87 @@ export function useResource<T>(
 export async function refresh(key: string): Promise<void> {
   const def = definitions.get(key);
   if (!def) return;
-  await queryClient.cancelQueries({ queryKey: [key], exact: true });
+  // fetchQuery joins an in-flight request. Cancelling here makes two callers
+  // refreshing the same resource reject each other with CancelledError.
   await queryClient.fetchQuery({
     queryKey: [key],
     queryFn: fetcherFor(key, def),
     staleTime: 0,
   });
 }
+/**
+ * 破坏性操作之后作废这些资源。
+ *
+ * # ⛔ 手动资源是**扔掉**，不是「标记过期」
+ *
+ * `auto:false` 的资源不会自动重取。老代码对它们只调 `invalidateQueries`
+ * 加 `refetchType:'none'` —— 结果是**什么都没发生**：那份旧数据原样留在
+ * 界面上继续冒充当前值。
+ *
+ * 实际长出来的样子（都在软件页）：升级装完了，版本栏还写着「可升级 →
+ * 2.1.x」；Chrome 清空重装完了，隐私审计还列着刚被删掉的那几个扩展的
+ * 高危权限。两处都不报错，只是**在说一件已经不成立的事**。
+ *
+ * 手动资源的答案是一次**测量**。破坏性操作之后，上一次测量既不是
+ * 「当前值」也不是「过期的当前值」，它就是没了 —— 界面该退回
+ * 「还没跑过」，跟「没查」不显示成「没问题」是同一条规矩。
+ *
+ * 持久化的那几份（dns / signals / checkup）连磁盘上那份一起扔：
+ * 留着的话下次开面板又会把它水化回来，等于作废没作废。
+ *
+ * ⚠ 想要的是「立刻重测一遍」而不是「退回没测过」时，**别用这个** ——
+ * 直接调那个资源的 `refresh()`。软件页的出站锁规则表与 Chrome 隐私审计
+ * 就是这种：使用者正盯着那一块，扔掉会让它当场空一下。
+ */
 export function invalidate(...keys: string[]): void {
   for (const key of keys) {
-    void queryClient.cancelQueries({ queryKey: [key], exact: true }).then(() =>
-      queryClient.invalidateQueries({
-        queryKey: [key],
-        exact: true,
-        refetchType:
-          definitions.get(key)?.options.auto === false ? "none" : "active",
-      }),
-    );
+    generations.set(key, (generations.get(key) ?? 0) + 1);
+    const manual = definitions.get(key)?.options.auto === false;
+    // Query cancellation takes effect synchronously. Finish invalidating in this
+    // turn too: a deferred removeQueries would cancel a subsequent refresh().
+    void queryClient.cancelQueries({ queryKey: [key], exact: true });
+    if (manual) {
+      queryClient.removeQueries({ queryKey: [key], exact: true });
+      measured.delete(key);
+      hydrated.delete(key);
+      try {
+        localStorage.removeItem(CACHE_PREFIX + key);
+      } catch {
+        // 存储读写不了就算了，内存里那份已经扔掉了。
+      }
+      continue;
+    }
+    void queryClient.invalidateQueries({
+      queryKey: [key],
+      exact: true,
+      refetchType: "active",
+    });
   }
 }
 export function invalidateAll(): void {
   invalidate(...definitions.keys());
 }
+/** Background workspace notifications refresh live state, not manual diagnostics.
+ * They must neither erase measurements nor interrupt a check already in flight.
+ * Actual mutations still use invalidate(keys) to discard affected measurements.
+ */
+export function invalidateAutomatic(): Promise<void> {
+  return queryClient.invalidateQueries(
+    {
+      predicate: (query) => {
+        const def = definitions.get(String(query.queryKey[0]));
+        return !!def && def.options.auto !== false;
+      },
+      refetchType: "active",
+    },
+    { cancelRefetch: false },
+  );
+}
 export function peek<T>(key: string): T | undefined {
   return queryClient.getQueryData<T>([key]);
 }
 export function put<T>(key: string, data: T): void {
+  generations.set(key, (generations.get(key) ?? 0) + 1);
   void queryClient.cancelQueries({ queryKey: [key], exact: true });
   queryClient.setQueryData([key], data);
 }

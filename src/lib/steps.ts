@@ -14,14 +14,14 @@
  */
 
 export const STEPS = [
-  { id: 'purity', label: 'IP 纯净度' },
-  { id: 'environment', label: '环境与安装' },
-  { id: 'dns', label: 'DNS 泄露' },
-  { id: 'iplock', label: 'IP 锁' },
-  { id: 'accounts', label: '账户与启动' },
+  { id: "purity", label: "IP 纯净度" },
+  { id: "environment", label: "环境与安装" },
+  { id: "dns", label: "DNS 泄露" },
+  { id: "iplock", label: "IP 锁" },
+  { id: "accounts", label: "账户与启动" },
 ] as const;
 
-export type StepId = (typeof STEPS)[number]['id'];
+export type StepId = (typeof STEPS)[number]["id"];
 
 export function stepLabel(id: string): string {
   return STEPS.find((s) => s.id === id)?.label ?? id;

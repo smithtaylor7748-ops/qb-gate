@@ -160,7 +160,7 @@ pub fn classify(t: &Traces) -> BackendReport {
     // 却很难把上游本来就没有的头凭空造全。
     if t.status == 200 && !anthropic_rl && !req_id_native {
         evidence.push(
-            "响应是 Claude 格式，但**一个 `anthropic-*` 头都没有** —— \
+            "响应是 Claude 格式，但一个 anthropic-* 头都没有 —— \
              官方直连不会这样，多半中间有一层格式转换"
                 .into(),
         );
@@ -258,8 +258,15 @@ mod tests {
         assert!(
             r.evidence
                 .iter()
-                .any(|e| e.contains("一个 `anthropic-*` 头都没有")),
+                .any(|e| e.contains("anthropic-* 头都没有")),
             "负证据必须写进去，否则使用者不知道结论是怎么来的"
+        );
+        // 传给界面的是纯文本：写 Markdown 的星号会显示成两个星号
+        // （CLAUDE.md 最后一节）。这里的证据是直接摆在中转站页上的。
+        assert!(
+            r.evidence.iter().all(|e| !e.contains("**")),
+            "证据是纯文本渲染的：{:?}",
+            r.evidence
         );
     }
 

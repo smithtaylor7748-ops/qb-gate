@@ -23,8 +23,7 @@ pub async fn signer_of(path: &std::path::Path) -> Option<String> {
     let script = format!(
         "try {{ (Get-AuthenticodeSignature -LiteralPath '{quoted}' -ErrorAction Stop).SignerCertificate.Subject }} catch {{ }}"
     );
-    let out = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+    let out = crate::process::powershell_tokio(&script)
         .output()
         .await
         .ok()?;

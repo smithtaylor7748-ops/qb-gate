@@ -229,20 +229,13 @@ pub fn matches_target(bin_hash: Option<&str>, target_hash: Option<&str>) -> Opti
 /// 检测页（`detect::claude_code`）也用这一个，不再自己跑 `--version`。
 #[cfg(windows)]
 pub(crate) async fn file_version(path: &std::path::Path) -> Option<String> {
-    let out = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            // 单引号在 Windows 文件名里合法，按 PowerShell 的规矩转义成两个。
-            &format!(
-                "(Get-Item -LiteralPath '{}').VersionInfo.ProductVersion",
-                path.display().to_string().replace('\'', "''")
-            ),
-        ])
-        .output()
-        .await;
-
+    // 单引号在 Windows 文件名里合法，按 PowerShell 的规矩转义成两个。
+    let out = crate::process::powershell_tokio(&format!(
+        "(Get-Item -LiteralPath '{}').VersionInfo.ProductVersion",
+        path.display().to_string().replace('\'', "''")
+    ))
+    .output()
+    .await;
     let out = match out {
         Ok(o) => o,
         Err(e) => {
@@ -417,10 +410,7 @@ pub async fn diagnose_blocker(bin: &Path) -> String {
          Where-Object {{ $_.ExecutablePath -eq '{quoted}' }} | \
          ForEach-Object {{ \"$($_.ProcessId)\" }}); ConvertTo-Json -InputObject @($p) -Compress"
     );
-    let out = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()
-        .await;
+    let out = crate::process::powershell_tokio(&script).output().await;
     match out {
         Ok(o) => {
             let text = String::from_utf8_lossy(&o.stdout).trim().to_string();
