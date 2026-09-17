@@ -4,7 +4,7 @@
   "version": "0.22.6",
   "type": "module",
   "description": "官方账户、中转站与扩展的 Windows 本地工作空间",
-  "license": "GPL-3.0-or-later",
+  "license": "AGPL-3.0-or-later",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

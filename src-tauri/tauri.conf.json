@@ -40,11 +40,12 @@
     },
     "resources": {
       "../LICENSE": "licenses/LICENSE",
+      "../LICENSE-COMMERCIAL.md": "licenses/LICENSE-COMMERCIAL.md",
       "../ATTRIBUTION.md": "licenses/ATTRIBUTION.md",
       "../THIRD_PARTY_NOTICES.txt": "licenses/THIRD_PARTY_NOTICES.txt",
       "../docs/dependencies.json": "licenses/dependencies.json"
     },
     "shortDescription": "Local AI client workspace",
-    "license": "GPL-3.0-or-later"
+    "license": "AGPL-3.0-or-later"
   }
 }

@@ -143,7 +143,7 @@ function General() {
       </p>
       <div className="qb-about">
         <strong>QB Gate {packageInfo.version}</strong>
-        <p>本地 AI 客户端工作空间 · GPL-3.0-or-later</p>
+        <p>本地 AI 客户端工作空间 · AGPL-3.0-or-later</p>
         {/* 图标由 ExternalLink 自己补，这里不要再加一个 —— 加了就是两个箭头。 */}
         <ExternalLink href="https://github.com/smithtaylor7748-ops/qb-gate/releases">
           查看 GitHub 发布版本
@@ -319,7 +319,7 @@ function Help() {
       </div>
       <p className="qb-help-note">
         QB Gate 使用
-        GPL-3.0-or-later。外部应用与扩展遵循各自的许可证；详情页提供来源和固定版本。
+        AGPL-3.0-or-later。外部应用与扩展遵循各自的许可证；详情页提供来源和固定版本。
       </p>
     </div>
   );

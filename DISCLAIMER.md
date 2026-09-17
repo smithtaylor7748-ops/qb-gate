@@ -87,7 +87,7 @@
 无论该责任产生于合同、侵权或其他事由，也无论其是否由本软件或本软件的使用
 或其他交易引起、与之相关。
 
-本条为 `LICENSE`（GNU GPL v3）中免责条款第 15、16 节的中文表述，**如有歧义以 `LICENSE` 英文原文为准**。
+本条为 `LICENSE`（GNU AGPL v3）中免责条款第 15、16 节的中文表述，**如有歧义以 `LICENSE` 英文原文为准**。
 
 ---
 
@@ -458,7 +458,7 @@ npm 全局安装出来的 `codex.cmd` 挡得住 `codex` 命令本身，挡不住
 - 本声明中任何条款被认定无效或不可执行的，不影响其余条款的效力。
 - 本声明可能随版本更新而修改，以仓库中的最新版本为准；更新后继续使用，
   即视为接受更新后的内容。
-- 本声明与 `LICENSE`（GNU GPL v3）的免责条款同时适用；涉及软件许可本身的问题，
+- 本声明与 `LICENSE`（GNU AGPL v3）的免责条款同时适用；涉及软件许可本身的问题，
   以 `LICENSE` 为准。
 
 ---
@@ -482,7 +482,7 @@ no trademark license, affiliation or endorsement.
   measures, regional restrictions, usage limits or bans — nor can it do so.** It is not a
   proxy, VPN or censorship-circumvention tool. Use it only where the service is
   available to you under the provider's terms, and only with accounts you own.
-- **Provided "AS IS", with NO WARRANTY of any kind.** See `LICENSE` (GNU GPL v3 or later).
+- **Provided "AS IS", with NO WARRANTY of any kind.** See `LICENSE` (GNU AGPL v3 or later).
   The authors are not liable for any claim, damage, or other liability.
 - **This tool does NOT prevent account bans or risk-control actions.** Its IP-purity,
   DNS-leak, locale and egress checks are informational heuristics built on public

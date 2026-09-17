@@ -35,7 +35,7 @@ members = ["src-tauri", "crates/*"]
 version = "0.22.6"
 edition = "2021"
 rust-version = "1.88"
-license = "GPL-3.0-or-later"
+license = "AGPL-3.0-or-later"
 authors = ["QB Gate contributors"]
 
 # 版本号集中在这里，各 crate 只写 `serde.workspace = true`。

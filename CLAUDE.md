@@ -294,7 +294,12 @@ operations，是跨域编排而不是门禁自己的事。留在 `gate` 里正�
 
 上游的许可状况逐条记在 [ATTRIBUTION.md](ATTRIBUTION.md)。三条铁律：
 
-1. **MIT 可以抄**，保留版权声明即可（与本项目的 GPL-3.0 相容）；
+1. **MIT 可以抄**，保留版权声明即可（与本项目的 AGPL-3.0 相容；MIT 允许再许可，
+   所以商业授权那一档也过得去 —— 但**原版权声明必须一路带着**）；
+   同理适用于 Apache-2.0、BSD、ISC 这些宽松许可。
+   ⚠ **别人的 GPL / AGPL 代码现在抄不得了**：双授权之后，抄进来的 copyleft 代码
+   无法再许可给商业授权那一档，会把商业这一档直接堵死。详见
+   [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) 第三节；
 2. **没有 license 文件 = 保留全部权利，一行都不能抄**。看可以看，实现必须自己写。
    目前已知：`dai-chao/Agent-Guard`、`iprisk-top`、`Trentct/claude-code-ban-risk`、
    `jlcodes/cockpit-tools`；

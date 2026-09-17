@@ -1,6 +1,6 @@
 # Contributing
 
-QB Gate is a Windows desktop project licensed under GPL-3.0-or-later. Contributions must be compatible with that license. Record copied or adapted material and its original notices in ATTRIBUTION.md; do not copy code without a verified license.
+QB Gate is a Windows desktop project dual-licensed under AGPL-3.0-or-later and a commercial license (see LICENSE and LICENSE-COMMERCIAL.md). Contributions must be compatible with that arrangement: by submitting code you confirm you have the right to license it and you grant the maintainers the right to use, modify and sublicense it under **both** AGPL-3.0-or-later and a commercial license. Code you cannot license on those terms — including third-party code under a copyleft or non-commercial licence — cannot be accepted. Record copied or adapted material and its original notices in ATTRIBUTION.md; do not copy code without a verified license.
 
 Read CLAUDE.md and docs/ARCHITECTURE.zh-CN.md before changing account, process, ACL, migration, or installation behavior. Keep executable discovery in install/inventory.rs and gate policy in gate/judge.rs.
 
