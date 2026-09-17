@@ -71,16 +71,7 @@
 
 ## 许可证
 
-**双授权，二选一：**
-
-- **AGPL-3.0-only** —— 默认这一档，任何人免费使用，完整条款见 [LICENSE](LICENSE)。
-  留意 AGPL 第 13 节：改过的版本若**通过网络**给别人用，也要把你那份源码公开。
-- **商业授权** —— 要把代码并入闭源软件、随闭源产品分发，或以它为基础对外提供
-  网络服务而不公开修改时走这一档，见 [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md)。
-
-自己用、内部用，既不分发也不对外提供网络服务的，AGPL 这一档就够了，不需要另外授权。
-第三方依赖与并入的第三方代码各自保留原许可证，见
-[ATTRIBUTION.md](ATTRIBUTION.md) 与 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)。
+本项目按 **AGPL-3.0-only** 发布，完整条款见 [LICENSE](LICENSE)。
 
 ### 授权声明
 

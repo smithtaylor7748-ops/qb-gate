@@ -147,9 +147,7 @@ function General() {
         {/* AGPL 第 5(d) 节：交互界面要显示版权与免责。别只留许可证名字。
             两行分开写：合成一行会被 Prettier 折在中文逗号后面，界面上多出一个空格。 */}
         <p>Copyright (C) 2026 smithtaylor7748-ops</p>
-        <p>
-          本软件不提供任何担保；可按 AGPL-3.0-only 再分发，另有商业授权可选。
-        </p>
+        <p>本软件不提供任何担保；可按 AGPL-3.0-only 再分发。</p>
         {/* 图标由 ExternalLink 自己补，这里不要再加一个 —— 加了就是两个箭头。 */}
         <ExternalLink href="https://github.com/smithtaylor7748-ops/qb-gate/releases">
           查看 GitHub 发布版本
