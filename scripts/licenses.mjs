@@ -98,7 +98,7 @@ writeFileSync(
 );
 writeFileSync(
   "THIRD_PARTY_NOTICES.txt",
-  "QB Gate third-party dependency notices\nGenerated from package-lock.json and Cargo.lock. Includes build and test dependencies as well as runtime dependencies.\nThe project license is AGPL-3.0-or-later; each dependency retains its own license.\n\n" +
+  "QB Gate third-party dependency notices\nGenerated from package-lock.json and Cargo.lock. Includes build and test dependencies as well as runtime dependencies.\nThe project license is AGPL-3.0-only; each dependency retains its own license.\n\n" +
     notices.sort().join("\n\n" + "=".repeat(72) + "\n\n"),
 );
 console.log(

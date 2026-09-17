@@ -4,10 +4,14 @@ QB Gate 采用**双授权**：
 
 | | 授权 | 适用 |
 |---|---|---|
-| 默认 | **AGPL-3.0-or-later**（见 [LICENSE](LICENSE)） | 任何人，免费 |
+| 默认 | **AGPL-3.0-only**（见 [LICENSE](LICENSE)） | 任何人，免费 |
 | 可选 | **商业授权**（本文件） | 不能或不愿履行 AGPL 义务的场景 |
 
-两者是二选一。除非你另行取得商业授权，否则你拿到的这份 QB Gate 就是 AGPL-3.0-or-later 的。
+两者是二选一。除非你另行取得商业授权，否则你拿到的这份 QB Gate 就是 AGPL-3.0-only 的。
+
+**注意是 `-only`，不是 `-or-later`。** [README 的授权声明](README.md#授权声明)里
+**故意没有**写「或任何更新版本」，所以 FSF 将来若发布 AGPL 新版本，**不会**自动适用于
+本程序（依据 AGPL 第 14 节）。版权人是 **smithtaylor7748-ops**。
 
 ---
 
@@ -16,7 +20,7 @@ QB Gate 采用**双授权**：
 拿免费这一档，你要守 AGPL-3.0 的全部条款，其中最容易被忽略的两条：
 
 1. **分发即开源。** 你把 QB Gate（原样或改过的）交给别人 —— 装机、打包、内部下发都算 ——
-   就要把对应的完整源码一并给到，且同样按 AGPL-3.0-or-later 授权。
+   就要把对应的完整源码一并给到，且同样按 AGPL-3.0-only 授权。
 2. **联网提供服务也算（§13）。** 这是 AGPL 与 GPL 的区别所在：
    哪怕你不分发二进制，只是把改过的 QB Gate 架起来**通过网络给别人用**，
    也必须向这些使用者提供你那份修改后的完整源码。
@@ -39,8 +43,9 @@ AGPL 就够了，不需要来买授权。**
 
 ## 三、商业授权覆盖什么、不覆盖什么
 
-**覆盖：** QB Gate 自有代码的版权许可。本项目所有提交均由单一版权人持有，
-因此有权在 AGPL 之外另行授权。
+**覆盖：** QB Gate 自有代码的版权许可。版权人是 **smithtaylor7748-ops**
+（`Copyright (C) 2026 smithtaylor7748-ops`，声明见 [README](README.md#授权声明)）——
+所有提交均由其一人持有，因此有权在 AGPL 之外另行授权，商业授权也由其授出。
 
 **不覆盖：**
 
@@ -58,7 +63,7 @@ AGPL 就够了，不需要来买授权。**
 ## 四、贡献者条款
 
 为了让双授权继续成立，向本项目提交代码即表示你同意：
-你对所提交内容拥有授权的权利，并授予项目维护者在 **AGPL-3.0-or-later
+你对所提交内容拥有授权的权利，并授予项目维护者在 **AGPL-3.0-only
 与商业授权两种方式下使用、修改和再许可**该内容的权利。
 不接受你无权授权的第三方代码 —— 来源与许可记录规则见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
@@ -80,11 +85,11 @@ AGPL 就够了，不需要来买授权。**
 
 QB Gate is **dual-licensed**:
 
-- **AGPL-3.0-or-later** (see [LICENSE](LICENSE)) — free, for everyone.
+- **AGPL-3.0-only** (see [LICENSE](LICENSE)) — free, for everyone.
 - **Commercial license** — for cases where the AGPL's obligations cannot be met.
 
 Unless you have separately obtained a commercial license, the copy of QB Gate you
-received is licensed to you under AGPL-3.0-or-later.
+received is licensed to you under AGPL-3.0-only.
 
 You need a commercial license if you want to link QB Gate into closed-source
 software, distribute it as part of a proprietary product, or offer a modified
@@ -92,7 +97,12 @@ version as a network service without publishing your modifications under AGPL §
 You do **not** need one for private or internal use where nothing is distributed
 and no network service is offered to others.
 
-A commercial license covers copyright in QB Gate's own code only. Third-party
+Note the licence is AGPL-3.0-**only**: the notice in [README](README.md#授权声明)
+deliberately omits "or any later version", so versions of the AGPL that the FSF may
+publish in future do not apply to this program automatically (AGPL section 14).
+
+A commercial license covers copyright in QB Gate's own code only, and is granted by
+the copyright holder, **smithtaylor7748-ops**. Third-party
 dependencies and incorporated third-party code keep their own licenses — see
 [docs/dependencies.json](docs/dependencies.json),
 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) and [ATTRIBUTION.md](ATTRIBUTION.md).
@@ -101,7 +111,7 @@ project that makes no promises about account status.
 
 By contributing, you agree that you have the right to license what you submit and
 that you grant the maintainers the right to use, modify and sublicense it under
-**both** AGPL-3.0-or-later and a commercial license.
+**both** AGPL-3.0-only and a commercial license.
 
 To enquire: https://github.com/smithtaylor7748-ops/qb-gate/issues
 

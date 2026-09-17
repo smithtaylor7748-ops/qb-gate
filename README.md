@@ -73,7 +73,7 @@
 
 **双授权，二选一：**
 
-- **AGPL-3.0-or-later** —— 默认这一档，任何人免费使用，完整条款见 [LICENSE](LICENSE)。
+- **AGPL-3.0-only** —— 默认这一档，任何人免费使用，完整条款见 [LICENSE](LICENSE)。
   留意 AGPL 第 13 节：改过的版本若**通过网络**给别人用，也要把你那份源码公开。
 - **商业授权** —— 要把代码并入闭源软件、随闭源产品分发，或以它为基础对外提供
   网络服务而不公开修改时走这一档，见 [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md)。
@@ -81,6 +81,29 @@
 自己用、内部用，既不分发也不对外提供网络服务的，AGPL 这一档就够了，不需要另外授权。
 第三方依赖与并入的第三方代码各自保留原许可证，见
 [ATTRIBUTION.md](ATTRIBUTION.md) 与 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)。
+
+### 授权声明
+
+**这一段才是正式声明**，`Cargo.toml` / `package.json` 里的 license 字段只是给包管理器
+看的提示，不构成授权。注意措辞里**没有**「或任何更新版本」—— 本项目按 AGPL **第 3 版**
+授权，不自动适用 FSF 将来发布的新版本（AGPL 第 14 节）。
+
+```
+QB Gate — Windows 本地 AI 客户端工作空间
+Copyright (C) 2026 smithtaylor7748-ops
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, version 3.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+```
 
 ## 社区
 

@@ -17,7 +17,7 @@ assert.equal(
   ws.match(/\[workspace\.package\][^[]*?^version\s*=\s*"([^"]+)"/ms)?.[1],
   "Root Cargo.toml [workspace.package] version must match package.json",
 );
-assert.equal(pkg.license, "AGPL-3.0-or-later");
+assert.equal(pkg.license, "AGPL-3.0-only");
 if (process.env.GITHUB_REF_TYPE === "tag")
   assert.equal(
     process.env.GITHUB_REF_NAME,

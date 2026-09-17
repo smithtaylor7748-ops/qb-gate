@@ -46,6 +46,6 @@
       "../docs/dependencies.json": "licenses/dependencies.json"
     },
     "shortDescription": "Local AI client workspace",
-    "license": "AGPL-3.0-or-later"
+    "license": "AGPL-3.0-only"
   }
 }

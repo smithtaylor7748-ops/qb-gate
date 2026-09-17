@@ -482,7 +482,7 @@ no trademark license, affiliation or endorsement.
   measures, regional restrictions, usage limits or bans — nor can it do so.** It is not a
   proxy, VPN or censorship-circumvention tool. Use it only where the service is
   available to you under the provider's terms, and only with accounts you own.
-- **Provided "AS IS", with NO WARRANTY of any kind.** See `LICENSE` (GNU AGPL v3 or later).
+- **Provided "AS IS", with NO WARRANTY of any kind.** See `LICENSE` (GNU AGPL v3).
   The authors are not liable for any claim, damage, or other liability.
 - **This tool does NOT prevent account bans or risk-control actions.** Its IP-purity,
   DNS-leak, locale and egress checks are informational heuristics built on public
