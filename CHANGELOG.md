@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.24.7 — 2026-09-19
+
+- **「识别（turn-state）」改为直接作用于当前激活的 Codex 账户槽位**，推翻 0.24.0–0.24.6「分身环境 + 复制 OAuth + 另起一个 Codex」的做法（使用者批准）。「开启识别」现在做的是：把官方上游挂进本机路由（`OAuthPassthrough`，仍只绑 `127.0.0.1`）→ 备份并**增量**改那个槽位的 `config.toml`（只动 `model_provider` 与 `[model_providers.qb_turnstate]`，base 不带 `/v1`，不写占位 Key）→ 落盘 marker（`turnstate-takeover.json`）。**`auth.json` 一个字不碰、不复制凭证、不另起 Codex** —— 起 Codex 仍是账户页那颗按钮。复制 OAuth 的老做法会让两份 Codex 各自轮换同一族刷新令牌而互相登出（档案 §7.29 在 Claude 上踩过一样的坑），而且「账户页起的 Codex」和「识别起的 Codex」是两个进程、两套会话，使用者分不清哪个在走路由。
+- 「关闭识别」按 marker **反向恢复**那个槽位的配置（不整份盖回备份：接管期间 Codex 自己写进去的项目授权 / MCP 都留着），恢复失败时保留 marker 让人再点一次。**面板启动时发现上次没关干净的 marker 会自动关闭并恢复**（本机路由随面板消失，留着会让那个槽位的 Codex 对着死端口），并清理 0.24.0–0.24.6 留下的 `qb-router-codex-official` 环境记录与目录（连同复制进去的 OAuth 快照）。
+- IPC：`station_turnstate_enable` / `station_turnstate_disable` 取代 `station_turnstate_launch` / `station_turnstate_disarm`；`RouterStatus` 新增 `turnstate_takeover`（被接管的槽位名，落盘 marker 是唯一真相，面板重启后内存里的 `turnstate_official_armed` 归零而它不会）。账户页标题栏的「识别」按钮改按它显示开 / 关。
+- 出站插件的互斥守卫改看落盘 marker（不只看内存里的路由状态），理由改成现在的事实：两者**都要改同一个槽位的 `config.toml`**，同时开就是两个程序抢同一个文件。
+
+## 0.24.6 — 2026-09-19
+
+- 修复：账户页「识别（turn-state）」挂上官方线之后**没有任何地方能断开**，而扩展中心出站插件的互斥守卫又指着这个不存在的「断开」—— 使用者被锁死在两者之间（实机截图撞到）。弹窗新增「断开识别线」（IPC `station_turnstate_disarm`，后端的 `disarm_official_codex` 早就有，只是没接）；断开只摘上游，不动正在跑的 Codex，界面提示把它关掉。
+- 互斥守卫改成**双向**并改写理由：`station_turnstate_launch` 在插件跑着时同样拒绝。之前的文案「两者都要接管 Codex 的入口」不对——核心识别线用独立环境目录，插件管槽位 / 默认 `~/.codex`，**不共享配置文件**；真正的顾虑是两个程序各自给同一个 ChatGPT 账号维护 turn-state，互相干扰的可能性无法排除，保守起见一次只开一个。
+- 出站插件改为**跟着当前激活的 Codex 账户槽位**：启动时 `CODEX_HOME` 指到槽位目录（没有槽位才用默认 `~/.codex`），接管的目录记进托管记录，停止时 `restore` 恢复**当初接管的那份**（中途切槽位也不会恢复错）。状态里新增「接管的 Codex 目录」。之前只管默认 `~/.codex`，通过 QB Gate 槽位用 Codex 的人开了插件也管不到自己在用的那份。
+- 修复：安装失败残留的 `.incoming-*` 暂存目录会被定位器**优先**选中（`.` 排在字母前）；现在跳过 `.` 开头目录，安装前先清残留。解压后换目录时对杀软短暂占用做重试。
+- 修复：插件状态把「进程在跑但端口还没听起来」写成「正在监听」；读版本不再每 10 秒 spawn 一次进程（按路径 + 修改时间缓存）。
+- 修复：中转 / 识别环境起 Codex 撞上 Store 包注册失效（`CreateProcessW` 报 0x80070005）时也给出「修复 Codex 注册」的可操作说明，与账户页一致。「修复 Codex 注册」不再握着全局互斥锁等 UAC（等待期间看门狗会停摆）。
+
+## 0.24.5 — 2026-09-19
+
+- 「订阅」页重做（`src/features/subscription/`，原来的单文件页删除）：新增默认落地的**首页 · 为什么自己订阅** —— 不正规中转站的六类问题（不稳定与首字延迟、降智与偷换模型、官方反制、限流、卖数据 / 投毒 / 偷币、跑路涨价连坐），每条标明是报道、研究、官方条款还是使用者反馈，未经官方证实的写「未证实」；自己订阅拿到什么；官方各档价目表（Claude Pro / Max 5x / Max 20x，ChatGPT Go / Plus / Pro 5x / Pro 20x，网页价与 iOS 内购价分列，Claude Max 在 iOS 贵 25%）；按 SemiAnalysis 2026-06 实测上限换算出的「等效倍率」与中转站倍率区间放在同一把对数尺子上；**倍率计算器**（付的钱 ÷ 一个月能用多少刀，支持汇率与「中转站给的额度」对比）。
+- 口径：全页不提任何特定国家、货币或发卡行，「国内」明确定义为两家都正式提供服务的国家和地区并链接两家官方名单；免税州地址与地址生成器（usaddressgen.com）只作格式参考、填本人真实地址，这类提醒统一红字并引用该网站自己的声明；删掉虚拟卡 / 卡商推荐；接码平台只作社区做法提及。`Subscription.test.tsx` 有禁词守卫盯着渲染文字。
+- 资料补全：Apple ID 已改名 Apple 账户（account.apple.com）；礼品卡面额按套餐给；iOS 订的只能在 Apple 管理、别在网页重复订；退款渠道；ChatGPT Go；Anthropic 2026-02 起禁止订阅 OAuth 用于第三方工具 / 中转。数据来源与复核日期记在 `docs/subscription-guide/SOURCES.md`。
+- 样式：修掉页面里不存在的 Tailwind 类（`text-text*` / `border-border`，它们让正文失色、卡片边框变成粗黑线）与多包的一层 `qb-page`；改用 `Card` / `Pill` / `Bullet` / `Collapsible` / `ExternalLink` / `Field` 等现成原语，颜色全部引用 `tokens.css`，780px 以下价目表堆成卡片。
+- 仓库：按使用者决定去掉 `.gitignore` 里「订阅指南永不入库」的两行；订阅页随本项目一起公开。
+
+## 0.24.4 — 2026-09-19
+
+- 新增「订阅」菜单栏（`/subscription`）与双 AI 官方订阅实战指南（Claude Pro 与 ChatGPT Plus）。
+- 按照支付方式划分为四大核心板块：苹果生态内购（Apple 余额 · 本地扫码结算 · 99% 首选）、安卓原生订阅（Google Play 原生 · 严禁礼卡避坑 · 跨端共享）、国际银行卡直付（PC 网页直连 · 账单地址实战 · 0% 避税）、答疑公约与排查（FAQ · 拒付急救 · 免税州速查 · 用户声明公约）。
+- 首次进入订阅页强制弹出《知情公约与合规声明》前置确认弹窗，用户确认签署后方可解锁查看后续具体实操步骤；答疑公约与排查页支持重新唤起阅读。
+- 严格遵循开源合规：全篇严禁提及特定受限区域，明确界定「国内」特指双 AI 官方合法支持与商业开放的服务区域；真实地址提示以深红重点警示醒目标出，明确声明本工具仅为本地看门狗与安全审计开源工具，绝不提供代充、代付或账号买卖中介服务。
+
+## 0.24.2 — 2026-09-19
+
+- 账户页「Codex 桌面端」卡片标题栏新增「识别」入口：官方 Codex 的 turn-state 开关、个人/Team 规则、「接入并启动 Codex」（识别模式）、采集状态表与完整说明都在这个弹窗里；按钮文字如实显示后端状态（注入开没开）。`RouterStatus` 新增 `turnstate_enabled` / `turnstate_team`，界面的开关**回读后端真实状态**，不再靠前端本地猜（原来面板重开后界面显示「关」而实际在注）。窄窗口（≤780px）下这个入口收起，中转站页 Codex 分页仍可打开同一弹窗。
+- 扩展中心新增「Codex 出站与换出口（ccodex 引擎）」条目（`install_method: connect`）：接入你自己安装的 `ccodex-sleep-state`（外部程序，GPL-3.0）——定位 exe、以带窗口的独立进程启动它的 `setup`、停止时结束进程并调用它自己的 `restore` 恢复 Codex 配置、打开它的网页面板。代理 / 订阅 / 机场出站与实验性的「换出口凑 292」都在那个程序里实现；**本程序核心仍不内置代理、不换出口**。它与账户页的官方 turn-state 识别线互斥（后端守卫）。IPC：`codex_egress_status` / `codex_egress_config` / `codex_egress_config_save` / `codex_egress_start` / `codex_egress_stop`。
+- `OwnedProgram::launch_detached_console`：给会改写外部配置、退出时要自己恢复的外部程序用的启动方式（带控制台窗口、不随面板退出而被杀）。
+- 扩展中心的该条目支持**一键下载、校验、安装**：从插件仓库（你自己的 fork）的 Releases 取 Windows 包与 `SHA256SUMS`，边下边算 SHA-256 并核对，解压到 `%LOCALAPPDATA%\Programs\ccodex-sleep-state\` 后登记 exe 位置；旧版本改名留一份。下载地址只认 github.com；正在运行时不装。IPC `codex_egress_install`，进度任务 `egress-install`。
+
+## 0.24.1 — 2026-09-19
+
+- 修复：官方账户·Codex 的「启动 / 切换」在 Codex（Microsoft Store 版）自动更新后可能报 `IO 失败: Access is denied. (os error 5)`。根因是新版 Codex 的打包应用带了需要管理员注册的服务，更新未走完时当前用户的注册失效，任何启动方式（std/CreateProcessW/应用激活）都会被系统拒绝 —— 与本工具用哪种进程创建方式无关。现在这种情形会给出可操作说明，而不是一句裸 IO 错误。
+- 新增：账户页「修复 Codex 注册（需要管理员）」一键修复（IPC `codex_repair_registration`）。它以管理员重新为当前用户注册 Codex 打包应用（`Add-AppxPackage -RegisterByFamilyName`），只做重新注册，不改任何安全设置、不动别的包、不复制凭据；使用者不在 UAC 授权就如实返回「已取消」。也可在 Microsoft Store → 库 更新 Codex 达到同样效果。
+- 关闭 Codex 桌面端失败时的文案改为可操作：提示它可能以管理员/沙箱提权运行，需从任务栏手动退出或以管理员运行面板。
+
+## 0.24.0 — 2026-09-18
+
+- 新增**官方 Codex 的 turn-state 采集 / 注入**（实验功能，默认关闭，**只作用于 Codex，不碰 Claude**）：本机路由的官方模式保留客户端自带的 OAuth，被动采集官方响应带回的 `X-Codex-Turn-State`（不额外发请求、不烧额度），并在客户端自己没带时补注一张；客户端带了就保留它自己的。长度只是经验筛选口径，不是质量或额度指标。机制照 ccodex-sleep-state（GPL）公开协议 clean-room 重写，未复制源码、未引入 Mihomo / 代理出口、不「换出口凑 292」。见 DISCLAIMER §5.3。
+- 本机路由**健康判定改看 SSE 结局**：Codex 的 HTTP 200 但流里 `response.failed` / 断流不再被当成成功；区分容量不足（`server_is_overloaded`）与限流（`rate_limit_exceeded`）。纯函数 `qb-station::sse` 实现，只对 Codex 路由生效，Claude 路由行为不变。
+- 本机路由给上游连接加了 15 秒连接超时（不设读/总超时，避免截断长回复）。
+- **一键把官方 Codex 接进本机路由**（turn-state 面板里的「接入并启动 Codex」）：备好一个只属于 Codex 的官方环境（`requires_openai_auth=true`、不写占位 Key、base_url 不带 `/v1`——官方端点是 `.../backend-api/codex/responses`），启动前把你自己的 ChatGPT OAuth 从当前 Codex 账户槽位（或 `~/.codex/auth.json`）**复制**一份进环境目录（只读源、只播一次，之后交给 Codex 自己续期），在路由里挂上官方上游（`OAuthPassthrough`，「路由不承载官方身份」的唯一受控例外，仍只绑 `127.0.0.1`），再起 Codex 走这条链。真实「拿 292」取决于你自己的账号与网络，本功能不换出口、不保证 292。
+- 新增 IPC：`station_turnstate_configure` / `station_turnstate_status` / `station_turnstate_launch`；`RouterStatus` 增加 `turnstate_official_armed`。
+
+## 0.23.1 — 2026-09-18
+
+- 「查套路」弹窗重做：后台连接、受控检验、三层报告、逐次证据和加密历史；适配浅色、深色及窄窗口，外部仅调整入口文案。
+- 按 station-monitor 源码接入 New API / Sub2API 账号密码登录、Cookie/访问令牌兼容、会话刷新及余额；提供独立浏览器登录入口，支持用户在本站使用 Linux DO 或二次验证。远程登录窗口不能调用应用命令。
+- 临时测试 Key 只在本轮内存中使用。默认 1 次预热加 5 次缓存复用验证；可单独确认第 7 次冷前缀对照。按新账单核对请求 ID、用量、实扣、官方成本和余额差额，缺失证据不会生成完整倍率。
+- 按用户指定口径，账单读取、倍率计算和前后余额核对忽略货币单位，直接比较账单数值，不进行汇率换算。
+- 保留原源码本地 CSV/JSON Worker 分析，最多每文件 5 MiB / 50,000 条，不上传。
+- Codex 中转启动单独提示 Windows 沙箱初始化错误；本机已用官方初始化器修复 helper_sandbox_lock_failed，并验证沙箱命令可执行。
+- ccodex-sleep-state 已评估，未引入 Go/Mihomo 服务或官方 turn-state 注入；cockpit-tools 仅参考设计。
+
 ## 0.22.6 — 2026-09-16
 
 - 修复酒馆起来之后报 `Not allowed to open url http://127.0.0.1:8000`、页面打不开的问题。

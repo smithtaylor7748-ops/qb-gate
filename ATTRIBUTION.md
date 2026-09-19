@@ -82,9 +82,9 @@ Artifact 里的 `\p{..}` 正则会让每个请求 400）也来自 cc-switch 源�
 ### cockpit-tools —— 桌面端怎么接进中转（v0.18.0 追加）
 
 - 仓库：https://github.com/jlcodes99/cockpit-tools
-- 许可：**没有 LICENSE 文件**（仓库根目录唯一那个 LICENSE 是它 vendor 进来的
-  第三方 MIT 组件 `CLIProxyAPI` 的，不是它自己的协议）。
-  按本文件开头第 2 条：**保留全部权利，一行都不能抄**。
+- 许可复核（2026-09-18）：根目录未提供 LICENSE，当前 README 声明
+  **CC BY-NC-SA 4.0**。本项目仅参考功能与公开协议，未复制其源码，
+  不将该许可下的代码并入现有双授权发行。
 - 读了：`src-tauri/src/modules/claude_desktop_gateway.rs`（561 行）与
   `claude_account_desktop_profile.rs` 里写配置那几段。
 
@@ -131,19 +131,30 @@ cockpit 走的是「让桌面端自己算 3p 目录」那条路（它观察到�
 | `CACHE_ATTENTION_THRESHOLD = 0.80` | `audit::CACHE_ATTENTION_THRESHOLD` |
 | `PRICE_STALE_AFTER_DAYS = 180` | `pricing::STALE_AFTER_DAYS` |
 
-**没参照什么，以及为什么**
+**后续适配范围**
 
-- **付费探针那一套**（`station_responses_billing_probe`：冷/热前缀构造、
-  余额前后对比、账单行与探针配对）没有搬。它要真发好几发计费请求，
-  而本项目的检验目前走的是「读站点自己的账单日志」这条零成本路径。
-  等要做真探针时再回去看它。
-- **`budget_estimate`（1 元预算推演）** 与 **结构化注意项**
-  （`code`/`level`/`fact`/`impact`/`next_step`/`evidence_refs` 八字段）
-  没有搬 —— 本项目的检验报告目前只回六项 + 可信度 + 证据档次。
+- **0.23.1 多轮缓存与余额核对**：按用户提供的源码适配六次固定前缀请求、可选第七次冷前缀、后台账号密码与浏览器会话、账单匹配和余额差额。测试材料/追问及 CSV/JSON 导入 Worker 来自用户提供的源码；Rust 编排和 React 界面适配本项目。缺少相同请求 ID 的 Token 匹配显式降级，不进入实扣倍率回写。
 
-**实现是自己写的**：那边是 Python + `Decimal`，这边是 Rust + `f64`，
+**计费编排独立适配**：那边是 Python + `Decimal`，这边是 Rust + `f64`，
 并且加了一条那边没有的硬规矩 —— **四类 token 缺任何一类就返回 `None`**，
 因为少一类会把分母算小、倍率被系统性抬高，而那正好是「这家在超收」的方向。
+
+### 0.23.1：中转检验与 Windows 初始化排障
+
+- 使用者提供的 `station-monitor-standalone.zip`：参考 `backend/server.py` 的
+  New API 账号密码/Cookie/访问令牌与 `New-Api-User`、`quota_per_unit`，Sub2API `/api/v1/usage`
+  与 `actual_cost`，以及 Responses SSE 和账单请求 ID 配对。Rust/React 实现
+  位于 `station_billing.rs`、`station_probe.rs`、`station_ops.rs` 与 `StationBilling.tsx`。
+- [cockpit-tools](https://github.com/jlcodes99/cockpit-tools)：继续参考独立实例与
+  进程诊断思路，实际故障依据本机官方 Codex 日志、协议和上游实现定位，未复制代码。
+- [OpenAI Codex Windows 指引](https://developers.openai.com/codex/windows/)、
+  [官方沙箱初始化实现](https://github.com/openai/codex/blob/main/codex-rs/windows-sandbox-rs/src/setup_provisioning.rs)：
+  核对旧目录缺少 `WRITE_DAC` 的原因；本机修复由已安装的官方初始化器执行，
+  QB Gate 仅新增诊断展示，未复制官方沙箱代码。
+- `ccodex-sleep-state-main.zip`（Go / GPL-3.0 / Mihomo）：**0.23.1 时仅评估未融合**；
+  **0.24.0 起 clean-room 重写了它的 turn-state 机制与 SSE 终止事件分类**（见下「ccodex-sleep-state」一节）。
+  始终**没有**复制其源码、二进制或引入 Mihomo / 代理出口。旧评估见
+  [融合与修复说明](docs/RELAY-REPAIR-0.23.1.zh-CN.md)。
 
 ---
 
@@ -169,6 +180,65 @@ cockpit 走的是「让桌面端自己算 3p 目录」那条路（它观察到�
 
 这跟本文件下面对 DNSLeakTester 的处理是同一条线：
 **授权不允许就不抄代码**，只按公开信息自己实现。
+
+---
+
+### ccodex-sleep-state —— turn-state 机制,clean-room 重写（v0.24.0）
+
+- 仓库：https://github.com/gylive/ccodex-sleep-state
+- 许可：**GPL-3.0**，且依赖 **Mihomo（GPL-3.0）**。
+- 用在：官方 Codex 的 `X-Codex-Turn-State` 采集 / 注入
+  （`crates/qb-station/src/turnstate.rs`），以及 SSE 终止事件分类
+  （`crates/qb-station/src/sse.rs`），二者都接进 `crates/qb-app/src/local_router.rs`。
+
+**⛔ 一行源码都没抄,只按公开描述用 Rust 重写。** 理由是许可：本项目是
+**AGPL-3.0-only + 商业授权双授权**，而 ccodex 是第三方持有版权的 GPL 代码 ——
+按 [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) 第三节,抄进来的 copyleft 代码
+无法再许可给商业档,会把商业档堵死。所以跟对 cc-switch(MIT，本可直接抄却仍独立实现)
+一样,这里也是 clean-room。
+
+**参照了什么（都是公开协议 / 行为,不受版权保护）：**
+
+- turn-state 信封的**外形**判定：base64url 解开后头字节 `0x80`、8 字节大端签发时间、
+  按 16 字节一块;个人 10 块 ≈ 292 字符 / Team 12 块 ≈ 332 字符。**只读外形,不解密不验签。**
+- active / ready 状态机的行为口径：响应头只做观测、不直接改 active;合格候选先进 ready;
+  连续两次形状变了或临近续补窗口才晋升。
+- 官方 Codex SSE 的终止事件归类：`response.completed` = 成功;`response.failed` / `error` = 失败;
+  `server_is_overloaded` / `slow_down` = 容量（≠429）;`rate_limit_exceeded` / `insufficient_quota` = 限流。
+
+**明确没有参照 / 没有做的：**
+
+- **没有复制它的 Go 源码**（`turnstate/`、`gateway/`、`codexconfig/`、`service/` 等一概没抄）。
+- **没有引入 Mihomo、订阅、出站协议适配或任何代理出口池** —— 那既是 GPL 传染源,
+  又与 DISCLAIMER §5「不做内置代理」冲突。
+- **没有做「换出口凑 292」**：本项目没有代理出口池,只在使用者当前这一条连接上采集。
+- **没有做主动合成探测**去烧额度:改为**被动**采集（读官方响应本就带回的头），
+  与本项目「不拿合成请求烧额度」的一贯纪律一致。
+- turn-state 只对 **Codex** 有意义（Anthropic Claude 协议里没有对应物），**只对 `Client::Codex` 生效**。
+
+长度只是经验筛选口径,**不是模型质量或额度指标**（ccodex 自己的 README / SECURITY 也这么说）——
+界面上照此措辞,不承诺任何服务端结果。详见 [DISCLAIMER.md](DISCLAIMER.md) 关于 turn-state 的一节。
+
+### ccodex-sleep-state —— 作为**外部程序**由插件商店接入（v0.24.2）
+
+- 仓库：https://github.com/smithtaylor7748-ops/qb-gate-codex-egress（使用者自己的 fork；上游 https://github.com/gylive/ccodex-sleep-state）
+- 许可：**GPL-3.0**（含 Mihomo，GPL-3.0）。
+- 用在：扩展中心的「Codex 出站与换出口」条目（`crates/qb-extensions/src/plugins/codex_egress.rs`、
+  `src/plugins/CodexEgressPanel.tsx`），`install_method: connect`，跟 SillyTavern 同一类。
+
+**与上一节的区别：这一节不重写它，只当作使用者自己装的第三方程序来接入。**
+本项目做的只有：定位本机已解压的 `ccodex-sleep-state.exe`、以带窗口的独立进程起它的
+`setup`、停止时结束进程并调用它自己的 `restore` 恢复 Codex 配置、打开它自己的网页面板。
+**不编译、不复制它一行源码、不把它链接进本程序**（0.24.2 起可一键从该仓库的 Releases 下载它发布的
+二进制包，按发布自带的 `SHA256SUMS` 校验后解压 —— 下载的是成品包，不是源码）—— 它以独立进程运行，
+本项目与它之间只有「起 / 停 / 打开网址」三个动作（GPL 的「聚合」而非「衍生」，
+跟本项目接入 AGPL 的 SillyTavern 同理）。因此本项目的 AGPL-3.0-only + 商业授权档不受影响。
+
+代理 / 订阅 / 机场出站，以及「换出口凑 292」这项实验性能力**全在它自己的仓库里**：
+本项目核心仍然不内置代理、不换出口（上一节「明确没有做的」原样成立）。
+它接管的是使用者当前激活 Codex 槽位的配置（没有槽位才是默认 `~/.codex`），与本项目的官方
+turn-state 识别**互斥**（0.24.7 起两者都改同一份 `config.toml`，命令层守卫）。
+对外定位见 [DISCLAIMER.md](DISCLAIMER.md) §5.3 末尾。
 
 ---
 
@@ -531,6 +601,12 @@ v0.12.0 的重构里带进来一份 3,310 行的订阅指引组件（`src/subscr
 750 行的购买教程正是使用者点名嫌多的那类内容，而且价格与步骤会过时、
 没人维护就会从帮助变成误导。代码已从工作区移除，要找的话在 git 历史里。
 按 MIT 的要求，这里保留出处记录。
+
+**0.24.5 补记：现在的 `/subscription` 页（`src/features/subscription/`）是另起炉灶的原创内容与代码**，
+不含那份 MIT 模块的任何代码或文字；套餐价、实测等值、中转站问题的出处逐条记在
+[docs/subscription-guide/SOURCES.md](docs/subscription-guide/SOURCES.md)，页面上也有「参考来源」折叠块。
+引用的都是公开网页（官方价目、App Store 商店页、帮助中心、媒体报道、arXiv 论文、GitHub issue），
+只转述事实与数字，不复制原文段落。
 
 SillyTavern 是外部 AGPL-3.0 应用。QB Gate 接入用户已有安装，不捆绑应用本体；本项目按 AGPL-3.0-only 发布，并另行提供商业授权。
 

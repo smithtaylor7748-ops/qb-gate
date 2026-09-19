@@ -20,6 +20,7 @@ pub const CHANNEL: &str = qb_contract::channels::TASK;
 pub const TASK_INSTALL: &str = "install";
 pub const TASK_UPGRADE: &str = "upgrade";
 pub const TASK_TAVERN_START: &str = "tavern-start";
+pub const TASK_EGRESS_INSTALL: &str = "egress-install";
 pub const TASK_DNS_PROBE: &str = "dns-probe";
 pub const TASK_LAUNCH_CODE: &str = "launch-claude-code";
 pub const TASK_LAUNCH_DESKTOP: &str = "launch-claude-desktop";

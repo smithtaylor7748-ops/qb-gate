@@ -32,13 +32,29 @@ pub use qb_iplock::gate;
 pub use qb_launch::{killswitch, launch};
 pub use qb_probe::probe;
 pub use qb_relay::relay;
-pub use qb_station::{health, router, schedule, station};
+pub use qb_station::{health, router, schedule, station, turnstate};
 pub use qb_sysenv::sysenv;
 
 pub mod app;
 pub mod commands;
 pub mod events;
 mod startup;
+mod station_login;
+
+/// Station login pages can never invoke application commands, including custom commands.
+fn main_window_commands<F: Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static>(
+    handler: F,
+) -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        if invoke.message.webview_ref().label() != "main" {
+            invoke
+                .resolver
+                .reject("This window has no application access");
+            return true;
+        }
+        handler(invoke)
+    }
+}
 pub mod tray;
 pub mod update;
 
@@ -90,7 +106,7 @@ pub fn run() {
             }
         })
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(main_window_commands(tauri::generate_handler![
             startup::startup_status,
             commands::workspace::operation_cancel,
             startup::startup_retry,
@@ -155,6 +171,10 @@ pub fn run() {
             commands::station::station_router_start,
             commands::station::station_router_stop,
             commands::station::station_router_status,
+            commands::station::station_turnstate_configure,
+            commands::station::station_turnstate_status,
+            commands::station::station_turnstate_enable,
+            commands::station::station_turnstate_disable,
             commands::station::station_select_route,
             commands::station::station_launch,
             commands::station::station_schedules,
@@ -171,6 +191,11 @@ pub fn run() {
             commands::station::station_audits,
             commands::station::station_run_audit,
             commands::station::station_models,
+            commands::station::station_billing_settings,
+            commands::station::station_billing_save,
+            commands::station::station_billing_connect,
+            commands::station::station_billing_browser,
+            commands::station::station_billing_refresh,
             commands::station::station_refresh_prices,
             commands::station::station_prices,
             commands::install::detect_software,
@@ -182,6 +207,7 @@ pub fn run() {
             commands::codex_commands::codex_accounts,
             commands::codex_commands::codex_desktop_status,
             commands::codex_commands::codex_close,
+            commands::codex_commands::codex_repair_registration,
             commands::codex_commands::codex_create,
             commands::codex_commands::codex_switch,
             commands::codex_commands::codex_launch,
@@ -244,6 +270,12 @@ pub fn run() {
             commands::plugins::plugin_catalog_status,
             commands::plugins::plugin_start,
             commands::plugins::plugin_stop,
+            commands::plugins::codex_egress_status,
+            commands::plugins::codex_egress_config,
+            commands::plugins::codex_egress_config_save,
+            commands::plugins::codex_egress_start,
+            commands::plugins::codex_egress_install,
+            commands::plugins::codex_egress_stop,
             commands::plugins::tavern_config,
             commands::plugins::tavern_config_save,
             commands::plugins::tavern_locate,
@@ -251,7 +283,7 @@ pub fn run() {
             commands::plugins::tavern_backup,
             commands::plugins::tavern_backups,
             commands::plugins::tavern_restore,
-        ])
+        ]))
         .setup(|app| {
             use tauri::Manager;
             // 「界面该刷新了」在这里接上托盘。
@@ -362,6 +394,44 @@ pub fn run() {
                         &handle.state::<AppState>(),
                         Some(handle.clone()),
                     );
+                    // 识别（turn-state）**不是**落盘的承诺，正相反：上次没关干净留下的接管
+                    // marker 要在这里**自动关闭并恢复**。本机路由随面板消失，marker 留着就是
+                    // 让那个槽位的 Codex 对着一个死端口（503）；「默认关闭、只在手动开启后
+                    // 生效」这条硬约束也要求它不能跨重启自动续上。
+                    match usecase::turnstate_ops::disable() {
+                        Ok(Some(t)) => audit::write(&format!(
+                            "面板重启：上次的识别没有关闭，已自动关闭并恢复槽位「{}」的配置",
+                            t.slot_label
+                        )),
+                        Ok(None) => {}
+                        Err(e) => audit::write(&format!(
+                            "面板重启：恢复上次识别接管的槽位配置失败，请到账户页「识别」弹窗手动关闭：{e}"
+                        )),
+                    }
+                    // 0.24.0–0.24.6 的旧做法留下的「官方 turn-state 环境」记录与目录
+                    // （连同复制进去的那份 OAuth 快照）：一次性清掉（best effort）。
+                    // 先查记录在不在再动手 —— `Repository::remove` 删不到也回 Ok，
+                    // 不查的话每次启动都会写一条「已清理」。环境先于 provider：
+                    // 环境引用着 provider，反过来删会被 `references` 拦下。
+                    for (kind, id) in [
+                        ("environments", "qb-router-codex-official"),
+                        ("providers", "qb-router-official"),
+                    ] {
+                        let exists = repository::Repository::open()
+                            .and_then(|db| db.get::<serde_json::Value>(kind, id))
+                            .is_ok();
+                        if !exists {
+                            continue;
+                        }
+                        match workspace::remove(kind, id) {
+                            Ok(()) => audit::write(&format!(
+                                "已清理 0.24.7 之前识别留下的 {kind} 记录 {id}"
+                            )),
+                            Err(e) => audit::write(&format!(
+                                "清理 0.24.7 之前识别留下的 {kind} 记录 {id} 失败：{e}"
+                            )),
+                        }
+                    }
                     // 智能调度是**落盘的承诺**：上次开着的，这次起来要接着跑。
                     // 不接回去的话，使用者重启一次面板，调度就悄悄停了 ——
                     // 而界面上那个开关还是「开」的（它读的是同一张表）。

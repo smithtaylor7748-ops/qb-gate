@@ -33,6 +33,7 @@ import {
 import {
   Check,
   ChevronRight,
+  Fingerprint,
   Play,
   SlidersHorizontal,
   Square,
@@ -71,6 +72,7 @@ import {
 import StationSchedule from "./StationSchedule";
 import StationAudit from "./StationAudit";
 import StationLogs from "./StationLogs";
+import StationTurnState from "./StationTurnState";
 import RouteDialog from "./RouteDialog";
 
 /** 三个维度在界面上叫什么。跟调度设置弹窗里那份是同一套写法。 */
@@ -223,8 +225,10 @@ function StationBoard({
     editing: Route | null;
   } | null>(null);
   const [schedOpen, setSchedOpen] = useState(false);
+  const [turnOpen, setTurnOpen] = useState(false);
   const [logOpen, setLogOpen] = useState<Route | null>(null);
   const [auditOpen, setAuditOpen] = useState<Route | null>(null);
+  const [auditBusy, setAuditBusy] = useState(false);
 
   const workspace = useWorkspace();
   const runningSessions = (workspace.data?.sessions ?? []).filter(
@@ -235,6 +239,10 @@ function StationBoard({
       session.context.identity_id === `qb-router-${client}`,
   );
   const isRunning = runningSessions.length > 0;
+  const setupNotice = runningSessions.find(
+    (session) =>
+      session.detail.includes("Windows") && session.detail.includes("Codex"),
+  )?.detail;
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible")
@@ -869,6 +877,11 @@ function StationBoard({
             )}
           </button>
 
+          {setupNotice && (
+            <p role="status" className="qb-st-nudge">
+              {setupNotice}
+            </p>
+          )}
           {/* 智能调度：点一下启动，再点一下停止。⛔ 不许改成「打开设置」——
               设置是下面单独那个按钮。开着时整块转绿，一道光沿着边一直绕、
               状态点一圈圈往外扩，告诉人它是真的在跑。 */}
@@ -928,6 +941,20 @@ function StationBoard({
             调度设置
             <ChevronRight size={14} className="chev" aria-hidden="true" />
           </button>
+
+          {/* turn-state 只对官方 Codex 有意义,别的软件不显示这个入口。 */}
+          {client === "codex" && (
+            <button
+              type="button"
+              className="qb-st-schedcfg"
+              onClick={() => setTurnOpen(true)}
+            >
+              <span className="qb-st-sheen" aria-hidden="true" />
+              <Fingerprint size={14} aria-hidden="true" />
+              turn-state（实验）
+              <ChevronRight size={14} className="chev" aria-hidden="true" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -1068,6 +1095,15 @@ function StationBoard({
       </Modal>
 
       <Modal
+        open={turnOpen}
+        onClose={() => setTurnOpen(false)}
+        title="官方 Codex · turn-state（实验）"
+        size="huge"
+      >
+        <StationTurnState />
+      </Modal>
+
+      <Modal
         open={logOpen != null}
         onClose={() => setLogOpen(null)}
         title={`请求日志 · ${logOpen ? logOpen.group || "默认分组" : ""}`}
@@ -1086,12 +1122,18 @@ function StationBoard({
       <Modal
         open={auditOpen != null}
         onClose={() => setAuditOpen(null)}
-        title={`站点检验 · ${auditOpen ? auditOpen.group || "默认分组" : ""}`}
-        size="wide"
+        title="查套路 · 账单检验"
+        size="huge"
+        dismissible={!auditBusy}
       >
         {auditOpen && (
           // focus 一定要给：行上已经选过这条线了，弹窗里不该再问一遍。
-          <StationAudit routes={[auditOpen]} focus={auditOpen.id} />
+          <StationAudit
+            routes={[auditOpen]}
+            focus={auditOpen.id}
+            stationName={siteName(auditOpen.station_id)}
+            onBusyChange={setAuditBusy}
+          />
         )}
       </Modal>
     </>
@@ -1223,7 +1265,7 @@ function RouteRow({
             {running ? (current ? "一键关闭" : "切换并使用") : "启动"}
           </Button>
           <Button variant="ghost" onClick={stop(onAudit)}>
-            检验
+            查套路
           </Button>
           <Button
             variant="ghost"
@@ -1277,6 +1319,11 @@ function RouteRow({
               界面会把挂掉的站显示成健康的。 */}
           {health.error}（上面几项是没有数据，不是零）
         </div>
+      )}
+      {health && !health.error && (
+        <p className="qb-st-note">
+          账单统计为最近一页（最多 100 条）的时间窗样本，不代表完整流量。
+        </p>
       )}
     </div>
   );

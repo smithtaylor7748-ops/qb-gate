@@ -451,7 +451,7 @@ $verdict  = Join-Path $state 'gate-verdict.json'
 $log      = Join-Path $state 'hooks\blocked.log'
 $settings = if ($env:CLAUDE_CONFIG_DIR) { Join-Path $env:CLAUDE_CONFIG_DIR 'settings.json' } else { '__SETTINGS_PATH__' }
 
-# 裁决超过这个秒数就算不新鲜。看门狗 15 秒一轮，90 秒足够容忍几轮抖动。
+# 裁决超过这个秒数就算不新鲜。看门狗 5 秒一轮，45 秒足够容忍几轮抖动。
 $MaxAge = 45
 
 function Deny($why) {

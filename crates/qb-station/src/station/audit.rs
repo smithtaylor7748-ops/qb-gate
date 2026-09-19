@@ -241,6 +241,39 @@ pub struct AuditRound {
     /// 而「只能选择信」正是这个面板整体想避免的事。
     #[serde(default)]
     pub model: String,
+    /// Missing evidence and failed steps, retained with the report.
+    #[serde(default)]
+    pub problems: Vec<String>,
+    #[serde(default)]
+    pub batch: Option<AuditBatch>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AuditSample {
+    pub stage: String,
+    pub request_id: String,
+    pub api_tokens: [Option<u32>; 4],
+    pub ledger_tokens: [Option<u32>; 4],
+    pub billed: Option<f64>,
+    pub official: Option<f64>,
+    pub first_token_ms: Option<f64>,
+    pub match_kind: String,
+    pub problem: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AuditBatch {
+    pub planned: u32,
+    pub samples: Vec<AuditSample>,
+    pub balance_before: Option<f64>,
+    pub balance_after: Option<f64>,
+    pub balance_delta: Option<f64>,
+    pub currency: String,
+    pub total_billed: Option<f64>,
+    pub official_cost: Option<f64>,
+    pub prefix_reuse: Option<f64>,
 }
 
 impl AuditRound {
@@ -263,6 +296,8 @@ impl AuditRound {
             checks,
             rates,
             model,
+            problems: Vec::new(),
+            batch: None,
         };
         round.evidence = round.evidence_of();
         round

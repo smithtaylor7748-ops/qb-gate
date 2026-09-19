@@ -306,7 +306,7 @@ export default function AccountBand() {
                 <Tile
                   icon={<Terminal size={18} />}
                   name="Claude Code"
-                  note="15 秒一次 · 断网先上锁留进程"
+                  note="5 秒一次 · 查不到 IP 立即关闭，不给宽限"
                   tone="accent"
                   task={codeTask}
                   disabled={!!busy}
@@ -317,7 +317,7 @@ export default function AccountBand() {
                 <Tile
                   icon={<MonitorSmartphone size={18} />}
                   name="Claude 桌面端"
-                  note="查不到 IP 立即关闭，不给宽限"
+                  note="5 秒一次 · 查不到 IP 立即关闭，不给宽限"
                   tone="warn"
                   task={desktopTask}
                   disabled={!!busy}
@@ -370,7 +370,7 @@ export default function AccountBand() {
         danger
       >
         <p>
-          桌面端这一档的看门狗<strong>不给宽限</strong>：每 20 秒查一次出口 IP，
+          桌面端这一档的看门狗<strong>不给宽限</strong>：每 5 秒查一次出口 IP，
           一旦查不到就立即关闭桌面端，不等网络恢复。
         </p>
         <p className="mt-2">

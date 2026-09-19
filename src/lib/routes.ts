@@ -7,6 +7,7 @@
  */
 import {
   Blocks,
+  CreditCard,
   KeyRound,
   Package,
   Settings,
@@ -43,6 +44,12 @@ export interface NavEntry {
 export const NAV: NavEntry[] = [
   { path: "/", name: "官方账户", icon: KeyRound, hint: "槽位、额度与启动" },
   { path: RELAY_BASE, name: "中转站", icon: Waypoints, hint: "API 服务与诊断" },
+  {
+    path: "/subscription",
+    name: "订阅",
+    icon: CreditCard,
+    hint: "双 AI 订阅与避坑实战",
+  },
   { path: "/software", name: "软件", icon: Package, hint: "安装、升级与版本" },
   {
     path: "/extensions",
@@ -63,6 +70,8 @@ export const NAV: NavEntry[] = [
  * 按前缀匹配，长的排前面。
  */
 export const LEGACY_REDIRECTS: [string, string][] = [
+  ["/subscription-guide", "/subscription"],
+  ["/guide", "/subscription"],
   ["/environment/software", "/software"],
   // 六项安全对象全在总览上：四格是评分明细，执行锁与会话内门禁挂在
   // 评分卡右上角那排门禁读数上，点一下开小窗。**没有单独的安全页** ——

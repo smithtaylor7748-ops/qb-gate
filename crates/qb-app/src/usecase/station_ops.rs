@@ -5,7 +5,7 @@
 //!
 //! # 免费的和要花钱的
 //!
-//! [`refresh_health`] 读的是站点**自己的账单日志**,零额外请求、零成本,
+//! [`refresh_health`] 读的是站点**自己的账单日志**,不发送模型请求,
 //! 所以可以自动刷新。真打模型测速和站点检验要花钱,**只在使用者点的时候跑** ——
 //! 这一层不提供任何自动触发它们的入口。
 //!
@@ -23,20 +23,32 @@ use qb_station::schedule::{
     cheap_values, cost_per_token, rank, Candidate, CheapBasis, CheapInput, Prefs, Ranking,
 };
 use qb_station::station::audit::{AuditRound, Check, CheckKind};
-use qb_station::station::billing::parse_self_log;
 use qb_station::station::model::Protocols;
 use qb_station::station::pricing::{self, FetchedPrice};
 use qb_station::station::route::Route;
 use std::collections::HashMap;
 
 /// 一条线路要去哪儿拉账单。
-#[derive(Debug, Clone)]
+#[derive(Clone, Default)]
 pub struct BillingSource {
     pub route_id: String,
     /// 站点基地址。
     pub base_url: String,
     /// 这条线那把 key。
     pub key: String,
+    pub client: qb_contract::domain::Client,
+    pub group: String,
+    pub billing: Option<super::station_billing::LedgerAuth>,
+    pub billing_problem: Option<String>,
+}
+
+impl std::fmt::Debug for BillingSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BillingSource")
+            .field("route_id", &self.route_id)
+            .field("client", &self.client)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Forwarding, pricing, audits and scheduling must resolve the same route key.
@@ -57,10 +69,20 @@ pub fn source(db: &Repository, route: &Route) -> Result<BillingSource> {
     if key.trim().is_empty() {
         return Err(GateError::Other("API Key 为空，请编辑线路重新填写".into()));
     }
+    let base_url = crate::endpoint::endpoint_base(&provider.base_url)?;
+    let (billing, billing_problem) =
+        match super::station_billing::load(db, &route.station_id, &base_url) {
+            Ok(value) => (value, None),
+            Err(e) => (None, Some(e.to_string())),
+        };
     Ok(BillingSource {
         route_id: route.id.clone(),
-        base_url: crate::endpoint::endpoint_base(&provider.base_url)?,
+        base_url,
         key,
+        client: route.client,
+        group: route.group.clone(),
+        billing,
+        billing_problem,
     })
 }
 
@@ -117,40 +139,45 @@ pub struct RouteHealth {
 /// 去站点拉账单并聚合成 1H / 1D / 7D。
 ///
 /// 单条失败不影响别条 —— 一家站点挂了不该让整页的健康度都变成空白。
+pub async fn ledger_rows(
+    source: &BillingSource,
+    client: &reqwest::Client,
+) -> std::result::Result<Vec<qb_station::station::model::UsageRow>, String> {
+    if let Some(problem) = &source.billing_problem {
+        return Err(problem.clone());
+    }
+    let auth = source
+        .billing
+        .as_ref()
+        .ok_or("尚未连接账单：打开「查套路 → 连接后台」，用站点账号密码或浏览器登录")?;
+    let rows = super::station_billing::usage(&source.base_url, auth, client).await?;
+    if !source.group.is_empty() && rows.iter().any(|r| r.group.is_empty()) {
+        return Err("账单缺少分组信息，无法确认属于这条线路；未把其它分组计入".into());
+    }
+    Ok(rows
+        .into_iter()
+        .filter(|r| r.group == source.group)
+        .collect())
+}
+
 pub async fn refresh_health(
     sources: &[BillingSource],
     client: &reqwest::Client,
     now_ms: i64,
 ) -> HashMap<String, RouteHealth> {
     let mut out = HashMap::new();
-    for s in sources {
-        let url = format!(
-            "{}{SELF_LOG_PATH}",
-            s.base_url.trim_end_matches('/').trim_end_matches("/v1")
-        );
-        let got = client
-            .get(&url)
-            .bearer_auth(&s.key)
-            .send()
-            .await
-            .and_then(|r| r.error_for_status());
-        let health = match got {
-            Ok(resp) => match resp.text().await {
-                Ok(body) => RouteHealth {
-                    windows: health::windows(&parse_self_log(&body), now_ms),
-                    error: None,
-                },
-                Err(e) => RouteHealth {
-                    error: Some(format!("读不到账单响应体：{e}")),
-                    ..Default::default()
-                },
+    for source in sources {
+        let health = match ledger_rows(source, client).await {
+            Ok(rows) => RouteHealth {
+                windows: health::windows(&rows, now_ms),
+                error: None,
             },
-            Err(e) => RouteHealth {
-                error: Some(format!("拉不到账单：{e}")),
+            Err(error) => RouteHealth {
+                error: Some(error),
                 ..Default::default()
             },
         };
-        out.insert(s.route_id.clone(), health);
+        out.insert(source.route_id.clone(), health);
     }
     out
 }
@@ -313,30 +340,6 @@ pub fn decide(
     (rank(&candidates, prefs, incumbent), basis)
 }
 
-/// 跑一轮站点检验。
-///
-/// ⛔ **要花钱,只在使用者点的时候调。** 这一层不提供任何自动触发。
-///
-/// # 哪几项量得出来,哪几项量不出来
-///
-/// | 项 | 怎么来的 |
-/// |---|---|
-/// | 缓存命中 / 成功率 | 站点自己的账单日志。**免费的证据**,直接用 |
-/// | 首字延迟 | 真发一发最小请求,量到第一个字节 |
-/// | 倍率 / 上下文窗口 / 最大输出 | **量不出来,记成「没测到」** |
-///
-/// 后三项不是忘了写:
-///
-/// - **倍率**的定义是「实扣是标称的几倍」,要算它就得知道**官方参考价**。
-///   仓库里没有这张价目表,文档里也没有定义它从哪儿来。
-///   凭空编一张出来,算出的 mult 会直接改写界面上的真实倍率、还会参与底线
-///   筛选 —— 编错了比不测危险得多;
-/// - **上下文窗口 / 最大输出**要靠构造超长输入和超大 `max_tokens` 去试探,
-///   每试一次都真的花钱,而「试到多少算到顶」的判据没有定过。
-///
-/// 记成 [`Verdict::Unmeasured`] 的后果是**可信度被压低**(分母是六项全额),
-/// 这正是想要的:没核实就不该读作可信。等那两件事定下来,
-/// 在这里各补一段即可,别改 `CheckKind`。
 /// 一轮检验的产物:结论,外加**顺手学到的那家站点的价目**。
 ///
 /// 价目单独带出来而不是塞进 [`AuditRound`],是因为两者的去处不同:
@@ -352,158 +355,109 @@ pub struct AuditOutcome {
     pub model: String,
 }
 
+/// Six controlled requests; an optional seventh cold-prefix control requires explicit consent.
 pub async fn run_audit(
     source: &BillingSource,
     claimed_rate: Option<f64>,
-    // 这条线主要在跑哪个模型 —— 官方价按它查。
     model: &str,
     catalog: &pricing::Catalog,
     previous: Option<&AuditRound>,
     client: &reqwest::Client,
     now_ms: i64,
 ) -> AuditOutcome {
-    let prev_of = |k: CheckKind| -> Option<f64> {
-        previous?
-            .checks
-            .iter()
-            .find(|c| c.kind == k)
-            .and_then(|c| c.measured)
-    };
+    run_audit_with(
+        source,
+        claimed_rate,
+        model,
+        catalog,
+        previous,
+        client,
+        now_ms,
+        false,
+        &|_, _, _| {},
+    )
+    .await
+}
 
-    // 一、免费的那几项：读站点自己的账单。
-    let health = refresh_health(std::slice::from_ref(source), client, now_ms).await;
-    let day = health.get(&source.route_id).map(|h| &h.windows.day);
-
-    let mut checks = Vec::new();
-    match day.and_then(|d| d.cache_hit_rate) {
-        Some(v) => checks.push(Check::measured(
-            CheckKind::CacheHit,
-            None,
-            prev_of(CheckKind::CacheHit),
-            v,
-        )),
-        None => checks.push(Check::unmeasured(
-            CheckKind::CacheHit,
-            None,
-            prev_of(CheckKind::CacheHit),
-        )),
-    }
-    match day.and_then(|d| d.success_rate) {
-        Some(v) => checks.push(Check::measured(
-            CheckKind::SuccessRate,
-            None,
-            prev_of(CheckKind::SuccessRate),
-            v,
-        )),
-        None => checks.push(Check::unmeasured(
-            CheckKind::SuccessRate,
-            None,
-            prev_of(CheckKind::SuccessRate),
-        )),
-    }
-
-    // 二、首字：真发一发最小请求。失败就记「没测到」,**不记成 0** ——
-    //     0 毫秒首字是个荒谬的断言。
-    let started = std::time::Instant::now();
-    let probe = client
-        .get(format!(
-            "{}/v1/models",
-            source
-                .base_url
-                .trim_end_matches('/')
-                .trim_end_matches("/v1")
-        ))
-        .bearer_auth(&source.key)
-        .send()
-        .await;
-    match probe {
-        Ok(r) if r.status().is_success() => {
-            let ms = started.elapsed().as_millis() as f64;
-            checks.push(Check::measured(
-                CheckKind::FirstToken,
-                None,
-                prev_of(CheckKind::FirstToken),
-                ms,
-            ));
-        }
-        _ => checks.push(Check::unmeasured(
-            CheckKind::FirstToken,
-            None,
-            prev_of(CheckKind::FirstToken),
-        )),
-    }
-
-    // 三、倍率:拿**真实账单**反推「实扣是官方价的几倍」。
-    //
-    //     实测倍率 = 24h 账单实扣 ÷ Σ(同一批实际 token × 官方单价)
-    //
-    // ⛔ **不要再拿站点公布的倍率去凑这个数。** 这里曾经的写法是:
-    // 把站点公布的四类倍率乘上官方价凑出一个「站点单价」,再交给
-    // `verdicts` 除以官方价 —— 官方价乘进去又除出来,约掉了,
-    // 算出来的恒等于站点自己公布的两个数相乘。站点说它便宜,面板就说它便宜。
-    // 那是「看起来通过了、实际什么都没测」,比不做这项检查更危险。
-    //
-    // 现在分子来自站点账单(真金白银的实扣),分母来自官方价目表,
-    // 两头都不是站点公布的倍率 —— 站点改价目表改不动这个结论。
-    //
-    // 四类 token 缺任何一类都记「没测到」:少一类会把分母算小、
-    // 倍率被系统性抬高,而那正好是「这家在超收」的方向。
-    let official = catalog.resolve(model);
-    let measured_rate = match (&official, day) {
-        (Some(o), Some(d)) => {
-            let m = d.mix;
-            pricing::measured_multiplier(
-                [m.input, m.cache_read, m.cache_write, m.output],
-                d.cost,
-                o,
-            )
-        }
-        _ => None,
-    };
-    match measured_rate {
-        Some(real) => checks.push(Check::measured(
-            CheckKind::Rate,
-            claimed_rate,
-            prev_of(CheckKind::Rate),
-            real,
-        )),
-        None => checks.push(Check::unmeasured(
-            CheckKind::Rate,
-            claimed_rate,
-            prev_of(CheckKind::Rate),
-        )),
-    }
-
-    // 四类倍率结构表。**只做展示,不下判定** —— 它回答的是
-    // 「这家站点公布的计费结构长什么样」(输入便不便宜、输出翻不翻倍),
-    // 不回答「它有没有超收」。后者只有上面那个 measured_rate 答得了。
+#[allow(clippy::too_many_arguments)]
+pub async fn run_audit_with(
+    source: &BillingSource,
+    claimed_rate: Option<f64>,
+    model: &str,
+    catalog: &pricing::Catalog,
+    previous: Option<&AuditRound>,
+    client: &reqwest::Client,
+    now_ms: i64,
+    cold: bool,
+    notify: &(dyn Fn(u32, u32, &str) + Send + Sync),
+) -> AuditOutcome {
+    let (batch, mut problems) = super::station_batch::run(
+        &source.base_url,
+        &source.key,
+        source.client,
+        &source.group,
+        source.billing.as_ref(),
+        model,
+        catalog,
+        client,
+        cold,
+        now_ms,
+        notify,
+    )
+    .await;
+    let rate = batch
+        .total_billed
+        .zip(batch.official_cost)
+        .filter(|(b, o)| b.is_finite() && *b >= 0.0 && o.is_finite() && *o > 0.0)
+        .filter(|_| batch.samples.iter().all(|s| s.match_kind == "request-id"))
+        .map(|(b, o)| b / o);
+    let ttfts: Vec<_> = batch
+        .samples
+        .iter()
+        .filter_map(|s| s.first_token_ms)
+        .collect();
+    let ttft = (!ttfts.is_empty()).then(|| ttfts.iter().sum::<f64>() / ttfts.len() as f64);
+    let checks = CheckKind::ALL
+        .into_iter()
+        .map(|kind| {
+            let claimed = if kind == CheckKind::Rate {
+                claimed_rate
+            } else {
+                None
+            };
+            let prev = previous
+                .and_then(|r| r.checks.iter().find(|c| c.kind == kind))
+                .and_then(|c| c.measured);
+            let value = match kind {
+                CheckKind::Rate => rate,
+                CheckKind::CacheHit => batch.prefix_reuse,
+                CheckKind::FirstToken => ttft,
+                _ => None,
+            };
+            value
+                .map(|v| Check::measured(kind, claimed, prev, v))
+                .unwrap_or_else(|| Check::unmeasured(kind, claimed, prev))
+        })
+        .collect();
+    problems.push(
+        "API 用量、账单与余额均由站点提供；本报告不鉴定模型身份、上下文上限或全站成功率".into(),
+    );
     let station_rates = fetch_station_models(source, client)
         .await
         .into_iter()
-        .find(|m| m.model.eq_ignore_ascii_case(model.trim()))
+        .find(|m| m.model == model && m.in_group(&source.group))
         .map(|m| m.rates);
-    // 官方价那一列用的是**这次实际查到的那份**(抓回来的优先、
-    // 没抓到才退回内置快照),跟上面 measured_rate 的分母是同一份。
-    // 两处各查各的会出现「表上说本来 5 块、结论按 4 块算」的错位。
-    let rates = match &station_rates {
-        Some(r) => pricing::verdicts(r, official.as_ref()),
-        None => Vec::new(),
-    };
-    checks.push(Check::unmeasured(
-        CheckKind::ContextWindow,
-        None,
-        prev_of(CheckKind::ContextWindow),
-    ));
-    checks.push(Check::unmeasured(
-        CheckKind::MaxOutput,
-        None,
-        prev_of(CheckKind::MaxOutput),
-    ));
-
+    let rates = station_rates
+        .as_ref()
+        .map(|r| pricing::verdicts(r, catalog.resolve(model).as_ref()))
+        .unwrap_or_default();
+    let mut round = AuditRound::with_rates(now_ms, checks, rates, model.into());
+    round.problems = problems;
+    round.batch = Some(batch);
     AuditOutcome {
-        round: AuditRound::with_rates(now_ms, checks, rates, model.trim().to_string()),
+        round,
         rates: station_rates,
-        model: model.trim().to_string(),
+        model: model.into(),
     }
 }
 
@@ -518,29 +472,75 @@ pub async fn fetch_station_models(
     source: &BillingSource,
     client: &reqwest::Client,
 ) -> Vec<pricing::StationModel> {
-    let url = format!(
-        "{}{STATION_PRICING_PATH}",
-        source
-            .base_url
-            .trim_end_matches('/')
-            .trim_end_matches("/v1")
-    );
-    let fetched = async {
-        let body = client
-            .get(&url)
-            .bearer_auth(&source.key)
-            .send()
-            .await
-            .ok()?
-            .error_for_status()
-            .ok()?
-            .text()
-            .await
-            .ok()?;
-        Some(pricing::parse_station_pricing(&body))
-    }
+    fetch_models(source, client).await.0
+}
+
+pub async fn fetch_models(
+    source: &BillingSource,
+    client: &reqwest::Client,
+) -> (Vec<pricing::StationModel>, Option<String>) {
+    let base = source
+        .base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/v1");
+    let pricing = super::station_billing::json(
+        client.get(format!("{base}{STATION_PRICING_PATH}")),
+        "站点价目表",
+    )
     .await;
-    fetched.unwrap_or_default()
+    let problem = match pricing {
+        Ok(value) => {
+            let models = pricing::parse_station_pricing(&value.to_string());
+            if !models.is_empty() {
+                return (models, None);
+            }
+            "站点价目表未提供可识别的模型".into()
+        }
+        Err(problem) => problem,
+    };
+    if let Some(auth) = &source.billing {
+        if let Ok(models) =
+            super::station_billing::models(&source.base_url, auth, client, &source.group).await
+        {
+            if !models.is_empty() {
+                return (models, None);
+            }
+        }
+    }
+    match super::station_billing::json(
+        client
+            .get(format!("{base}/v1/models"))
+            .bearer_auth(&source.key),
+        "模型列表",
+    )
+    .await
+    {
+        Ok(value) => {
+            let models = value
+                .get("data")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.get("id").and_then(serde_json::Value::as_str))
+                .filter(|s| !s.trim().is_empty())
+                .map(|model| pricing::StationModel {
+                    model: model.into(),
+                    rates: Default::default(),
+                    groups: vec![],
+                })
+                .collect();
+            (
+                models,
+                Some(format!(
+                    "{problem}；已尝试使用 API Key 的模型列表，未编造价格。也可以手动输入模型"
+                )),
+            )
+        }
+        Err(error) => (
+            Vec::new(),
+            Some(format!("{problem}；{error}。可手动输入模型")),
+        ),
+    }
 }
 
 /// 官方定价文档的地址与表格格式。

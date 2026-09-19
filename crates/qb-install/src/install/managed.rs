@@ -557,7 +557,10 @@ async fn codex_release() -> Result<Release> {
 /// 下载到 `dest`，边下边算 SHA-256。返回算出来的哈希（小写十六进制）。
 ///
 /// 60 秒一个字节都没收到就放弃 —— 不设这个的话，网络断在半路会让任务永远挂在「下载中」。
-async fn download(
+///
+/// `pub` 是给扩展中心的外部程序安装（Codex 出站插件）复用的 —— 同一套「边下边算哈希、
+/// 卡住 60 秒就停、大小对不上就报」，别在别处再抄一份。
+pub async fn download(
     url: &str,
     dest: &Path,
     size_hint: Option<u64>,
@@ -610,10 +613,11 @@ async fn download(
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// 解压 Codex 的 zip。用 .NET 的 ZipFile（PowerShell 5.1 自带），不为它加一个 Rust 依赖。
+/// 解压 zip。用 .NET 的 ZipFile（PowerShell 5.1 自带），不为它加一个 Rust 依赖。
 /// 路径按 PowerShell 单引号串的规矩转义（`'` → `''`），脚本里没有双引号。
+/// `pub` 同上：扩展中心装外部程序也用它。目标目录已有同名文件会失败 —— 调用方先解到干净的暂存目录。
 #[cfg(windows)]
-async fn unzip(zip: &Path, out: &Path) -> Result<()> {
+pub async fn unzip(zip: &Path, out: &Path) -> Result<()> {
     let q = |p: &Path| p.display().to_string().replace('\'', "''");
     let script = format!(
         "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; \
@@ -636,7 +640,7 @@ async fn unzip(zip: &Path, out: &Path) -> Result<()> {
 }
 
 #[cfg(not(windows))]
-async fn unzip(_zip: &Path, _out: &Path) -> Result<()> {
+pub async fn unzip(_zip: &Path, _out: &Path) -> Result<()> {
     Err(GateError::Other("只在 Windows 上可用".into()))
 }
 

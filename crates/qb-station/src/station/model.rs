@@ -159,6 +159,8 @@ impl StationGroup {
 /// 否则缓存命中率会被稀释成一个看起来很正常的小数,而真相是「这站压根没报缓存」。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct UsageRow {
+    /// Ledger request identifier, used to correlate one paid probe without guessing.
+    pub request_id: String,
     /// 毫秒时间戳。时间窗聚合按它切。
     pub at_ms: i64,
     pub group: String,

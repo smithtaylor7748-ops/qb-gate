@@ -30,4 +30,30 @@ switches: number,
 /**
  * 还没落库的请求日志条数。
  */
-pending_logs: number, };
+pending_logs: number, 
+/**
+ * 官方 Codex turn-state 上游挂上了没有（Codex 接进路由了没）。
+ *
+ * **Codex 全局,与界面停在哪个分页无关** —— 官方线整机只有一条。
+ * turn-state 面板据此显示「已接入 / 未接入」。
+ */
+turnstate_official_armed: boolean, 
+/**
+ * turn-state 注入总开关现在开着没有（**后端真实状态**,界面的开关照它显示）。
+ *
+ * 只在使用者手动开启后为真;面板重启后回到关（不落盘）—— 这是「默认关闭」
+ * 那条硬约束的一部分,不是遗漏。
+ */
+turnstate_enabled: boolean, 
+/**
+ * 账号规则是不是 Team（12 块 / 332）;否则个人（10 块 / 292）。
+ */
+turnstate_team: boolean, 
+/**
+ * 识别正作用于哪个 Codex 账户槽位（槽位名）。`None` = 识别关着。
+ *
+ * 0.24.7 起识别**直接作用于激活槽位**（改它的 `config.toml`，不复制凭证、不另起
+ * Codex），落盘的 marker 是唯一真相 —— 面板重启后 `turnstate_official_armed` 归零，
+ * 而这个字段还能告诉界面「上次没关干净」（启动时会自动关闭并恢复）。
+ */
+turnstate_takeover: string | null, };

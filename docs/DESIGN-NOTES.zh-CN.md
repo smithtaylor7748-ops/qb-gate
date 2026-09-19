@@ -1078,3 +1078,146 @@ v0.12.0 之前这里写死的是作者本机那份 `D:\tools\…`，在作者机
 取自 `page_url`，外链取自 `probe::verdict::criteria()`）必须在范围里，本机程序
 路径必须不在。实测过：换回光秃秃的写法，第一条当场报出 `http://127.0.0.1:8000`；
 放宽成 `*`，第二条当场红。
+
+## v0.24.0：官方 Codex 接进本机路由（turn-state 的最后一段接线）
+
+> ⚠ **0.24.7 起，这一节里「官方环境 + 复制 OAuth + 另起 Codex」那条接线被下一节取代，
+> 代码已删**（`router_official_environment` / `seed_official_oauth` / `is_official_router` /
+> `station_turnstate_launch` 都不在了）。下面「base_url 不带 `/v1`」与「官方上游怎么保住」
+> 两小节**仍然成立**；「官方环境靠 provider_id 认」「OAuth 是复制、只播一次」「一键接入」
+> 三小节只作历史记录 —— 留着是因为它们写着当初为什么那样做、以及为什么后来不那样做了。
+
+turn-state 的采集/注入机制（`qb-station::turnstate` / `sse`、`local_router` 的官方模式）
+0.24.0 早先就写好并单测过了，但**没有任何东西把官方 Codex 的流量导进路由** ——
+端到端跑不起来。这一段把接线补上，全在 `workspace.rs` 与 `commands/station.rs`，
+`qb-station` 一个字没动（`relay_breakers_can_never_reach_account_switching` 保持绿）。
+
+### base_url 不带 `/v1` —— 差一段就 404，而错误信息看不出来
+
+官方端点在装机版 Codex 二进制里逐字核过是 `https://chatgpt.com/backend-api/codex/responses`
+（**没有 `/v1`**）。中转 Codex 的端点是 OpenAI 兼容站点的 `/v1/responses`（**有 `/v1`**）。
+两者不能共用一套 base：
+
+| | 客户端配置的 base | Codex 实际打 | `route_of` 剥 `/codex` 后 | `join_url` 拼出 |
+|---|---|---|---|---|
+| 中转 Codex | `http://127.0.0.1:15721/codex/v1` | `.../codex/v1/responses` | `/v1/responses` | `站点/v1/responses` ✓ |
+| 官方 Codex | `http://127.0.0.1:15721/codex`（**无 `/v1`**） | `.../codex/responses` | `/responses` | `.../backend-api/codex/responses` ✓ |
+
+所以官方这条**跳过 `client_base`**（那个会给 Codex 补 `/v1`），直接用
+`client_base_url(Codex, port)`。两头都不带 `/v1`，拼出来正好对上官方那条路径。
+任何一头多一段，上游收到的是 `.../codex/v1/responses`，404，而错误里完全看不出多了什么。
+0.24.7 起钉着这件事的是 `turnstate_ops` 里的
+`takeover_touches_only_model_provider_and_its_table`（断言写进槽位配置的 base 不含 `/codex/v1`）。
+
+### 官方环境靠 provider_id 认，不新加字段
+
+官方环境 = `provider_id == ROUTER_OFFICIAL_PROVIDER_ID` 的那个（`is_official_router`）。
+这是**我们自己赋的内部常量**，`router_official_environment` 每次都按回去（自愈），
+不是从「base_url 看着像回环」那种使用者能撞上的值里推的 —— 所以跟 `via_router`
+那条「别推」的教训不冲突。按 provider_id 认省下了给 `Environment` 加字段
+（那会牵动 qb-contract、全部 TS 绑定、导入导出与一堆夹具），而这处判断只有 workspace.rs 用。
+
+### OAuth 是「复制、只播一次」，不是整份托管
+
+官方环境要让 Codex 带着**使用者自己的 ChatGPT OAuth** 打路由。OAuth 不在
+`~/.codex/auth.json`（那通常是 apikey 模式），而在**当前激活的 Codex 账户槽位**
+（`qb-accounts::codex`，`.../home/auth.json` 里的 `tokens`）——`official_oauth_source`
+按「槽位 → `~/.codex`」的顺序找第一处带有效 `tokens` 的。
+
+`seed_official_oauth` 在启动前把它**复制**进官方环境目录，铁律两条：
+
+1. **只读源、绝不移动或改写源** —— 这是 §7.10「auth.json 覆盖登出」教训的正面照做：
+   那个坑是往真实目录整份写把官方登录抹了；这里方向相反，只从真实目录读一份出来。
+2. **只播一次** —— 环境目录已经有有效 OAuth 就原样留着。Codex 会自己轮换刷新令牌
+   并写回**环境目录**的 auth.json；拿一份可能更旧的源覆盖上去会把它弄失效。
+   因此官方环境的 auth.json **不进** `configuration_files`/指纹系统（`configuration_state`
+   只哈希 config.toml）——否则 Codex 每次续期都会把配置状态刷成「被外部修改」。
+   相应地，那道「中转环境目录出现 OAuth 就拒启」的守卫对官方环境**放行**（它本就该有 OAuth）。
+
+### 官方上游怎么保住：`replace_upstreams` 不清 `OAuthPassthrough`
+
+官方上游是 `arm_official_codex` 临时挂上去的，不在 SQLite 的 `station_routes` 里。
+而使用者每加/删一条中转线路都会触发 `load_upstreams` → `replace_upstreams` 整批重装。
+所以 `replace_upstreams` 现在**保留** `OAuthPassthrough` 那一条（官方线是唯一的
+`OAuthPassthrough`，这条等式有测试钉着）。不保留的话，接进路由之后随手编辑一条
+中转线路，官方线就被这次重装悄悄冲掉，Codex 下一发请求 503 而看不出所以然。
+
+### 一键接入是显式动作，不搭在注入开关上
+
+`station_turnstate_launch` 一步做完：备环境 → 挂官方上游并选中 → 拉路由 → 播 OAuth →
+起 Codex。它跟中转的 `station_launch` **分开写**，不共用：官方这条挂 OAuth 上游、用官方
+环境、播 OAuth；中转那条换占位 Key、用中转环境。塞一个函数里全是分支，而分支一多
+就会有一条路径接错——这正是「账户四条线」「唯一受控例外」最经不起的错。
+
+注入开关（`station_turnstate_configure`）只管「有可用 292 时补不补注」，**不**顺带挂上游：
+挂官方上游会把 Codex 的当前身份切成官方，属于「会改变系统行为的动作」，必须显式点击，
+跟「账户切换只能人工触发」同一类纪律。
+
+### 验证边界
+
+单测、离线/回环端到端都过了。但**真实官方 Codex（ChatGPT 登录）走路由采集/注入 292
+只能由使用者本人用他的账号实测** —— 这一步谁也替不了，别把偶发成功写成稳定能力
+（ccodex 自己都常采不到合格 292）。见 `docs/KNOWN-ISSUES.zh-CN.md`。
+
+## v0.24.7：识别直接作用于槽位 —— 不再造分身、不再复制 OAuth
+
+0.24.0 的接线是「另建一个环境目录 `qb-router-codex-official`，把槽位的 `auth.json` 复制一份进去，
+再起第二个 Codex 走本机路由」。0.24.6 修互斥 bug 时把它整个摊开看了一遍，使用者批准推翻。
+代码在 `crates/qb-app/src/usecase/turnstate_ops.rs`（纯函数 `apply_to_config` / `revert_config`，
+带 I/O 的 `enable` / `disable`，落盘 marker）与 `commands/station.rs`
+（`station_turnstate_enable` / `station_turnstate_disable`）。
+
+### 为什么推翻
+
+1. **复制 OAuth 迟早把槽位登出。** ChatGPT 的刷新令牌是轮换式的：复制件和原件谁先刷新，
+   另一份就作废。档案 §7.29 在 Claude 上踩过一模一样的坑。「只播一次」缓解不了 —— 两份 Codex
+   只要都活着就都会刷。
+2. **两个 Codex 实例，使用者分不清哪个在走路由。** 账户页那颗「启动 Codex 桌面端」起的是槽位
+   自己的那份（官方直连），识别弹窗起的是分身（走路由）；两者窗口长得一样，而 turn-state
+   状态表只对后者有数据。互斥 bug 那张截图就是在这种混乱里撞出来的。
+3. **多一套目录就多一处要维护的配置**：分身目录的 `config.toml` 要跟槽位的保持同步（模型、
+   MCP、项目授权），而没有任何东西在同步它。
+
+### 现在怎么做：备份 + 增量改两处 + 反向恢复
+
+「开启识别」= 挂官方上游（`arm_official_codex`，`OAuthPassthrough` 那条唯一受控例外不变）
+→ 起路由 → 对**当前激活槽位**的 `config.toml`：
+
+| 步骤 | 做什么 | 为什么这样 |
+|---|---|---|
+| 备份 | `config.toml.qb-turnstate-backup`（只在新接管时写） | 给人看 / 手工兜底，**不是**恢复的依据 |
+| 改 | `model_provider = "qb_turnstate"` + `[model_providers.qb_turnstate]`（base 不带 `/v1`、`requires_openai_auth = true`、不写 `env_key`），toml_edit 增量改，其余原样 | 不写占位 Key：身份全靠槽位自己的 OAuth；`auth.json` 一个字不碰 |
+| 记 | marker `state_dir/turnstate-takeover.json`：槽位 id / 标签 / 目录 / 接管前的 `model_provider` | 关闭按它恢复，中途切槽位也不会恢复错 |
+
+「关闭识别」= 摘上游 → 按 marker **反向恢复那两处** → 删 marker。**不整份盖回备份**：接管期间
+Codex 自己写进去的项目授权 / MCP / 偏好都要留着，整份盖正是 §7.10 那类事故的形状。
+`model_provider` 只在仍是 `qb_turnstate` 时改回 —— 使用者接管期间自己改成了别的，那是他的
+新决定，不是我们的残留。恢复失败保留 marker、报错，让人再点一次。
+
+`ensure_table` 那个小函数是 §7.11 的坑：链式索引在空文档上建出来的是**内联表**，
+`as_table_mut()` 对它返回 `None`，删键那类逻辑会静默失效。
+
+### marker 是唯一真相，而且面板启动时要自动清
+
+内存里的 `official_codex_armed()` 随面板消失，marker 不会。所以：
+
+- 界面上「识别开着没」看 `RouterStatus.turnstate_takeover`，不看 `turnstate_official_armed`；
+- 出站插件的互斥守卫两个都看（`armed || takeover().is_some()`）；
+- **`lib.rs` 的 setup 里先跑一次 `disable()`**：上次没关干净（崩溃 / 被杀）留下的 marker 会让
+  那个槽位的 Codex 对着一个死端口，而且「默认关闭、只在手动开启后生效」也不允许它跨重启续上。
+  这跟智能调度正相反 —— 调度是落盘的承诺，识别是落盘的**债**。
+
+同一处顺手清掉 0.24.0–0.24.6 留下的 `qb-router-codex-official` 环境（连目录、连复制进去的
+OAuth 快照）与 `qb-router-official` provider。先查记录在不在再删 —— `Repository::remove`
+删不到也回 Ok，不查的话每次启动都写一条「已清理」。
+
+### 互斥的理由从「保守」变成「事实」
+
+0.24.6 时两边不共享文件，互斥理由只能写成「两个程序各自维护 turn-state，互相干扰的可能性
+无法排除」。现在两边**都改同一个槽位的 `config.toml`**（识别改 `model_provider`，插件整份接管），
+同时开就是两个程序抢同一个文件 —— 守卫还是那两道，文案改成这句。
+
+### 验证边界
+
+跟 0.24.0 一样：单测（纯函数 + 幂等 + 反向恢复）过了，**真实官方 Codex 走路由采集/注入 292
+只能由使用者本人用他的账号实测**。见 `docs/KNOWN-ISSUES.zh-CN.md`「0.24.0 → 0.24.7」一节。

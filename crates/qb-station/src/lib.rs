@@ -4,6 +4,8 @@
 //! |---|---|
 //! | [`station`] | 线路模型：站点 · 分组 · 令牌，以及倍率与余额 |
 //! | [`health`] | 把账单日志按 1H / 1D / 7D 三个窗口聚合成可比较的指标 |
+//! | [`sse`] | 把一条 SSE 流的结局判成成功 / 失败 / 容量 / 限流 / 断流（纯函数） |
+//! | [`turnstate`] | Codex `X-Codex-Turn-State` 信封的外形解析与 active/ready 状态机（纯函数） |
 //!
 //! # 为什么指标是「免费」的
 //!
@@ -23,4 +25,6 @@ pub use qb_foundation::{error, sink};
 pub mod health;
 pub mod router;
 pub mod schedule;
+pub mod sse;
 pub mod station;
+pub mod turnstate;

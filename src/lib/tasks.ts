@@ -29,6 +29,7 @@ export type TaskName =
   | "install"
   | "upgrade"
   | "tavern-start"
+  | "egress-install"
   | "dns-probe"
   | "launch-claude-code"
   | "launch-claude-desktop"

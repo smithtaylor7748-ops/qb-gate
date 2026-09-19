@@ -183,6 +183,62 @@ operations，是跨域编排而不是门禁自己的事。留在 `gate` 里正�
 3. **绝不自动加**。这两件事都只在使用者当次点击之后执行，没有定时器、没有启动时触发。
    跟「账户切换只能人工触发」同一类：会改变系统行为的动作，不许自己发生。
 
+### 官方 Codex 的 turn-state 口子（0.24.0，使用者定的）
+
+使用者明确要求：把 ccodex-sleep-state 的 turn-state 机制 clean-room 重写、**只用在官方 Codex** 上
+（「只改 GPT Codex，不改 Claude」「本机路由只路由 `127.0.0.1`，不属于当初决定不引入的那部分」）。
+代码在 `crates/qb-station/src/turnstate.rs`（外形解析 + active/ready，纯函数）、
+`crates/qb-station/src/sse.rs`（SSE 终止事件分类，纯函数）、
+`crates/qb-app/src/local_router.rs`（`UpstreamAuth::OAuthPassthrough` 官方模式 + 采集/注入）。
+
+六条硬约束，动了任何一条就要同步改 [DISCLAIMER.md](DISCLAIMER.md) §5.3 与 [ATTRIBUTION.md](ATTRIBUTION.md)：
+
+1. **只对 `Client::Codex`。** Claude Code / 桌面端一律不进官方模式、不注入、不采集 ——
+   turn-state 是 OpenAI 的请求头，Anthropic 协议里没有对应物。有测试
+   `turn_state_stays_off_for_claude_routes` 钉着。
+2. **一行 ccodex 源码都不许抄。** 它是第三方 GPL，抄进来堵死商业授权档（见「抄代码之前先看 license」）。
+   只按公开协议行为自己写，Mihomo / 订阅 / 出站协议 / 代理出口池一概不引入。
+3. **不「换出口凑 292」。** 没有代理出口池，只在当前这一条连接上采集。
+4. **被动采集，不发合成探测请求。** 只读官方响应本就带回的头喂给 `Store::offer`；
+   不额外发模型请求烧额度。客户端自己带了 turn-state 就保留它的，不覆盖（不弄坏它自己的状态）。
+5. **`OAuthPassthrough` 是「路由不承载官方身份」的唯一受控例外。** 只有它保留客户端的 OAuth、
+   不剥不换；其余上游仍走 `CLIENT_AUTH_HEADERS` 剥离 + 换上线路自己的 Key。仍只绑回环、
+   不改系统代理、不做链式转发。
+6. **长度不是质量/额度指标。** 界面与文案照 ccodex 自己的口径写：符合 292/332 不证明任何服务端事实，
+   也不增加额度。默认关闭，只在使用者手动开启后生效。
+
+把官方 Codex 接进路由那段接线在 `crates/qb-app/src/usecase/turnstate_ops.rs`（槽位接管：
+`apply_to_config` / `revert_config` 两个纯函数 + `enable` / `disable` + 落盘 marker）与
+`src-tauri/src/commands/station.rs`（`station_turnstate_enable` / `station_turnstate_disable`）。
+**0.24.7 起识别直接作用于当前激活的 Codex 账户槽位** —— 不再造 `qb-router-codex-official`
+分身环境、不再复制 OAuth、不另起第二个 Codex（使用者批准推翻 0.24.0 的做法；老做法会让两份
+Codex 各自轮换同一族刷新令牌而互相登出）。四条容易踩的：
+
+- **官方 base_url 不带 `/v1`**（官方端点是 `.../backend-api/codex/responses`）；中转 Codex 才带。
+  差一段 404 而看不出来。细节见 `docs/DESIGN-NOTES.zh-CN.md`「识别直接作用于槽位」一节。
+- **只改槽位 `config.toml` 的两处（`model_provider` + `[model_providers.qb_turnstate]`），
+  `auth.json` 一个字不碰。** 关闭时按 marker **反向恢复这两处，不整份盖回备份** —— 整份盖正是
+  §7.10「auth.json 覆盖登出」那类事故的形状；接管期间 Codex 自己写进去的项目授权 / MCP 要留着。
+- **marker（`state_dir/turnstate-takeover.json`）是「识别开着」的唯一真相。** 面板启动时发现它
+  就**自动关闭并恢复**（`lib.rs` 的 setup 里；本机路由随面板消失，留着会让那个槽位的 Codex
+  对着死端口）—— 这也是「默认关闭、只在手动开启后生效」那条硬约束的落地。互斥守卫看它，
+  不只看内存里的 `official_codex_armed()`（面板重启后后者归零，前者不会）。
+- **挂官方上游是显式动作**（`station_turnstate_enable`），不搭在注入开关上；`replace_upstreams`
+  会保住那条 `OAuthPassthrough` 上游，别让中转线路重装把它冲掉。
+
+**代理 / 订阅 / 机场出站 / 换出口凑 292 不在核心里**（0.24.2，使用者定的）：它们归**独立的
+第三方程序** `ccodex-sleep-state`（GPL），扩展中心只以 `connect` 方式接入它
+（`crates/qb-extensions/src/plugins/codex_egress.rs`：定位 exe、带窗口独立起 `setup`、
+停止 = 结束进程 + 跑它自己的 `restore`；一键安装只下载它 Releases 里的**成品二进制包**并按
+`SHA256SUMS` 校验，`pick_release` 只认 github.com 的下载地址）。**不编译、不复制它一行源码** ——
+GPL 聚合而非衍生，商业档才不受影响。它接管的是**当前激活 Codex 槽位**的目录（`CODEX_HOME`
+显式传给它，接管的目录记进托管记录，`restore` 恢复当初那份），与官方识别**双向互斥**：
+0.24.7 起两边**都要改同一个槽位的 `config.toml`**（识别改 `model_provider`，插件整份接管），
+同时开就是两个程序抢同一个文件。`codex_egress_start` 里的
+`official_codex_armed() || turnstate_ops::takeover().is_some()` 守卫和 `station_turnstate_enable`
+里的 `codex_egress::running()` 守卫都别删；解开靠 `station_turnstate_disable`（0.24.6 之前
+挂上官方线就没有任何地方能摘掉，使用者被锁死在两者之间）。
+
 ---
 
 ## ⛔ 中转环境的 base_url 指的是本机路由，不是站点

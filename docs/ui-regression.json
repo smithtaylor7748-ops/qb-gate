@@ -13,6 +13,12 @@
       "passed": true
     },
     {
+      "route": "subscription",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "software",
       "width": 1180,
       "theme": "light",
@@ -49,6 +55,12 @@
       "passed": true
     },
     {
+      "route": "subscription",
+      "width": 944,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "software",
       "width": 944,
       "theme": "light",
@@ -80,6 +92,12 @@
     },
     {
       "route": "relays",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "subscription",
       "width": 786,
       "theme": "light",
       "passed": true
@@ -116,6 +134,12 @@
     },
     {
       "route": "relays",
+      "width": 680,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "subscription",
       "width": 680,
       "theme": "light",
       "passed": true
@@ -157,6 +181,12 @@
       "passed": true
     },
     {
+      "route": "subscription",
+      "width": 1180,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "software",
       "width": 1180,
       "theme": "dark",
@@ -188,6 +218,12 @@
     },
     {
       "route": "relays",
+      "width": 944,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "subscription",
       "width": 944,
       "theme": "dark",
       "passed": true
@@ -224,6 +260,12 @@
     },
     {
       "route": "relays",
+      "width": 786,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "subscription",
       "width": 786,
       "theme": "dark",
       "passed": true
@@ -260,6 +302,12 @@
     },
     {
       "route": "relays",
+      "width": 680,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "subscription",
       "width": 680,
       "theme": "dark",
       "passed": true
@@ -303,6 +351,13 @@
       "passed": true
     },
     {
+      "route": "subscription",
+      "width": 944,
+      "theme": "light",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
       "route": "software",
       "width": 944,
       "theme": "light",
@@ -339,6 +394,13 @@
     },
     {
       "route": "relays",
+      "width": 944,
+      "theme": "dark",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "subscription",
       "width": 944,
       "theme": "dark",
       "scale": 1.25,
@@ -387,6 +449,13 @@
       "passed": true
     },
     {
+      "route": "subscription",
+      "width": 786,
+      "theme": "light",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
       "route": "software",
       "width": 786,
       "theme": "light",
@@ -423,6 +492,13 @@
     },
     {
       "route": "relays",
+      "width": 786,
+      "theme": "dark",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "subscription",
       "width": 786,
       "theme": "dark",
       "scale": 1.5,
@@ -563,7 +639,8 @@
     "desktop account pagination and safe login confirmation",
     "five-item diagnostics and repair review",
     "IPv6 default switch and per-adapter restore",
-    "equal fixed account columns and wheel immobility"
+    "equal fixed account columns and wheel immobility",
+    "station audit model entry and independent billing credentials"
   ],
   "pageErrors": []
 }

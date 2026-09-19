@@ -2160,4 +2160,10 @@ body:has(.official-page) {
   .qb-page:has(.official-page) {
     padding: 10px;
   }
+  /* Codex 桌面端卡片标题栏里的「识别」入口：680 这一档标题 + 状态 Pill 已经把
+     标题栏撑满，再加一个按钮整块动作区就换行，卡片高度固定就裁掉底下的「一键关闭」
+     （test:ui 抓到的）。窄屏下收起这个入口；中转站页 Codex 分页仍有同一个弹窗。 */
+  .account-launch .turnstate-entry {
+    display: none;
+  }
 }

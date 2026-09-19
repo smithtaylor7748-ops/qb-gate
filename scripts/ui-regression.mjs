@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 const ROUTES = [
   "",
   "relays",
+  "subscription",
   "software",
   "extensions",
   "extensions/sillytavern",
@@ -113,6 +114,13 @@ const OVERFLOW_PROBE = `
 
 /** 查一处，有问题就把具体是哪个元素、溢出多少 px 写进断言消息。 */
 async function assertNoOverflow(page, scope) {
+  // A rotating loading ring has a changing bounding box; inspect the settled layout.
+  await page.waitForFunction(
+    () =>
+      !Array.from(document.querySelectorAll(".btn-spinner")).some(
+        (el) => el.getBoundingClientRect().width > 0,
+      ),
+  );
   const { live, stress } = await page.evaluate(OVERFLOW_PROBE);
   assert.deepEqual(live, [], `${scope} 有文字顶出了盒子`);
   assert.deepEqual(stress, [], `${scope} 装不下长字符串`);
@@ -870,6 +878,53 @@ try {
   await page.waitForFunction(() => !document.querySelector(".toast"));
   await assertFixedAccounts(page, "final account workspace");
   await page.screenshot({ path: "docs/screenshots/accounts-layout-light.png" });
+  await page.goto(origin + "/#/relays");
+  await page
+    .getByRole("button", { name: "查套路", exact: true })
+    .first()
+    .click();
+  await page.getByRole("dialog").waitFor();
+  await page.getByLabel("检验模型").fill("fixture-model");
+  await page.getByLabel("站点账号 / 邮箱").fill("demo-user");
+  await page.getByLabel("站点密码").fill("fixture-password");
+  await page
+    .getByRole("button", { name: "登录并读取账单", exact: true })
+    .click();
+  await page.getByText("后台已连接，账单读取已验证。").waitFor();
+  await page.getByLabel("本次临时 API Key").fill("fixture-only-key");
+  mkdirSync("target/ui", { recursive: true });
+  for (const width of [1320, 680]) {
+    await page.setViewportSize({ width, height: 940 });
+    await assertNoOverflow(page, `station audit ${width}`);
+    await page.screenshot({ path: `target/ui/station-audit-${width}.png` });
+  }
+  await page.getByRole("button", { name: "开始检验", exact: true }).click();
+  await page.getByRole("tab", { name: "基础报告", exact: true }).waitFor();
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await page.screenshot({ path: "target/ui/station-audit-report.png" });
+  await page.getByRole("tab", { name: "完整证据" }).click();
+  await assertNoOverflow(page, "station audit evidence");
+  await page.screenshot({ path: "target/ui/station-audit-evidence.png" });
+  await page.getByText("本地账单分析", { exact: false }).click();
+  await page.getByLabel("选择账单文件").setInputFiles({
+    name: "fixture.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(
+      JSON.stringify([
+        {
+          model: "fixture",
+          group: "demo",
+          input_tokens: 1000,
+          cached: 800,
+          output: 5,
+          cost: 0.01,
+          currency: "USD",
+        },
+      ]),
+    ),
+  });
+  await page.getByText("fixture.json · 1 条").waitFor();
+  await page.keyboard.press("Escape");
   assert.deepEqual(errors, []);
   writeFileSync(
     "docs/ui-regression.json",
@@ -887,6 +942,7 @@ try {
           "five-item diagnostics and repair review",
           "IPv6 default switch and per-adapter restore",
           "equal fixed account columns and wheel immobility",
+          "station audit model entry and independent billing credentials",
         ],
         pageErrors: errors,
       },
@@ -895,7 +951,7 @@ try {
     ),
   );
   console.log(
-    `${report.length} responsive/theme routes and 10 interaction flows passed.`,
+    `${report.length} responsive/theme routes and 11 interaction flows passed.`,
   );
 } finally {
   if (browser) await browser.close();

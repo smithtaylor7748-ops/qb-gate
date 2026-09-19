@@ -1,0 +1,107 @@
+You are reviewing a small Python operations service. Give concise, concrete engineering advice.
+
+Project README
+reconciliation-dispatch-{batch} coordinates daily work for the training team. It imports incoming records, assigns a responsible operator, and publishes a short summary. The service must preserve the original record, avoid duplicate work, and keep degraded dependencies visible.
+
+pyproject.toml
+[project]
+name = "dispatch-service"
+requires-python = ">=3.11"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+
+config/settings.toml
+[dispatch]
+max_retries = 3
+slow_request_ms = 850
+queue_warning = 24
+[contacts]
+default_team = "operations"
+
+
+src/models.py
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class WorkItem:
+    reference: str
+    category: str
+    priority: int
+    owner: str | None = None
+
+
+src/normalizer.py
+from .models import WorkItem
+
+def normalize(raw: dict) -> WorkItem:
+    reference = str(raw.get("reference", "")).strip()
+    category = str(raw.get("category", "general")).strip().lower()
+    priority = max(1, min(5, int(raw.get("priority", 3))))
+    if not reference:
+        raise ValueError("reference is required")
+    return WorkItem(reference, category, priority)
+
+
+src/assignment.py
+from .models import WorkItem
+
+def choose_owner(item: WorkItem, roster: dict[str, list[str]]) -> str:
+    people = roster.get(item.category) or roster.get("general") or []
+    if not people:
+        raise LookupError("no operator available")
+    return people[item.priority % len(people)]
+
+
+src/service.py
+from .assignment import choose_owner
+from .normalizer import normalize
+
+def process(raw: dict, roster: dict[str, list[str]]) -> dict:
+    item = normalize(raw)
+    owner = choose_owner(item, roster)
+    return {"reference": item.reference, "owner": owner, "priority": item.priority}
+
+
+tests/test_service.py
+from src.service import process
+
+def test_assigns_known_category():
+    result = process({"reference": "R-42", "category": "returns", "priority": 2}, {"returns": ["Lin", "Qiao"]})
+    assert result["owner"] == "Lin"
+
+def test_rejects_empty_reference():
+    try:
+        process({"reference": ""}, {"general": ["Lin"]})
+    except ValueError:
+        return
+    raise AssertionError("missing validation")
+
+
+logs/service.log
+INFO imported=18 category=returns elapsed_ms=164
+INFO assigned=18 unresolved=0 queue_depth=7
+WARN dependency=directory elapsed_ms=918 retry=1
+
+
+docs/operations.md
+The morning operator starts by checking the previous day's unresolved records. A record may be delayed by an unavailable directory entry, an incomplete category, or an owner who is absent. The operator does not edit the imported source in place. Instead, the operator adds a note to the daily handoff and asks the source team to correct the next export. This keeps the assignment history understandable when a customer later asks why an item moved between people.
+
+When the directory is slow, process waits for one retry before using the most recent roster. The roster timestamp is shown in the summary so a supervisor can tell whether the chosen owner came from a fresh response or from the prior refresh. If the prior roster has no suitable person, the item remains unresolved and appears at the top of the handoff. It must never be assigned to a random person simply to make a count look healthy.
+
+The daily summary groups work by category, priority, and owner. A high-priority item with no owner is called out separately. The summary is intended for people working a shift, so it uses short labels and includes the record reference. It does not contain customer notes, contact details, or the raw import body. Detailed source data stays in the originating system.
+
+On-call guidance: confirm that the import source is producing new references before restarting the service. If references repeat, pause assignment and compare the export timestamp with the previous run. If only one category is affected, continue processing the others and include the category name in the handoff. If all categories are affected, notify the operations lead and record the dependency message with its duration.
+
+A change to owner-selection rules requires a small example in the service tests. The example should describe a real roster and show the selected person. Changes to normalization require examples for blank references, unknown categories, non-numeric priorities, and values outside the allowed range. The team prefers these examples over broad integration fixtures because they make a shift handover easier to reason about.
+
+
+docs/release-checklist.md
+Before a weekday release, one operator imports a small sample from the training source and compares the returned references with the source list. A second operator reviews the unresolved section and confirms that it names a concrete reason for each item. The release owner records the build version, the roster timestamp, and the number of imported records in the handoff. After release, the owner watches the first two summaries for a sudden increase in unresolved work or a change in the priority distribution. A rollback is appropriate when assignments select an owner outside the configured roster, when valid references disappear, or when the summary cannot be produced. A slow directory alone is not a rollback condition if the previous roster is still available and the handoff states that it was used.
+
+
+design.md
+The import endpoint is synchronous because operators need an immediate assignment. A later worker may publish summaries, but it must not change the selected owner. The roster is refreshed every ten minutes; a failed refresh keeps the previous known roster and records a warning.
+
+release-notes.md
+The training-release change window includes revision {batch}. The release owner will compare the handoff summary with a sampled import before the afternoon shift.

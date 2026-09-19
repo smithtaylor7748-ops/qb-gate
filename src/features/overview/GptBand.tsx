@@ -1,5 +1,5 @@
 /** Codex desktop: official login slots, explicit switching, local rollout usage. */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Gauge,
   MonitorSmartphone,
@@ -12,7 +12,9 @@ import {
 import { CODEX_R, codexApi } from "../../lib/codexAccounts";
 import type { CodexSlot } from "../../lib/generated/CodexSlot";
 import type { CodexUsage } from "../../lib/generated/CodexUsage";
+import { stationApi } from "../../lib/station";
 import { useResource, useSession } from "../../lib/store";
+import StationTurnState from "../station/StationTurnState";
 import { Button, Card, ConfirmDialog, Modal, Pill, useToast } from "../../ui";
 
 const PER_PAGE = 4;
@@ -103,6 +105,50 @@ export default function GptBand() {
     setError("");
     setAsk({ id: slot.id, label: slot.label, action });
   };
+  // 官方 Codex 的 turn-state「识别」（实验，默认关，只对 Codex）。
+  // 开关 / 规则 / 接管了哪个槽位都从后端路由状态回读，不本地臆测 —— 见 StationTurnState。
+  // 「识别开着」看的是 `turnstate_takeover`（落盘 marker），不是内存里的 armed 位。
+  const [ts, setTs] = useState<{
+    enabled: boolean;
+    team: boolean;
+    takeover: string | null;
+  }>({ enabled: false, team: false, takeover: null });
+  const [tsOpen, setTsOpen] = useState(false);
+  const refreshTs = useCallback(async () => {
+    try {
+      const rs = await stationApi.routerStatus("codex");
+      setTs({
+        enabled: rs.turnstate_enabled,
+        team: rs.turnstate_team,
+        takeover: rs.turnstate_takeover,
+      });
+    } catch {
+      // 路由没起时读不到；保持上一次的值，不让整块报错。
+    }
+  }, []);
+  useEffect(() => {
+    void refreshTs();
+    const timer = window.setInterval(() => void refreshTs(), 5000);
+    return () => window.clearInterval(timer);
+  }, [refreshTs]);
+  // Codex 打包应用更新后需管理员重新注册，否则启动一律「拒绝访问 (os error 5)」。
+  // 命中这类报错时给一个一键修复（会弹 UAC）。
+  const needsReg = /os error 5|拒绝访问|RegisterByFamilyName/i.test(error);
+  const [repairing, setRepairing] = useState(false);
+  async function repairRegistration() {
+    setRepairing(true);
+    setError("");
+    try {
+      await codexApi.repairRegistration();
+      await reload();
+      toast.ok("已重新注册 Codex，请重试启动");
+      setAsk(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRepairing(false);
+    }
+  }
 
   return (
     <>
@@ -233,13 +279,29 @@ export default function GptBand() {
             className="account-launch"
             title="Codex 桌面端"
             actions={
-              <Pill tone={desktop.data?.executable ? "ok" : "default"}>
-                {desktop.data?.running
-                  ? "运行中"
-                  : desktop.data?.executable
-                    ? "未运行"
-                    : "未检测到"}
-              </Pill>
+              <div className="flex items-center gap-1.5">
+                {/* 官方 Codex 识别（turn-state）的入口：放在卡片标题栏，不占纵向空间 ——
+                    这一页是固定高度（test:ui 钉着 900×740 不许裁切），卡片里再加一行就裁。
+                    开关、个人/Team、识别模式启动、状态表和完整说明都在弹窗里；
+                    这个按钮的文字如实显示后端状态（注入开没开、接没接进路由）。 */}
+                <Button
+                  size="sm"
+                  variant={ts.takeover !== null ? "primary" : "default"}
+                  className="turnstate-entry"
+                  data-testid="codex-turnstate"
+                  aria-label={`Codex 识别（turn-state）：${ts.takeover !== null ? `已开启，作用于槽位 ${ts.takeover}` : "未开启"}；注入${ts.enabled ? "开" : "关"}`}
+                  onClick={() => setTsOpen(true)}
+                >
+                  {ts.takeover !== null ? "识别：开" : "识别"}
+                </Button>
+                <Pill tone={desktop.data?.executable ? "ok" : "default"}>
+                  {desktop.data?.running
+                    ? "运行中"
+                    : desktop.data?.executable
+                      ? "未运行"
+                      : "未检测到"}
+                </Pill>
+              </div>
             }
           >
             {desktop.error && (
@@ -287,6 +349,18 @@ export default function GptBand() {
           />
         </div>
       </div>
+      {/* 开关、个人/Team、「开启识别（作用于当前槽位）」、状态表与完整说明都在这里。
+          关掉弹窗立刻回读一次，标题栏那个按钮的文字跟着变，不等下一轮轮询。 */}
+      <Modal
+        open={tsOpen}
+        onClose={() => {
+          setTsOpen(false);
+          void refreshTs();
+        }}
+        title="Codex 识别（turn-state）· 开关、配置与状态"
+      >
+        <StationTurnState />
+      </Modal>
       <Modal
         open={adding}
         onClose={() => !busy && setAdding(false)}
@@ -361,6 +435,16 @@ export default function GptBand() {
           <p role="alert" className="notice notice--danger mt-2">
             {error}
           </p>
+        )}
+        {needsReg && (
+          <Button
+            variant="primary"
+            className="mt-2"
+            loading={repairing}
+            onClick={() => void repairRegistration()}
+          >
+            修复 Codex 注册（需要管理员）
+          </Button>
         )}
       </ConfirmDialog>
     </>

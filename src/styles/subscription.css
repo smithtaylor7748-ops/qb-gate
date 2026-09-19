@@ -1,0 +1,703 @@
+/**
+ * 订阅页（`src/features/subscription/`）的样式。
+ *
+ * 颜色只引用 `tokens.css` 的变量；页头与分页栏复用 `workspace.css` 的
+ * `.qb-page-heading` / `.qb-tabs`，卡片、标签、按钮、条目复用 `components.css`。
+ * 这里只写这一页自己的排版：首页的结论区、价目表、倍率对照条、计算器、
+ * 红色提醒、步骤条、格式样例卡、FAQ。
+ *
+ * `overflow-wrap: anywhere` 写在根上（它是继承属性）：来源清单里的链接、
+ * 地址样例、`$8,000` 这类都会在 680px 下被 `test:ui` 的溢出探针盯着。
+ */
+
+.qb-subscription {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.qb-sub-heading-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.qb-sub-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+
+.qb-sub-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.qb-sub-h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  margin: 0;
+}
+.qb-sub-h3 {
+  font-size: var(--text-md);
+  font-weight: 600;
+  margin: 12px 0 0;
+}
+
+.qb-sub-para {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  line-height: 1.75;
+  margin: 0 0 8px;
+}
+.qb-sub-para:last-child {
+  margin-bottom: 0;
+}
+.qb-sub-muted {
+  color: var(--text-3);
+}
+
+/* ================================================================ 首页 */
+
+.qb-sub-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 20px;
+  padding: 22px 24px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, var(--accent-bg), var(--surface) 70%);
+}
+.qb-sub-hero-text {
+  min-width: 0;
+}
+.qb-sub-hero-text h2 {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 0 0 10px;
+}
+.qb-sub-hero-text p {
+  font-size: var(--text-base);
+  color: var(--text-2);
+  line-height: 1.75;
+}
+.qb-sub-hero-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+.qb-sub-hero-metrics .metric {
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.qb-sub-hero-metrics .metric-v {
+  font-size: var(--text-xl);
+  font-variant-numeric: tabular-nums;
+}
+
+.qb-sub-grid {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.qb-sub-grid--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.qb-sub-grid--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.qb-sub-grid > .card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.qb-sub-grid > .card .card-head {
+  margin-bottom: 2px;
+}
+
+.qb-sub-refs {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  line-height: 1.6;
+  margin: auto 0 0;
+  padding-top: 6px;
+}
+
+.qb-sub-sources {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.qb-sub-source-note {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+/* ================================================================ 价目表 */
+
+.qb-sub-table-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.qb-sub-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  font-size: var(--text-sm);
+}
+.qb-sub-table th,
+.qb-sub-table td {
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+.qb-sub-table th {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+.qb-sub-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.qb-sub-table .qb-sub-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.qb-sub-table .qb-sub-num .pill {
+  margin-left: 6px;
+}
+.qb-sub-plan-name {
+  display: block;
+  font-weight: 600;
+  color: var(--text);
+}
+.qb-sub-plan-vendor {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.qb-sub-plan-note {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  margin-top: 2px;
+}
+
+/* ================================================================ 倍率对照条 */
+
+.qb-sub-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  min-width: 0;
+}
+.qb-sub-meter-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 190px) minmax(0, 1fr) 96px;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--text-sm);
+}
+.qb-sub-meter-label {
+  color: var(--text-2);
+  min-width: 0;
+}
+.qb-sub-meter-track {
+  position: relative;
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.qb-sub-meter-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 999px;
+  min-width: 4px;
+}
+.qb-sub-meter-fill--ok {
+  background: var(--ok);
+}
+.qb-sub-meter-fill--warn {
+  background: var(--warn);
+}
+.qb-sub-meter-fill--danger {
+  background: var(--danger);
+}
+.qb-sub-meter-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
+.qb-sub-meter .notice {
+  margin-top: 4px;
+}
+
+/* ================================================================ 计算器 */
+
+.qb-sub-calc-intro {
+  margin-bottom: 12px;
+}
+.qb-sub-calc {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 20px;
+  min-width: 0;
+}
+.qb-sub-calc-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.qb-sub-calc-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  gap: 10px;
+}
+.qb-sub-calc-grow,
+.qb-sub-calc-rate {
+  min-width: 0;
+}
+.qb-sub-calc-result {
+  background: var(--surface-2);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.qb-sub-calc-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.qb-sub-calc-k {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.qb-sub-calc-big {
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.qb-sub-calc-big--ok {
+  color: var(--ok);
+}
+.qb-sub-calc-big--warn {
+  color: var(--warn);
+}
+.qb-sub-calc-big--danger {
+  color: var(--danger);
+}
+.qb-sub-calc-line {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  line-height: 1.7;
+}
+
+/* ================================================================ 提醒框 */
+
+.qb-sub-alert {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+}
+.qb-sub-alert > svg {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.qb-sub-alert-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.qb-sub-alert-title {
+  font-weight: 700;
+  font-size: var(--text-base);
+}
+/* 红色：地址与真实资料。整框红字，使用者要求「标红让人看到就知道是特别提醒」。 */
+.qb-sub-alert--danger {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  border-left-color: var(--danger);
+  color: var(--danger);
+}
+.qb-sub-alert--danger a {
+  color: inherit;
+  text-decoration: underline;
+}
+.qb-sub-alert--accent {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  border-left-color: var(--accent);
+  color: var(--text-2);
+}
+.qb-sub-alert--accent .qb-sub-alert-title {
+  color: var(--accent);
+}
+.qb-sub-alert--ok {
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
+  border-left-color: var(--ok);
+}
+.qb-sub-alert--ok .qb-sub-alert-title,
+.qb-sub-alert--ok > svg {
+  color: var(--ok);
+}
+.qb-sub-alert--warn {
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+  border-left-color: var(--warn);
+}
+.qb-sub-alert--warn .qb-sub-alert-title,
+.qb-sub-alert--warn > svg {
+  color: var(--warn);
+}
+.qb-sub-alert-inline {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ================================================================ 步骤条 */
+
+.qb-sub-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: step;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.qb-sub-step {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.qb-sub-step::before {
+  counter-increment: step;
+  content: counter(step);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--surface);
+  font-weight: 700;
+  font-size: var(--text-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+.qb-sub-step-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.qb-sub-step-title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.qb-sub-step-text {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  line-height: 1.75;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.qb-sub-tip {
+  margin-top: 2px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border-left: 3px solid var(--accent);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  line-height: 1.65;
+}
+.qb-sub-tip--danger {
+  background: var(--danger-bg);
+  border-left-color: var(--danger);
+  color: var(--danger);
+}
+
+.qb-sub-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+.qb-sub-facts > div {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+.qb-sub-fact-k {
+  flex-shrink: 0;
+  width: 60px;
+  color: var(--text-3);
+}
+
+/* ================================================================ 答疑 */
+
+.qb-sub-price {
+  display: block;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.qb-sub-state {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.qb-sub-state-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+  font-size: var(--text-base);
+}
+.qb-sub-state-body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 10px;
+  margin: 0;
+  font-size: var(--text-sm);
+}
+.qb-sub-state-body dt {
+  color: var(--text-3);
+}
+.qb-sub-state-body dd {
+  margin: 0;
+  color: var(--text-2);
+}
+.qb-sub-state-foot {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.qb-sub-faq {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.qb-sub-faq-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.qb-sub-faq-q {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px;
+  background: none;
+  border: 0;
+  text-align: left;
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: 500;
+  border-radius: var(--radius-md);
+}
+.qb-sub-faq-q:hover {
+  background: var(--surface-2);
+}
+.qb-sub-faq-chevron {
+  flex-shrink: 0;
+  color: var(--text-3);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.qb-sub-faq-chevron.is-open {
+  transform: rotate(180deg);
+}
+.qb-sub-faq-a {
+  margin: 0 14px;
+  padding: 10px 0 12px;
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  line-height: 1.75;
+}
+
+.qb-sub-disclaimer .bullet {
+  font-size: var(--text-xs);
+}
+
+/* ================================================================ 锁闭态与弹窗 */
+
+.qb-sub-locked {
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: 32px 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.qb-sub-locked-title {
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.qb-sub-locked .sub {
+  max-width: 48ch;
+}
+
+.qb-sub-ack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ================================================================ 响应式 */
+
+@media (max-width: 1020px) {
+  .qb-sub-hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .qb-sub-grid--3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 780px) {
+  .qb-sub-calc {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .qb-sub-meter-row {
+    grid-template-columns: minmax(0, 1fr) 96px;
+  }
+  .qb-sub-meter-label {
+    grid-column: 1 / -1;
+  }
+  /* 表格堆成卡片：每格前面带列名，不横向滚。 */
+  .qb-sub-table thead {
+    display: none;
+  }
+  .qb-sub-table,
+  .qb-sub-table tbody,
+  .qb-sub-table tr,
+  .qb-sub-table td {
+    display: block;
+  }
+  .qb-sub-table tr {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .qb-sub-table tr:last-child {
+    border-bottom: none;
+  }
+  .qb-sub-table td {
+    border-bottom: none;
+    padding: 4px 12px;
+  }
+  .qb-sub-table .qb-sub-num {
+    white-space: normal;
+  }
+  .qb-sub-table td[data-col]:not(:first-child)::before {
+    content: attr(data-col) "：";
+    color: var(--text-3);
+    font-size: var(--text-xs);
+    margin-right: 6px;
+  }
+}
+
+@media (max-width: 610px) {
+  .qb-sub-grid--3,
+  .qb-sub-grid--2,
+  .qb-sub-hero-metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .qb-sub-calc-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .qb-sub-heading-side {
+    align-items: flex-start;
+  }
+  .qb-sub-step {
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 10px;
+    padding: 12px;
+  }
+  .qb-sub-step::before {
+    width: 26px;
+    height: 26px;
+    font-size: var(--text-sm);
+  }
+  .qb-sub-calc-big {
+    font-size: 32px;
+  }
+}

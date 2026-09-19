@@ -15,7 +15,11 @@ pub mod ipv6_ops;
 pub mod locale_ops;
 pub mod purge_ops;
 pub mod settings_ops;
+pub mod station_batch;
+pub mod station_billing;
 pub mod station_ops;
+pub mod station_probe;
 pub mod token_summary;
+pub mod turnstate_ops;
 
 pub mod codex_accounts;

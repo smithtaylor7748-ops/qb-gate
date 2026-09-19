@@ -40,6 +40,7 @@ impl Keys {
     pub const COST: &'static [&'static str] = &["quota", "cost", "used_quota"];
     /// 缓存读。
     pub const CACHE_READ: &'static [&'static str] = &[
+        "cache_read_tokens",
         "cache_read_input_tokens",
         "cached_tokens",
         "cache_tokens",
@@ -47,6 +48,7 @@ impl Keys {
     ];
     /// 缓存写。
     pub const CACHE_WRITE: &'static [&'static str] = &[
+        "cache_creation_tokens",
         "cache_creation_input_tokens",
         "cache_write_tokens",
         "cache_write",
@@ -78,6 +80,10 @@ fn num(v: &Value) -> Option<f64> {
         Value::String(s) => s.trim().parse::<f64>().ok(),
         _ => None,
     }
+}
+
+pub fn number(v: &Value) -> Option<f64> {
+    num(v)
 }
 
 /// 按别名表找第一个命中的字段。
@@ -169,6 +175,11 @@ fn parse_row(row: &Value) -> Option<UsageRow> {
     };
 
     Some(UsageRow {
+        request_id: row
+            .get("request_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .into(),
         at_ms,
         group: pick(row, Keys::GROUP)
             .and_then(Value::as_str)
@@ -201,9 +212,112 @@ pub fn parse_self_log(body: &str) -> Vec<UsageRow> {
     rows_of(&root).iter().filter_map(parse_row).collect()
 }
 
+fn checked_rows(root: &Value) -> Result<Vec<Value>, String> {
+    if root.is_array()
+        || [
+            "/data/items",
+            "/data/records",
+            "/data/logs",
+            "/data/list",
+            "/data",
+            "/items",
+            "/records",
+            "/logs",
+        ]
+        .iter()
+        .any(|path| root.pointer(path).is_some_and(Value::is_array))
+    {
+        Ok(rows_of(root))
+    } else {
+        Err("账单响应不包含可识别的明细列表，不能当成零消费".into())
+    }
+}
+
+pub fn parse_self_log_checked(root: &Value) -> Result<Vec<UsageRow>, String> {
+    let raw = checked_rows(root)?;
+    let rows: Vec<_> = raw.iter().filter_map(parse_row).collect();
+    if !raw.is_empty() && rows.is_empty() {
+        return Err("账单记录无法解析时间戳".into());
+    }
+    Ok(rows)
+}
+
+/// Sub2API reports uncached input and dollar costs directly; do not subtract cache again.
+pub fn parse_sub2_log(root: &Value) -> Result<Vec<UsageRow>, String> {
+    let raw = checked_rows(root)?;
+    let rows: Vec<_> = raw
+        .iter()
+        .filter_map(|row| {
+            let at = pick(row, Keys::AT)?;
+            let at_ms = num(at).map(|v| normalise_ts(v as i64)).or_else(|| {
+                chrono::DateTime::parse_from_rfc3339(at.as_str()?)
+                    .ok()
+                    .map(|d| d.timestamp_millis())
+            })?;
+            let mut parsed = parse_row(&serde_json::json!({"created_at": at_ms}))?;
+            parsed.model = pick(row, Keys::MODEL)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .into();
+            parsed.request_id = row
+                .get("request_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .into();
+            parsed.group = row
+                .pointer("/group/name")
+                .and_then(Value::as_str)
+                .or_else(|| row.get("group_name").and_then(Value::as_str))
+                .or_else(|| row.get("group").and_then(Value::as_str))
+                .unwrap_or_default()
+                .into();
+            parsed.input_uncached = pick_u64(row, &["input_tokens"]);
+            parsed.cache_read = pick_u64(row, Keys::CACHE_READ);
+            parsed.cache_write = pick_u64(row, Keys::CACHE_WRITE);
+            parsed.output = pick_u64(row, &["output_tokens"]);
+            parsed.cost = pick_f64(row, &["actual_cost"]).filter(|v| v.is_finite() && *v >= 0.0);
+            parsed.first_token_ms = pick_u64(row, &["first_token_ms", "ttft_ms"]);
+            parsed.total_ms = pick_u64(row, &["duration_ms"]);
+            // A consumption-only ledger cannot establish the overall success rate.
+            parsed.status_reported = false;
+            Some(parsed)
+        })
+        .collect();
+    if !raw.is_empty() && rows.is_empty() {
+        return Err("Sub2API 账单记录无法解析时间戳".into());
+    }
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sub2_keeps_uncached_input_and_dollar_cost_separate() {
+        let rows = parse_sub2_log(&serde_json::json!({"data":{"items":[{
+            "created_at":"2026-09-18T12:00:00Z", "model":"gpt-5.6-sol", "group":{"name":"team"},
+            "input_tokens":100, "cache_read_tokens":900, "cache_creation_tokens":0,
+            "output_tokens":20, "actual_cost":0.02, "first_token_ms":321
+        }]}}))
+        .unwrap();
+        assert_eq!(rows[0].input_uncached, Some(100));
+        assert_eq!(rows[0].input_total(), Some(1000));
+        assert_eq!(rows[0].cost, Some(0.02));
+        assert_eq!(rows[0].group, "team");
+        assert!(!rows[0].status_reported);
+    }
+
+    #[test]
+    fn a_login_response_is_not_an_empty_ledger() {
+        assert!(
+            parse_self_log_checked(&serde_json::json!({"success":false,"message":"login"}))
+                .is_err()
+        );
+        assert!(parse_sub2_log(&serde_json::json!({"data":{"items":[]}}))
+            .unwrap()
+            .is_empty());
+    }
 
     #[test]
     fn a_new_api_shaped_payload_parses() {

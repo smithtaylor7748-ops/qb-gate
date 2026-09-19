@@ -1,0 +1,7 @@
+[
+  "Review the error-handling path and name the highest-risk failure mode.",
+  "Review the error-handling path, then propose one focused malformed-metrics test and state the assertion it should make.",
+  "Review the error-handling path and malformed-metrics test, then identify one maintainability improvement that preserves the public API and explain the trade-off.",
+  "Review error handling, the malformed-metrics test, and the maintainability trade-off. Check whether the retry configuration can surprise an on-call operator, citing the relevant setting and a practical safeguard.",
+  "Write a concise engineering review covering error handling, malformed-metrics coverage, maintainability, and retry behavior. Prioritize the one change that most improves a shift handoff, explain why it matters, and describe a concrete regression test for it."
+]

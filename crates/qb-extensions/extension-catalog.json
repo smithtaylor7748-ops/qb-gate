@@ -19,6 +19,24 @@
     ]
   },
   {
+    "id": "codex-egress",
+    "name": "Codex 出站与换出口（ccodex 引擎）",
+    "description": "接入本机已安装的 ccodex-sleep-state：代理 / 订阅 / 机场出站，以及实验性的「换出口凑 292」。独立第三方程序，本面板只负责启停与接入；核心不内置代理。",
+    "kind": "application",
+    "source": "https://github.com/smithtaylor7748-ops/qb-gate-codex-egress",
+    "version": "integration-1",
+    "license": "GPL-3.0 (external application; fork of gylive/ccodex-sleep-state)",
+    "clients": [
+      "codex"
+    ],
+    "install_method": "connect",
+    "configuration": "{}",
+    "dependencies": [
+      "ccodex-sleep-state 发布包（解压到 %LOCALAPPDATA%\\Programs\\ccodex-sleep-state，或在插件页指定 exe）",
+      "Codex"
+    ]
+  },
+  {
     "id": "mcp-filesystem",
     "name": "Filesystem MCP",
     "description": "让指定环境通过 MCP 访问你选择的文件目录。",

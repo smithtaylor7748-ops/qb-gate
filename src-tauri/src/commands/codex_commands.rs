@@ -25,6 +25,18 @@ pub async fn codex_close() -> Result<()> {
         .await
         .map_err(|e| GateError::Other(e.to_string()))?
 }
+/// 以管理员重新注册 Codex 打包应用（更新后打包服务需管理员注册，否则启动一律拒绝访问）。
+/// 只做重新注册，会弹 UAC；使用者不授权就返回「已取消」。
+///
+/// ⛔ **故意不拿 `operations::exclusive`**：它只是起一个提权的外部命令、不动面板自己的
+/// 任何状态，而 UAC 提示可能等上几分钟 —— 看门狗每一轮都要拿同一把锁，握着锁等 UAC
+/// 等于让门禁在这段时间里停摆。
+#[tauri::command]
+pub async fn codex_repair_registration() -> Result<()> {
+    tokio::task::spawn_blocking(codex_desktop::repair_registration)
+        .await
+        .map_err(|e| GateError::Other(e.to_string()))?
+}
 #[tauri::command]
 pub async fn codex_create(label: String) -> Result<String> {
     let _guard = operations::exclusive().await?;

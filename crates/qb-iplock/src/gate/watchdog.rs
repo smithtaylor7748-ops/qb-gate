@@ -40,10 +40,24 @@ pub enum WatchMode {
 }
 
 impl WatchMode {
+    /// 巡检间隔。**两档都是 5 秒**，使用者要求 Claude Code 这一档跟桌面端一致。
+    ///
+    /// 原来是 CLI 15 秒 / 桌面端 20 秒。分开的本意是给桌面端留点余量，但档位
+    /// 一合并就失真了：`lease::Lease::grant_with_mode` 里只要有一个持有者是
+    /// Desktop，整份租约就按 Desktop 算，于是**桌面端在场时 Claude Code 实际
+    /// 是 20 秒一轮**，而界面上写着 15 秒。统一成一个数之后这种失真没有了。
+    ///
+    /// ⚠ **提频会放大误杀，别当成纯收紧。** 关停的触发源是
+    /// `probe::ip::reading` 那一轮的结果，轮次密了，撞上三家探测源同时
+    /// 限流 / 超时的机会也跟着密 —— 而「查不到」这一档是零宽限直接收摊
+    /// （见 `unknown_grace`）。2026-09-17 的 `ip-gate.log` 里，15/20 秒档
+    /// 下一天之内已经有 4 次 `CountryUnknown` 误杀。
+    ///
+    /// 循环是「做完一轮再 `sleep(interval)`」（`gate_ops::run_watchdog`），
+    /// 探测最长 8 秒，所以 5 秒不会让轮次重叠。
     pub fn interval(self) -> Duration {
         match self {
-            WatchMode::Cli => Duration::from_secs(15),
-            WatchMode::Desktop => Duration::from_secs(20),
+            WatchMode::Cli | WatchMode::Desktop => Duration::from_secs(5),
         }
     }
 
@@ -347,8 +361,11 @@ mod tests {
 
     #[test]
     fn intervals_match_existing_implementation() {
-        assert_eq!(WatchMode::Cli.interval(), Duration::from_secs(15));
-        assert_eq!(WatchMode::Desktop.interval(), Duration::from_secs(20));
+        // 两档同一个间隔 —— 使用者要求 Claude Code 跟桌面端一致，见 `interval`。
+        // 合并档位（Desktop 压过 Cli）之后不会再改变巡检节奏，这条钉住它。
+        assert_eq!(WatchMode::Cli.interval(), Duration::from_secs(5));
+        assert_eq!(WatchMode::Desktop.interval(), Duration::from_secs(5));
+        assert_eq!(WatchMode::Cli.interval(), WatchMode::Desktop.interval());
         // 两档都不给宽限 —— 这是使用者定的严格档。
         assert_eq!(WatchMode::Desktop.unknown_grace(), None);
         assert_eq!(WatchMode::Cli.unknown_grace(), None);

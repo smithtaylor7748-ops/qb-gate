@@ -150,6 +150,9 @@ fn main() {
         qb_gate_lib::commands::accounts::SwitchReport::export_all_to(&root)?;
         qb_gate_lib::commands::install::MigrateReport::export_all_to(&root)?;
         qb_gate_lib::plugins::sillytavern::TavernConfig::export_all_to(&root)?;
+        qb_gate_lib::plugins::codex_egress::EgressConfig::export_all_to(&root)?;
+        qb_gate_lib::plugins::codex_egress::EgressInstall::export_all_to(&root)?;
+        qb_gate_lib::usecase::turnstate_ops::Takeover::export_all_to(&root)?;
         qb_gate_lib::plugins::tavern_locate::TavernEvidence::export_all_to(&root)?;
         qb_gate_lib::plugins::tavern_locate::TavernCandidate::export_all_to(&root)?;
         qb_gate_lib::plugins::tavern_locate::TavernSurvey::export_all_to(&root)?;
@@ -176,6 +179,9 @@ fn main() {
         qb_gate_lib::schedule::Row::export_all_to(&root)?;
         qb_gate_lib::schedule::Ranking::export_all_to(&root)?;
         qb_gate_lib::schedule::Schedule::export_all_to(&root)?;
+        // 官方 Codex turn-state 的界面状态（导出名 TurnStateStatus / TurnStateModelStatus）。
+        qb_gate_lib::turnstate::Status::export_all_to(&root)?;
+        qb_gate_lib::turnstate::ModelStatus::export_all_to(&root)?;
         qb_gate_lib::commands::station::ProbeResult::export_all_to(&root)?;
         qb_gate_lib::commands::station::ClientConfig::export_all_to(&root)?;
         qb_gate_lib::commands::station::RouterStatus::export_all_to(&root)?;
@@ -194,6 +200,7 @@ fn main() {
         // 「站点 → 分组 → 模型」那三级:第三级的候选来自站点自己的价目表。
         qb_gate_lib::station::pricing::StationModel::export_all_to(&root)?;
         qb_gate_lib::commands::station::StationModelsView::export_all_to(&root)?;
+        qb_app::usecase::station_billing::StationBillingSettings::export_all_to(&root)?;
         qb_gate_lib::station::pricing::FetchedPrice::export_all_to(&root)
     };
     out().expect("export IPC contracts");

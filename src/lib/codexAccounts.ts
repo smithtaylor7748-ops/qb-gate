@@ -11,6 +11,8 @@ export const codexApi = {
   switch: (id: string) => call<void>("codex_switch", { id }),
   launch: (id: string) => call<void>("codex_launch", { id }),
   close: () => call<void>("codex_close"),
+  // 更新后打包服务需管理员注册，否则启动一律「拒绝访问 (os error 5)」。会弹 UAC。
+  repairRegistration: () => call<void>("codex_repair_registration"),
   archive: (id: string) => call<void>("codex_archive", { id }),
   usage: (id: string, days: number) =>
     call<CodexUsage>("codex_usage", { id, days }),

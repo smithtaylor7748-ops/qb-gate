@@ -323,6 +323,7 @@ pub fn client_base(raw: &str, client: Client) -> Result<String> {
         },
     )
 }
+
 fn official_dir(client: Client, id: &str) -> Result<PathBuf> {
     if client == Client::ClaudeDesktop {
         return Err(GateError::Other("桌面端无需迁移 Code 配置".into()));
@@ -826,6 +827,9 @@ pub fn configuration_files(db: &Repository, e: &Environment) -> Result<Vec<Edit>
             let mut doc = crate::relay::codex_config_toml(&text, &m, None)
                 .parse::<toml_edit::DocumentMut>()
                 .map_err(|e| GateError::Other(e.to_string()))?;
+            // 中转环境一律 API-Key 模式：占位 Key 由路由换成线路自己的。官方 turn-state
+            // 识别**不再走环境目录**（0.24.7 起直接作用于账户槽位，见 `usecase::turnstate_ops`），
+            // 所以这里没有「官方分支」。
             doc["forced_login_method"] = toml_edit::value("api");
             doc["cli_auth_credentials_store"] = toml_edit::value("file");
             if e.auth_style == "none" {
@@ -1226,7 +1230,10 @@ pub fn remove(kind: &str, id: &str) -> Result<()> {
     let dir = crate::config_io::environment_dir(&db.root, id)?;
     db.transaction(|| {
         db.remove(kind, id)?;
-        for key in ["environment-undo", "applied-environment"] {
+        for key in ["environment-undo", "applied-environment"]
+            .into_iter()
+            .chain((kind == "providers").then_some("station-billing"))
+        {
             db.conn
                 .execute("DELETE FROM metadata WHERE key=?1", [format!("{key}:{id}")])
                 .map_err(|e| GateError::Database(e.to_string()))?;
@@ -1302,6 +1309,11 @@ pub async fn close_desktop_for_relay(
          请从托盘完全退出桌面端后再点启动。"
             .into(),
     ))
+}
+
+/// Windows 的「拒绝访问」有三副面孔：本地化文案、英文文案、HRESULT。任一命中都算。
+fn looks_like_access_denied(msg: &str) -> bool {
+    msg.contains("0x80070005") || msg.contains("Access is denied") || msg.contains("拒绝访问")
 }
 
 pub async fn launch(
@@ -1483,6 +1495,14 @@ pub async fn launch(
         stops_with_gate,
         revision,
     );
+    // Store 版 Codex 更新后注册失效时，CreateProcessW 会回「拒绝访问 (0x80070005)」——
+    // 跟账户页那条 os error 5 是同一件事，同样给可操作的说明，别让人在这里看到裸错误。
+    let result = match result {
+        Err(e) if client == Client::Codex && looks_like_access_denied(&e.to_string()) => Err(
+            GateError::Other(qb_install::install::codex_desktop::registration_repair_message()),
+        ),
+        other => other,
+    };
     match result {
         Ok(s) => {
             if gated {

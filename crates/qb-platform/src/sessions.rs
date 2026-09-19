@@ -62,6 +62,29 @@ pub fn sanitized_environment(
     out.into_values().collect()
 }
 
+/// Surface official Windows setup separately from a successful process spawn.
+/// Only diagnostic markers are read; sandbox secrets and ACLs are never modified.
+pub fn codex_setup_notice(config_dir: &Path) -> Option<String> {
+    let sandbox = config_dir.join(".sandbox");
+    let error = std::fs::read(sandbox.join("setup_error.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+    if let Some(error) = error {
+        let code = error
+            .get("code")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        if code == "helper_sandbox_lock_failed" {
+            return Some("Codex 已打开，但 Windows 沙箱目录权限初始化失败（helper_sandbox_lock_failed）。旧初始化标记可能阻止权限更新；需要备份标记后重新运行官方管理员初始化。具体步骤见中转站修复说明。".into());
+        }
+        return Some("Codex 已打开，但 Windows 沙箱初始化尚未完成。请在 Codex 的 Finish setup 中完成系统授权。".into());
+    }
+    if !sandbox.join("setup_marker.json").is_file() {
+        return Some("Codex 已打开；独立中转环境首次运行可能显示 Finish Windows setup，请在该窗口完成系统授权。".into());
+    }
+    None
+}
+
 /// 起一个面板托管的会话。
 ///
 /// `gated` 只回答一件事：**门禁判不过时要不要收掉它**（见
@@ -123,6 +146,12 @@ pub fn start(
         Repository::open()?.put("sessions", &id, &session)?;
         return Err(GateError::Other(session.detail));
     }
+    if session.context.client == Client::Codex {
+        if let Some(notice) = codex_setup_notice(Path::new(&session.context.config_dir)) {
+            session.detail = notice;
+            Repository::open()?.put("sessions", &session.id, &session)?;
+        }
+    }
     registry().lock().unwrap().insert(
         id,
         Managed {
@@ -167,6 +196,15 @@ pub fn refresh() -> Result<bool> {
             m.session.state = "exited".into();
             m.session.detail = "进程已退出".into();
             db.put("sessions", &m.session.id, &m.session)?;
+        }
+        if m.session.state == "running" && m.session.context.client == Client::Codex {
+            let detail = codex_setup_notice(Path::new(&m.session.context.config_dir))
+                .unwrap_or_else(|| "进程已登记".into());
+            if m.session.detail != detail {
+                m.session.detail = detail;
+                changed = true;
+                db.put("sessions", &m.session.id, &m.session)?;
+            }
         }
     }
     Ok(changed)
@@ -340,6 +378,46 @@ impl OwnedProgram {
             &sanitized_environment(std::env::vars(), env),
             false,
             true,
+            &id,
+        )?;
+        if let Err(e) = process.resume() {
+            let _ = process.stop();
+            return Err(e);
+        }
+        Ok(Self {
+            record: ProgramRecord {
+                id,
+                pid: process.pid,
+                created: process.created,
+            },
+            process,
+        })
+    }
+    /// 起一个**独立于面板生命周期**、带自己控制台窗口的程序。
+    ///
+    /// 跟 [`Self::launch`] 的两点差别都是刻意的：
+    ///
+    /// * **不设 `KILL_ON_JOB_CLOSE`**：面板退出它照跑。给会**改写外部配置、
+    ///   退出时要自己恢复**的程序用（Codex 出站插件 `ccodex-sleep-state` 接管的是
+    ///   使用者真实的 `~/.codex`，被面板顺手杀掉就把 Codex 留在一个指向死服务的
+    ///   配置上）。代价是面板重启后认不出它（命名 Job 随面板消失），只能报
+    ///   「端口被占、不是本面板起的」，让使用者去它自己的窗口按 Ctrl+C。
+    /// * **`CREATE_NEW_CONSOLE`**：给它一个看得见的窗口，跟它自己的 `start.cmd`
+    ///   一样 —— 使用者能看到日志、能 Ctrl+C 让它走自己的恢复流程。
+    pub fn launch_detached_console(
+        exe: &Path,
+        args: &[String],
+        cwd: &Path,
+        env: Vec<(String, String)>,
+    ) -> Result<Self> {
+        let id = crate::config_io::id();
+        let process = NativeProcess::create(
+            exe,
+            args,
+            &cwd.display().to_string(),
+            &sanitized_environment(std::env::vars(), env),
+            true,
+            false,
             &id,
         )?;
         if let Err(e) = process.resume() {
@@ -760,6 +838,24 @@ impl NativeProcess {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_setup_is_not_misreported_as_relay_authentication() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        std::fs::create_dir_all(root.join(".sandbox")).unwrap();
+        assert!(codex_setup_notice(&root).unwrap().contains("首次"));
+        std::fs::write(root.join(".sandbox/setup_marker.json"), "{}").unwrap();
+        assert!(codex_setup_notice(&root).is_none());
+        std::fs::write(
+            root.join(".sandbox/setup_error.json"),
+            r#"{"code":"helper_sandbox_lock_failed"}"#,
+        )
+        .unwrap();
+        assert!(codex_setup_notice(&root)
+            .unwrap()
+            .contains("helper_sandbox_lock_failed"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn windows_arguments_preserve_spaces_quotes_and_trailing_slashes() {

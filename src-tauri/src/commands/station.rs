@@ -11,6 +11,7 @@
 use crate::app::AppState;
 use crate::error::{GateError, Result};
 use qb_app::local_router::{self, RouterConfig, Upstream, UpstreamAuth};
+use qb_app::usecase::station_billing::{self, StationBillingSettings};
 use qb_app::usecase::station_ops;
 use qb_contract::domain::Client;
 use qb_station::router::RequestLog;
@@ -41,6 +42,24 @@ pub struct RouterStatus {
     pub switches: u32,
     /// 还没落库的请求日志条数。
     pub pending_logs: u32,
+    /// 官方 Codex turn-state 上游挂上了没有（Codex 接进路由了没）。
+    ///
+    /// **Codex 全局,与界面停在哪个分页无关** —— 官方线整机只有一条。
+    /// turn-state 面板据此显示「已接入 / 未接入」。
+    pub turnstate_official_armed: bool,
+    /// turn-state 注入总开关现在开着没有（**后端真实状态**,界面的开关照它显示）。
+    ///
+    /// 只在使用者手动开启后为真;面板重启后回到关（不落盘）—— 这是「默认关闭」
+    /// 那条硬约束的一部分,不是遗漏。
+    pub turnstate_enabled: bool,
+    /// 账号规则是不是 Team（12 块 / 332）;否则个人（10 块 / 292）。
+    pub turnstate_team: bool,
+    /// 识别正作用于哪个 Codex 账户槽位（槽位名）。`None` = 识别关着。
+    ///
+    /// 0.24.7 起识别**直接作用于激活槽位**（改它的 `config.toml`，不复制凭证、不另起
+    /// Codex），落盘的 marker 是唯一真相 —— 面板重启后 `turnstate_official_armed` 归零，
+    /// 而这个字段还能告诉界面「上次没关干净」（启动时会自动关闭并恢复）。
+    pub turnstate_takeover: Option<String>,
 }
 
 /// `client` 是「界面现在停在哪个分页」。`current_route` / `pending_route`
@@ -64,6 +83,12 @@ fn status_of(state: &AppState, client: Client) -> RouterStatus {
         pending_route: s.as_ref().and_then(|s| s.pending(client)),
         switches: s.as_ref().map(|s| s.switches() as u32).unwrap_or(0),
         pending_logs: s.as_ref().map(|s| s.logs().len() as u32).unwrap_or(0),
+        turnstate_official_armed: s.as_ref().is_some_and(|s| s.official_codex_armed()),
+        turnstate_enabled: s.as_ref().is_some_and(|s| s.turnstate_enabled()),
+        turnstate_team: s
+            .as_ref()
+            .is_some_and(|s| s.turnstate_kind() == local_router::TurnKind::Team),
+        turnstate_takeover: qb_app::usecase::turnstate_ops::takeover().map(|t| t.slot_label),
     }
 }
 
@@ -129,12 +154,18 @@ pub async fn station_router_start(
     }
     load_upstreams(&state)?;
     let shared = std::sync::Arc::clone(&state.station);
+    // 只配连接超时:上游连不上时尽快失败并如实判健康,而**不设读/总超时** ——
+    // SSE 生成可以合法地跑很久,总超时会把长回复(含 Claude 的)拦腰截断。
+    let http = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
     let handle = local_router::serve(
         RouterConfig {
             port: port.unwrap_or(local_router::DEFAULT_PORT),
         },
         shared,
-        reqwest::Client::new(),
+        http,
     )
     .await?;
     if let Ok(mut a) = state.station_addr.lock() {
@@ -163,6 +194,118 @@ pub fn station_router_stop(state: State<'_, AppState>, client: Client) -> Router
 #[tauri::command]
 pub fn station_router_status(state: State<'_, AppState>, client: Client) -> RouterStatus {
     status_of(&state, client)
+}
+
+/// 配置官方 Codex 的 turn-state 注入。**实验功能,默认关闭。只对 Codex,不碰 Claude。**
+///
+/// `enabled` = 注入总开关;`team` = 账号规则(true → Team 12 块,false → 个人 10 块)。
+/// 关着时仍会被动采集与展示,只是不往请求里塞。采集是免费的(读官方响应带回的头),
+/// 不额外发探测请求、不换出口、不消耗多余额度。
+#[tauri::command]
+pub fn station_turnstate_configure(
+    state: State<'_, AppState>,
+    enabled: bool,
+    team: bool,
+) -> Result<()> {
+    let kind = if team {
+        local_router::TurnKind::Team
+    } else {
+        local_router::TurnKind::Personal
+    };
+    state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?
+        .turnstate_configure(enabled, kind);
+    Ok(())
+}
+
+/// 每个 model 当前的 turn-state 外形（块数、长度、剩余秒、strikes、观测次数）。
+/// **不含 turn-state 的值本身。**
+#[tauri::command]
+pub fn station_turnstate_status(
+    state: State<'_, AppState>,
+) -> Result<Vec<qb_station::turnstate::ModelStatus>> {
+    let now = chrono::Utc::now().timestamp_millis();
+    Ok(state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?
+        .turnstate_status(now))
+}
+
+/// 开启识别：把当前激活的 Codex 账户槽位接进本机路由。**只 Codex。**
+///
+/// 0.24.7 起**不再另建环境目录、不再复制 OAuth、不再另起 Codex**（老做法留下两份轮换式
+/// 刷新令牌，谁先刷新另一份就作废 —— 档案 §7.29 同款隐患）。现在三步：
+/// 1. 在路由里挂上官方上游（`OAuthPassthrough`）并拉起路由 —— 先做这步，路由起不来就
+///    不去动槽位配置；
+/// 2. `usecase::turnstate_ops::enable`：备份并增量改槽位的 `config.toml`
+///    （`model_provider` → `qb_turnstate`，base 不带 `/v1`），写 marker；失败就把上游摘回去；
+/// 3. 之后使用者照常从账户页启动那个槽位的 Codex —— 它读到的就是走路由的配置。
+///    已经开着的 Codex 只在启动时读一次配置，**要重启才生效**，界面上说明。
+///
+/// ⛔ 与出站插件（ccodex）互斥，双向。两边**都要改同一个槽位的 `config.toml`**，
+/// 同时开就是两个程序抢同一个文件，谁赢都说不清。
+#[tauri::command]
+pub async fn station_turnstate_enable(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<RouterStatus> {
+    let _guard = crate::operations::exclusive().await?;
+    let client = Client::Codex;
+    if crate::plugins::codex_egress::running() {
+        return Err(GateError::Other(
+            "出站插件（ccodex）正在运行。它和识别都要改同一个槽位的 Codex 配置，一次只能开一个：先到扩展中心停掉插件（会恢复 Codex 配置），再开启识别。"
+                .into(),
+        ));
+    }
+    // 路由先起：官方上游挂上并选中（load_upstreams 会保住它）。
+    {
+        let mut s = state
+            .station
+            .lock()
+            .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
+        s.arm_official_codex();
+    }
+    load_upstreams(&state)?;
+    station_router_start(app.clone(), None, client).await?;
+    // 官方 base **不带 `/v1`**：官方端点是 `.../backend-api/codex/responses`，
+    // `client_base_url(Codex, …)` 给的 `http://127.0.0.1:15721/codex` 正好对上。
+    let base = local_router::client_base_url(client, local_router::DEFAULT_PORT);
+    if let Err(e) =
+        tokio::task::spawn_blocking(move || qb_app::usecase::turnstate_ops::enable(&base))
+            .await
+            .map_err(|e| GateError::Other(e.to_string()))?
+    {
+        if let Ok(mut s) = state.station.lock() {
+            s.disarm_official_codex();
+        }
+        return Err(e);
+    }
+    crate::operations::changed(&crate::events::ui(&app), "turnstate", "enabled");
+    Ok(status_of(&state, client))
+}
+
+/// 关闭识别：摘掉官方上游，并按 marker 把那个槽位的 `config.toml` 反向恢复。**只 Codex。**
+///
+/// 不动正在跑的那个 Codex（它接下来的请求会如实收到 503「还没选上游」，界面提示重启）。
+/// 恢复失败时 marker 保留，报错让使用者再点一次 —— 不能让「路由摘了、配置还指着路由」
+/// 这种半成品悄悄留下。
+#[tauri::command]
+pub async fn station_turnstate_disable(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<RouterStatus> {
+    let _guard = crate::operations::exclusive().await?;
+    if let Ok(mut s) = state.station.lock() {
+        s.disarm_official_codex();
+    }
+    tokio::task::spawn_blocking(qb_app::usecase::turnstate_ops::disable)
+        .await
+        .map_err(|e| GateError::Other(e.to_string()))??;
+    crate::operations::changed(&crate::events::ui(&app), "turnstate", "disabled");
+    Ok(status_of(&state, Client::Codex))
 }
 
 /// 选一条上游。
@@ -340,6 +483,7 @@ pub async fn station_probe(
                 route_id: String::new(),
                 base_url: base.clone(),
                 key: key.clone(),
+                ..Default::default()
             },
             &client,
         )
@@ -538,9 +682,21 @@ pub struct StoredAudit {
 /// 这条线的检验历史,新的在前。
 #[tauri::command]
 pub fn station_audits(route_id: String) -> Result<Vec<StoredAudit>> {
-    let all: Vec<StoredAudit> = crate::repository::Repository::open()?
-        .list("station_audits")
-        .unwrap_or_default();
+    let records: Vec<serde_json::Value> =
+        crate::repository::Repository::open()?.list("station_audits")?;
+    let all: Vec<StoredAudit> = records
+        .into_iter()
+        .filter(|v| v["route_id"].as_str() == Some(&route_id))
+        .map(|v| {
+            if let Some(sealed) = v["sealed"].as_str() {
+                let raw = crate::secret::open(sealed)
+                    .ok_or_else(|| GateError::Other("检验历史无法解密".into()))?;
+                serde_json::from_str(&raw).map_err(Into::into)
+            } else {
+                serde_json::from_value(v).map_err(Into::into)
+            }
+        })
+        .collect::<Result<_>>()?;
     let mut mine: Vec<StoredAudit> = all.into_iter().filter(|a| a.route_id == route_id).collect();
     // 新的在前：报告页那排历史按钮从左到右就是从新到旧。
     mine.sort_by_key(|a| std::cmp::Reverse(a.round.at_ms));
@@ -593,7 +749,7 @@ pub async fn station_models(route_id: String) -> Result<StationModelsView> {
             })
         }
     };
-    let all = station_ops::fetch_station_models(&source, &reqwest::Client::new()).await;
+    let (all, problem) = station_ops::fetch_models(&source, &station_billing::http_client()?).await;
 
     // 分组过滤在这里做一次,前端拿到的就是这个分组能用的。
     // 站点没公布分组时 in_group 恒真 —— 「不知道」不该表现成「不能用」。
@@ -606,9 +762,11 @@ pub async fn station_models(route_id: String) -> Result<StationModelsView> {
         &route.group,
         prefers_anthropic(&route),
     );
-    let problem = models
-        .is_empty()
-        .then(|| "这个站点没公布价目表（/api/pricing），模型名要自己填".to_string());
+    let problem = problem.or_else(|| {
+        models
+            .is_empty()
+            .then(|| "这个分组没有公布模型，请手动输入".into())
+    });
 
     Ok(StationModelsView {
         models,
@@ -634,13 +792,39 @@ fn prefers_anthropic(route: &Route) -> bool {
 /// 这个分组根本不提供的名字。拿它去验,验的是一个不存在的东西,六项里的倍率
 /// 会全记「没测到」—— 界面上看起来像站点不配合,其实是我们挑错了模型。
 #[tauri::command]
-pub async fn station_run_audit(route_id: String, model: Option<String>) -> Result<StoredAudit> {
+pub async fn station_run_audit(
+    app: tauri::AppHandle,
+    route_id: String,
+    model: Option<String>,
+    test_key: String,
+    cold: bool,
+) -> Result<StoredAudit> {
+    use tauri::Emitter;
+    if test_key.trim().is_empty() || test_key.contains(['\r', '\n']) {
+        return Err(GateError::Other(
+            "请填写本次检验的临时 API Key；不会保存到历史或线路配置".into(),
+        ));
+    }
+    // Serialise spending: duplicate clicks/windows must never start overlapping audit batches.
+    static AUDIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if AUDIT.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err(GateError::Other("已有检验正在运行，请等待完成".into()));
+    }
+    struct AuditGuard;
+    impl Drop for AuditGuard {
+        fn drop(&mut self) {
+            AUDIT.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let _audit_guard = AuditGuard;
     let db = crate::repository::Repository::open()?;
     let mut routes: Vec<Route> = db.list("station_routes").unwrap_or_default();
     let Some(idx) = routes.iter().position(|r| r.id == route_id) else {
         return Err(GateError::Other("找不到这条线路".into()));
     };
-    let source = station_ops::source(&db, &routes[idx])?;
+    station_billing::refresh(&routes[idx].station_id).await?;
+    let mut source = station_ops::source(&db, &routes[idx])?;
+    source.key = test_key.trim().into();
 
     let previous = station_audits(route_id.clone())?
         .into_iter()
@@ -650,7 +834,7 @@ pub async fn station_run_audit(route_id: String, model: Option<String>) -> Resul
     // 官方价：优先用这次启动抓到的，没抓到就退回内置快照。
     let catalog = qb_station::station::pricing::Catalog::new(stored_prices());
     // 验哪个模型：使用者选的优先；没选就去站点的价目表里挑一个真实存在的。
-    let client = reqwest::Client::new();
+    let client = station_billing::http_client()?;
     let model = match model
         .map(|m| m.trim().to_string())
         .filter(|m| !m.is_empty())
@@ -666,7 +850,12 @@ pub async fn station_run_audit(route_id: String, model: Option<String>) -> Resul
             .unwrap_or_default()
         }
     };
-    let outcome = station_ops::run_audit(
+    if model.trim().is_empty() {
+        return Err(GateError::Other(
+            "没有可用模型，请在检验窗口选择或手动填写模型；未发送计费请求".into(),
+        ));
+    }
+    let outcome = station_ops::run_audit_with(
         &source,
         routes[idx].nominal_rate,
         &model,
@@ -674,6 +863,10 @@ pub async fn station_run_audit(route_id: String, model: Option<String>) -> Resul
         previous.as_ref(),
         &client,
         now,
+        cold,
+        &|completed, total, stage| {
+            let _ = app.emit("station-audit-progress", serde_json::json!({"routeId":route_id,"completed":completed,"total":total,"stage":stage}));
+        },
     )
     .await;
     let round = outcome.round;
@@ -696,8 +889,59 @@ pub async fn station_run_audit(route_id: String, model: Option<String>) -> Resul
         route_id: route_id.clone(),
         round,
     };
-    db.put("station_audits", &format!("{route_id}@{now}"), &stored)?;
+    db.put(
+        "station_audits",
+        &format!("{route_id}@{now}"),
+        &serde_json::json!({
+            "route_id":route_id, "sealed":crate::secret::seal(&serde_json::to_string(&stored)?)?
+        }),
+    )?;
     Ok(stored)
+}
+
+#[tauri::command]
+pub fn station_billing_settings(station_id: String) -> Result<StationBillingSettings> {
+    station_billing::settings(&crate::repository::Repository::open()?, &station_id)
+}
+
+#[tauri::command]
+pub async fn station_billing_connect(
+    station_id: String,
+    backend: String,
+    account: String,
+    password: String,
+) -> Result<StationBillingSettings> {
+    station_billing::connect(&station_id, &backend, &account, &password).await
+}
+
+#[tauri::command]
+pub async fn station_billing_browser(
+    app: tauri::AppHandle,
+    station_id: String,
+) -> Result<StationBillingSettings> {
+    crate::station_login::login(app, station_id).await
+}
+
+#[tauri::command]
+pub async fn station_billing_refresh(station_id: String) -> Result<StationBillingSettings> {
+    station_billing::refresh(&station_id).await
+}
+
+#[tauri::command]
+pub async fn station_billing_save(
+    station_id: String,
+    backend: String,
+    user_id: String,
+    token: Option<String>,
+) -> Result<StationBillingSettings> {
+    let _guard = crate::operations::exclusive().await?;
+    station_billing::save(
+        &crate::repository::Repository::open()?,
+        &station_id,
+        &backend,
+        &user_id,
+        token.as_deref(),
+    )
 }
 
 // ------------------------------------------------------------------ 官方价目
@@ -803,7 +1047,8 @@ pub async fn station_refresh_health() -> Result<Vec<RouteHealthView>> {
     let db = crate::repository::Repository::open()?;
     let routes: Vec<Route> = db.list("station_routes").unwrap_or_default();
     let now = chrono::Utc::now().timestamp_millis();
-    let health = station_ops::route_health(&db, &routes, &reqwest::Client::new(), now).await;
+    let health =
+        station_ops::route_health(&db, &routes, &station_billing::http_client()?, now).await;
     Ok(routes
         .iter()
         .map(|r| {
@@ -859,7 +1104,8 @@ pub async fn station_decide(
     // 健康度要现拉一轮。**不拉的话「快」和「稳」两维永远是「没有证据」**,
     // 排序退化成只比倍率 —— 界面上还摆着三个复选框,而其中两个不起作用。
     // 这一轮是免费的:读的是站点自己的账单日志,不打模型。
-    let health = station_ops::route_health(&db, &routes, &reqwest::Client::new(), now).await;
+    let health =
+        station_ops::route_health(&db, &routes, &station_billing::http_client()?, now).await;
 
     // 熔断状态归路由器管 —— 这里只读,不另算一份(两份必然漂移)。
     let (incumbent, breakers) = {
@@ -1042,6 +1288,7 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
     let now = chrono::Utc::now().timestamp_millis();
     let catalog = qb_station::station::pricing::Catalog::new(stored_prices());
     let mut out = Vec::new();
+    let http = station_billing::http_client();
 
     for &client in ALL_CLIENTS {
         let Ok(mut sched) = db.get::<Schedule>("station_schedule", client_key(client)) else {
@@ -1061,7 +1308,13 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
             out.push(sched);
             continue;
         }
-        let health = station_ops::route_health(&db, &routes, &reqwest::Client::new(), now).await;
+        let Ok(http) = &http else {
+            sched.last_note = "无法建立账单连接，请检查本机网络配置".into();
+            let _ = db.put("station_schedule", client_key(client), &sched);
+            out.push(sched);
+            continue;
+        };
+        let health = station_ops::route_health(&db, &routes, http, now).await;
         let (incumbent, breakers) = {
             let s = state.station.lock().ok();
             (

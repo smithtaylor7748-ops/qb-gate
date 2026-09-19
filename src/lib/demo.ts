@@ -827,7 +827,24 @@ const plugins: PluginStatus[] = [
       { label: "端口 5001 / 8000", ok: true, detail: "都空着" },
     ],
   },
+  {
+    id: "codex-egress",
+    name: "Codex 出站与换出口（ccodex 引擎）",
+    state: "ready",
+    detail: "已安装，没在跑。",
+    checks: [
+      {
+        label: "程序文件",
+        ok: true,
+        detail: `${HOME}\\AppData\\Local\\Programs\\ccodex-sleep-state\\ccodex-sleep-state.exe（版本 v0.3.0）`,
+      },
+      { label: "端口 17841", ok: true, detail: "空闲" },
+    ],
+  },
 ];
+/** 演示里的出站插件运行态：启动翻真、停止翻假，状态随之变。 */
+let egressRunning = false;
+let egressExe: string | null = null;
 
 const catalog: OfficialCatalogStatus = {
   configured: false,
@@ -1264,6 +1281,13 @@ const stationRoutes = [
 /** 演示里的路由状态。按软件各记一份，跟真后端的 `ClientRouter` 对齐。 */
 let stationRouterUp = true;
 let stationSwitches = 3;
+/** 官方 Codex turn-state 上游接进路由了没。开启识别后翻真。 */
+let stationTurnstateArmed = false;
+/** 识别接管了哪个 Codex 槽位（真后端是落盘 marker 里的槽位标签）。 */
+let stationTurnstateTakeover: string | null = null;
+/** turn-state 注入开关与账号规则 —— 跟真后端一样由 configure 落定、由 status 回读。 */
+let stationTurnstateEnabled = false;
+let stationTurnstateTeam = false;
 const stationCurrent: Record<string, string> = {
   // 只有 Claude Code 选了上游 —— 另外两个显示「还没选上游」，
   // 那是刚装完面板的真实样子，也让「三个软件各走各的」一眼看得出来。
@@ -1539,6 +1563,7 @@ const stationAudits = [
       trust: 29,
       // 只测到两项 —— 低分是因为没测够，不是因为这站坏
       evidence: "insufficient",
+      problems: [],
       model: "claude-opus-5",
       // 四类价目对照。moxi 是 sub2api 系 —— 站点那一列是**绝对单价**，
       // 不是倍率。⛔ 缺的那一类写 null，界面渲染成「—」；写 0 会被读成免费。
@@ -1841,11 +1866,59 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       stationPending[String(args?.client ?? "claude-code")] ?? null,
     switches: stationSwitches,
     pending_logs: 0,
+    turnstate_official_armed: stationTurnstateArmed,
+    turnstate_enabled: stationTurnstateEnabled,
+    turnstate_team: stationTurnstateTeam,
+    turnstate_takeover: stationTurnstateTakeover,
   }),
   station_router_start: (args) => {
     stationRouterUp = true;
     return FIXTURES.station_router_status(args);
   },
+  // 官方 Codex turn-state（实验）。演示数据给一张采到的 292，好看清界面。
+  station_turnstate_configure: (args) => {
+    stationTurnstateEnabled = Boolean(args?.enabled);
+    stationTurnstateTeam = Boolean(args?.team);
+    return null;
+  },
+  // 开启识别：演示里挂上官方上游、把「接管的槽位」记成当前激活的那个 —— 跟真后端
+  // 一样只改槽位配置、不起进程；起 Codex 仍是账户页那颗按钮的事。
+  station_turnstate_enable: () => {
+    if (egressRunning)
+      throw new Error(
+        "出站插件（ccodex）正在运行。它和识别都要改同一个槽位的 Codex 配置，一次只能开一个：先到扩展中心停掉插件（会恢复 Codex 配置），再开启识别。",
+      );
+    const active = codexSlots.find((s) => s.active);
+    if (!active) throw new Error("没有激活的 Codex 账户槽位。");
+    if (!active.logged_in)
+      throw new Error(
+        `槽位「${active.label}」还没用 ChatGPT 登录。先在账户页打开它登录，再开启识别。`,
+      );
+    stationRouterUp = true;
+    stationTurnstateArmed = true;
+    stationTurnstateTakeover = active.label;
+    return FIXTURES.station_router_status({ client: "codex" });
+  },
+  station_turnstate_disable: () => {
+    stationTurnstateArmed = false;
+    stationTurnstateTakeover = null;
+    return FIXTURES.station_router_status({ client: "codex" });
+  },
+  station_turnstate_status: () => [
+    {
+      model: "gpt-5.6-sol",
+      status: {
+        usable: true,
+        version: 3n,
+        blocks: 10,
+        length: 292,
+        remaining_seconds: 3180n,
+        ready: true,
+        strikes: 0,
+        observations: 14n,
+      },
+    },
+  ],
   station_router_stop: (args) => {
     stationRouterUp = false;
     return FIXTURES.station_router_status(args);
@@ -1937,6 +2010,74 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   },
   station_logs: () => stationLogs,
   station_audits: (args) => (args?.routeId === R_CHEAP ? stationAudits : []),
+  station_run_audit: (args) => ({
+    ...stationAudits[0],
+    route_id: args?.routeId,
+    round: {
+      ...stationAudits[0].round,
+      at_ms: Date.now(),
+      model: args?.model,
+      mult: null,
+      batch: {
+        planned: args?.cold ? 7 : 6,
+        samples: Array.from({ length: args?.cold ? 7 : 6 }, (_, i) => ({
+          stage: i === 0 ? "预热" : i === 6 ? "冷前缀对照" : "缓存验证 " + i,
+          request_id: "demo-request-" + (i + 1),
+          api_tokens: [i === 0 ? 5200 : 500, i === 0 ? 0 : 4700, 0, 82],
+          ledger_tokens: [i === 0 ? 5200 : 500, i === 0 ? 0 : 4700, 0, 82],
+          billed: 0.004,
+          official: 0.005,
+          first_token_ms: 720,
+          match_kind: "request-id",
+          problem: null,
+        })),
+        balance_before: 12.5,
+        balance_after: 12.476,
+        balance_delta: 0.024,
+        currency: "USD",
+        total_billed: 0.024,
+        official_cost: 0.03,
+        prefix_reuse: 0.904,
+      },
+    },
+  }),
+  station_billing_connect: (args) => ({
+    backend: args?.backend === "auto" ? "newapi" : args?.backend,
+    user_id: "12",
+    configured: true,
+    account: args?.account,
+    balance: 12.5,
+    currency: "USD",
+    verified_at: Date.now(),
+  }),
+  station_billing_browser: () => ({
+    backend: "newapi",
+    user_id: "12",
+    configured: true,
+    account: "demo-user",
+    balance: 12.5,
+    currency: "USD",
+    verified_at: Date.now(),
+  }),
+  station_billing_refresh: () => ({
+    backend: "newapi",
+    user_id: "12",
+    configured: true,
+    account: "demo-user",
+    balance: 12.5,
+    currency: "USD",
+    verified_at: Date.now(),
+  }),
+  station_billing_settings: () => ({
+    backend: "none",
+    user_id: "",
+    configured: false,
+  }),
+  station_billing_save: (args) => ({
+    backend: args?.backend ?? "none",
+    user_id: args?.userId ?? "",
+    configured: args?.backend !== "none",
+  }),
   // 「选中转站 → 选分组 → 选模型」那第三级。
   //
   // 两种情形都要有:有价目表的(能列模型、能看出哪个开了计费翻倍)和
@@ -2170,6 +2311,56 @@ function codexDemo(cmd: string, args: Record<string, unknown>) {
   if (cmd === "codex_close") {
     codexLaunched = null;
     return null;
+  }
+  if (cmd === "codex_repair_registration") {
+    // 演示里没有真实的打包应用注册，直接当作修好了。
+    return null;
+  }
+  // Codex 出站与换出口插件（外部程序）。演示里只翻状态位，不起任何进程。
+  if (cmd === "codex_egress_status") {
+    const base = plugins.find((p) => p.id === "codex-egress")!;
+    return {
+      ...base,
+      state: egressRunning ? "running" : "ready",
+      detail: egressRunning
+        ? "运行中，面板：http://127.0.0.1:17841/admin/"
+        : "已安装，没在跑。",
+      checks: base.checks.map((c) =>
+        c.label === "端口 17841"
+          ? {
+              ...c,
+              detail: egressRunning ? "本面板启动的服务正在监听" : "空闲",
+            }
+          : c,
+      ),
+    };
+  }
+  if (cmd === "codex_egress_config") return { exe: egressExe };
+  if (cmd === "codex_egress_config_save") {
+    egressExe = (args.cfg as { exe: string | null } | undefined)?.exe ?? null;
+    return null;
+  }
+  if (cmd === "codex_egress_start") {
+    if (stationTurnstateArmed || stationTurnstateTakeover)
+      throw new Error(
+        "账户页的「识别（turn-state）」还开着。它和这个插件都要改同一个 Codex 槽位的配置，一次只能开一个：到账户页「识别」弹窗点「关闭识别」（会恢复槽位配置），再启动插件。",
+      );
+    egressRunning = true;
+    return "http://127.0.0.1:17841/admin/";
+  }
+  if (cmd === "codex_egress_stop") {
+    egressRunning = false;
+    return ["已结束插件进程", "已用它自己的 restore 恢复 Codex 配置"];
+  }
+  if (cmd === "codex_egress_install") {
+    // 演示里不真下载；给一个像样的结果，让界面能演到「已登记」。
+    egressExe = `${HOME}\\AppData\\Local\\Programs\\ccodex-sleep-state\\ccodex-sleep-state-windows-amd64\\ccodex-sleep-state.exe`;
+    return {
+      tag: "v0.1.0",
+      exe: egressExe,
+      sha256:
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    };
   }
   throw new MissingDemoCommand(`Unknown Codex fixture: ${cmd}`);
 }

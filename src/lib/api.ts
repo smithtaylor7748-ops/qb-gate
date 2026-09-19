@@ -67,6 +67,8 @@ import type { OfficialCatalogStatus } from "./generated/OfficialCatalogStatus";
 import type { PackageProbe } from "./generated/PackageProbe";
 import type { PanelVerdict } from "./generated/PanelVerdict";
 import type { PluginState } from "./generated/PluginState";
+import type { EgressConfig } from "./generated/EgressConfig";
+import type { EgressInstall } from "./generated/EgressInstall";
 import type { PluginStatus } from "./generated/PluginStatus";
 import type { PolicyScope } from "./generated/PolicyScope";
 import type { PolicyValue } from "./generated/PolicyValue";
@@ -543,4 +545,16 @@ export const api = {
   tavernBackups: () => call<BackupEntry[]>("tavern_backups"),
   tavernRestore: (backupId: string) =>
     call<string>("tavern_restore", { backupId }),
+
+  // Codex 出站与换出口插件（外部程序 ccodex-sleep-state，本面板只接入）
+  codexEgressStatus: () => call<PluginStatus>("codex_egress_status"),
+  codexEgressConfig: () => call<EgressConfig>("codex_egress_config"),
+  codexEgressConfigSave: (cfg: EgressConfig) =>
+    call<void>("codex_egress_config_save", { cfg }),
+  /** 起它的 setup（接管真实 ~/.codex 并起服务）。核心官方识别线挂着时后端会拒绝。 */
+  codexEgressStart: () => call<string>("codex_egress_start"),
+  /** 结束本面板起的那份，再跑它自己的 restore 恢复 Codex 配置。 */
+  codexEgressStop: () => call<string[]>("codex_egress_stop"),
+  /** 一键从它的 Releases 下载 Windows 包、按 SHA256SUMS 校验、解压到默认位置并登记。进度走 egress-install 任务。 */
+  codexEgressInstall: () => call<EgressInstall>("codex_egress_install"),
 };

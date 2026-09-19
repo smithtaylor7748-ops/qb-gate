@@ -560,11 +560,11 @@ export function LockPanel() {
             两栏行，看起来像是在报告当前配置。 */}
         <div className="rounded-[var(--radius-md)] bg-[var(--surface-2)] px-3 py-2">
           <Bullet marker="·">
-            <strong>Claude Code / 桥接档</strong>：每 15 秒查一次。查不到 IP
+            <strong>Claude Code / 桥接档</strong>：每 5 秒查一次。查不到 IP
             时立即上锁并关闭受管进程，不提供宽限。
           </Bullet>
           <Bullet marker="·">
-            <strong>Claude 桌面端档</strong>：每 15 秒查一次。查不到 IP
+            <strong>Claude 桌面端档</strong>：每 5 秒查一次。查不到 IP
             <strong>立即关闭，不给宽限</strong>。
           </Bullet>
         </div>

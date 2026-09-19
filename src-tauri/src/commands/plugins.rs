@@ -11,7 +11,81 @@ use crate::{
 
 #[tauri::command]
 pub fn plugin_list() -> Vec<plugins::PluginStatus> {
-    vec![plugins::sillytavern::status()]
+    vec![
+        plugins::sillytavern::status(),
+        plugins::codex_egress::status(),
+    ]
+}
+
+// ------------------------------------------------------------ Codex 出站与换出口插件
+
+#[tauri::command]
+pub fn codex_egress_status() -> plugins::PluginStatus {
+    plugins::codex_egress::status()
+}
+
+#[tauri::command]
+pub fn codex_egress_config() -> plugins::codex_egress::EgressConfig {
+    plugins::codex_egress::load_config()
+}
+
+#[tauri::command]
+pub async fn codex_egress_config_save(cfg: plugins::codex_egress::EgressConfig) -> Result<()> {
+    let _guard = operations::exclusive().await?;
+    tokio::task::spawn_blocking(move || plugins::codex_egress::save_config(&cfg))
+        .await
+        .map_err(|e| crate::error::GateError::Other(e.to_string()))?
+}
+
+/// 启动插件（它会接管当前激活槽位 / 默认 `~/.codex` 的 Codex 配置并起服务）。
+///
+/// ⛔ 与核心的官方 turn-state 识别互斥（双向，另一半在 `station_turnstate_enable`）。
+/// 0.24.7 起两边**都改同一个槽位的 `config.toml`**（识别改 `model_provider`，插件也接管它），
+/// 同时开就是两个程序抢同一个文件。识别开着时请先在账户页「识别」弹窗里点「关闭识别」。
+/// 看的是落盘的 marker（`turnstate_ops::takeover`），不只看内存里的路由状态 ——
+/// 面板重启后后者归零，前者才是真相（启动时会自动关闭并恢复，这里再兜一道底）。
+#[tauri::command]
+pub async fn codex_egress_start(state: tauri::State<'_, AppState>) -> Result<String> {
+    let _guard = operations::exclusive().await?;
+    let armed = state
+        .station
+        .lock()
+        .map_err(|_| crate::error::GateError::Other("中转站状态损坏".into()))?
+        .official_codex_armed();
+    if armed || qb_app::usecase::turnstate_ops::takeover().is_some() {
+        return Err(crate::error::GateError::Other(
+            "账户页的「识别（turn-state）」还开着。它和这个插件都要改同一个 Codex 槽位的配置，一次只能开一个：到账户页「识别」弹窗点「关闭识别」（会恢复槽位配置），再启动插件。"
+                .into(),
+        ));
+    }
+    tokio::task::spawn_blocking(plugins::codex_egress::start)
+        .await
+        .map_err(|e| crate::error::GateError::Other(e.to_string()))?
+}
+
+/// 一键下载、校验（SHA256SUMS）、解压并登记插件。进度走 `egress-install` 任务事件。
+#[tauri::command]
+pub async fn codex_egress_install(
+    app: tauri::AppHandle,
+) -> Result<plugins::codex_egress::EgressInstall> {
+    let _guard = operations::exclusive().await?;
+    let rep = Reporter::new(app, events::TASK_EGRESS_INSTALL, 5);
+    match plugins::codex_egress::install(&rep).await {
+        Ok(done) => Ok(done),
+        Err(e) => {
+            rep.fail(&e.to_string());
+            Err(e)
+        }
+    }
+}
+
+/// 停止插件：结束本面板起的那份，再用它自己的 `restore` 把 Codex 配置恢复回去。
+#[tauri::command]
+pub async fn codex_egress_stop() -> Result<Vec<String>> {
+    let _guard = operations::exclusive().await?;
+    tokio::task::spawn_blocking(plugins::codex_egress::stop)
+        .await
+        .map_err(|e| crate::error::GateError::Other(e.to_string()))?
 }
 
 #[tauri::command]

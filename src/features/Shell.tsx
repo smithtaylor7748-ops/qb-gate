@@ -53,12 +53,14 @@ const PAGES = {
   relays: () => import("./RelayCenter"),
   extensions: () => import("./ExtensionCenter"),
   software: () => import("./Software"),
+  subscription: () => import("./subscription/Subscription"),
   settings: () => import("./SettingsCenter"),
 };
 const Onboarding = lazy(PAGES.onboarding);
 const RelayCenter = lazy(PAGES.relays);
 const ExtensionCenter = lazy(PAGES.extensions);
 const Software = lazy(PAGES.software);
+const Subscription = lazy(PAGES.subscription);
 const SettingsCenter = lazy(PAGES.settings);
 requestIdleCallback(
   () => {
@@ -385,6 +387,7 @@ function Layout() {
                         path="/extensions/:id?"
                         element={<ExtensionCenter />}
                       />
+                      <Route path="/subscription" element={<Subscription />} />
                       <Route path="/software" element={<Software />} />
                       <Route
                         path="/settings/:section?"
