@@ -1,3 +1,6 @@
+// QB Gate — Copyright (C) 2026 smithtaylor7748-ops
+// Licensed under AGPL-3.0-only with the additional terms permitted by its section 7:
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md at the repository root.
 //! 环境体检（L2）。
 //!
 //! 查的是**系统层面会让 Claude 行为异常的那些设置**：残留的

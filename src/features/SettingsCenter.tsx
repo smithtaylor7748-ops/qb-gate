@@ -143,11 +143,21 @@ function General() {
       </p>
       <div className="qb-about">
         <strong>QB Gate {packageInfo.version}</strong>
-        <p>本地 AI 客户端工作空间 · AGPL-3.0-only</p>
+        <p>本地 AI 客户端工作空间 · AGPL-3.0-only + 第 7 节附加条款</p>
         {/* AGPL 第 5(d) 节：交互界面要显示版权与免责。别只留许可证名字。
-            两行分开写：合成一行会被 Prettier 折在中文逗号后面，界面上多出一个空格。 */}
+            两行分开写：合成一行会被 Prettier 折在中文逗号后面，界面上多出一个空格。
+            下面那行署名是 LICENSE-ADDITIONAL-TERMS.md 第 1 条要求修改版保留的那一句，
+            原版自己先照做 —— 下游只要不删就合规，措辞别改。 */}
         <p>Copyright (C) 2026 smithtaylor7748-ops</p>
-        <p>本软件不提供任何担保；可按 AGPL-3.0-only 再分发。</p>
+        <p>
+          基于 QB Gate，版权所有 (C) 2026 smithtaylor7748-ops。源码：
+          https://github.com/smithtaylor7748-ops/qb-gate
+        </p>
+        <p>
+          本软件不提供任何担保；可按 AGPL-3.0-only
+          及附加条款再分发：保留上面这行署名、改版须标明、不得使用「QB
+          Gate」名称。
+        </p>
         {/* 图标由 ExternalLink 自己补，这里不要再加一个 —— 加了就是两个箭头。 */}
         <ExternalLink href="https://github.com/smithtaylor7748-ops/qb-gate/releases">
           查看 GitHub 发布版本
@@ -322,8 +332,8 @@ function Help() {
         </ExternalLink>
       </div>
       <p className="qb-help-note">
-        QB Gate 使用
-        AGPL-3.0-only。外部应用与扩展遵循各自的许可证；详情页提供来源和固定版本。
+        QB Gate 使用 AGPL-3.0-only 及第 7
+        节附加条款（署名、改版标明、不授予名称）。外部应用与扩展遵循各自的许可证；详情页提供来源和固定版本。
       </p>
     </div>
   );

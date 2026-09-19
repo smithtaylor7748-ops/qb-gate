@@ -25,7 +25,9 @@ QB Gate 采用**双授权**：
    哪怕你不分发二进制，只是把改过的 QB Gate 架起来**通过网络给别人用**，
    也必须向这些使用者提供你那份修改后的完整源码。
 
-还有：保留版权与许可声明、标注你做过的修改、不得追加与 AGPL 冲突的限制。
+还有：保留版权与许可声明、标注你做过的修改、不得追加与 AGPL 冲突的限制；以及
+[LICENSE-ADDITIONAL-TERMS.md](LICENSE-ADDITIONAL-TERMS.md) 里依 AGPL 第 7 节附加的三条
+（保留署名与仓库链接、改版必须标明、不授予「QB Gate」名称）。
 完整条款以 [LICENSE](LICENSE) 英文原文为准，本节只是提示，不构成法律意见。
 
 ## 二、什么时候需要商业授权
@@ -89,7 +91,9 @@ QB Gate is **dual-licensed**:
 - **Commercial license** — for cases where the AGPL's obligations cannot be met.
 
 Unless you have separately obtained a commercial license, the copy of QB Gate you
-received is licensed to you under AGPL-3.0-only.
+received is licensed to you under AGPL-3.0-only, supplemented by the section 7
+additional terms in [LICENSE-ADDITIONAL-TERMS.md](LICENSE-ADDITIONAL-TERMS.md)
+(attribution, marking of modified versions, no grant of the "QB Gate" name).
 
 You need a commercial license if you want to link QB Gate into closed-source
 software, distribute it as part of a proprietary product, or offer a modified

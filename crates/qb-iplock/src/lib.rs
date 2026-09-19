@@ -1,3 +1,6 @@
+// QB Gate — Copyright (C) 2026 smithtaylor7748-ops
+// Licensed under AGPL-3.0-only with the additional terms permitted by its section 7:
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md at the repository root.
 //! IP 门禁（L2）。
 //!
 //! # 判定全项目只有一个函数

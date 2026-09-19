@@ -1,3 +1,6 @@
+// QB Gate — Copyright (C) 2026 smithtaylor7748-ops
+// Licensed under AGPL-3.0-only with the additional terms permitted by its section 7:
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md at the repository root.
 //! QB Gate 的 IPC 契约（L0.5）。
 //!
 //! 前后端共用的数据形状。Rust 这边是**唯一真相源**，TypeScript 那边由

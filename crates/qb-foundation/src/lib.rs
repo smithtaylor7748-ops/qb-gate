@@ -1,3 +1,6 @@
+// QB Gate — Copyright (C) 2026 smithtaylor7748-ops
+// Licensed under AGPL-3.0-only with the additional terms permitted by its section 7:
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md at the repository root.
 //! QB Gate 的地基层（L0）。
 //!
 //! # 这一层装什么

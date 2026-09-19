@@ -1,3 +1,6 @@
+// QB Gate — Copyright (C) 2026 smithtaylor7748-ops
+// Licensed under AGPL-3.0-only with the additional terms permitted by its section 7:
+// see LICENSE and LICENSE-ADDITIONAL-TERMS.md at the repository root.
 //! QB Gate —— Claude 环境控制面板。
 //!
 //! 命令层。业务逻辑全在各自模块里，这里只做参数搬运与状态持有。

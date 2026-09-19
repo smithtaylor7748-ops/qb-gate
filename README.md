@@ -71,7 +71,22 @@
 
 ## 许可证
 
-本项目按 **AGPL-3.0-only** 发布，完整条款见 [LICENSE](LICENSE)。
+本项目按 **AGPL-3.0-only** 发布，并依 AGPL 第 7 节附加了三条条款，完整条款见
+[LICENSE](LICENSE) 与 [LICENSE-ADDITIONAL-TERMS.md](LICENSE-ADDITIONAL-TERMS.md)。
+
+### 改了拿去发的人要做什么
+
+AGPL 本身要求：附上许可证全文、保留版权声明、标明你改了什么、整个改版继续按 AGPL-3.0-only
+发布并提供源码（把改版架成网络服务给别人用也算，§13）。附加条款在这之上再加三条，
+接收者不能删（AGPL §7）：
+
+1. **保留署名和仓库链接。** 源码的 README（或等效顶层文件）和界面的「关于」页里必须原样保留：
+   `基于 QB Gate，版权所有 (C) 2026 smithtaylor7748-ops。源码：https://github.com/smithtaylor7748-ops/qb-gate`
+2. **改版必须标明是改版**，不得暗示由原作者发布或背书。
+3. **不能叫「QB Gate」。** 名称和图标不在授权范围内，改版要换名字（署名里如实提到原名除外）。
+
+不想守 AGPL 的场景（并入闭源、不公开改动地对外提供服务），需要另行取得授权 ——
+见 [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md)。
 
 ### 授权声明
 
@@ -85,7 +100,10 @@ Copyright (C) 2026 smithtaylor7748-ops
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, version 3.
+by the Free Software Foundation, version 3, supplemented by the additional
+terms permitted under section 7 of that license and set out in
+LICENSE-ADDITIONAL-TERMS.md (preservation of attribution, marking of
+modified versions, and no grant of the "QB Gate" name).
 
 This program is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of

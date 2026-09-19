@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.24.8 — 2026-09-19
+
+- **许可：AGPL-3.0-only 之上依 AGPL 第 7 节附加三条条款**（新文件 `LICENSE-ADDITIONAL-TERMS.md`，中英文，英文为准）：(b) 传播原版或改版时必须在 README 和界面「关于」页保留署名「基于 QB Gate，版权所有 (C) 2026 smithtaylor7748-ops。源码：https://github.com/smithtaylor7748-ops/qb-gate」；(c) 改版必须显著标明、不得暗示由原作者发布或背书；(e) 不授予「QB Gate」名称与图标，改版须改名。这三类是 AGPL §7 明确允许的附加条款，接收者不能删；之外的任何限制都没有加，项目仍是开源项目。README 授权声明、设置页「关于」、各 crate 与入口文件头、安装包 `licenses/`、Release 附件都指向这份文件，`release:check` 逐处断言。
+- 第三方声明（`THIRD_PARTY_NOTICES.txt` / `docs/dependencies.json`）按当前锁文件重新生成：补上 0.23–0.24 期间新增的 25 个依赖，表头从残留的「GPL-3.0-or-later」改成现在的许可。
+
 ## 0.24.7 — 2026-09-19
 
 - **「识别（turn-state）」改为直接作用于当前激活的 Codex 账户槽位**，推翻 0.24.0–0.24.6「分身环境 + 复制 OAuth + 另起一个 Codex」的做法（使用者批准）。「开启识别」现在做的是：把官方上游挂进本机路由（`OAuthPassthrough`，仍只绑 `127.0.0.1`）→ 备份并**增量**改那个槽位的 `config.toml`（只动 `model_provider` 与 `[model_providers.qb_turnstate]`，base 不带 `/v1`，不写占位 Key）→ 落盘 marker（`turnstate-takeover.json`）。**`auth.json` 一个字不碰、不复制凭证、不另起 Codex** —— 起 Codex 仍是账户页那颗按钮。复制 OAuth 的老做法会让两份 Codex 各自轮换同一族刷新令牌而互相登出（档案 §7.29 在 Claude 上踩过一样的坑），而且「账户页起的 Codex」和「识别起的 Codex」是两个进程、两套会话，使用者分不清哪个在走路由。

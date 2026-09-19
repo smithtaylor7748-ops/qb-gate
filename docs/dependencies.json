@@ -311,7 +311,7 @@
     {
       "ecosystem": "cargo",
       "name": "bitflags",
-      "version": "2.13.1",
+      "version": "2.13.2",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/bitflags/bitflags",
       "licenseFiles": [
@@ -494,7 +494,7 @@
     {
       "ecosystem": "cargo",
       "name": "cc",
-      "version": "1.4.5",
+      "version": "1.4.6",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/rust-lang/cc-rs",
       "licenseFiles": [
@@ -688,7 +688,7 @@
     {
       "ecosystem": "cargo",
       "name": "crc32fast",
-      "version": "1.5.1",
+      "version": "1.5.2",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/srijs/rust-crc32fast",
       "licenseFiles": [
@@ -1794,6 +1794,17 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "httpdate",
+      "version": "1.0.3",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/pyfisch/httpdate",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
       "name": "hyper-rustls",
       "version": "0.27.9",
       "license": "Apache-2.0 OR ISC OR MIT",
@@ -2055,7 +2066,7 @@
     {
       "ecosystem": "cargo",
       "name": "jiff-core",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "license": "Unlicense OR MIT",
       "source": "https://github.com/BurntSushi/jiff",
       "licenseFiles": [
@@ -2067,7 +2078,7 @@
     {
       "ecosystem": "cargo",
       "name": "jiff-static",
-      "version": "0.2.35",
+      "version": "0.2.37",
       "license": "Unlicense OR MIT",
       "source": "https://github.com/BurntSushi/jiff",
       "licenseFiles": [
@@ -2103,7 +2114,7 @@
     {
       "ecosystem": "cargo",
       "name": "jiff",
-      "version": "0.2.35",
+      "version": "0.2.37",
       "license": "Unlicense OR MIT",
       "source": "https://github.com/BurntSushi/jiff",
       "licenseFiles": [
@@ -2235,6 +2246,17 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "lazy_static",
+      "version": "1.5.0",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/rust-lang-nursery/lazy-static.rs",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
       "name": "libappindicator-sys",
       "version": "0.9.0",
       "license": "Apache-2.0 OR MIT",
@@ -2290,7 +2312,7 @@
     {
       "ecosystem": "cargo",
       "name": "libredox",
-      "version": "0.1.23",
+      "version": "0.1.24",
       "license": "MIT",
       "source": "https://gitlab.redox-os.org/redox-os/libredox.git",
       "licenseFiles": [
@@ -2373,6 +2395,16 @@
       "licenseFiles": [
         "LICENSE-APACHE",
         "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "matchers",
+      "version": "0.2.0",
+      "license": "MIT",
+      "source": "https://github.com/hawkw/matchers",
+      "licenseFiles": [
+        "LICENSE"
       ]
     },
     {
@@ -2494,6 +2526,16 @@
       "version": "0.31.3",
       "license": "MIT",
       "source": "https://github.com/nix-rust/nix",
+      "licenseFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "nu-ansi-term",
+      "version": "0.50.3",
+      "license": "MIT",
+      "source": "https://github.com/nushell/nu-ansi-term",
       "licenseFiles": [
         "LICENSE"
       ]
@@ -2728,7 +2770,7 @@
     {
       "ecosystem": "cargo",
       "name": "open",
-      "version": "5.4.3",
+      "version": "5.4.4",
       "license": "MIT",
       "source": "https://github.com/Byron/open-rs",
       "licenseFiles": [
@@ -3092,6 +3134,110 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "qb-accounts",
+      "version": "0.24.7",
+      "license": "AGPL-3.0-only",
+      "source": "https://crates.io/crates/qb-accounts/0.24.7",
+      "licenseFiles": []
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "qb-app",
+      "version": "0.24.7",
+      "license": "AGPL-3.0-only",
+      "source": "https://crates.io/crates/qb-app/0.24.7",
+      "licenseFiles": []
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "qb-contract",
+      "version": "0.24.7",
+      "license": "AGPL-3.0-only",
+      "source": "https://crates.io/crates/qb-contract/0.24.7",
+      "licenseFiles": []
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "qb-extensions",
+      "version": "0.24.7",
+      "license": "AGPL-3.0-only",
+      "source": "https://crates.io/crates/qb-extensions/0.24.7",
+      "licenseFiles": []
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "qb-foundation",
+      "version": "0.24.7",
+      "license": "AGPL-3.0-only",
+      "source": "https://crates.io/crates/qb-foundation/0.24.7",
+      "licenseFiles": []
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "qb-install",
+      "version": "0.24.7",
+      "license": "AGPL-3.0-only",
+      "source": "https://crates.io/crates/qb-install/0.24.7",
+      "licenseFiles": []
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "qb-iplock",
+      "version": "0.24.7",
+      "license": "AGPL-3.0-only",
+      "source": "https://crates.io/crates/qb-iplock/0.24.7",
+      "licenseFiles": []
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "qb-launch",
+      "version": "0.24.7",
+      "license": "AGPL-3.0-only",
+      "source": "https://crates.io/crates/qb-launch/0.24.7",
+      "licenseFiles": []
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "qb-platform",
+      "version": "0.24.7",
+      "license": "AGPL-3.0-only",
+      "source": "https://crates.io/crates/qb-platform/0.24.7",
+      "licenseFiles": []
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "qb-probe",
+      "version": "0.24.7",
+      "license": "AGPL-3.0-only",
+      "source": "https://crates.io/crates/qb-probe/0.24.7",
+      "licenseFiles": []
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "qb-relay",
+      "version": "0.24.7",
+      "license": "AGPL-3.0-only",
+      "source": "https://crates.io/crates/qb-relay/0.24.7",
+      "licenseFiles": []
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "qb-station",
+      "version": "0.24.7",
+      "license": "AGPL-3.0-only",
+      "source": "https://crates.io/crates/qb-station/0.24.7",
+      "licenseFiles": []
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "qb-sysenv",
+      "version": "0.24.7",
+      "license": "AGPL-3.0-only",
+      "source": "https://crates.io/crates/qb-sysenv/0.24.7",
+      "licenseFiles": []
+    },
+    {
+      "ecosystem": "cargo",
       "name": "quick-xml",
       "version": "0.42.0",
       "license": "MIT",
@@ -3307,7 +3453,7 @@
     {
       "ecosystem": "cargo",
       "name": "reqwest",
-      "version": "0.13.4",
+      "version": "0.13.5",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/seanmonstar/reqwest",
       "licenseFiles": [
@@ -3458,7 +3604,7 @@
     {
       "ecosystem": "cargo",
       "name": "rustls",
-      "version": "0.23.44",
+      "version": "0.23.45",
       "license": "Apache-2.0 OR ISC OR MIT",
       "source": "https://github.com/rustls/rustls",
       "licenseFiles": [
@@ -3791,6 +3937,16 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "sharded-slab",
+      "version": "0.1.7",
+      "license": "MIT",
+      "source": "https://github.com/hawkw/sharded-slab",
+      "licenseFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
       "name": "shlex",
       "version": "2.0.1",
       "license": "MIT OR Apache-2.0",
@@ -3866,7 +4022,7 @@
     {
       "ecosystem": "cargo",
       "name": "smallvec",
-      "version": "1.16.0",
+      "version": "1.16.1",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/servo/rust-smallvec",
       "licenseFiles": [
@@ -3997,6 +4153,18 @@
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/Brendonovich/swift-rs",
       "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "symlink",
+      "version": "0.1.0",
+      "license": "MIT/Apache-2.0",
+      "source": "https://gitlab.com/chris-morgan/symlink",
+      "licenseFiles": [
+        "COPYRIGHT",
         "LICENSE-APACHE",
         "LICENSE-MIT"
       ]
@@ -4324,6 +4492,17 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "thread_local",
+      "version": "1.1.10",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/Amanieu/thread_local-rs",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
       "name": "time-core",
       "version": "0.1.9",
       "license": "MIT OR Apache-2.0",
@@ -4509,7 +4688,7 @@
     {
       "ecosystem": "cargo",
       "name": "toml_edit",
-      "version": "0.25.13+spec-1.1.0",
+      "version": "0.25.15+spec-1.1.0",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/toml-rs/toml",
       "licenseFiles": [
@@ -4575,7 +4754,7 @@
     {
       "ecosystem": "cargo",
       "name": "toml",
-      "version": "1.1.5+spec-1.1.0",
+      "version": "1.1.6+spec-1.1.0",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/toml-rs/toml",
       "licenseFiles": [
@@ -4625,6 +4804,16 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "tracing-appender",
+      "version": "0.2.5",
+      "license": "MIT",
+      "source": "https://github.com/tokio-rs/tracing",
+      "licenseFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
       "name": "tracing-attributes",
       "version": "0.1.31",
       "license": "MIT",
@@ -4637,6 +4826,26 @@
       "ecosystem": "cargo",
       "name": "tracing-core",
       "version": "0.1.36",
+      "license": "MIT",
+      "source": "https://github.com/tokio-rs/tracing",
+      "licenseFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "tracing-log",
+      "version": "0.2.0",
+      "license": "MIT",
+      "source": "https://github.com/tokio-rs/tracing",
+      "licenseFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "tracing-subscriber",
+      "version": "0.3.23",
       "license": "MIT",
       "source": "https://github.com/tokio-rs/tracing",
       "licenseFiles": [
@@ -4863,13 +5072,21 @@
     {
       "ecosystem": "cargo",
       "name": "uuid",
-      "version": "1.26.0",
+      "version": "1.26.1",
       "license": "Apache-2.0 OR MIT",
       "source": "https://github.com/uuid-rs/uuid",
       "licenseFiles": [
         "LICENSE-APACHE",
         "LICENSE-MIT"
       ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "valuable",
+      "version": "0.1.1",
+      "license": "MIT",
+      "source": "https://github.com/tokio-rs/valuable",
+      "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
@@ -5019,6 +5236,17 @@
       "version": "0.2.128",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/wasm-bindgen/wasm-bindgen",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "wasm-streams",
+      "version": "0.4.2",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/MattiasBuelens/wasm-streams/",
       "licenseFiles": [
         "LICENSE-APACHE",
         "LICENSE-MIT"

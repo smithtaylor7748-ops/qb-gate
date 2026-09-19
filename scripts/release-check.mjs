@@ -18,6 +18,26 @@ assert.equal(
   "Root Cargo.toml [workspace.package] version must match package.json",
 );
 assert.equal(pkg.license, "AGPL-3.0-only");
+// AGPL 第 7 节要求「在相关源文件里写明附加条款，或指明去哪里找」。这份文件就是那个
+// 「哪里」：README 的授权声明、安装包的 licenses/ 目录、Release 附件都指着它。
+// 少了任何一处，下游拿到的就是一份没有附加条款的 AGPL —— 署名那三条形同虚设。
+assert.ok(
+  existsSync("LICENSE-ADDITIONAL-TERMS.md"),
+  "LICENSE-ADDITIONAL-TERMS.md (AGPL section 7 terms) is missing",
+);
+for (const [file, needle] of [
+  ["README.md", "LICENSE-ADDITIONAL-TERMS.md"],
+  ["src-tauri/tauri.conf.json", "licenses/LICENSE-ADDITIONAL-TERMS.md"],
+  [".github/workflows/release.yml", "LICENSE-ADDITIONAL-TERMS.md"],
+  [
+    "src/features/SettingsCenter.tsx",
+    "基于 QB Gate，版权所有 (C) 2026 smithtaylor7748-ops",
+  ],
+])
+  assert.ok(
+    readFileSync(file, "utf8").includes(needle),
+    `${file} must reference the additional terms (${needle})`,
+  );
 if (process.env.GITHUB_REF_TYPE === "tag")
   assert.equal(
     process.env.GITHUB_REF_NAME,
