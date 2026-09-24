@@ -56,7 +56,7 @@ jobs:
       # 它只提供版本号与说明，安装包的真假看 SHA256SUMS.txt。
       - name: Update manifest and release notes
         run: node scripts/update-manifest.mjs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qb-gate-windows
           path: dist-installers/*
