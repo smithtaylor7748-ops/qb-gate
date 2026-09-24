@@ -1,4 +1,18 @@
 import { demoWorkspaceCall } from "./workspaceDemo";
+import packageInfo from "../../package.json";
+import {
+  demoCodexSummary,
+  demoSlotSummary,
+  demoSummarize,
+  demoTokenUsage,
+  demoUsageOverview,
+} from "./demoUsage";
+import { addDays, today as todayYmd, ymd } from "./dates";
+import type { BrowserReport } from "./generated/BrowserReport";
+import type { AntigravityStatus } from "./generated/AntigravityStatus";
+import type { AntigravityAccount } from "./generated/AntigravityAccount";
+import type { AntigravityIdentity } from "./generated/AntigravityIdentity";
+import type { AntigravityUsage } from "./generated/AntigravityUsage";
 /**
  * 演示数据 —— 只给截图和界面预览用。
  *
@@ -22,9 +36,15 @@ import { demoWorkspaceCall } from "./workspaceDemo";
  */
 
 import type {
+  GptBridgeStatus,
+  GeminiBridgeStatus,
+  UiStatus,
+  UiConfig,
+  DangerRules,
   AccountProbe,
   EgressChecks,
   TokenSummary,
+  TokenBucket,
   AccountsReport,
   BackupEntry,
   BrowserAudit,
@@ -210,6 +230,38 @@ const software: SoftwareReport = {
     path: `${APPS}\\codex\\codex.exe`,
     advisory: "默认不在 IP 门禁范围内，可在「设置 → 门禁范围」里打开。",
   },
+  codexDesktop: {
+    id: "codex-desktop",
+    name: "Codex 桌面端",
+    installed: true,
+    version: "26.9.0",
+    path: "C:\\Demo\\Codex\\ChatGPT.exe",
+    advisory: null,
+  },
+  antigravity: {
+    id: "antigravity",
+    name: "反重力",
+    installed: true,
+    version: "2.15.0",
+    path: `${HOME}\\AppData\\Local\\Programs\\antigravity\\Antigravity.exe`,
+    advisory: null,
+  },
+  antigravityIde: {
+    id: "antigravity-ide",
+    name: "反重力 IDE",
+    installed: true,
+    version: "1.19.4",
+    path: `${HOME}\\AppData\\Local\\Programs\\Antigravity IDE\\Antigravity IDE.exe`,
+    advisory: null,
+  },
+  geminiCli: {
+    id: "gemini-cli",
+    name: "Gemini CLI",
+    installed: true,
+    version: "0.9.0",
+    path: `${HOME}\\AppData\\Roaming\\npm\\node_modules\\@google\\gemini-cli\\dist\\index.js`,
+    advisory: null,
+  },
   browsers: [
     {
       id: "chrome",
@@ -223,66 +275,10 @@ const software: SoftwareReport = {
 };
 
 /**
- * 详情页的 token 统计。
- *
- * 数字照实机的形状编：缓存读远大于输入（长会话靠缓存命中），
- * `duplicates` 和留下的条数一个量级 —— 那是续接会话重放出来的，
- * 界面上那句「不去重会接近两倍」不是吓唬人。
+ * 详情页的 token 统计与用量小结：都在 `demoUsage.ts`（2026-09-24 搬过去，
+ * 跟 Rust 的 `summarize_with` 同一个算式现算美元）。
  */
-const tokenUsage: TokenUsage = {
-  buckets: (() => {
-    const out: TokenUsage["buckets"] = [];
-    for (let i = 0; i < 12; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-        d.getDate(),
-      ).padStart(2, "0")}`;
-      out.push({
-        day,
-        model: "claude-opus-5",
-        input: 300 + i * 17,
-        output: 90_000 - i * 3_100,
-        cache_write: 420_000 - i * 9_000,
-        cache_read: 14_000_000 - i * 310_000,
-        messages: 140 - i * 4,
-      });
-      if (i % 3 === 0) {
-        out.push({
-          day,
-          model: "claude-sonnet-5",
-          input: 120,
-          output: 6_400,
-          cache_write: 31_000,
-          cache_read: 880_000,
-          messages: 11,
-        });
-      }
-    }
-    // 后端给的是按 (day, model) 升序，演示夹具不该比它宽松。
-    return out.sort(
-      (a, b) => a.day.localeCompare(b.day) || a.model.localeCompare(b.model),
-    );
-  })(),
-  sessions: 37,
-  files_read: 41,
-  files_failed: 0,
-  duplicates: 2_860,
-  undated: 0,
-  // 默认目录里没有账户标记的那部分。实机上今天的记录全落在这一档，
-  // 所以夹具里也必须有 —— 夹具不出现的形态，界面就没人验过。
-  unattributed: [
-    {
-      day: "2026-09-16",
-      model: "claude-opus-5",
-      input: 1_680,
-      output: 635_633,
-      cache_write: 1_835_505,
-      cache_read: 289_051_108,
-      messages: 780,
-    },
-  ],
-};
+const tokenUsage: TokenUsage = demoTokenUsage;
 
 /**
  * 出口一致性。故意让四种状态都出现一次 —— 截图那一圈要能看出
@@ -292,6 +288,24 @@ const egress: EgressChecks = {
   undoable: [],
   checked_at: "2026-09-16 04:12",
   items: [
+    {
+      id: "anthropic_reach",
+      label: "Anthropic 服务可达",
+      state: "pass",
+      detail:
+        "不带密钥问 API 回 401（缺密钥时的正常回答，说明这个出口放行），claude.ai 与 anthropic.com 都打得开。",
+      fixable: false,
+      manual: null,
+    },
+    {
+      id: "claude_dns",
+      label: "claude.ai 的解析",
+      state: "pass",
+      detail:
+        "解析正常：Anthropic 自己的地址段。claude.ai → 160.79.104.10；api.anthropic.com → 160.79.104.10。",
+      fixable: false,
+      manual: null,
+    },
     {
       id: "egress_consistency",
       label: "出口一致性",
@@ -339,50 +353,9 @@ const egress: EgressChecks = {
   ],
 };
 
-/**
- * 用量小结。按档位从 `tokenUsage` 的桶里现算，跟真后端一个口径 ——
- * 夹具自己另编一套数的话，界面上那几个格子就永远验不出算错了没有。
- */
+/** 用量小结（账户卡那一条）。按档位从桶里现算，见 `demoUsage.ts`。 */
 function summaryFor(days: number): TokenSummary {
-  const today = new Date();
-  const key = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-      d.getDate(),
-    ).padStart(2, "0")}`;
-  let since = "";
-  if (days > 0) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - (days - 1));
-    since = key(d);
-  }
-  const picked = tokenUsage.buckets.filter((b) => !since || b.day >= since);
-  const unattr = tokenUsage.unattributed.filter(
-    (b) => !since || b.day >= since,
-  );
-  const sum = (f: (b: TokenUsage["buckets"][number]) => number) =>
-    picked.reduce((a, b) => a + f(b), 0);
-  const input = sum((b) => b.input);
-  const cacheRead = sum((b) => b.cache_read);
-  const cacheWrite = sum((b) => b.cache_write);
-  const readTotal = input + cacheRead + cacheWrite;
-  return {
-    days,
-    input,
-    output: sum((b) => b.output),
-    cache_write: cacheWrite,
-    cache_read: cacheRead,
-    messages: sum((b) => b.messages),
-    hit_rate: readTotal > 0 ? cacheRead / readTotal : null,
-    unattributed: unattr.reduce(
-      (a, b) => a + b.input + b.output + b.cache_write + b.cache_read,
-      0,
-    ),
-    unattributed_messages: unattr.reduce((a, b) => a + b.messages, 0),
-    // 演示口径：Opus 5 的输入 $5、缓存读 $0.5，差 $4.5 / 百万。
-    saved_usd: cacheRead > 0 ? (cacheRead / 1_000_000) * 4.5 : null,
-    unpriced_models: 0,
-    priced_from_snapshot: cacheRead > 0 ? true : null,
-  };
+  return demoSlotSummary(days);
 }
 
 const accountProbe: AccountProbe = {
@@ -534,6 +507,9 @@ const dns: DnsReport = {
       asn: "AS64501 Example Broadband LLC",
       from_adapter: false,
       interface: null,
+      tunnel: false,
+      connected: true,
+      via_tunnel: null,
       is_private: false,
       is_domestic: false,
     },
@@ -544,7 +520,38 @@ const dns: DnsReport = {
       asn: "AS64502 Example Anycast DNS",
       from_adapter: false,
       interface: null,
+      tunnel: false,
+      connected: true,
+      via_tunnel: null,
       is_private: false,
+      is_domestic: false,
+    },
+    // 网卡那一层：有线网卡的 DNS 被隧道软件改成了隧道网段里的地址（走隧道，没问题），
+    // 断开的 Wi-Fi 上还挂着路由器的地址（不看）。
+    {
+      address: "172.19.0.2",
+      country_code: null,
+      country_name: null,
+      asn: null,
+      from_adapter: true,
+      interface: "以太网",
+      tunnel: false,
+      connected: true,
+      via_tunnel: true,
+      is_private: true,
+      is_domestic: false,
+    },
+    {
+      address: "192.168.1.1",
+      country_code: null,
+      country_name: null,
+      asn: null,
+      from_adapter: true,
+      interface: "WLAN",
+      tunnel: false,
+      connected: false,
+      via_tunnel: false,
+      is_private: true,
       is_domestic: false,
     },
   ],
@@ -553,7 +560,8 @@ const dns: DnsReport = {
   upstream_conclusion: null,
   note: "10 个探针域名全部由出口同侧的解析器回报，物理网卡的 DNS 没有漏出去。高级通过仍要交给 Codex 复核。",
   score: 100,
-  ethernet_safe: true,
+  adapters_safe: true,
+  adapters_note: "看了 以太网 上配的 DNS：都走隧道。断开的 WLAN 不看。",
 };
 
 const hook: HookStatus = {
@@ -583,15 +591,56 @@ const demoEnv: EnvHit[] = [
   { name: "HTTPS_PROXY", scope: "当前进程", shown: "http://127.0.0.1:7890" },
 ];
 
+/** 演示的真实浏览器报告：点过「用默认浏览器测」才有。 */
+let demoProbeReport: BrowserReport | null = null;
+function demoBrowserReport(): BrowserReport {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${ymd(now)} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  return {
+    page_json: JSON.stringify({
+      v: 1,
+      signals: [
+        { id: "timezone", raw: "America/New_York", score: 0 },
+        { id: "language", raw: "en-US, en", score: 0 },
+        { id: "fonts", raw: "检测到 6 款中文字体", score: 1 },
+        { id: "vendorFonts", raw: "未检测到", score: 0 },
+        { id: "webrtcLeak", raw: "候选地址泄露（203.0.113.7）", score: 0.5 },
+        { id: "cnBrowser", raw: "Google Chrome", score: 0 },
+        { id: "deviceVendor", raw: "未识别", score: 0 },
+        { id: "intlLocale", raw: "en-US", score: 0 },
+        { id: "timezoneOffset", raw: "UTC-4", score: 0 },
+        { id: "emoji", raw: "Microsoft 风格", score: 0.1 },
+      ],
+      webrtc: ["203.0.113.7"],
+      languages: ["en-US", "en"],
+      timezone: "America/New_York",
+      locale: "en-US",
+      ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+      ua_platform: "Windows",
+      brands: "Google Chrome 128, Chromium 128",
+    }),
+    accept_language: "en-US,en;q=0.9",
+    ch_platform: "Windows",
+    user_agent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    received_at: stamp,
+    received_unix: Math.floor(now.getTime() / 1000),
+  };
+}
+
 const checkup: Checkup = {
+  exit_ips: ["203.0.113.7"],
   items: [
     {
       id: "proxy",
-      label: "系统代理",
-      state: "pass",
-      detail: "系统代理没开 —— 出口由路由/TUN 决定，跟面板量到的是同一条路",
+      label: "代理形态",
+      state: "warn",
+      detail:
+        "开着 PAC 自动分流（http://127.0.0.1:7891/proxy.pac），同时TUN / 虚拟网卡接管了默认路由（Meta）。认系统代理的程序（浏览器、桌面端）按网站分流，不同网站可能从不同出口出去；面板「跟随系统代理」那一路也不认 PAC，出口一致性那一项看不到它。",
       fixable: false,
-      manual: null,
+      manual:
+        "要关就去「设置 → 网络和 Internet → 代理 → 使用设置脚本」里关，或者在代理软件里改成全局 / TUN。面板不替你关 —— 你的网可能正是靠它出去的。",
     },
     {
       id: "egress_consistency",
@@ -603,15 +652,32 @@ const checkup: Checkup = {
       manual: "常见原因是系统代理或某个环境变量里的代理只接管了一部分流量。",
     },
     {
+      id: "anthropic_reach",
+      label: "Anthropic 服务可达",
+      state: "pass",
+      detail:
+        "不带密钥问 API 回 401（缺密钥时的正常回答，说明这个出口放行），claude.ai 与 anthropic.com 都打得开。",
+      fixable: false,
+      manual: null,
+    },
+    {
+      id: "claude_dns",
+      label: "claude.ai 的解析",
+      state: "pass",
+      detail:
+        "解析正常：代理接管（fake-ip）。claude.ai → 198.18.0.21；api.anthropic.com → 198.18.0.22。",
+      fixable: false,
+      manual: null,
+    },
+    {
       id: "ipv6",
       label: "IPv6",
-      state: "warn",
+      state: "fail",
       detail:
-        "IPv6 开着。隧道只接管 IPv4 时，v6 流量会绕过它直接从本地出去 —— 这是最常见的一种「代理开着但还是暴露了」。",
+        "IPv6 出口 2001:db8::7 在 CN，IPv4 出口在 US —— 隧道没接管 IPv6，走 v6 的请求会把另一个国家的地址露给对面。2 / 5 张网卡还开着 IPv6。",
       fixable: false,
       manual:
-        "管理员身份运行，然后重启：" +
-        "\nreg add HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip6\\Parameters /v DisabledComponents /t REG_DWORD /d 0xff /f",
+        "在代理软件里打开 IPv6 接管；或者用「IP 纯净度 → 禁用本机 IPv6」开关（需要管理员授权，能随时恢复原设置）。",
     },
     {
       id: "doh",
@@ -650,7 +716,9 @@ const checkup: Checkup = {
 };
 
 const settings: Settings = {
-  codex_under_gate: false,
+  codex_outside_gate: false,
+  antigravity_outside_gate: false,
+  antigravity_hub_quota: true,
   gate_auto_rearm: true,
   managed_apps_dir: null,
   country_allowlist: ["US"],
@@ -662,6 +730,9 @@ const settings: Settings = {
   align_timezone_on_start: true,
   align_locale_on_start: true,
   align_display_language_on_start: false,
+  // 0.25.3：启动时检查更新，照 Rust 的默认值开着；没有跳过的版本。
+  update_check_on_start: true,
+  update_skipped_version: null,
 };
 
 const managed: ManagedStatus = {
@@ -824,7 +895,12 @@ const plugins: PluginStatus[] = [
         detail: `${HOME}\\SillyTavern\\bridge`,
       },
       { label: "启动脚本", ok: true, detail: "start-sillytavern.cmd" },
-      { label: "端口 5001 / 8000", ok: true, detail: "都空着" },
+      {
+        label: "官方 Codex CLI（GPT 桥接用）",
+        ok: true,
+        detail: `${HOME}\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe`,
+      },
+      { label: "端口 5001 / 5002 / 8000", ok: true, detail: "都空着" },
     ],
   },
   {
@@ -839,6 +915,25 @@ const plugins: PluginStatus[] = [
         detail: `${HOME}\\AppData\\Local\\Programs\\ccodex-sleep-state\\ccodex-sleep-state.exe（版本 v0.3.0）`,
       },
       { label: "端口 17841", ok: true, detail: "空闲" },
+    ],
+  },
+  {
+    id: "antigravity-ui",
+    name: "反重力 · 汉化与审批",
+    state: "ready",
+    detail: "未运行 · 点「附加」把汉化与审批引擎接到正在跑的 Hub 上",
+    checks: [
+      {
+        label: "反重力 Hub",
+        ok: true,
+        detail: "已安装（位置表 install::antigravity）",
+      },
+      {
+        label: "汉化字典",
+        ok: true,
+        detail: "1312 条（EasyAntigravity，MIT）",
+      },
+      { label: "高危规则", ok: true, detail: "9 条启用 / 共 9 条" },
     ],
   },
 ];
@@ -860,6 +955,342 @@ const tavern: TavernConfig = {
   st_launcher: `${HOME}\\SillyTavern\\start-sillytavern.cmd`,
   bridge_port: 5001,
   st_port: 8000,
+  gpt_bridge_port: 5002,
+  gpt_model: "",
+  gpt_system_prompt: "",
+  gpt_effort: "medium",
+  gpt_persist_sessions: false,
+  gemini_bridge_port: 5003,
+  gemini_model: "",
+  gemini_system_prompt: "",
+};
+
+/** 内置 Gemini 桥接的演示状态。驱动的是官方 Gemini CLI，不是反重力本体。 */
+const geminiBridge: GeminiBridgeStatus = {
+  running: false,
+  port: 5003,
+  url: "http://127.0.0.1:5003/v1",
+  slot: "个人 Google",
+  slot_logged_in: true,
+  gemini_cli: `${HOME}\\nodejs\\node.exe ${HOME}\\AppData\\Roaming\\npm\\node_modules\\@google\\gemini-cli\\dist\\index.js`,
+  token_path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\plugins\\gemini-bridge\\token.txt`,
+  model: "gemini-default",
+  detail: "未运行 · 下次会用槽位「个人 Google」",
+};
+
+/** 反重力汉化与审批引擎的演示状态：没附加，字典与规则都齐。 */
+let antigravityUiRunning = false;
+const antigravityUiConfig: UiConfig = {
+  enable_i18n: true,
+  auto_accept: true,
+  block_dangerous: true,
+  prefer_option: 4,
+  attach_on_launch: true,
+};
+const antigravityUiStatus = (): UiStatus => ({
+  running: antigravityUiRunning,
+  port: antigravityUiRunning ? 9229 : 0,
+  targets: antigravityUiRunning ? 2 : 0,
+  sockets: antigravityUiRunning ? 2 : 0,
+  // 演示数据里两个源都在：Hub 核实生效，IDE 没有端口（使用者自己起的那种）——
+  // 这正是界面上两行必须长得不一样的那一档。
+  sources: antigravityUiRunning
+    ? [
+        {
+          product: "hub",
+          label: "反重力",
+          port: 9229,
+          targets: 2,
+          sockets: 2,
+          verified: 2,
+          dict_in_page: 1312,
+          error: "",
+        },
+        {
+          product: "ide",
+          label: "反重力 IDE",
+          port: 0,
+          targets: 0,
+          sockets: 0,
+          verified: 0,
+          dict_in_page: 0,
+          error: "",
+        },
+      ]
+    : [],
+  verified: antigravityUiRunning ? 2 : 0,
+  last_attach_error: "",
+  inject_count: antigravityUiRunning ? 12 : 0,
+  approve_count: antigravityUiRunning ? 3 : 0,
+  block_count: antigravityUiRunning ? 1 : 0,
+  cdp_error: "",
+  config: structuredClone(antigravityUiConfig),
+  dict_entries: 1312,
+  rules_total: 9,
+  rules_on: 9,
+  rules_path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\antigravity\\danger-rules.json`,
+  hub_installed: true,
+  ide_installed: true,
+  port_file_present: true,
+  log: antigravityUiRunning
+    ? [
+        {
+          at: "10:02:11",
+          category: "CDP",
+          message: "已连接页面并注入：Antigravity",
+        },
+        {
+          at: "10:03:40",
+          category: "AUTO-ACCEPT",
+          message: "放行 · 选项[4] 始终允许 · npm test",
+        },
+        {
+          at: "10:05:02",
+          category: "SECURITY ALERT",
+          message: "拦截高危指令[rm-rf]: rm -rf ./build",
+        },
+      ]
+    : [],
+  detail: antigravityUiRunning
+    ? "运行中 · 已在 2 个页面核实生效"
+    : "未运行 · 点「附加」把汉化与审批引擎接到正在跑的反重力上",
+});
+const antigravityRules: DangerRules = {
+  version: 1,
+  enabled: true,
+  rules: [
+    {
+      id: "rm-rf",
+      name: "递归强制删除",
+      description: "rm -rf / rm -fr / rm --force",
+      pattern: "\\brm\\s+(-[a-zA-Z]*r[a-zA-Z]*f|--force)",
+      flags: "i",
+      enabled: true,
+    },
+    {
+      id: "disk-wipe",
+      name: "磁盘破坏",
+      description: "format / diskpart / mkfs",
+      pattern: "\\b(format|diskpart|mkfs|wipefs|shred)\\b",
+      flags: "i",
+      enabled: true,
+    },
+    {
+      id: "git-force-push",
+      name: "Git 强制推送",
+      description: "git push --force / -f",
+      pattern: "\\bgit\\s+push\\s+.*(-f|--force)\\b",
+      flags: "i",
+      enabled: true,
+    },
+  ],
+};
+
+/**
+ * 反重力账户页的演示状态：Hub 与 IDE 都装了、都没在跑。
+ *
+ * 三条账户故意覆盖三种形状（一眼能看出两半是独立的）：
+ *
+ * 1. 两半都登了、正在用的那一条；
+ * 2. 只有 IDE 那一半的（从旧清单升上来的形状）—— 它会显示「并入…」；
+ * 3. 只有 CLI 那一半且还没登的。
+ */
+const agAccounts: AntigravityAccount[] = [
+  {
+    id: "ag-demo-0",
+    label: "个人账户",
+    active: true,
+    ide_dir: `${HOME}\\AppData\\Local\\ClaudeIpGate\\antigravity-accounts\\ag-demo-0\\ide-user-data`,
+    ide_logged_in: true,
+    ide_auth_state: "已登录 · 令牌由 IDE 自己保管在它的状态库里",
+    email: "someone@example.com",
+    tier: "Google AI Pro",
+    identity_error: null,
+    quota: [],
+    written_at: "2026-09-21 03:35",
+    cli_dir: `${HOME}\\AppData\\Local\\ClaudeIpGate\\antigravity-accounts\\ag-demo-0\\cli-home`,
+    cli_logged_in: true,
+    cli_auth_state: "已登录 · 本地凭据（由 Gemini CLI 自己保管）",
+  },
+  {
+    id: "ag-demo-1",
+    label: "工作账户",
+    active: false,
+    ide_dir: `${HOME}\\AppData\\Local\\ClaudeIpGate\\antigravity-ide-accounts\\ag-ide-demo-1\\user-data`,
+    ide_logged_in: false,
+    ide_auth_state: "未登录 · 还没在这个账户起过 IDE",
+    email: null,
+    tier: null,
+    identity_error: null,
+    quota: [],
+    written_at: null,
+    cli_dir: null,
+    cli_logged_in: false,
+    cli_auth_state: "还没有 CLI 那一半",
+  },
+  {
+    id: "ag-demo-2",
+    label: "个人 Google",
+    active: false,
+    ide_dir: null,
+    ide_logged_in: false,
+    ide_auth_state: "还没有 IDE 那一半",
+    email: null,
+    tier: null,
+    identity_error: null,
+    quota: [],
+    written_at: null,
+    cli_dir: `${HOME}\\AppData\\Local\\ClaudeIpGate\\gemini-accounts\\gemini-demo-1\\home`,
+    cli_logged_in: false,
+    cli_auth_state: "未登录",
+  },
+];
+
+const antigravityIdentity = (): AntigravityIdentity => {
+  const reset = Math.floor(Date.now() / 1000) + 3 * 3600 + 20 * 60;
+  const model = (
+    label: string,
+    model_id: number,
+    remaining: number | null,
+    tags: string[],
+  ) => ({
+    label,
+    model_id,
+    remaining,
+    reset_at: remaining == null ? null : "2026-09-21 07:38",
+    reset_epoch: remaining == null ? null : reset,
+    tags,
+  });
+  return {
+    name: "演示用户",
+    email: "someone@example.com",
+    tier_id: "g1-pro-tier",
+    tier_name: "Google AI Pro",
+    written_at: "2026-09-21 03:35",
+    models: [
+      model("Gemini 3.8 Flash (High)", 1318, 1, ["Fast", "Limited time"]),
+      model("Gemini 3.8 Flash (Medium)", 1319, 1, ["Fast", "Limited time"]),
+      model("Gemini 3.8 Flash (Low)", 1320, 1, ["Fast", "Limited time"]),
+      model("Gemini 3.7 Flash (High)", 1298, 0.62, ["Fast"]),
+      model("Gemini 3.7 Flash (Medium)", 1299, 0.62, ["Fast"]),
+      model("Gemini 3.7 Flash (Low)", 1300, 0.62, ["Fast"]),
+      model("Claude Opus 4.6 (Thinking)", 1026, 0.85, []),
+      model("GPT-OSS 120B (Medium)", 342, null, []),
+    ],
+  };
+};
+/** 反重力用量：一个模型占大头、缓存读淹掉输入，跟实机的比例一个样。 */
+const antigravityUsage = (days: number): AntigravityUsage => {
+  const scale = days === 1 ? 1 : days === 7 ? 6 : days === 30 ? 20 : 34;
+  const flash = {
+    model: "gemini-3.7-flash",
+    input: 3_082_000 * scale,
+    output: 124_500 * scale,
+    cache_read: 60_126_000 * scale,
+    messages: 349 * scale,
+  };
+  const opus = {
+    model: "claude-opus-4-6-thinking",
+    input: 41_800 * scale,
+    output: 830 * scale,
+    cache_read: 52_200 * scale,
+    messages: 1 * scale,
+  };
+  // 按天的桶：故意中间缺一天 —— 柱状图上没有那根柱子，跟「那天是 $0」是两回事。
+  // 日期按本地日历（`dates.ts`）；原来用 `toISOString()`，东八区整张图错一天。
+  // `claude-opus-4-6-thinking` 在演示价里没有 —— 「没有官方价」那条路也得有人看过。
+  const span = days === 1 ? 1 : days === 7 ? 7 : days === 30 ? 14 : 20;
+  const buckets: TokenBucket[] = [];
+  for (let i = span - 1; i >= 0; i--) {
+    if (span > 3 && i === 2) continue; // 故意缺一天
+    const day = addDays(todayYmd(), -i);
+    const f = (1 + Math.sin(i)) / 2 + 0.4;
+    for (const m of [flash, opus]) {
+      buckets.push({
+        day,
+        model: m.model,
+        input: Math.round((m.input / span) * f),
+        output: Math.round((m.output / span) * f),
+        cache_write: 0,
+        cache_write_1h: 0,
+        cache_read: Math.round((m.cache_read / span) * f),
+        messages: Math.max(1, Math.round((m.messages / span) * f)),
+      });
+    }
+  }
+  return {
+    summary: demoSummarize(buckets, days),
+    models: [flash, opus],
+    files_read: 49,
+    files_failed: 0,
+    legacy_skipped: 16,
+    incomplete: 0,
+    duplicates: 0,
+    scanned_dirs: [
+      `${HOME}\\.gemini\\antigravity\\conversations`,
+      `${HOME}\\.gemini\\antigravity-ide\\conversations`,
+    ],
+    checked_at: new Date().toTimeString().slice(0, 5),
+  };
+};
+let antigravityLive: Record<string, boolean> = { hub: false, ide: false };
+const antigravityStatus = (): AntigravityStatus => ({
+  hub: {
+    product: "hub",
+    label: "反重力",
+    installed: true,
+    path: `${HOME}\\AppData\\Local\\Programs\\antigravity\\Antigravity.exe`,
+    session_id: antigravityLive.hub ? "demo-session-ag" : null,
+    pid: antigravityLive.hub ? 4242 : null,
+    data_dir: `${HOME}\\.gemini\\antigravity`,
+  },
+  ide: {
+    product: "ide",
+    label: "反重力 IDE",
+    installed: true,
+    path: `${HOME}\\AppData\\Local\\Programs\\Antigravity IDE\\Antigravity IDE.exe`,
+    session_id: antigravityLive.ide ? "demo-session-ag-ide" : null,
+    pid: antigravityLive.ide ? 4343 : null,
+    data_dir: `${HOME}\\.gemini\\antigravity-ide`,
+  },
+  under_gate: !settings.antigravity_outside_gate,
+  auto_update: true,
+  login_seen: true,
+  gemini_cli_installed: true,
+  hub_logged_in: true,
+  // Hub 的邮箱是从凭据里那个 `id_token` 本机解出来的，零网络请求。
+  // 演示里故意跟 IDE 那一侧是**同一个**账户 —— 实机上它们完全可以不是。
+  hub_identity: {
+    email: "someone@example.com",
+    email_verified: true,
+    token_expires_at: "2026-09-21 12:40",
+    token_expired: false,
+    auth_method: "google",
+  },
+  hub_identity_error: null,
+  accounts: { slots: structuredClone(agAccounts) },
+  identity_source: agAccounts.some((s) => s.active)
+    ? `账户「${agAccounts.find((s) => s.active)?.label}」`
+    : "默认资料目录",
+  identity: agAccounts.find((s) => s.active)?.ide_logged_in
+    ? antigravityIdentity()
+    : null,
+  identity_error: null,
+});
+
+/** 内置 GPT 桥接的演示状态：没在跑，但槽位、CLI、地址都齐。 */
+const gptBridge: GptBridgeStatus = {
+  running: false,
+  port: 5002,
+  url: "http://127.0.0.1:5002/v1",
+  slot: "个人账户",
+  slot_logged_in: true,
+  codex_exe: `${HOME}\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe`,
+  token_path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\plugins\\gpt-bridge\\token.txt`,
+  model: "codex-default",
+  effort: "medium",
+  persist_sessions: false,
+  detail: "未运行 · 下次会用槽位「个人账户」",
 };
 
 /** 定位结果。演示里给一条「正在跑的」加两条扫出来的，其中一条是备份 —— 排序看得出来。 */
@@ -1060,13 +1491,38 @@ const upgrade: UpgradePlan = {
   detail: "latest 渠道上没有更新的版本。",
 };
 
-const update: UpdateStatus = {
-  current_version: "0.9.0",
-  repository: "smithtaylor7748-ops/qb-gate",
-  configured: true,
+/**
+ * 应用自己的更新（0.25.3）。
+ *
+ * **启动那一次（`manual: false`）永远「没有新版」**：更新弹窗是全局的，演示里一打开就弹，
+ * `test:ui` 那 151 个组合就全被它盖住了。只有设置页点「检查更新」（`manual: true`）
+ * 才「查到」一个编出来的 0.99.0，好让弹窗能被看见、被 `test:ui` 走一遍。
+ * 「一键更新」在演示里只会报错 —— 演示不下载、不安装、不退出。
+ */
+let update: UpdateStatus = {
+  current_version: packageInfo.version,
+  check_on_start: true,
+  latest: null,
   update_available: false,
-  latest_version: "0.9.0",
-  detail: "QB Gate 不做自动更新，这里只是查一下 Releases。",
+  skipped: false,
+  checked_at: null,
+  error: null,
+};
+const demoRelease = {
+  version: "0.99.0",
+  tag: "v0.99.0",
+  published_at: "2026-10-01T08:00:00Z",
+  notes: [
+    "## 更新内容",
+    "",
+    "- 演示数据：这一版并不存在，只用来展示更新弹窗长什么样。",
+    "- 点「一键更新」会从 GitHub 下载安装包，核对 SHA256SUMS.txt 之后再安装。",
+    "",
+    "## 修复",
+    "",
+    "- 演示数据：一条修复说明。",
+  ].join("\n"),
+  page_url: "https://github.com/smithtaylor7748-ops/qb-gate/releases",
 };
 
 const kill: KillReport = {
@@ -2165,9 +2621,22 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   firewall_rules: () => firewallRules,
   firewall_adapters: () => adapters,
   checkup_scan: () => checkup,
+  // 真实浏览器采集（2026-09-24）：演示里不开任何端口，直接给一份编好的报告。
+  browser_probe_start: () => ({
+    url: "http://127.0.0.1:53123/0123456789abcdef0123456789abcdef/",
+    token: "demo-probe",
+    opened: true,
+  }),
+  browser_probe_wait: () => {
+    demoProbeReport = demoBrowserReport();
+    return demoProbeReport;
+  },
+  browser_probe_last: () => demoProbeReport,
   accounts_list: () => accounts,
   accounts_tokens: () => tokenUsage,
   accounts_token_summary: (args) => summaryFor(Number(args?.days ?? 1)),
+  accounts_usage_overview: (args) =>
+    demoUsageOverview(String(args?.label ?? ""), Number(args?.days ?? 7)),
   // 演示里给「本地令牌已过期」那一档 —— 实机上它就是最常见的那个，
   // 而且它是唯一一个**不发请求**的分支，最该让人在截图里先看见。
   account_probe: () => accountProbe,
@@ -2218,10 +2687,273 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   },
   upgrade_plan: () => upgrade,
   update_status: () => update,
+  update_check: (args) => {
+    if (args?.manual)
+      update = {
+        ...update,
+        latest: demoRelease,
+        update_available: true,
+        skipped: update.skipped,
+        checked_at: new Date().toISOString(),
+        error: null,
+      };
+    return update;
+  },
+  update_skip: (args) => {
+    update = {
+      ...update,
+      skipped: !!args?.version && args.version === update.latest?.version,
+    };
+    return update;
+  },
+  update_install: () => {
+    throw new Error(
+      "演示模式不会真的下载或安装：装好的面板里，这一步会从 GitHub 下载安装包、核对 SHA-256，然后退出并安装。",
+    );
+  },
   killswitch_preview: () => kill,
   plugin_list: () => plugins,
   plugin_catalog_status: () => catalog,
   tavern_config: () => tavern,
+  tavern_gpt_status: () => gptBridge,
+  tavern_gpt_token: () => "demo-token-not-a-real-secret",
+  tavern_gpt_quota: (args) =>
+    askedOnly("gpt:active", args?.refresh, () =>
+      gptQuotaFixture("demo@example.test"),
+    ),
+  tavern_gemini_status: () => geminiBridge,
+  tavern_gemini_token: () => "demo-token-not-a-real-secret",
+  tavern_gemini_quota: (args) =>
+    askedOnly("gemini:active", args?.refresh, () => ({
+      provider: "gemini",
+      account: "demo@example.test",
+      project: "demo-project",
+      tier: "Google AI Pro",
+      models: [
+        {
+          model_id: "gemini-2.5-pro",
+          label: "gemini-2.5-pro",
+          token_type: "REQUESTS",
+          remaining_percent: 62,
+          reset_at: "2026-09-22 00:00",
+          reset_epoch: Math.floor(Date.now() / 1000) + 36000,
+        },
+        {
+          model_id: "gemini-2.5-flash",
+          label: "gemini-2.5-flash",
+          token_type: "REQUESTS",
+          remaining_percent: 84,
+          reset_at: "2026-09-22 00:00",
+          reset_epoch: Math.floor(Date.now() / 1000) + 36000,
+        },
+      ],
+      fetched_at: new Date().toISOString(),
+      source:
+        "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
+    })),
+  tavern_bridge_roleplay_test: (args) => ({
+    provider: String(args?.provider ?? "gpt"),
+    ok: true,
+    model:
+      String(args?.provider ?? "gpt") === "gemini"
+        ? "gemini-2.5-pro"
+        : "codex-default",
+    reply: "（演示）林澈微笑着指向星海区：我想起一本很适合你的书。",
+    latency_ms: 842,
+    input_tokens: 42,
+    output_tokens: 18,
+    detail: "演示模式：桥接角色扮演测试通过",
+    tested_at: new Date().toISOString(),
+  }),
+  antigravity_ui_status: () => antigravityUiStatus(),
+  antigravity_ui_start: () => {
+    antigravityUiRunning = true;
+    return antigravityUiStatus();
+  },
+  antigravity_ui_stop: () => {
+    antigravityUiRunning = false;
+    return null;
+  },
+  antigravity_ui_config_save: (args) => {
+    Object.assign(antigravityUiConfig, (args?.cfg as UiConfig) ?? {});
+    return null;
+  },
+  antigravity_ui_rules: () => structuredClone(antigravityRules),
+  antigravity_ui_rules_save: (args) => {
+    const next = args?.rules as DangerRules | undefined;
+    if (next) antigravityRules.rules = structuredClone(next.rules);
+    return null;
+  },
+  antigravity_ui_rules_reset: () => structuredClone(antigravityRules),
+  antigravity_status: () => antigravityStatus(),
+  antigravity_launch: (args) => {
+    antigravityLive = { ...antigravityLive, [String(args?.product)]: true };
+    if (args?.product === "hub") antigravityUiRunning = true;
+    return null;
+  },
+  antigravity_close: (args) => {
+    const was = antigravityLive[String(args?.product)] ? 1 : 0;
+    antigravityLive = { ...antigravityLive, [String(args?.product)]: false };
+    if (args?.product === "hub") antigravityUiRunning = false;
+    return was;
+  },
+  // 启动前那次「有没有在跑」的只读查询（0.27.0）。真机上按安装目录数进程，
+  // 演示里就是这个状态位。
+  antigravity_running: (args) =>
+    antigravityLive[String(args?.product)] ? 1 : 0,
+  antigravity_auto_update_set: () => null,
+  // 一键安装（0.29.0）：演示里不联网、不装包，只回一句结论。
+  antigravity_install: (args) =>
+    args?.product === "ide"
+      ? "演示：反重力 IDE 2.5.5 已装好（winget）。"
+      : "演示：反重力 2.15.1 已装好（winget）。",
+  antigravity_latest: (args) => (args?.product === "ide" ? "2.5.5" : "2.15.1"),
+  // 反重力账户槽位与本机用量（0.32.0：一条 = 一个账户，两半）。
+  antigravity_ide_create: (args) => {
+    const id = `ag-demo-${agAccounts.length}`;
+    agAccounts.push({
+      id,
+      label: String(args?.label),
+      active: agAccounts.length === 0,
+      ide_dir: `${HOME}\\AppData\\Local\\ClaudeIpGate\\antigravity-accounts\\${id}\\ide-user-data`,
+      ide_logged_in: false,
+      ide_auth_state: "未登录 · 还没在这个账户起过 IDE",
+      email: null,
+      tier: null,
+      identity_error: null,
+      quota: [],
+      written_at: null,
+      cli_dir: `${HOME}\\AppData\\Local\\ClaudeIpGate\\antigravity-accounts\\${id}\\cli-home`,
+      cli_logged_in: false,
+      cli_auth_state: "未登录",
+    });
+    return id;
+  },
+  antigravity_ide_select: (args) => {
+    for (const s of agAccounts) s.active = s.id === args?.id;
+    return null;
+  },
+  antigravity_ide_archive: (args) => {
+    const i = agAccounts.findIndex((s) => s.id === args?.id);
+    if (i >= 0) agAccounts.splice(i, 1);
+    return null;
+  },
+  antigravity_account_rename: (args) => {
+    const s = agAccounts.find((x) => x.id === args?.id);
+    if (s) s.label = String(args?.label);
+    return null;
+  },
+  // 只改索引：把 `from` 那一半挂到 `into` 上，再把 `from` 从清单里去掉。
+  antigravity_account_attach: (args) => {
+    const into = agAccounts.find((x) => x.id === args?.into);
+    const i = agAccounts.findIndex((x) => x.id === args?.from);
+    if (into && i >= 0) {
+      const from = agAccounts[i];
+      if (!into.ide_dir && from.ide_dir) {
+        into.ide_dir = from.ide_dir;
+        into.ide_logged_in = from.ide_logged_in;
+        into.ide_auth_state = from.ide_auth_state;
+        into.email = from.email;
+        into.tier = from.tier;
+      }
+      if (!into.cli_dir && from.cli_dir) {
+        into.cli_dir = from.cli_dir;
+        into.cli_logged_in = from.cli_logged_in;
+        into.cli_auth_state = from.cli_auth_state;
+      }
+      agAccounts.splice(i, 1);
+    }
+    return null;
+  },
+  antigravity_usage: (args) => antigravityUsage(Number(args?.days ?? 1)),
+  // 演示里不联网。给的是「问到了」那一档 —— 真实机器上它可能报「令牌换新失败」之类，
+  // 那些话在 `crates/qb-app/src/usecase/antigravity_quota.rs` 里。
+  // 跟真的一样只手动刷新：`refresh` 为假时只回问过的那份，没问过就是 null。
+  antigravity_hub_quota: (args) =>
+    askedOnly("ag:hub", args?.refresh, () => agOnlineQuota(true)),
+  antigravity_account_quota: (args) =>
+    askedOnly(`ag:${String(args?.id)}`, args?.refresh, () =>
+      agOnlineQuota(args?.id === "ag-demo-0"),
+    ),
+  gemini_login: (args) => {
+    const s = agAccounts.find((x) => x.id === args?.id);
+    if (s) {
+      s.cli_dir ??= `${HOME}\\AppData\\Local\\ClaudeIpGate\\antigravity-accounts\\${s.id}\\cli-home`;
+      s.cli_logged_in = true;
+      s.cli_auth_state = "已登录 · 本地凭据（由 Gemini CLI 自己保管）";
+    }
+    return null;
+  },
+  // 0.29.0 起它是个长任务、回一句结论（原来只是「弹个窗口」回 null）。
+  gemini_cli_install: () => "演示：Gemini CLI 0.9.1 已装好（npm 全局）。",
+  // Claude 桥的设置与监控（0.32.0）。演示里给的是「桥在跑」那一档 ——
+  // 真机上它常常是「没在跑」，那时界面显示的是后端那句能照着做的话。
+  tavern_bridge_health: () => ({
+    bridge_version: "2.4.0",
+    invocation_mode: "cli",
+    model: "claude-opus-5",
+    effort: "max",
+    cache_ttl: "1h",
+    sdk_sessions: 1,
+  }),
+  tavern_bridge_settings: () => ({
+    settings: {
+      priority_prompt: "你是一个演示用的角色。",
+      tail_prompt: "",
+      model: "claude-opus-5",
+      effort: "max",
+      cache_ttl: "1h",
+      system_prompt_mode: "append",
+      invocation_mode: "cli",
+    },
+    models: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    cache_ttls: ["5m", "1h"],
+    prompt_modes: ["append", "replace"],
+    invocation_modes: ["cli", "agent_sdk"],
+  }),
+  tavern_bridge_settings_save: () => null,
+  tavern_bridge_telemetry: () => ({
+    records: [
+      {
+        id: "demo-1",
+        at: "09-21 08:12:03",
+        status: "ok",
+        mode: "cli",
+        model: "claude-opus-5",
+        effort: "max",
+        input: 1820,
+        output: 640,
+        cache_read: 41200,
+        cache_write: 0,
+        prefix: "append_only",
+        elapsed_ms: 8400,
+      },
+      {
+        id: "demo-2",
+        at: "09-21 08:09:51",
+        status: "ok",
+        mode: "cli",
+        model: "claude-opus-5",
+        effort: "max",
+        input: 1760,
+        output: 512,
+        cache_read: 39800,
+        cache_write: 2100,
+        prefix: "first",
+        elapsed_ms: 11200,
+      },
+    ],
+    total: 2,
+    offset: 0,
+    has_more: false,
+    hit_rate: 0.94,
+    cache_read: 81000,
+    cache_write: 2100,
+    countable: 2,
+    prefix_reusable: 0.5,
+  }),
+  tavern_bridge_telemetry_clear: () => 2,
   tavern_locate: () => survey,
   tavern_assets: () => assets,
   tavern_backups: () => backups,
@@ -2229,6 +2961,123 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
 
 /** Only a missing fixture should fall through to the other demo dispatcher. */
 export class MissingDemoCommand extends Error {}
+
+// ------------------------------------------------ 联网额度的演示（2026-09-23）
+//
+// 真实面板里联网额度只手动刷新：`refresh: false` 只回「最近一次」问到的，没问过就是 null。
+// 演示照同一条规矩走，`test:ui` 才测得出「打开页面不显示在线、点了刷新才有」。
+const demoAsked = new Map<string, unknown>();
+function askedOnly<T>(key: string, refresh: unknown, make: () => T): T | null {
+  if (refresh === true) {
+    const value = make();
+    demoAsked.set(key, value);
+    return value;
+  }
+  return (demoAsked.get(key) as T | undefined) ?? null;
+}
+
+/** 本地 `YYYY-MM-DD HH:MM`，跟后端给的格式一样。 */
+function demoMinute(epochSec: number): string {
+  const d = new Date(epochSec * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function gptQuotaFixture(account: string) {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    provider: "gpt",
+    account,
+    plan_type: "plus",
+    windows: [
+      {
+        label: "5 小时",
+        remaining_percent: 71,
+        reset_at: demoMinute(now + 7200),
+        reset_epoch: now + 7200,
+        window_minutes: 300,
+        present: true,
+      },
+      {
+        label: "7 天",
+        remaining_percent: 23,
+        reset_at: demoMinute(now + 360000),
+        reset_epoch: now + 360000,
+        window_minutes: 10080,
+        present: true,
+      },
+    ],
+    fetched_at: demoMinute(now) + ":00",
+    source: "https://chatgpt.com/backend-api/wham/usage",
+  };
+}
+
+/**
+ * 反重力的联网额度。付费档是四格 + AI 积分（Gemini 周窗口用掉 5%，跟使用者截图里那台一样）；
+ * 免费档 Google 不给四格，只有按模型的。
+ */
+function agOnlineQuota(paid: boolean) {
+  const now = Math.floor(Date.now() / 1000);
+  const win = (
+    group: "claude" | "gemini",
+    span: "five-hour" | "weekly",
+    remaining: number,
+    resetIn: number,
+    note: string | null = null,
+  ) => ({
+    group,
+    span,
+    remaining,
+    remaining_implied: false,
+    reset_epoch: now + resetIn,
+    reset_at: demoMinute(now + resetIn),
+    note,
+  });
+  if (!paid)
+    return {
+      tier_id: "free-tier",
+      tier_name: "Antigravity Starter Quota",
+      gcp_tos: false,
+      credits: null,
+      windows: [],
+      windows_note:
+        "免费档：Google 不给免费档 5 小时 / 每周的汇总（HTTP 403），下面按模型显示。",
+      models: [
+        {
+          label: "Gemini 3.8 Flash (High)",
+          model_id: 0,
+          remaining: 0.8,
+          reset_at: demoMinute(now + 5 * 86400),
+          reset_epoch: now + 5 * 86400,
+          tags: ["Fast"],
+        },
+        {
+          label: "Claude Sonnet 4.6",
+          model_id: 0,
+          remaining: 1,
+          reset_at: demoMinute(now + 5 * 86400),
+          reset_epoch: now + 5 * 86400,
+          tags: [],
+        },
+      ],
+      fetched_at: demoMinute(now),
+    };
+  return {
+    tier_id: "g1-pro-tier",
+    tier_name: "Google AI Pro",
+    gcp_tos: false,
+    credits: 1000,
+    windows: [
+      win("claude", "five-hour", 1, 5 * 3600 - 300),
+      win("claude", "weekly", 1, 7 * 86400 - 300),
+      win("gemini", "five-hour", 1, 5 * 3600 - 300),
+      win("gemini", "weekly", 0.95, 3 * 86400 + 660, "部分已用"),
+    ],
+    windows_note: null,
+    models: [],
+    fetched_at: demoMinute(now),
+  };
+}
 
 /** 演示模式下代替 `invoke`。故意留 120ms，让加载态也长得像真的。 */
 export async function demoCall<T>(
@@ -2256,6 +3105,9 @@ const codexSlots = Array.from({ length: 6 }, (_, i) => ({
   plan: i < 5 ? "pro" : null,
 }));
 let codexLaunched: string | null = codexSlots[0].id;
+// 一份**不是面板起的** Codex（开始菜单 / `codex://` 链接 / 别的多开工具，默认资料）。
+// 起槽位、切槽位都不动它（2026-09-23）；只有使用者点「一键关闭」才一起关。
+let codexForeign = true;
 function codexDemo(cmd: string, args: Record<string, unknown>) {
   if (cmd === "codex_accounts")
     return {
@@ -2264,13 +3116,29 @@ function codexDemo(cmd: string, args: Record<string, unknown>) {
       launched_pid: codexLaunched ? 100 : null,
       launched_at: codexLaunched ? "demo-start" : null,
     };
-  if (cmd === "codex_desktop_status")
+  if (cmd === "codex_desktop_status") {
+    const processes = [
+      ...(codexLaunched
+        ? [
+            {
+              pid: 100,
+              started: "demo-start",
+              profile: `C:/Users/demo/AppData/Local/ClaudeIpGate/codex-accounts/${codexLaunched}/desktop`,
+              ours: true,
+            },
+          ]
+        : []),
+      ...(codexForeign
+        ? [{ pid: 200, started: "demo-other", profile: null, ours: false }]
+        : []),
+    ];
     return {
       executable: "C:/Demo/Codex/ChatGPT.exe",
       version: "26.9.0",
-      running: !!codexLaunched,
-      processes: codexLaunched ? [{ pid: 100, started: "demo-start" }] : [],
+      running: processes.length > 0,
+      processes,
     };
+  }
   if (cmd === "codex_usage")
     return {
       input: 82450,
@@ -2284,7 +3152,53 @@ function codexDemo(cmd: string, args: Record<string, unknown>) {
       duplicates: 2,
       incomplete: 0,
       checked_at: "2026-09-16 10:35",
+      buckets: [],
+      long_context: [],
     };
+  // 用量明细页的 GPT 一侧（2026-09-24）：按天、按模型、美元。
+  if (cmd === "codex_usage_summary")
+    return demoCodexSummary(Number(args?.days ?? 7));
+  // 额度窗口（0.32.0）：Codex 自己写在会话记录里的，零网络。
+  // 演示里故意让**七天那个更紧**（剩 23% vs 剩 71%）—— 那正是「只看宽裕的
+  // 那半做判断」会出错的形状，界面得把「卡这儿」标在七天那根上。
+  if (cmd === "codex_rate_limits")
+    return {
+      files_examined: 2,
+      files_failed: 0,
+      first_error: null,
+      found: {
+        source_file: "C:/Demo/.codex/sessions/2026/09/21/rollout-demo.jsonl",
+        measured_at: new Date(Date.now() - 42 * 60_000).toISOString(),
+        age_minutes: 42,
+        primary: {
+          name: "5 小时",
+          window_minutes: 300,
+          window: {
+            used: 29,
+            resets_at: new Date(Date.now() + 2.4 * 3600_000).toISOString(),
+            estimated: false,
+          },
+        },
+        secondary: {
+          name: "7 天",
+          window_minutes: 10080,
+          window: {
+            used: 77,
+            resets_at: new Date(Date.now() + 3.2 * 86400_000).toISOString(),
+            estimated: false,
+          },
+        },
+        plan_type: null,
+        credits: { has_credits: false, unlimited: false, balance: null },
+      },
+    };
+  // 官方额度接口（`wham/usage`）的演示：只在点了那一行的刷新图标（`refresh: true`）时才有。
+  if (cmd === "codex_quota") {
+    const slot = codexSlots.find((s) => s.id === args.id);
+    return askedOnly(`codex:${String(args.id)}`, args.refresh, () =>
+      gptQuotaFixture(slot?.email ?? String(args.id)),
+    );
+  }
   if (cmd === "codex_create") {
     const id = `demo-${codexSlots.length}`;
     codexSlots.push({
@@ -2309,13 +3223,19 @@ function codexDemo(cmd: string, args: Record<string, unknown>) {
     return null;
   }
   if (cmd === "codex_close") {
+    // 「一键关闭」是全关：别处起的那份也一起。
     codexLaunched = null;
+    codexForeign = false;
     return null;
   }
   if (cmd === "codex_repair_registration") {
     // 演示里没有真实的打包应用注册，直接当作修好了。
     return null;
   }
+  // 直装（0.28.0）：演示里不联网、不装包，只回一句结果；版本查询回一个比本机新的。
+  if (cmd === "codex_desktop_install")
+    return "演示：Codex 桌面端 26.9.1 已装好（winget · Store 源）。";
+  if (cmd === "codex_desktop_latest") return "26.9.1";
   // Codex 出站与换出口插件（外部程序）。演示里只翻状态位，不起任何进程。
   if (cmd === "codex_egress_status") {
     const base = plugins.find((p) => p.id === "codex-egress")!;

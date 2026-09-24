@@ -9,4 +9,18 @@ egress_asn: string | null, resolvers: Array<Resolver>, passed: boolean, findings
 /**
  * bash.ws 自己给的结论行，原样透出。
  */
-upstream_conclusion: string | null, note: string, score: number, ethernet_safe: boolean | null, };
+upstream_conclusion: string | null, note: string, 
+/**
+ * 100 分制（算法见文件头）。`None` = 没收到真实解析回显，判不了有没有泄露。
+ */
+score: number | null, 
+/**
+ * 连着的物理网卡上配的 DNS 都走隧道吗。`None` = 这一项不适用：没开 TUN、查不出路由、
+ * 或者没有连着的物理网卡配了 DNS。**不分有线还是 Wi-Fi** —— 原来的 `ethernet_safe`
+ * 按名字只认「以太网」，只连 Wi-Fi 的机器永远是「未检测到以太网」。
+ */
+adapters_safe: boolean | null, 
+/**
+ * 这一项看了哪几张网卡、或者为什么不适用。界面原样显示。
+ */
+adapters_note: string, };

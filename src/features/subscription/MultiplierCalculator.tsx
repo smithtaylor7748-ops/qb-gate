@@ -1,16 +1,18 @@
 import { useId, useState } from "react";
 import { Calculator } from "lucide-react";
 import { Card, Field, Pill } from "../../ui";
-import { PLANS } from "./data";
+import { PLANS, WEEKS_PER_MONTH, monthlyValue } from "./data";
 import {
+  YUAN_PER_USD,
   effectiveMultiplier,
   fmtMultiplier,
   fmtTimes,
   fmtUsd,
+  fmtYuan,
   multiplierTone,
   parseAmount,
+  planMultiplier,
   timesMoreExpensive,
-  toUsd,
 } from "./multiplier";
 
 const CUSTOM = "custom";
@@ -18,44 +20,49 @@ const DEFAULT_PLAN = "claude-max-20";
 
 function planValue(id: string): string {
   const p = PLANS.find((x) => x.id === id);
-  return p && p.apiValue !== null ? String(p.apiValue) : "";
+  const monthly = p ? monthlyValue(p) : null;
+  return monthly === null ? "" : String(monthly);
+}
+
+/** 结果旁边那枚标签：只按价钱说话（`multiplierTone` 的三段）。 */
+function toneLabel(m: number): string {
+  const tone = multiplierTone(m);
+  if (tone === "ok") return "和自己订阅官方一个价位";
+  if (tone === "warn") return "比自己订阅官方贵";
+  return m > YUAN_PER_USD
+    ? "比官方 API 牌价还贵"
+    : "官转的价位，比自己订阅贵好几倍";
 }
 
 /**
  * 「我这笔钱，相当于中转站什么倍率」。
  *
  * 使用者给的算式：开会员花的钱 ÷ 订阅一个月能总共用多少刀。
- * 分母默认取所选官方套餐的实测 API 等值，可以手改；分子支持按汇率折成美元。
+ * 花的钱按元填 —— 中转站的倍率本来就是「每 $1 牌价的用量付几元」（2026-09-24 起，
+ * 原来那格「汇率」随之去掉）。分母默认取所选官方套餐的周额度中间值 × 4（`monthlyValue`），
+ * 可以手改；官方那一档按 1:7 折成元（`planMultiplier`），跟价目表同一个数。
  * 再多给一个可选项：中转站实际给了多少额度 —— 有了它能算出「比官方贵几倍」。
  */
 export function MultiplierCalculator() {
   const [amount, setAmount] = useState("");
-  const [rate, setRate] = useState("1");
   const [planId, setPlanId] = useState(DEFAULT_PLAN);
   const [value, setValue] = useState(planValue(DEFAULT_PLAN));
   const [quota, setQuota] = useState("");
   const selectId = useId();
 
   const plan = PLANS.find((p) => p.id === planId) ?? null;
-  const parsedAmount = parseAmount(amount);
-  const parsedRate = parseAmount(rate);
-  const spendUsd =
-    parsedAmount !== null && parsedRate !== null
-      ? toUsd(parsedAmount, parsedRate)
-      : null;
+  const spend = parseAmount(amount);
   const monthly = parseAmount(value);
   const m =
-    spendUsd !== null && monthly !== null
-      ? effectiveMultiplier(spendUsd, monthly)
+    spend !== null && monthly !== null
+      ? effectiveMultiplier(spend, monthly)
       : null;
-  const officialM =
-    plan && plan.apiValue !== null
-      ? effectiveMultiplier(plan.webMonthly, plan.apiValue)
-      : null;
+  const planMonthly = plan ? monthlyValue(plan) : null;
+  const officialM = plan ? planMultiplier(plan) : null;
   const quotaUsd = parseAmount(quota);
   const relayM =
-    spendUsd !== null && quotaUsd !== null
-      ? effectiveMultiplier(spendUsd, quotaUsd)
+    spend !== null && quotaUsd !== null
+      ? effectiveMultiplier(spend, quotaUsd)
       : null;
   const times =
     relayM !== null && officialM !== null
@@ -63,9 +70,7 @@ export function MultiplierCalculator() {
       : null;
 
   const amountError =
-    amount.trim() !== "" && parsedAmount === null ? "请填一个正数" : undefined;
-  const rateError =
-    rate.trim() !== "" && parsedRate === null ? "汇率要是正数" : undefined;
+    amount.trim() !== "" && spend === null ? "请填一个正数" : undefined;
   const valueError =
     value.trim() !== "" && monthly === null ? "请填一个正数" : undefined;
   const quotaError =
@@ -78,45 +83,29 @@ export function MultiplierCalculator() {
       className="qb-sub-calc-card"
     >
       <p className="sub qb-sub-calc-intro">
-        填上你为「会员」付的钱，再除以一个月能用到多少美元的用量，得到的就是中转站口径的倍率。分母默认取所选官方套餐的实测上限，可以改。
+        填上你为「会员」付的钱（元），再除以一个月能用到多少美元的用量，得到的就是中转站口径的倍率
+        —— 每 $1
+        牌价的用量付几元。分母默认取所选官方套餐的周额度（网友估算中间值）×{" "}
+        {WEEKS_PER_MONTH}，可以改；官方那一档的美元按 1:{YUAN_PER_USD} 折成元。
       </p>
       <div className="qb-sub-calc">
         <div className="qb-sub-calc-inputs">
-          <div className="qb-sub-calc-row">
-            <Field
-              label="你为会员付了多少钱（每月）"
-              error={amountError}
-              hint="随便什么货币都行，下一格填汇率"
-              className="qb-sub-calc-grow"
-            >
-              {(p) => (
-                <input
-                  {...p}
-                  className="input"
-                  inputMode="decimal"
-                  placeholder="例如 40"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                />
-              )}
-            </Field>
-            <Field
-              label="汇率（1 美元 = ？）"
-              error={rateError}
-              hint="付的是美元就填 1"
-              className="qb-sub-calc-rate"
-            >
-              {(p) => (
-                <input
-                  {...p}
-                  className="input"
-                  inputMode="decimal"
-                  value={rate}
-                  onChange={(e) => setRate(e.target.value)}
-                />
-              )}
-            </Field>
-          </div>
+          <Field
+            label="你为会员付了多少钱（元 / 月）"
+            error={amountError}
+            hint={`付的是美元就先乘 ${YUAN_PER_USD}`}
+          >
+            {(p) => (
+              <input
+                {...p}
+                className="input"
+                inputMode="decimal"
+                placeholder="例如 40"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+            )}
+          </Field>
 
           <div>
             <label className="field-label" htmlFor={selectId}>
@@ -131,10 +120,10 @@ export function MultiplierCalculator() {
                 setValue(planValue(e.target.value));
               }}
             >
-              {PLANS.filter((p) => p.apiValue !== null).map((p) => (
+              {PLANS.filter((p) => p.weeklyValue !== null).map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name} —— {fmtUsd(p.webMonthly)}/月，实测上限 ≈{" "}
-                  {fmtUsd(p.apiValue!)}
+                  {p.name} —— {fmtUsd(p.webMonthly)}/月，周额度 ≈{" "}
+                  {fmtUsd(p.weeklyValue!)}
                 </option>
               ))}
               <option value={CUSTOM}>自己填一个月能用多少</option>
@@ -146,7 +135,7 @@ export function MultiplierCalculator() {
             error={valueError}
             hint={
               plan
-                ? `默认是 ${plan.name} 的实测上限，可以按你的实际用量改小`
+                ? `默认是 ${plan.name} 的周额度中间值 × ${WEEKS_PER_MONTH}，可以按你的实际用量改`
                 : "按你自己的用量估"
             }
           >
@@ -155,7 +144,7 @@ export function MultiplierCalculator() {
                 {...p}
                 className="input"
                 inputMode="decimal"
-                placeholder="例如 8000"
+                placeholder="例如 16000"
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
               />
@@ -194,21 +183,16 @@ export function MultiplierCalculator() {
               >
                 {fmtMultiplier(m)}
               </span>
-              <Pill tone={multiplierTone(m)}>
-                {multiplierTone(m) === "ok"
-                  ? "和官方订阅一个水平"
-                  : multiplierTone(m) === "warn"
-                    ? "逆向流量中转的价位"
-                    : "比官方 API 牌价还贵"}
-              </Pill>
+              <Pill tone={multiplierTone(m)}>{toneLabel(m)}</Pill>
               <p className="qb-sub-calc-line">
-                你每月付 {fmtUsd(spendUsd!)}，按「一个月能用 {fmtUsd(monthly!)}
+                你每月付 {fmtYuan(spend!)}，按「一个月能用 {fmtUsd(monthly!)}
                 」折算，相当于中转站倍率 {fmtMultiplier(m)}。
               </p>
               {plan && officialM !== null && (
                 <p className="qb-sub-calc-line">
-                  官方 {plan.name} 自己是 {fmtUsd(plan.webMonthly)} ÷{" "}
-                  {fmtUsd(plan.apiValue!)} = {fmtMultiplier(officialM)}。
+                  官方 {plan.name} 自己是 {fmtUsd(plan.webMonthly)} ×{" "}
+                  {YUAN_PER_USD} ÷ {fmtUsd(planMonthly!)} ={" "}
+                  {fmtMultiplier(officialM)}（美元按 1:{YUAN_PER_USD} 折成元）。
                 </p>
               )}
               {relayM !== null && (
@@ -219,7 +203,7 @@ export function MultiplierCalculator() {
                     <>
                       ，是官方的 <strong>{fmtTimes(times)}</strong>
                       ；同样一笔钱按官方倍率能换到 ≈{" "}
-                      {fmtUsd(spendUsd! / officialM)} 的用量
+                      {fmtUsd(spend! / officialM)} 的用量
                     </>
                   )}
                   。

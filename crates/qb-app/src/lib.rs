@@ -46,9 +46,13 @@ pub use qb_probe::probe;
 pub use qb_relay::relay;
 pub use qb_sysenv::sysenv;
 
+pub mod browser_probe;
 pub mod diagnostics;
+pub mod gemini_bridge;
+pub mod gpt_bridge;
 pub mod local_router;
 pub mod profile;
 pub mod snapshot;
+pub mod turnstate_marker;
 pub mod usecase;
 pub mod workspace;

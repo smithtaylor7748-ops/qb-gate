@@ -12,7 +12,9 @@
 //! | 行 | 它怎么跟出口打架 |
 //! |---|---|
 //! | 出口一致性 | 绕过代理和跟随代理量到的是两个国家 —— 面板显示的出口不是请求走的那条 |
-//! | IPv6 | 没关的话可能从另一条路出去，对端看到的是另一个地址 |
+//! | Anthropic 服务可达 | 不带凭据问 API：403 = Anthropic 不接受这个出口（2026-09-24，参照 CheckClaude） |
+//! | claude.ai 的解析 | 解析到内网 / 回环 = 被污染，请求根本到不了真的 claude.ai（同上） |
+//! | IPv6 | 实测 v6 出口：在另一个国家的话，走 v6 的请求露的是另一个地址（同上） |
 //! | 浏览器语言 | 网站拿到的 `Accept-Language` 和 IP 地区对不上 |
 //! | WebRTC | 可以绕开代理直接用 UDP 打出去，把真实地址捅给网页 |
 //! | 浏览器 DoH | DNS 走系统解析器，明文出去，解析请求的出口跟网页的出口不是一条 |
@@ -107,6 +109,11 @@ fn fixable(mut it: CheckItem) -> CheckItem {
 /// `langs` 由调用方读好传进来（`chrome_languages`）—— **判定不做 I/O**，
 /// 否则这一项的单测就得看跑测试那台机器上 Chrome 装没装、设了什么语言。
 fn browser_locale(langs: Option<String>, country: Option<&str>) -> CheckItem {
+    locale_item(langs, country, "Chrome 报的语言")
+}
+
+/// 判定本体。`source` 说的是这串语言是从哪来的（Chrome 的设置，还是默认浏览器实测发出的请求头）。
+fn locale_item(langs: Option<String>, country: Option<&str>, source: &str) -> CheckItem {
     let Some(langs) = langs else {
         return item(
             "browser_locale",
@@ -120,7 +127,7 @@ fn browser_locale(langs: Option<String>, country: Option<&str>) -> CheckItem {
             "browser_locale",
             "浏览器语言",
             State::Unknown,
-            format!("Chrome 报的语言是 {langs}。还没测出口 IP，对不上号 —— 先在总览点一次「重新检测」。"),
+            format!("{source}是 {langs}。还没测出口 IP，对不上号 —— 先在总览点一次「重新检测」。"),
         );
     };
     // 只判一件事：中文语言 + 非中文地区出口。别的组合不下判断 ——
@@ -133,7 +140,7 @@ fn browser_locale(langs: Option<String>, country: Option<&str>) -> CheckItem {
             "浏览器语言",
             State::Warn,
             format!(
-                "Chrome 报的语言是 {langs}，而出口在 {cc}。网站拿到的 Accept-Language 和 IP 地区对不上。\
+                "{source}是 {langs}，而出口在 {cc}。网站拿到的 Accept-Language 和 IP 地区对不上。\
                  面板只把这件事告诉你，不替你改浏览器或系统的身份。",
             ),
         )
@@ -142,9 +149,138 @@ fn browser_locale(langs: Option<String>, country: Option<&str>) -> CheckItem {
             "browser_locale",
             "浏览器语言",
             State::Pass,
-            format!("Chrome 的语言是 {langs}，出口在 {cc}，对得上。"),
+            format!("{source}是 {langs}，出口在 {cc}，对得上。"),
         )
     }
+}
+
+/// `zh-CN,zh;q=0.9,en;q=0.8` → `zh-CN、zh、en`。
+pub fn accept_languages(header: &str) -> String {
+    header
+        .split(',')
+        .filter_map(|p| p.split(';').next().map(str::trim))
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("、")
+}
+
+/// 从 UA 认个浏览器名，只为说清楚「测的是哪一个」。认不出就说「默认浏览器」。
+pub fn browser_name(ua: Option<&str>) -> String {
+    let ua = ua.unwrap_or("");
+    let ver = |key: &str| {
+        ua.split(key)
+            .nth(1)
+            .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next())
+            .filter(|v| !v.is_empty())
+            .map(|v| format!(" {v}"))
+            .unwrap_or_default()
+    };
+    if ua.contains("Edg/") {
+        format!("Edge{}", ver("Edg/"))
+    } else if ua.contains("Firefox/") {
+        format!("Firefox{}", ver("Firefox/"))
+    } else if ua.contains("OPR/") {
+        format!("Opera{}", ver("OPR/"))
+    } else if ua.contains("Chrome/") {
+        format!("Chrome{}", ver("Chrome/"))
+    } else {
+        "默认浏览器".into()
+    }
+}
+
+fn is_public(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(a) => {
+            let o = a.octets();
+            !(a.is_private()
+                || a.is_loopback()
+                || a.is_link_local()
+                || a.is_unspecified()
+                || (o[0] == 100 && (64..128).contains(&o[1])))
+        }
+        std::net::IpAddr::V6(a) => {
+            let s = a.segments()[0];
+            !(a.is_loopback()
+                || a.is_unspecified()
+                || (s & 0xfe00) == 0xfc00
+                || (s & 0xffc0) == 0xfe80)
+        }
+    }
+}
+
+/// 默认浏览器**实测**的 WebRTC 候选地址对出口（2026-09-24，参照 CheckClaude 的「WebRTC 出口」）。
+///
+/// 只看公网地址：局域网地址与 mDNS 名字不出本机。公网地址就是出口 = 同一条路，通过；
+/// 有**不是出口**的公网地址 = UDP 绕过了代理，网页看得到那个地址（关键项）。
+pub fn webrtc_measured(ips: &[String], exits: &[String], browser: &str) -> CheckItem {
+    let public: Vec<&String> = ips
+        .iter()
+        .filter(|ip| ip.parse().is_ok_and(is_public))
+        .collect();
+    if public.is_empty() {
+        return item(
+            "browser_webrtc",
+            "WebRTC 出口",
+            State::Pass,
+            format!("{browser}实测：WebRTC 没有暴露公网地址（只有局域网 / mDNS 候选，或者一个都没有）。"),
+        );
+    }
+    if exits.is_empty() {
+        return item(
+            "browser_webrtc",
+            "WebRTC 出口",
+            State::Unknown,
+            format!(
+                "{browser}实测到 WebRTC 公网地址 {}，但这一轮没测出出口 IP，比不了。",
+                public
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join("、")
+            ),
+        );
+    }
+    let others: Vec<&str> = public
+        .iter()
+        .filter(|ip| !exits.iter().any(|e| e == **ip))
+        .map(|s| s.as_str())
+        .collect();
+    if others.is_empty() {
+        item(
+            "browser_webrtc",
+            "WebRTC 出口",
+            State::Pass,
+            format!(
+                "{browser}实测：WebRTC 暴露的就是出口（{}），走的是同一条路。",
+                exits.join("、")
+            ),
+        )
+    } else {
+        fixable(item(
+            "browser_webrtc",
+            "WebRTC 出口",
+            State::Fail,
+            format!(
+                "{browser}实测：WebRTC 暴露了 {}，不是出口 {} —— UDP 绕过了代理，网页看得到这个地址。\
+                 代理开 TUN 全局接管 UDP，或者把 Chrome 的 WebRtcIPHandling 收紧到 disable_non_proxied_udp。",
+                others.join("、"),
+                exits.join("、")
+            ),
+        ))
+    }
+}
+
+/// 从真实浏览器的报告里取出页面交回的 WebRTC 地址。页面交回的是不可信数据：只收字符串、最多 16 个。
+fn report_webrtc(page_json: &str) -> Option<Vec<String>> {
+    let v: serde_json::Value = serde_json::from_str(page_json).ok()?;
+    let arr = v.get("webrtc")?.as_array()?;
+    Some(
+        arr.iter()
+            .filter_map(|x| x.as_str())
+            .take(16)
+            .map(|s| s.chars().take(64).collect())
+            .collect(),
+    )
 }
 
 /// 读 Chrome 各个 Profile 的 `intl.accept_languages`，去重后拼成一串。
@@ -319,12 +455,37 @@ pub async fn scan(country: Option<String>) -> EgressChecks {
     // 阻塞任务挂了也要给出一份能看的报告 —— 整项白屏比少几行糟得多。
     let audit = local.await.unwrap_or_default();
 
+    // 一小时内用默认浏览器实测过（`browser_probe`）：浏览器语言与 WebRTC 两行改用实测 ——
+    // 请求头里真正发出去的 Accept-Language、真正收到的 WebRTC 候选地址，任何浏览器都算，
+    // 不再只看 Chrome 的设置与策略。没测过就退回原来的读法。
+    let report = crate::browser_probe::fresh_report();
+    let browser = report
+        .as_ref()
+        .map(|r| format!("默认浏览器（{}）", browser_name(r.user_agent.as_deref())));
+    let locale = match (&report, &browser) {
+        (Some(r), Some(b)) if r.accept_language.is_some() => locale_item(
+            r.accept_language.as_deref().map(accept_languages),
+            country.as_deref(),
+            &format!("{b}实测发出的 Accept-Language "),
+        ),
+        _ => browser_locale(chrome_languages(), country.as_deref()),
+    };
+    let webrtc_row = match (&report, &browser) {
+        (Some(r), Some(b)) => match report_webrtc(&r.page_json) {
+            Some(ips) => webrtc_measured(&ips, &checkup.exit_ips, b),
+            None => webrtc(&audit),
+        },
+        _ => webrtc(&audit),
+    };
+
     EgressChecks {
         items: vec![
             take("egress_consistency"),
+            take("anthropic_reach"),
+            take("claude_dns"),
             take("ipv6"),
-            browser_locale(chrome_languages(), country.as_deref()),
-            webrtc(&audit),
+            locale,
+            webrtc_row,
             doh(&audit),
         ],
         checked_at,
@@ -377,6 +538,67 @@ mod tests {
             checked_at: String::new(),
             undoable: Vec::new(),
         }
+    }
+
+    /// 真实浏览器实测的 WebRTC：候选地址就是出口不算泄露；有别的公网地址才算（关键项）。
+    #[test]
+    fn measured_webrtc_is_judged_against_the_exit() {
+        let exits = vec!["203.0.113.7".to_string()];
+        let b = "默认浏览器（Chrome 128）";
+        assert_eq!(webrtc_measured(&[], &exits, b).state, State::Pass);
+        assert_eq!(
+            webrtc_measured(&["192.168.1.9".into(), "10.0.0.2".into()], &exits, b).state,
+            State::Pass,
+            "局域网地址不出本机"
+        );
+        assert_eq!(
+            webrtc_measured(&["203.0.113.7".into()], &exits, b).state,
+            State::Pass
+        );
+        let leak = webrtc_measured(&["198.51.100.4".into()], &exits, b);
+        assert_eq!(leak.state, State::Fail);
+        assert!(leak.detail.contains("198.51.100.4"));
+        assert_eq!(
+            webrtc_measured(&["198.51.100.4".into()], &[], b).state,
+            State::Unknown
+        );
+    }
+
+    #[test]
+    fn accept_language_headers_and_browser_names() {
+        assert_eq!(accept_languages("zh-CN,zh;q=0.9,en;q=0.8"), "zh-CN、zh、en");
+        assert_eq!(accept_languages("en-US"), "en-US");
+        let chrome = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
+        assert_eq!(browser_name(Some(chrome)), "Chrome 128");
+        assert_eq!(
+            browser_name(Some(&format!("{chrome} Edg/128.0.1"))),
+            "Edge 128"
+        );
+        assert_eq!(
+            browser_name(Some(
+                "Mozilla/5.0 (Windows NT 10.0; rv:130.0) Gecko/20100101 Firefox/130.0"
+            )),
+            "Firefox 130"
+        );
+        assert_eq!(browser_name(None), "默认浏览器");
+        // 实测发出的中文 Accept-Language + 美国出口：警告，而且写明是哪个浏览器发的。
+        let it = locale_item(
+            Some(accept_languages("zh-CN,zh;q=0.9")),
+            Some("US"),
+            "默认浏览器（Chrome 128）实测发出的 Accept-Language ",
+        );
+        assert_eq!(it.state, State::Warn);
+        assert!(it.detail.starts_with("默认浏览器（Chrome 128）"));
+    }
+
+    #[test]
+    fn the_report_webrtc_list_is_read_defensively() {
+        assert_eq!(
+            report_webrtc(r#"{"webrtc":["203.0.113.7",5,"x"]}"#),
+            Some(vec!["203.0.113.7".to_string(), "x".to_string()])
+        );
+        assert_eq!(report_webrtc(r#"{"v":1}"#), None);
+        assert_eq!(report_webrtc("not json"), None);
     }
 
     /// ⛔ 查不出来的项从分子分母里一起去掉 —— 跟 `score.ts` 顶上那条同理。

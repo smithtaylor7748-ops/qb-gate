@@ -217,13 +217,25 @@ fn mutation_script(targets: &[Ipv6Binding]) -> Result<String> {
         {
             return Err(GateError::Other("网卡实例标识无效，未修改 IPv6".into()));
         }
-        plan.push(serde_json::json!({"id": b.id, "enabled": b.enabled}));
+        // ⛔ **一个双引号都不许出现在这段脚本里**，所以计划用 PowerShell 的
+        // 数组字面量写，不用 JSON。理由在 `set_bindings` 的说明里：整段脚本要作为
+        // **一个参数**穿过 `Start-Process -ArgumentList`，而 PowerShell 5.1 在那里
+        // 会把内嵌的 `"` 吃掉 —— 实测的下场是子进程 **exit 0 但一件事都没做**。
+        //
+        // id 的字符集上面刚校验过（只有 `{`、`}`、十六进制、`-`、后缀 `::ms_tcpip6`），
+        // 拼不出引号来，所以单引号包起来是安全的。
+        plan.push(format!(
+            "  [pscustomobject]@{{ id = '{}'; enabled = ${} }}",
+            b.id, b.enabled
+        ));
     }
-    let plan = serde_json::to_string(&plan)?;
+    let plan = plan.join("\n");
     Ok(format!(
         r#"$ErrorActionPreference = 'Stop'
 try {{
-  $plan = ConvertFrom-Json '{plan}'
+  $plan = @(
+{plan}
+  )
   $failed = $false
   foreach ($item in $plan) {{
     try {{
@@ -239,14 +251,41 @@ exit 0"#
     ))
 }
 
+/// 提权跑一遍 [`mutation_script`]。
+///
+/// # ⛔ 这里为什么**不再**用 `-EncodedCommand`（0.29.0）
+///
+/// 老写法是 `Start-Process -Verb RunAs -WindowStyle Hidden -ArgumentList @(…, '-EncodedCommand', $encoded)`。
+/// `-Verb RunAs` + `-WindowStyle Hidden` + `-EncodedCommand` **三件凑在一条命令行上**，
+/// 是 Defender 那套启发式里权重最高的 PowerShell 组合之一 —— 而这台机器 2026-09
+/// 连着三次 `Trojan:Win32/Bearfoos.A!ml`（见 `docs/ANTIVIRUS.zh-CN.md`）。
+/// 提权和隐藏窗口是功能需要，留着；base64 只是个传输技巧，可以不要。
+///
+/// # ⚠ 但 base64 当初是为了绕一个真坑，不能直接删了事
+///
+/// 整段脚本要作为**一个参数**穿过 `Start-Process -ArgumentList`。PowerShell 5.1 在
+/// 这一步会把参数里的双引号吃掉 —— 2026-09-20 实测三种形状：
+///
+/// | 内层脚本 | 结果 |
+/// |---|---|
+/// | 单行、无引号 | 正常 |
+/// | 单行、**含双引号**（老脚本的 JSON） | **exit 0，但什么都没做** |
+/// | 多行、只有单引号 | 正常 |
+///
+/// 中间那一行才是关键：它**不报错**。所以真正的修法不是「换个传法」，而是让
+/// [`mutation_script`] **一个双引号都不产生**（计划改用 PowerShell 数组字面量，
+/// 不用 `ConvertFrom-Json`）。多行是安全的，实测过。
+///
+/// ⛔ **以后往那段脚本里加任何带 `"` 的东西之前，先回来读这一段。**
+/// 加了之后的症状是「点了没反应、也没有报错」，而不是编译失败。
 #[cfg(windows)]
 fn set_bindings(targets: &[Ipv6Binding]) -> Result<()> {
     let inner = crate::process::ps_utf8(&mutation_script(targets)?).replace('\'', "''");
     let script = format!(
         r#"$ErrorActionPreference = 'Stop'
+$inner = '{inner}'
 try {{
-  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('{inner}'))
-  $child = Start-Process -FilePath "$PSHOME\powershell.exe" -Verb RunAs -WindowStyle Hidden -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) -PassThru -Wait
+  $child = Start-Process -FilePath "$PSHOME\powershell.exe" -Verb RunAs -WindowStyle Hidden -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', $inner) -PassThru -Wait
   exit $child.ExitCode
 }} catch {{ [Console]::Error.WriteLine($_.Exception.Message); exit 1 }}"#
     );
@@ -398,6 +437,28 @@ mod tests {
         assert!(s.contains("-InputObject $binding[0]"));
         b.id = "'; Write-Host bad; '".into();
         assert!(mutation_script(&[b]).is_err());
+    }
+
+    /// ⛔ 这段脚本里**一个双引号都不许有**。
+    ///
+    /// 它要作为一个参数穿过 `Start-Process -ArgumentList`，而 PowerShell 5.1 在那里
+    /// 会把内嵌的 `"` 吃掉。2026-09-20 实测：含双引号的那一版子进程 **exit 0
+    /// 而一张网卡都没改** —— 不报错、界面上看着像成功。老版本用 `-EncodedCommand`
+    /// 绕开这件事，0.29.0 为了不触发杀软的启发式改成了 `-Command`，
+    /// 于是这条不变量成了硬要求。
+    ///
+    /// 删这条测试，等于把「点了没反应也没有报错」放回来。
+    #[test]
+    fn the_elevated_script_never_contains_a_double_quote() {
+        let s = mutation_script(&[binding(1, true), binding(2, false)]).unwrap();
+        assert!(
+            !s.contains('"'),
+            "提权脚本里出现了双引号，它会被 Start-Process 吃掉而且不报错：\n{s}"
+        );
+        // 计划真的带上了两张网卡，而且布尔值是 PowerShell 认的写法。
+        assert!(s.contains("$true"));
+        assert!(s.contains("$false"));
+        assert_eq!(s.matches("[pscustomobject]").count(), 2);
     }
     #[test]
     fn no_adapters_is_not_reported_as_disabled() {

@@ -24,6 +24,7 @@ import { api } from "../lib/api";
 import { R } from "../lib/resources";
 import { invalidate, useResource, useSession } from "../lib/store";
 import { markStep } from "../lib/progress";
+import { slotName } from "../lib/slotName";
 import { workspaceApi, useAction } from "../lib/workspace";
 import { requestNewSlot } from "../pages/accounts/AccountDialogs";
 import { BROWSER_REINSTALL_PROMPT, CLEAN_REINSTALL_PROMPT } from "../prompts";
@@ -446,7 +447,7 @@ export default function Onboarding() {
               {slots.map((s) => (
                 <Row key={s.label} side={s.active ? "当前" : ""}>
                   <span>
-                    {s.label}
+                    {slotName(s.email, s.label)}
                     {s.logged_in ? "" : " · 尚未登录"}
                   </span>
                 </Row>

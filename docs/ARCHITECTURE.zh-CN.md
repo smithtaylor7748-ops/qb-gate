@@ -20,21 +20,21 @@ flowchart TD
 
 ## 模块职责
 
-| 模块 | 职责 |
-|---|---|
-| `features/` | 工作台、官方账户、中转站、扩展中心、环境与设置；旧叶子检测页面作为环境子页使用 |
-| `lib/store.ts` | TanStack Query 兼容层、取消失效请求、页面会话草稿；无自制请求缓存 |
-| `lib/workspace.ts` | 业务 IPC、统一操作错误与状态失效；Rust 导出类型在 `lib/generated/` |
-| `commands.rs` | IPC 参数、协调器、操作记录、状态事件 |
-| `workspace.rs` | 身份分离、配置解析与生成、引用检查、迁移与启动方案 |
-| `repository.rs` | SQLite schema、事务、带版本的旧数据迁移；密钥为 DPAPI 密文 |
-| `config_io.rs` | 文件读错误区分、预览指纹、写入日志、SQLite 提交标记、恢复与逆向编辑 |
-| `sessions.rs` | 子进程环境净化、悬停启动、作业归属、创建时间核验与进程树停止 |
-| `operations.rs` | 后台互斥、修订事件、任务记录、可安全取消的网络阶段 |
-| `diagnostics.rs` | 显式 HTTP 诊断、响应与流式校验、脱敏请求导出 |
-| `extensions.rs` | 固定版本目录、Skills 文件管理、MCP 配置与 SDK 连接验证 |
-| `startup.rs` | 中断恢复与恢复页面状态 |
-| `install/inventory.rs` / `gate/judge.rs` | 唯一安装清单与门禁判定入口 |
+| 模块                                     | 职责                                                                           |
+| ---------------------------------------- | ------------------------------------------------------------------------------ |
+| `features/`                              | 工作台、官方账户、中转站、扩展中心、环境与设置；旧叶子检测页面作为环境子页使用 |
+| `lib/store.ts`                           | TanStack Query 兼容层、取消失效请求、页面会话草稿；无自制请求缓存              |
+| `lib/workspace.ts`                       | 业务 IPC、统一操作错误与状态失效；Rust 导出类型在 `lib/generated/`             |
+| `commands.rs`                            | IPC 参数、协调器、操作记录、状态事件                                           |
+| `workspace.rs`                           | 身份分离、配置解析与生成、引用检查、迁移与启动方案                             |
+| `repository.rs`                          | SQLite schema、事务、带版本的旧数据迁移；密钥为 DPAPI 密文                     |
+| `config_io.rs`                           | 文件读错误区分、预览指纹、写入日志、SQLite 提交标记、恢复与逆向编辑            |
+| `sessions.rs`                            | 子进程环境净化、悬停启动、作业归属、创建时间核验与进程树停止                   |
+| `operations.rs`                          | 后台互斥、修订事件、任务记录、可安全取消的网络阶段                             |
+| `diagnostics.rs`                         | 显式 HTTP 诊断、响应与流式校验、脱敏请求导出                                   |
+| `extensions.rs`                          | 固定版本目录、Skills 文件管理、MCP 配置与 SDK 连接验证                         |
+| `startup.rs`                             | 中断恢复与恢复页面状态                                                         |
+| `install/inventory.rs` / `gate/judge.rs` | 唯一安装清单与门禁判定入口                                                     |
 
 ## 状态边界
 

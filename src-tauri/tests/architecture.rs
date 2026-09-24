@@ -292,6 +292,56 @@ fn the_watchdog_still_routes_through_the_judge() {
     );
 }
 
+/// ⛔ `operations::exclusive()` 是 tokio 的 `Mutex`，**不可重入**：拿着锁的命令再调一个
+/// 自己也去拿锁的函数，就在自己手里的锁上永远等着 —— 按钮转圈不停、没有报错、
+/// 没有一段进度。0.22.6 到 0.27.0 的 `managed_install` 正是这样（`install_run` 与
+/// `upgrade_execute` 拿了锁再调它，它开头又拿一次），软件页的「安装 / 重新下载安装」
+/// 和托管那份的「升级」从来没有真正跑通过，而待办里只标着「未验证」。
+///
+/// 这条钉的是：`commands/` 里凡是被 `#[tauri::command]` 拿着锁调用的**私有辅助函数**
+/// （目前就 `managed_install` 一个），函数体里不许再出现 `operations::exclusive()`。
+/// 编译器看不出死锁，单测又碰不到 Tauri 命令，只能读源码。
+#[test]
+fn helpers_called_under_the_exclusive_lock_never_take_it_again() {
+    let body = module_files()
+        .values()
+        .flatten()
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .map(|s| strip(&s))
+        .find(|s| s.contains("async fn managed_install("))
+        .expect("找不到 `async fn managed_install(` —— 它改名了？把这条测试一起改。");
+    let at = body.find("async fn managed_install(").unwrap();
+    // 函数体到下一个顶层 `fn` / `#[tauri::command]` 为止。
+    let rest = &body[at..];
+    let end = rest[1..]
+        .find("\n#[tauri::command]")
+        .or_else(|| rest[1..].find("\npub fn "))
+        .or_else(|| rest[1..].find("\npub async fn "))
+        .map(|i| i + 1)
+        .unwrap_or(rest.len());
+    let fn_body = &rest[..end];
+    assert!(
+        !fn_body.contains("operations::exclusive()"),
+        "managed_install 里又出现了 `operations::exclusive()` —— 调用方已经拿着这把锁，\
+         再拿一次就是死锁（tokio Mutex 不可重入）。"
+    );
+    // 反向钉住：两个调用方确实是拿着锁调它的，否则上面那条就成了没有前提的规矩。
+    for caller in ["pub async fn install_run(", "pub async fn upgrade_execute("] {
+        let at = body
+            .find(caller)
+            .unwrap_or_else(|| panic!("找不到 `{caller}`"));
+        let seg = &body[at..];
+        let call = seg
+            .find("managed_install(")
+            .expect("调用方里不再调 managed_install 了？");
+        assert!(
+            seg[..call].contains("operations::exclusive()"),
+            "{caller} 调 managed_install 之前没有拿 operations::exclusive() —— \
+             那这条测试的前提就变了，重新想一想锁该在哪一层。"
+        );
+    }
+}
+
 /// ⛔ 中转站的熔断**绝不许**触发官方账户槽位切换。
 ///
 /// # 为什么这是一条测试而不是一条约定

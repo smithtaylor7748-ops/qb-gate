@@ -70,6 +70,16 @@
   --danger-bg: #381e1b;
   --danger-border: #754036;
 
+  /* 图表（用量明细页的柱状图，2026-09-24）。单系列、一种颜色，跟强调色同色相。
+     深色不直接用 --accent：#e18a65 的 OKLCH 亮度 0.717，超出深色图表的亮度带（0.48–0.67），
+     大块柱子会显得发白。#d27a55 是同色相里最亮的一档达标色（dataviz 的
+     validate_palette.js：亮度带 / 彩度 / 对 #211d18 的对比度三项都过）。
+     悬停那一档往亮处走一步 —— 「被点到的那根亮起来」。
+     --chart-grid 是网格线：比边框再淡一点，只起定位作用。 */
+  --chart-1: #d27a55;
+  --chart-1-hover: #e18a65;
+  --chart-grid: #2f2821;
+
   --mono: ui-monospace, "Cascadia Mono", "Consolas", monospace;
 
   /* 圆角：旧代码里 `.card` 写死 12px 绕过了 `--radius: 8px`，这里给三档，
@@ -117,6 +127,10 @@
     --danger: #ac3934;
     --danger-bg: #fbeceb;
     --danger-border: #e8bdb9;
+
+    --chart-1: #b55232;
+    --chart-1-hover: #c76241;
+    --chart-grid: #ece7de;
   }
 }
 
@@ -148,6 +162,10 @@
   --danger: #ac3934;
   --danger-bg: #fbeceb;
   --danger-border: #e8bdb9;
+
+  --chart-1: #b55232;
+  --chart-1-hover: #c76241;
+  --chart-grid: #ece7de;
 }
 
 @theme inline {

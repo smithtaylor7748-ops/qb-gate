@@ -11,4 +11,9 @@ secrets: Array<SecretHit>,
 /**
  * 相关环境变量的清单。值都掩码过，见 `mask_env_value`。
  */
-env: Array<EnvHit>, };
+env: Array<EnvHit>, 
+/**
+ * 这一轮量到的出口地址：绕过系统代理那一路的 IP，外加（有的话）IPv6 出口。
+ * 真实浏览器的 WebRTC 候选地址拿它比 —— 候选地址就是出口的话不算泄露。
+ */
+exit_ips: Array<string>, };

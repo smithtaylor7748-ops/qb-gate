@@ -41,6 +41,7 @@ import {
 } from "./DnsPanel";
 import { EgressResult, EgressRunButton, EgressWhy } from "./EgressPanel";
 import {
+  BrowserProbeCard,
   LocalCheckup,
   SignalsBreakdown,
   SignalsFixable,
@@ -121,6 +122,7 @@ export function ObjectDetail({ id }: { id: ObjectId }) {
       return (
         <>
           <SignalsScore />
+          <BrowserProbeCard />
           <SignalsBreakdown />
           <SignalsFixable />
           <LocalCheckup />

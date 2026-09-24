@@ -3,4 +3,4 @@
 /**
  * 怎么处理这一项。
  */
-export type PurgeAction = "delete_file" | "delete_dir" | "npm_uninstall" | "winget_uninstall" | "scoop_uninstall" | "registry_delete" | "env_unset" | "path_entry_remove" | "shell_line_remove" | "credential_delete" | "startup_remove";
+export type PurgeAction = "delete_file" | "delete_dir" | "npm_uninstall" | "winget_uninstall" | "scoop_uninstall" | "registry_delete" | "env_unset" | "path_entry_remove" | "shell_line_remove" | "credential_delete" | "startup_remove" | "appx_remove";

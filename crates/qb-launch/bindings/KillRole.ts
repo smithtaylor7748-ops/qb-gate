@@ -6,4 +6,4 @@
  * 切账户的确认框按它报数：「会关掉：桌面端 13 个、Claude Code 会话 2 个、酒馆桥接 1 个」。
  * （v0.8.0 还拿它决定切完「重新打开哪个」；v0.9.0 起切完不启动任何东西。）
  */
-export type KillRole = "desktop" | "code" | "bridge";
+export type KillRole = "desktop" | "code" | "bridge" | "antigravity";

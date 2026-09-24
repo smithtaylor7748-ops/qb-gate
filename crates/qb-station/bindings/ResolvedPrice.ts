@@ -4,7 +4,16 @@ import type { UnitPrice } from "./UnitPrice";
 /**
  * 查出来的一条价,连同它是抓回来的还是内置的。
  */
-export type ResolvedPrice = { input: UnitPrice, output: UnitPrice, cache_read: UnitPrice, cache_write: UnitPrice, currency: string, source_url: string, verified_at: string, 
+export type ResolvedPrice = { input: UnitPrice, output: UnitPrice, cache_read: UnitPrice, 
+/**
+ * 5 分钟档缓存写。中转站那套四类判定([`PriceCategory::CacheWrite`])用的就是它。
+ */
+cache_write: UnitPrice, 
+/**
+ * 1 小时档缓存写。官方标了就是 `Published`,没标按 [`CACHE_WRITE_1H_RATIO`] 推。
+ * 只给用量折算用 —— 中转站的四类判定不认这一档。
+ */
+cache_write_1h: UnitPrice, currency: string, source_url: string, verified_at: string, 
 /**
  * 这一条是这次启动抓回来的(`true`),还是内置快照(`false`)。
  * **界面要分得出来** —— 内置快照可能已经过期。

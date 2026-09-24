@@ -29,4 +29,5 @@ pub mod station;
 pub mod system;
 pub mod workspace;
 
+pub mod antigravity;
 pub mod codex_commands;

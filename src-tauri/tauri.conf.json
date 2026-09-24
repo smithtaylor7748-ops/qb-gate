@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "QB Gate",
-  "version": "0.24.8",
+  "version": "0.25.3",
   "identifier": "com.qbgate.panel",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -47,6 +47,9 @@
       "../docs/dependencies.json": "licenses/dependencies.json"
     },
     "shortDescription": "Local AI client workspace",
-    "license": "AGPL-3.0-only"
+    "license": "AGPL-3.0-only",
+    "publisher": "smithtaylor7748-ops",
+    "homepage": "https://github.com/smithtaylor7748-ops/qb-gate",
+    "copyright": "Copyright (C) 2026 smithtaylor7748-ops. AGPL-3.0-only."
   }
 }

@@ -9,7 +9,7 @@
  * 下一个人挪 `Home` 的时候就会带出一个莫名其妙的 import 环。
  */
 
-export type Side = "claude" | "gpt";
+export type Side = "claude" | "gpt" | "antigravity";
 
 /** 会话态的键。`Home` 与侧栏读写的是同一个。 */
 export const SIDE_KEY = "home.side";
@@ -20,5 +20,11 @@ export const SIDES: Array<{ id: Side; label: string; hint: string }> = [
     label: "Claude",
     hint: "槽位 · Claude Code / 桌面端 / 酒馆",
   },
-  { id: "gpt", label: "Codex", hint: "Codex 桌面端 · 账户登录与用量" },
+  { id: "gpt", label: "GPT", hint: "Codex 桌面端 · 账户登录与用量" },
+  // 0.26.0。反重力本体没有槽位（令牌在凭据管理器）；这一侧放启动 / 汉化引擎 / 酒馆用的 Gemini CLI 槽位。
+  {
+    id: "antigravity",
+    label: "反重力",
+    hint: "Antigravity Hub / IDE · 汉化与审批 · Gemini CLI",
+  },
 ];

@@ -7,6 +7,19 @@
 //! 项目划分参考 check-cc 与 claude-antiban-macos（都是 MIT）的体检清单，
 //! Windows 侧的读法是自己写的。
 //!
+//! 2026-09-24 按 [CheckClaude](https://github.com/zzusec/CheckClaude)（MIT，© 2026 zzusec）
+//! 补了三组，判法自己写：
+//!
+//! | 项 | 原来 | 现在 |
+//! |---|---|---|
+//! | 代理形态（`proxy`） | 只读 `ProxyEnable` —— PAC 开着也说「系统代理没开」 | 读 PAC / 自动检测，再看默认路由是不是被虚拟网卡接走（TUN） |
+//! | IPv6（`ipv6`） | 网卡上开着 IPv6 就警告 | 实测只有 v6 的回显服务：有没有 v6 出口、在哪个国家、跟 IPv4 比 |
+//! | Anthropic 服务可达（`anthropic_reach`） | 没有 | 不带凭据问 API：401 = 地区放行，403 = 地区拦截 |
+//! | claude.ai 的解析（`claude_dns`） | 没有 | 系统解析器解出来落在哪一段：fake-ip / Anthropic / Cloudflare / 内网（被污染） |
+//!
+//! 后两项与 IPv6 进「出口一致性」那 10 分（`usecase::egress_checks`），403、被污染、
+//! v6 出口在别的国家三种是**关键项**：界面评分封顶（`src/lib/score.ts`）。
+//!
 //! # 为什么大部分项「只报告不代劳」
 //!
 //! 使用者选的是「诊断 + 修可控项」。可是这几项里真正**安全可逆**的只有时区：
@@ -102,53 +115,529 @@ fn reg_query(_path: &str, _name: &str) -> Option<String> {
 
 // ------------------------------------------------------------------ 各项
 
-fn check_proxy() -> CheckItem {
+// ------------------------------------------------------------ 代理形态
+
+/// 系统代理这一层的设置（`HKCU\…\Internet Settings`）。读不出来的项是 `None`。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ProxySettings {
+    pub enabled: Option<bool>,
+    pub server: Option<String>,
+    /// PAC 脚本地址（`AutoConfigURL`）。**0.25.1 之前这一项根本没读** ——
+    /// PAC 开着、`ProxyEnable` 是 0 时，面板照样说「系统代理没开，出口由路由/TUN 决定」。
+    pub pac: Option<String>,
+    /// 「自动检测设置」（WPAD）。读自 `Connections\DefaultConnectionSettings` 的标志位。
+    pub auto_detect: Option<bool>,
+}
+
+/// 默认路由（`0.0.0.0/0`，或 VPN 常用的 `0.0.0.0/1` + `128.0.0.0/1` 两半）挂在哪张网卡上。
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct RouteRow {
+    pub prefix: String,
+    pub alias: String,
+    /// 路由跃点 + 接口跃点。小的赢。
+    pub metric: i64,
+    /// `Get-NetAdapter` 的 `HardwareInterface`：物理网卡是 `true`，TUN / TAP / WireGuard 这类是 `false`。
+    pub hardware: bool,
+    pub desc: String,
+    pub up: bool,
+}
+
+/// `DefaultConnectionSettings` 那串十六进制里第 9 个字节是标志位：
+/// `0x01` 直连、`0x02` 手动代理、`0x04` PAC、`0x08` 自动检测。
+pub fn auto_detect_from(hex: &str) -> Option<bool> {
+    let b = u8::from_str_radix(hex.get(16..18)?, 16).ok()?;
+    Some(b & 0x08 != 0)
+}
+
+fn read_proxy_settings() -> ProxySettings {
     const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
-    let enabled = reg_query(KEY, "ProxyEnable").map(|v| v.ends_with('1'));
-    match enabled {
-        None => item("proxy", "系统代理", State::Unknown, "读不出系统代理设置"),
-        Some(false) => item(
-            "proxy",
-            "系统代理",
-            State::Pass,
-            "系统代理没开 —— 出口由路由/TUN 决定，跟面板量到的是同一条路",
-        ),
-        Some(true) => {
-            let server = reg_query(KEY, "ProxyServer").unwrap_or_else(|| "（读不出地址）".into());
-            let mut it = item(
-                "proxy",
-                "系统代理",
-                State::Warn,
-                format!(
-                    "系统代理开着（{server}）。面板测出口时是绕过系统代理的，\
-                     所以面板看到的出口和走系统代理的程序看到的可能不是同一个。"
-                ),
-            );
-            it.manual = Some(
-                "要关就去「设置 → 网络和 Internet → 代理」里关。\
-                 面板不替你关 —— 你的网可能正是靠它出去的，关掉会当场断网。"
-                    .into(),
-            );
-            it
-        }
+    ProxySettings {
+        enabled: reg_query(KEY, "ProxyEnable").map(|v| v.ends_with('1')),
+        server: reg_query(KEY, "ProxyServer"),
+        pac: reg_query(KEY, "AutoConfigURL").filter(|v| !v.trim().is_empty()),
+        auto_detect: reg_query(&format!(r"{KEY}\Connections"), "DefaultConnectionSettings")
+            .and_then(|hex| auto_detect_from(&hex)),
     }
 }
 
-fn check_ipv6() -> CheckItem {
-    let mut it = match super::ipv6::bindings() {
-        Ok(rows) if !rows.is_empty() && rows.iter().all(|b| !b.enabled) => item(
-            "ipv6", "IPv6", State::Pass,
-            format!("已核验 {} 张网卡的 IPv6 绑定均关闭（含隐藏网卡）；不代表 Windows 内部 IPv6 回环被移除", rows.len()),
-        ),
-        Ok(rows) if !rows.is_empty() => item(
-            "ipv6", "IPv6", State::Warn,
-            format!("{} / {} 张网卡仍启用 IPv6；隧道仅接管 IPv4 时可能出现出口不一致", rows.iter().filter(|b| b.enabled).count(), rows.len()),
-        ),
-        Ok(_) => item("ipv6", "IPv6", State::Unknown, "没有读到网卡，无法确认 IPv6 状态"),
-        Err(e) => item("ipv6", "IPv6", State::Unknown, format!("读取 IPv6 状态失败：{e}")),
+/// 默认路由那几条挂在哪。读不出来是 `None`（不是「没有隧道」）。
+///
+/// 脚本里不拼任何外来的字符串，也不用双引号（整段走 `-Command`，坑 7.28）；
+/// 输出一律 `ConvertTo-Json -InputObject @(...)`，一条也是数组（坑 7.17）。
+#[cfg(windows)]
+fn read_default_routes() -> Option<Vec<RouteRow>> {
+    const SCRIPT: &str = "$ErrorActionPreference = 'Stop'; \
+        $rows = @(Get-NetRoute -AddressFamily IPv4 | Where-Object { $_.DestinationPrefix -in @('0.0.0.0/0','0.0.0.0/1','128.0.0.0/1') } | ForEach-Object { \
+          $a = Get-NetAdapter -InterfaceIndex $_.ifIndex -IncludeHidden -ErrorAction SilentlyContinue; \
+          $i = Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue; \
+          [pscustomobject]@{ prefix = [string]$_.DestinationPrefix; alias = [string]$_.InterfaceAlias; \
+            metric = [int64]$_.RouteMetric + [int64]$i.InterfaceMetric; hardware = [bool]$a.HardwareInterface; \
+            desc = [string]$a.InterfaceDescription; up = ([string]$a.Status -eq 'Up') } }); \
+        ConvertTo-Json -Compress -Depth 3 -InputObject $rows";
+    let out = crate::process::powershell_std(SCRIPT).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&out.stdout).ok()
+}
+
+#[cfg(not(windows))]
+fn read_default_routes() -> Option<Vec<RouteRow>> {
+    None
+}
+
+/// 默认路由是不是被一张虚拟网卡（TUN / TAP / WireGuard / 某个 VPN）接走了。
+///
+/// **按网卡的性质认，不按名字认** —— `xray_tun`、`Clash`、`Meta`、`sing-box`、`Wintun Userspace Tunnel`，
+/// 别人机器上叫什么都有可能（CLAUDE.md「别写死本机事实」）。Hyper-V 的虚拟交换机也是
+/// 「非硬件网卡」，但它是宿主机自己的网，不算隧道。
+pub fn tunnel_of(routes: &[RouteRow]) -> Option<&RouteRow> {
+    let is_tunnel = |r: &RouteRow| r.up && !r.hardware && !r.desc.contains("Hyper-V");
+    // VPN 常用的两半：比 0.0.0.0/0 更具体，一定赢。
+    if let Some(r) = routes
+        .iter()
+        .find(|r| (r.prefix == "0.0.0.0/1" || r.prefix == "128.0.0.0/1") && is_tunnel(r))
+    {
+        return Some(r);
+    }
+    routes
+        .iter()
+        .filter(|r| r.prefix == "0.0.0.0/0" && r.up)
+        .min_by_key(|r| r.metric)
+        .filter(|r| is_tunnel(r))
+}
+
+/// 「代理形态」这一项。纯函数：读取在调用方。
+///
+/// 参照 CheckClaude 的「代理形态」（TUN 全局 / 系统代理 / PAC），判法按本项目的口径：
+/// TUN 接管整机（含 UDP、DNS），跟面板量到的是同一条路 —— 通过；
+/// 系统代理与 PAC 只管认它的程序，PAC 还按网站分流 —— 警告，面板不替你改。
+pub fn proxy_form_item(s: &ProxySettings, routes: Option<&[RouteRow]>) -> CheckItem {
+    const ID: &str = "proxy";
+    const LABEL: &str = "代理形态";
+    let tun = routes.and_then(tunnel_of);
+    let tun_text = tun.map(|r| format!("TUN / 虚拟网卡接管了默认路由（{}）", r.alias));
+    let pac = s.pac.as_deref();
+
+    if let Some(url) = pac {
+        let mut it = item(
+            ID,
+            LABEL,
+            State::Warn,
+            format!(
+                "开着 PAC 自动分流（{url}）{}。认系统代理的程序（浏览器、桌面端）按网站分流，\
+                 不同网站可能从不同出口出去；面板「跟随系统代理」那一路也不认 PAC，出口一致性那一项看不到它。",
+                tun_text.as_deref().map(|t| format!("，同时{t}")).unwrap_or_default()
+            ),
+        );
+        it.manual = Some(
+            "要关就去「设置 → 网络和 Internet → 代理 → 使用设置脚本」里关，或者在代理软件里改成全局 / TUN。\
+             面板不替你关 —— 你的网可能正是靠它出去的。"
+                .into(),
+        );
+        return it;
+    }
+    if s.enabled == Some(true) {
+        let server = s.server.as_deref().unwrap_or("（读不出地址）");
+        let mut it = item(
+            ID,
+            LABEL,
+            State::Warn,
+            format!(
+                "系统代理开着（{server}）{}。面板测出口时是绕过系统代理的，\
+                 所以面板看到的出口和走系统代理的程序看到的可能不是同一个。",
+                tun_text
+                    .as_deref()
+                    .map(|t| format!("，同时{t}"))
+                    .unwrap_or_default()
+            ),
+        );
+        it.manual = Some(
+            "要关就去「设置 → 网络和 Internet → 代理」里关。\
+             面板不替你关 —— 你的网可能正是靠它出去的，关掉会当场断网。"
+                .into(),
+        );
+        return it;
+    }
+    let wpad = if s.auto_detect == Some(true) {
+        "（「自动检测设置」开着：网络里若有 WPAD 配置，浏览器会自己去拿一份 PAC。）"
+    } else {
+        ""
     };
-    it.manual = Some("可在「IP 纯净度 → 禁用本机 IPv6」查看实际网卡状态、应用或恢复原设置。开关默认开启，修改需要管理员授权。".into());
+    match (tun_text, routes, s.enabled) {
+        (Some(t), _, _) => item(
+            ID,
+            LABEL,
+            State::Pass,
+            format!(
+                "{t}，没开系统代理与 PAC：所有程序的流量（含 UDP 与 DNS）都从隧道出去，\
+                 跟面板量到的是同一条路。{wpad}"
+            ),
+        ),
+        (None, Some(_), Some(false)) => item(
+            ID,
+            LABEL,
+            State::Pass,
+            format!(
+                "没开系统代理、没开 PAC，也没看到隧道接管默认路由 —— 出口就是本机网络。\
+                 人在海外直连时这是正常的。{wpad}"
+            ),
+        ),
+        (None, None, Some(false)) => item(
+            ID,
+            LABEL,
+            State::Unknown,
+            "没开系统代理与 PAC；读不出默认路由挂在哪张网卡上，看不出有没有隧道。",
+        ),
+        _ => item(ID, LABEL, State::Unknown, "读不出系统代理设置"),
+    }
+}
+
+/// 网卡上的 IPv6 绑定。只报告，不下结论（结论看真实出口，见 [`ipv6_item`]）。
+fn ipv6_bindings_note(
+    bindings: &std::result::Result<Vec<super::ipv6::Ipv6Binding>, String>,
+) -> String {
+    match bindings {
+        Ok(rows) if !rows.is_empty() && rows.iter().all(|b| !b.enabled) => {
+            format!("{} 张网卡的 IPv6 绑定都关着（含隐藏网卡）。", rows.len())
+        }
+        Ok(rows) if !rows.is_empty() => format!(
+            "{} / {} 张网卡还开着 IPv6。",
+            rows.iter().filter(|b| b.enabled).count(),
+            rows.len()
+        ),
+        Ok(_) => "没有读到网卡的 IPv6 绑定。".into(),
+        Err(e) => format!("读网卡的 IPv6 绑定失败：{e}。"),
+    }
+}
+
+/// 「IPv6」这一项（2026-09-24 起看**真实出口**，参照 CheckClaude 的「IPv6 出口」）。
+///
+/// 原来只看网卡上 IPv6 开没开：开着就警告 —— 可很多宽带根本不给 v6，开着也漏不出去；
+/// 反过来网卡关了、隧道没接管 v6 的情况它也说不清。现在：
+///
+/// | 实测 | 结论 |
+/// |---|---|
+/// | 只有 v6 的回显服务都连不上 | 通过：没有 v6 出口 |
+/// | 回来的是 IPv4 | 通过：v6 请求被代理接走了 |
+/// | 有 v6 出口，跟 IPv4 同一个国家 | 通过 |
+/// | 有 v6 出口，跟 IPv4 **不是**同一个国家 | **失败**（关键项）：隧道没接管 v6，对端看得到另一个国家的地址 |
+/// | 有 v6 出口，查不到国家 / IPv4 国家没测到 | 警告 |
+///
+/// `exit` 为 `None`（这一轮没测成）时退回只看网卡绑定的老判法。
+pub fn ipv6_item(
+    bindings: &std::result::Result<Vec<super::ipv6::Ipv6Binding>, String>,
+    exit: Option<&crate::probe::reach::V6Exit>,
+    v4_countries: &[String],
+) -> CheckItem {
+    use crate::probe::reach::V6Exit;
+    let note = ipv6_bindings_note(bindings);
+    let mut it = match exit {
+        Some(V6Exit::None) => item(
+            "ipv6",
+            "IPv6",
+            State::Pass,
+            format!(
+                "测不到 IPv6 出口（只有 v6 的回显服务一个都连不上）—— 没有从 v6 漏出去的路。{note}"
+            ),
+        ),
+        Some(V6Exit::ViaProxy { ip }) => item(
+            "ipv6",
+            "IPv6",
+            State::Pass,
+            format!("IPv6 请求被代理接走了（回显看到的是 {ip}），本机没有自己的 v6 出口。{note}"),
+        ),
+        Some(V6Exit::Exit {
+            ip,
+            country: Some(cc),
+        }) => {
+            if v4_countries.iter().any(|c| c.eq_ignore_ascii_case(cc)) {
+                item(
+                    "ipv6",
+                    "IPv6",
+                    State::Pass,
+                    format!("有 IPv6 出口 {ip}，也在 {cc}，跟 IPv4 出口一致。{note}"),
+                )
+            } else if v4_countries.is_empty() {
+                item(
+                    "ipv6",
+                    "IPv6",
+                    State::Warn,
+                    format!(
+                        "有 IPv6 出口 {ip}，在 {cc}；IPv4 出口的国家这一轮没测到，比不了。{note}"
+                    ),
+                )
+            } else {
+                item(
+                    "ipv6",
+                    "IPv6",
+                    State::Fail,
+                    format!(
+                        "IPv6 出口 {ip} 在 {cc}，IPv4 出口在 {} —— 隧道没接管 IPv6，\
+                         走 v6 的请求会把另一个国家的地址露给对面。{note}",
+                        v4_countries.join("/")
+                    ),
+                )
+            }
+        }
+        Some(V6Exit::Exit { ip, country: None }) => item(
+            "ipv6",
+            "IPv6",
+            State::Warn,
+            format!("有 IPv6 出口 {ip}，但查不到它在哪个国家。{note}"),
+        ),
+        None => match bindings {
+            Ok(rows) if !rows.is_empty() && rows.iter().all(|b| !b.enabled) => item(
+                "ipv6",
+                "IPv6",
+                State::Pass,
+                format!("这一轮没测成 IPv6 出口；{note}"),
+            ),
+            Ok(rows) if !rows.is_empty() => item(
+                "ipv6",
+                "IPv6",
+                State::Warn,
+                format!("这一轮没测成 IPv6 出口；{note}隧道只接管 IPv4 时可能出现出口不一致。"),
+            ),
+            _ => item(
+                "ipv6",
+                "IPv6",
+                State::Unknown,
+                format!("这一轮没测成 IPv6 出口；{note}"),
+            ),
+        },
+    };
+    it.manual = Some(
+        "在代理软件里打开 IPv6 接管；或者用「IP 纯净度 → 禁用本机 IPv6」开关（需要管理员授权，能随时恢复原设置）。"
+            .into(),
+    );
     it
+}
+
+// ------------------------------------------------------------ 服务可达与解析
+
+fn reach_line(
+    name: &str,
+    o: &crate::probe::reach::HttpOutcome,
+    r: crate::probe::reach::Reach,
+) -> String {
+    use crate::probe::reach::Reach;
+    let code = o
+        .status
+        .map(|s| format!("HTTP {s}"))
+        .unwrap_or_else(|| o.error.clone().unwrap_or_else(|| "连不上".into()));
+    let what = match r {
+        Reach::Open => "通",
+        Reach::Blocked => "被拦（403）",
+        Reach::Challenge => "Cloudflare 验证页",
+        Reach::Unreachable => "连不上",
+        Reach::Other(_) => "异常",
+    };
+    format!("{name} {what}（{code}）")
+}
+
+/// 「Anthropic 服务可达」这一项（参照 CheckClaude 的「Anthropic API 可达」「claude.ai 可达」
+/// 「anthropic.com 可达」三项）。`via_proxy` 只在系统代理开着时有。
+///
+/// 判定以 API 那一个为准 —— 它是 Anthropic 自己对「这个出口能不能用」的回答：
+/// 403 就是地区拦截（**关键项**，评分封顶）。网页那两个只降级到警告：
+/// claude.ai 前面有一层人机验证，打不开不一定是地区的事。
+pub fn reach_item(
+    direct: &crate::probe::reach::ReachReport,
+    via_proxy: Option<&crate::probe::reach::ReachReport>,
+) -> CheckItem {
+    use crate::probe::reach::{classify_api, classify_site, Reach};
+    const ID: &str = "anthropic_reach";
+    const LABEL: &str = "Anthropic 服务可达";
+    let api = classify_api(&direct.api);
+    let web = classify_site(&direct.web);
+    let site = classify_site(&direct.site);
+    let lines = [
+        reach_line("API", &direct.api, api),
+        reach_line("claude.ai", &direct.web, web),
+        reach_line("anthropic.com", &direct.site, site),
+    ]
+    .join("；");
+    let proxy_note = via_proxy
+        .map(|p| {
+            let pa = classify_api(&p.api);
+            if pa == api {
+                String::new()
+            } else {
+                format!(
+                    " 跟随系统代理那一路不一样：{}（浏览器和桌面端走的是这一路）。",
+                    reach_line("API", &p.api, pa)
+                )
+            }
+        })
+        .unwrap_or_default();
+    let proxy_blocked = via_proxy.is_some_and(|p| classify_api(&p.api) == Reach::Blocked);
+
+    let mut it = match api {
+        Reach::Blocked => item(
+            ID,
+            LABEL,
+            State::Fail,
+            format!(
+                "Anthropic 的 API 回了 403：它不接受从这个出口来的请求（地区拦截）。{lines}。{proxy_note}"
+            ),
+        ),
+        Reach::Unreachable => item(
+            ID,
+            LABEL,
+            State::Fail,
+            format!("连不上 Anthropic 的 API。{lines}。{proxy_note}"),
+        ),
+        Reach::Open => {
+            let pages_ok = web == Reach::Open && site == Reach::Open;
+            if proxy_blocked {
+                item(
+                    ID,
+                    LABEL,
+                    State::Warn,
+                    format!("直连这一路放行（API 回 {}），但{proxy_note}{lines}。", status_of(&direct.api)),
+                )
+            } else if pages_ok {
+                item(
+                    ID,
+                    LABEL,
+                    State::Pass,
+                    format!(
+                        "不带密钥问 API 回 {}（缺密钥时的正常回答，说明这个出口放行），\
+                         claude.ai 与 anthropic.com 都打得开。{proxy_note}",
+                        status_of(&direct.api)
+                    ),
+                )
+            } else {
+                item(
+                    ID,
+                    LABEL,
+                    State::Warn,
+                    format!("API 放行了，但网页那两个有问题：{lines}。{proxy_note}"),
+                )
+            }
+        }
+        Reach::Challenge | Reach::Other(_) => item(
+            ID,
+            LABEL,
+            State::Unknown,
+            format!("API 回的不是能说明地区的答案。{lines}。{proxy_note}"),
+        ),
+    };
+    if it.state != State::Pass {
+        it.manual = Some(
+            "换到 Anthropic 支持地区的出口；确认代理是全局 / TUN 接管，而不是只有部分网站走代理。\
+             这一项只发了三个不带任何凭据的请求，跟你的账户无关。"
+                .into(),
+        );
+    }
+    it
+}
+
+fn status_of(o: &crate::probe::reach::HttpOutcome) -> String {
+    o.status
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "—".into())
+}
+
+/// 「claude.ai 的解析」这一项（参照 CheckClaude 的「claude.ai 解析」）。
+///
+/// 解析到私网 / 回环是被污染或被劫持（**关键项**）；解析到认不出的公网段只警告 ——
+/// 那也可能是代理用了自定义的 fake-ip 段。
+pub fn dns_item(rs: &[crate::probe::reach::Resolved]) -> CheckItem {
+    use crate::probe::reach::{classify_ip, DnsClass};
+    const ID: &str = "claude_dns";
+    const LABEL: &str = "claude.ai 的解析";
+    if rs.is_empty() {
+        return item(ID, LABEL, State::Unknown, "这一轮没解析。");
+    }
+    if let Some(r) = rs.iter().find(|r| r.addrs.is_empty()) {
+        let mut it = item(
+            ID,
+            LABEL,
+            State::Fail,
+            format!(
+                "{} 解析不出来（{}）。",
+                r.host,
+                r.error.as_deref().unwrap_or("没有地址")
+            ),
+        );
+        it.manual = Some("检查 DNS 设置，或者让代理接管 DNS（fake-ip 模式）。".into());
+        return it;
+    }
+    let mut worst = DnsClass::Anthropic;
+    let mut bad: Option<String> = None;
+    let rank = |c: DnsClass| match c {
+        DnsClass::Private => 3,
+        DnsClass::Other => 2,
+        _ => 0,
+    };
+    for r in rs {
+        for a in &r.addrs {
+            let Ok(ip) = a.parse() else { continue };
+            let c = classify_ip(ip);
+            if rank(c) > rank(worst) {
+                worst = c;
+                bad = Some(format!("{} → {a}", r.host));
+            }
+        }
+    }
+    let seen = rs
+        .iter()
+        .map(|r| format!("{} → {}", r.host, r.addrs.join(", ")))
+        .collect::<Vec<_>>()
+        .join("；");
+    let kind = |c: DnsClass| match c {
+        DnsClass::FakeIp => "代理接管（fake-ip）",
+        DnsClass::Anthropic => "Anthropic 自己的地址段",
+        DnsClass::Cloudflare => "Cloudflare 的地址段",
+        DnsClass::Private => "内网 / 回环地址",
+        DnsClass::Other => "认不出的公网地址",
+    };
+    match worst {
+        DnsClass::Private => {
+            let mut it = item(
+                ID,
+                LABEL,
+                State::Fail,
+                format!(
+                    "{} 是{}：claude.ai 不可能在那里 —— 解析被污染或被劫持了。{seen}。",
+                    bad.unwrap_or_default(),
+                    kind(DnsClass::Private)
+                ),
+            );
+            it.manual = Some("换加密 DNS（DoH），或者让代理接管 DNS（fake-ip 模式）。".into());
+            it
+        }
+        DnsClass::Other => {
+            let mut it = item(
+                ID,
+                LABEL,
+                State::Warn,
+                format!(
+                    "{} 不在 Anthropic / Cloudflare 的地址段，也不是常见的 fake-ip 段：可能被污染了。\
+                     如果你的代理用了自定义的 fake-ip 段，这一条可以忽略。{seen}。",
+                    bad.unwrap_or_default()
+                ),
+            );
+            it.manual = Some("换加密 DNS（DoH），或者让代理接管 DNS。".into());
+            it
+        }
+        _ => {
+            let first = rs
+                .first()
+                .and_then(|r| r.addrs.first())
+                .and_then(|a| a.parse().ok())
+                .map(classify_ip)
+                .unwrap_or(DnsClass::Anthropic);
+            item(
+                ID,
+                LABEL,
+                State::Pass,
+                format!("解析正常：{}。{seen}。", kind(first)),
+            )
+        }
+    }
 }
 
 fn check_doh() -> CheckItem {
@@ -625,6 +1114,9 @@ pub struct Checkup {
     pub secrets: Vec<SecretHit>,
     /// 相关环境变量的清单。值都掩码过，见 `mask_env_value`。
     pub env: Vec<EnvHit>,
+    /// 这一轮量到的出口地址：绕过系统代理那一路的 IP，外加（有的话）IPv6 出口。
+    /// 真实浏览器的 WebRTC 候选地址拿它比 —— 候选地址就是出口的话不算泄露。
+    pub exit_ips: Vec<String>,
 }
 
 /// 跑一轮体检。
@@ -643,8 +1135,9 @@ pub async fn scan() -> Checkup {
         let (sec_item, secrets) = check_secrets();
         let (env_item, env) = scan_env();
         (
-            check_proxy(),
-            check_ipv6(),
+            read_proxy_settings(),
+            read_default_routes(),
+            super::ipv6::bindings().map_err(|e| e.to_string()),
             check_doh(),
             env_item,
             env,
@@ -653,31 +1146,69 @@ pub async fn scan() -> Checkup {
         )
     });
 
-    // 两条路并发问，省一半时间。
-    let (direct, via_proxy) = tokio::join!(
+    // 网络那几项全并发：两轮出口、服务可达、claude.ai 的解析、IPv6 出口。
+    // 服务可达与 IPv6 走**绕过系统代理**那一份客户端 —— 跟门禁同一条路（`ip::build_client`）。
+    let direct_client = crate::probe::ip::build_client(true).ok();
+    let (direct, via_proxy, reach, dns, v6) = tokio::join!(
         crate::probe::ip::reading(),
-        crate::probe::ip::reading_via_system_proxy()
+        crate::probe::ip::reading_via_system_proxy(),
+        async {
+            match &direct_client {
+                Some(c) => Some(crate::probe::reach::reach(c).await),
+                None => None,
+            }
+        },
+        crate::probe::reach::resolve_claude(),
+        async {
+            match &direct_client {
+                Some(c) => Some(crate::probe::reach::ipv6_exit(c).await),
+                None => None,
+            }
+        },
     );
 
     // 阻塞任务 panic 了也要给出一份能看的报告 —— 体检页整个白屏
     // 比少一项糟得多。
-    let (proxy, ipv6, doh, env_item, env, sec_item, secrets) = local.await.unwrap_or_else(|_| {
-        (
-            unavailable("proxy", "系统代理"),
-            unavailable("ipv6", "IPv6"),
-            unavailable("doh", "DNS over HTTPS"),
-            unavailable("env", "环境变量残留"),
-            Vec::new(),
-            unavailable("secrets", "明文密钥"),
-            Vec::new(),
-        )
-    });
+    let (proxy_settings, routes, bindings, doh, env_item, env, sec_item, secrets) =
+        local.await.unwrap_or_else(|_| {
+            (
+                ProxySettings::default(),
+                None,
+                Err("本地检查任务异常结束".into()),
+                unavailable("doh", "DNS over HTTPS"),
+                unavailable("env", "环境变量残留"),
+                Vec::new(),
+                unavailable("secrets", "明文密钥"),
+                Vec::new(),
+            )
+        });
+
+    // 系统代理开着时，服务可达再按「跟随系统代理」问一轮：浏览器与桌面端走的是那一路。
+    let via_proxy_reach = if proxy_settings.enabled == Some(true) {
+        match crate::probe::ip::build_client(false) {
+            Ok(c) => Some(crate::probe::reach::reach(&c).await),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    let mut exit_ips: Vec<String> = direct.ip.iter().cloned().collect();
+    if let Some(crate::probe::reach::V6Exit::Exit { ip, .. }) = &v6 {
+        exit_ips.push(ip.clone());
+    }
 
     Checkup {
+        exit_ips,
         items: vec![
-            proxy,
+            proxy_form_item(&proxy_settings, routes.as_deref()),
             compare_egress(&direct, &via_proxy),
-            ipv6,
+            reach
+                .as_ref()
+                .map(|r| reach_item(r, via_proxy_reach.as_ref()))
+                .unwrap_or_else(|| unavailable("anthropic_reach", "Anthropic 服务可达")),
+            dns_item(&dns),
+            ipv6_item(&bindings, v6.as_ref(), &direct.distinct_countries()),
             doh,
             env_item,
             sec_item,
@@ -708,6 +1239,237 @@ pub fn fix(id: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::probe::reach::{HttpOutcome, ReachReport, Resolved, V6Exit};
+
+    fn route(prefix: &str, alias: &str, metric: i64, hardware: bool, desc: &str) -> RouteRow {
+        RouteRow {
+            prefix: prefix.into(),
+            alias: alias.into(),
+            metric,
+            hardware,
+            desc: desc.into(),
+            up: true,
+        }
+    }
+
+    /// 实机的形状：隧道网卡跃点更小，接走了默认路由。按网卡**性质**认，名字随便叫。
+    #[test]
+    fn a_virtual_adapter_carrying_the_default_route_is_a_tunnel() {
+        let routes = vec![
+            route(
+                "0.0.0.0/0",
+                "以太网",
+                35,
+                true,
+                "Realtek Gaming 2.5GbE Family Controller",
+            ),
+            route("0.0.0.0/0", "随便起的名字", 5, false, "Xray Tunnel"),
+        ];
+        assert_eq!(
+            tunnel_of(&routes).map(|r| r.alias.as_str()),
+            Some("随便起的名字")
+        );
+        // 物理网卡跃点更小：流量没进隧道。
+        let routes = vec![
+            route("0.0.0.0/0", "Ethernet", 5, true, "Intel"),
+            route("0.0.0.0/0", "wg0", 50, false, "WireGuard Tunnel"),
+        ];
+        assert_eq!(tunnel_of(&routes), None);
+        // VPN 那种两半：比 0/0 具体，一定赢。
+        let routes = vec![
+            route("0.0.0.0/0", "Ethernet", 5, true, "Intel"),
+            route("0.0.0.0/1", "OpenVPN", 100, false, "TAP-Windows Adapter V9"),
+        ];
+        assert!(tunnel_of(&routes).is_some());
+        // Hyper-V 的外部交换机也是「非硬件网卡」，但那是宿主机自己的网。
+        let routes = vec![route(
+            "0.0.0.0/0",
+            "vEthernet (External)",
+            5,
+            false,
+            "Hyper-V Virtual Ethernet Adapter",
+        )];
+        assert_eq!(tunnel_of(&routes), None);
+    }
+
+    /// 0.25.1 之前的漏洞：PAC 开着、`ProxyEnable` 是 0，面板说「系统代理没开」。
+    #[test]
+    fn a_pac_script_is_reported_even_when_the_proxy_switch_is_off() {
+        let s = ProxySettings {
+            enabled: Some(false),
+            server: Some("127.0.0.1:10808".into()),
+            pac: Some("http://127.0.0.1:10809/pac".into()),
+            auto_detect: Some(false),
+        };
+        let it = proxy_form_item(&s, Some(&[]));
+        assert_eq!(it.state, State::Warn);
+        assert!(it.detail.contains("PAC"), "{}", it.detail);
+        assert!(it.manual.is_some());
+    }
+
+    #[test]
+    fn proxy_form_states() {
+        let off = ProxySettings {
+            enabled: Some(false),
+            ..Default::default()
+        };
+        let tun = vec![route("0.0.0.0/0", "xray_tun", 0, false, "Xray Tunnel")];
+        assert_eq!(proxy_form_item(&off, Some(&tun)).state, State::Pass);
+        assert!(proxy_form_item(&off, Some(&tun))
+            .detail
+            .contains("xray_tun"));
+        assert_eq!(proxy_form_item(&off, Some(&[])).state, State::Pass, "直连");
+        assert_eq!(
+            proxy_form_item(&off, None).state,
+            State::Unknown,
+            "路由读不出来"
+        );
+        let on = ProxySettings {
+            enabled: Some(true),
+            server: Some("127.0.0.1:7890".into()),
+            ..Default::default()
+        };
+        assert_eq!(proxy_form_item(&on, Some(&tun)).state, State::Warn);
+        assert_eq!(
+            proxy_form_item(&ProxySettings::default(), None).state,
+            State::Unknown
+        );
+    }
+
+    /// `DefaultConnectionSettings` 第 9 个字节的 0x08 是「自动检测设置」。
+    #[test]
+    fn the_auto_detect_flag_is_read_from_the_ninth_byte() {
+        assert_eq!(auto_detect_from("460000001300000009000000"), Some(true));
+        assert_eq!(auto_detect_from("460000001300000001000000"), Some(false));
+        assert_eq!(auto_detect_from("4600"), None);
+    }
+
+    /// IPv6 看真实出口：没有 v6 出口就通过，哪怕网卡上还开着。
+    #[test]
+    fn ipv6_is_judged_by_the_real_exit_not_the_adapter_switch() {
+        let open = Ok(vec![super::super::ipv6::Ipv6Binding {
+            id: "a".into(),
+            name: "以太网".into(),
+            enabled: true,
+        }]);
+        let us = vec!["US".to_string()];
+        assert_eq!(
+            ipv6_item(&open, Some(&V6Exit::None), &us).state,
+            State::Pass
+        );
+        assert_eq!(
+            ipv6_item(
+                &open,
+                Some(&V6Exit::ViaProxy {
+                    ip: "203.0.113.7".into()
+                }),
+                &us
+            )
+            .state,
+            State::Pass
+        );
+        let exit = |cc: Option<&str>| V6Exit::Exit {
+            ip: "2001:db8::1".into(),
+            country: cc.map(String::from),
+        };
+        assert_eq!(
+            ipv6_item(&open, Some(&exit(Some("US"))), &us).state,
+            State::Pass
+        );
+        assert_eq!(
+            ipv6_item(&open, Some(&exit(Some("CN"))), &us).state,
+            State::Fail,
+            "v6 出口在别的国家：隧道没接管 v6"
+        );
+        assert_eq!(ipv6_item(&open, Some(&exit(None)), &us).state, State::Warn);
+        assert_eq!(
+            ipv6_item(&open, Some(&exit(Some("CN"))), &[]).state,
+            State::Warn
+        );
+        // 这一轮没测成：退回只看网卡的老判法。
+        assert_eq!(ipv6_item(&open, None, &us).state, State::Warn);
+    }
+
+    fn o(status: Option<u16>) -> HttpOutcome {
+        HttpOutcome {
+            url: "u".into(),
+            status,
+            cf_challenge: false,
+            error: status.is_none().then(|| "连不上".to_string()),
+        }
+    }
+    fn report(api: Option<u16>, web: Option<u16>, site: Option<u16>) -> ReachReport {
+        ReachReport {
+            api: o(api),
+            web: o(web),
+            site: o(site),
+        }
+    }
+
+    #[test]
+    fn the_api_answer_decides_the_reach_item() {
+        assert_eq!(
+            reach_item(&report(Some(401), Some(200), Some(200)), None).state,
+            State::Pass
+        );
+        let blocked = reach_item(&report(Some(403), Some(200), Some(200)), None);
+        assert_eq!(blocked.state, State::Fail);
+        assert!(blocked.detail.contains("403"));
+        assert_eq!(
+            reach_item(&report(None, None, None), None).state,
+            State::Fail
+        );
+        assert_eq!(
+            reach_item(&report(Some(401), Some(403), Some(200)), None).state,
+            State::Warn,
+            "网页被拦只降到警告"
+        );
+        assert_eq!(
+            reach_item(&report(Some(500), Some(200), Some(200)), None).state,
+            State::Unknown
+        );
+        // 直连放行、跟随系统代理那一路被拦：浏览器那边会出事。
+        let proxied = report(Some(403), Some(200), Some(200));
+        let it = reach_item(&report(Some(401), Some(200), Some(200)), Some(&proxied));
+        assert_eq!(it.state, State::Warn);
+        assert!(it.detail.contains("跟随系统代理"), "{}", it.detail);
+    }
+
+    fn resolved(host: &str, addrs: &[&str]) -> Resolved {
+        Resolved {
+            host: host.into(),
+            addrs: addrs.iter().map(|s| s.to_string()).collect(),
+            error: addrs.is_empty().then(|| "解析失败".to_string()),
+        }
+    }
+
+    #[test]
+    fn claude_dns_states() {
+        assert_eq!(
+            dns_item(&[
+                resolved("claude.ai", &["160.79.104.10"]),
+                resolved("api.anthropic.com", &["160.79.104.10"])
+            ])
+            .state,
+            State::Pass,
+            "实机 2026-09-24 的形状"
+        );
+        assert_eq!(
+            dns_item(&[resolved("claude.ai", &["198.18.0.9"])]).state,
+            State::Pass
+        );
+        assert_eq!(
+            dns_item(&[resolved("claude.ai", &["127.0.0.1"])]).state,
+            State::Fail
+        );
+        assert_eq!(
+            dns_item(&[resolved("claude.ai", &["31.13.94.37"])]).state,
+            State::Warn
+        );
+        assert_eq!(dns_item(&[resolved("claude.ai", &[])]).state, State::Fail);
+        assert_eq!(dns_item(&[]).state, State::Unknown);
+    }
+
     #[test]
     fn different_ips_without_country_evidence_are_not_declared_same_country() {
         let a = crate::probe::ip::Reading {

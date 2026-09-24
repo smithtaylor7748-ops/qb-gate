@@ -506,7 +506,15 @@ pub fn parse_codex_release(json: &str, asset: &str) -> Result<Release> {
     })
 }
 
-fn http() -> Result<reqwest::Client> {
+/// 面板自己的 HTTP 客户端。`pub` 是给同一个 crate 里别的安装路径复用的
+/// （`antigravity_setup` 抓下载页），**别在别处再建一个** —— 超时与 User-Agent
+/// 散成几份之后，「为什么这一条会卡住」就没人答得上来了。
+///
+/// ⚠ 这个客户端用的是 rustls + webpki 的根证书清单。链到 Windows 自带根
+/// （比如微软 Update 那条）的站点在这里**连不上**，那种情况要像 `codex_store`
+/// 那样单独给那一个客户端加根证书，不要给整个 workspace 开
+/// `rustls-tls-native-roots`（坑 7.52）。
+pub fn http() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(20))
         .user_agent(concat!("QB Gate/", env!("CARGO_PKG_VERSION")))

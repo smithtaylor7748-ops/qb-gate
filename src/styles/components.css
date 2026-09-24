@@ -681,6 +681,36 @@
   flex-shrink: 0;
 }
 
+/* 「发现新版本」弹窗里的更新说明（0.25.3）。文字是从 GitHub 取回来的纯文本，
+   长度不由我们控制：自己滚，不把按钮挤出弹窗。 */
+.qb-update-notes {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  max-height: min(40vh, 320px);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.qb-update-notes h4 {
+  margin: 10px 0 4px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+.qb-update-notes h4:first-child {
+  margin-top: 0;
+}
+.qb-update-notes ul {
+  margin: 0;
+  padding-left: 1.2em;
+  list-style: disc;
+}
+.qb-update-notes p {
+  margin: 4px 0;
+}
+
 /* ================================================================ Toast */
 
 .toast-region {
@@ -1138,6 +1168,312 @@
   background: var(--danger);
 }
 
+/* 磁贴右上角的小按钮（酒馆那格的「桥接设置」）。
+   磁贴本身是 <button>，不能再套一个 —— 所以包一层定位容器，角标是它的兄弟节点。
+   容器替磁贴当网格子项，所以要把宽高撑满，否则两行等高那条规则就落空了。 */
+.tile-wrap {
+  position: relative;
+  display: grid;
+  min-width: 0;
+}
+.tile-wrap > .tile {
+  width: 100%;
+  height: 100%;
+}
+.tile-corner {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  z-index: 1;
+}
+.tile-corner > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--text-3);
+  transition:
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+.tile-corner > button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--text-3);
+}
+.tile-corner > button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 桥接设置弹窗里的三条桥。每条一块：状态 · 缺什么 · 端口 / 模型 / 地址。
+   左边那条竖线分「在跑 / 没在跑」—— 三条桥长得一样，光看名字分不出差别。 */
+.bridgelist {
+  display: grid;
+  gap: 8px;
+}
+.bridgelist > section {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--text-3);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  background: var(--surface-2);
+}
+.bridgelist > section.is-up {
+  border-left-color: var(--ok);
+}
+.bridge-provider {
+  --bridge-accent: var(--text-3);
+  --bridge-tint: var(--surface-2);
+  position: relative;
+  overflow: hidden;
+  border-left-color: var(--bridge-accent) !important;
+  background: linear-gradient(135deg, var(--bridge-tint), var(--surface-2) 44%);
+}
+.bridge-provider--gpt {
+  --bridge-accent: var(--accent);
+  --bridge-tint: var(--accent-bg);
+}
+.bridge-provider--gemini {
+  --bridge-accent: var(--warn);
+  --bridge-tint: var(--warn-bg);
+}
+.bridge-provider.is-up {
+  box-shadow: inset 0 0 0 1px var(--ok-border);
+}
+.bridge-provider-eyebrow {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--bridge-accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+.bridge-provider-summary {
+  margin: 5px 0 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.bridge-provider--gpt .tavern-roleplay-test {
+  border-top-color: var(--accent-border);
+}
+.bridge-provider--gemini .tavern-roleplay-test {
+  border-top-color: var(--warn-border);
+}
+.bridgelist-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+}
+.bridgelist-slot {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.bridgelist-sub {
+  margin: 3px 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+/* 缺什么。顺序 = 该先做哪一件，所以保留列表的编号感（实心点 + 缩进）。 */
+.bridgelist-blockers {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 2px;
+  font-size: var(--text-xs);
+  color: var(--warn);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.bridgelist-fields {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: minmax(96px, 0.5fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+/* 地址那一行横跨两列：Windows 上的本机地址不长，但加上「复制」按钮就挤了。 */
+.bridgelist-url {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.bridgelist-url .mono {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+.bridgelist-dirty {
+  font-size: var(--text-xs);
+  color: var(--warn);
+}
+.tavern-quota-card {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 9px 10px;
+  background: var(--surface-1);
+}
+.tavern-quota-head,
+.tavern-quota-window-head,
+.tavern-roleplay-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tavern-quota-head {
+  font-size: var(--text-sm);
+}
+.tavern-quota-meta {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+.tavern-quota-error {
+  margin: 6px 0 0;
+  color: var(--warn);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+.tavern-quota-grid,
+.tavern-quota-models {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 8px;
+}
+.tavern-quota-models {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+.tavern-quota-window {
+  min-width: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  padding: 7px 8px;
+  background: var(--surface-2);
+}
+.tavern-quota-window-head {
+  font-size: var(--text-xs);
+}
+.tavern-quota-window-head strong {
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+.tavern-quota-window .bar {
+  margin-top: 6px;
+  height: 5px;
+}
+.tavern-quota-window small {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-3);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.tavern-quota-card--gpt {
+  border-top-color: var(--accent-border);
+  background: linear-gradient(135deg, var(--accent-bg), var(--surface-1) 48%);
+}
+.tavern-quota-card--gemini {
+  border-top-color: var(--warn-border);
+  background: linear-gradient(135deg, var(--warn-bg), var(--surface-1) 48%);
+}
+.tavern-quota-gauge {
+  display: grid;
+  grid-template-columns: minmax(5em, 0.8fr) minmax(70px, 1fr) auto;
+  gap: 5px 8px;
+  align-items: center;
+  width: 100%;
+}
+.tavern-quota-gauge .gauge-name {
+  width: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tavern-quota-gauge .gauge-track {
+  min-width: 70px;
+  max-width: none;
+}
+.tavern-quota-gauge .gauge-pct {
+  min-width: 5em;
+  text-align: right;
+}
+.tavern-quota-gauge .gauge-reset {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tavern-quota-empty {
+  margin: 8px 0 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+.tavern-roleplay-test {
+  margin-top: 10px;
+  border-top: 1px dashed var(--line);
+  padding-top: 9px;
+}
+.tavern-roleplay-head {
+  font-size: var(--text-xs);
+}
+.tavern-roleplay-fixture {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-1);
+  padding: 7px 8px;
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+.tavern-provider-prompt {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+}
+.tavern-roleplay-reply {
+  margin: 7px 0 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+@media (max-width: 560px) {
+  .bridgelist-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tavern-quota-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* 一键关闭：宫格下面单独一条，用间距和红框跟启动区隔开。 */
 .killbar {
   width: 100%;
@@ -1308,6 +1644,56 @@
   font-size: var(--text-xs);
   color: var(--text-3);
 }
+/* 额度条右边那块空白放刷新图标（2026-09-23 使用者指的位置）：
+   左列是条子，右列是图标、纵向居中跨过条子那几行，来源那一行横跨在最下面。 */
+.slotusage-bars {
+  display: grid;
+  gap: 3px 10px;
+  min-width: 0;
+}
+.slotusage--refreshable {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+.slotusage--refreshable > .slotusage-bars {
+  grid-column: 1;
+  grid-row: 1;
+}
+.slotusage--refreshable > .slotusage-refresh {
+  grid-column: 2;
+  grid-row: 1;
+}
+.slotusage--refreshable > .gauge-src {
+  grid-column: 1 / -1;
+}
+/* 反重力账户行的联网额度：一组一行（Claude / Gemini），每行 5h 与周两格。
+   两格各占一半，条子自己伸缩；倒计时在窄档跟别的重置时刻一起收掉。 */
+.ag-group {
+  display: grid;
+  grid-template-columns: 3.6em minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ag-group-name {
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gauge--mini {
+  gap: 5px;
+}
+.gauge--mini .gauge-name {
+  width: auto;
+}
+.gauge--mini .gauge-track {
+  min-width: 28px;
+  max-width: 90px;
+}
+.gauge--mini .gauge-pct {
+  min-width: 3em;
+}
 .gauge {
   display: flex;
   align-items: center;
@@ -1350,6 +1736,17 @@
 }
 .gauge-used--danger {
   background: var(--danger);
+}
+/* 「没测到」不是 0（0.32.0）。斜纹 = 这一项没有读到额度信息 ——
+   跟综合评分那条 `.wseg--none` 同一个视觉语言。画成实心 0 就是替使用者
+   断言了一件没人知道的事：反重力的 `remaining === null`、Codex 那边
+   「还没有带额度信息的会话记录」都落在这一档。 */
+.gauge-used--none {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--border) 0 3px,
+    transparent 3px 6px
+  );
 }
 .gauge-pct {
   font-variant-numeric: tabular-nums;
@@ -1493,4 +1890,39 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 额度来源只显示短状态；完整错误放在 title，避免把用量卡撑成说明书。 */
+.quota-sources {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin: 2px 0 8px;
+}
+.quota-source {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+.quota-source strong {
+  flex-shrink: 0;
+  color: var(--text-1);
+  font-weight: 600;
+}
+.quota-source > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quota-source .btn {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding-inline: 4px;
 }

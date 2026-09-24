@@ -3,7 +3,8 @@
 /**
  * 要卸哪一个。
  *
- * 比 `managed::App` 多两个：桌面端（官方安装器装的，面板接管不了它的目录）
- * 与 Chrome（浏览器，只在使用者点名时才处理）。
+ * 比 `managed::App` 多的几个：Claude 桌面端（官方安装器装的，面板接管不了它的目录）、
+ * Chrome（浏览器，只在使用者点名时才处理）、Codex 桌面端（Store 包，0.28.0）、
+ * 反重力与 Gemini CLI（0.28.0 —— 软件页能装能检测却不能卸，是同一类不对称）。
  */
-export type PurgeTarget = "claude-code" | "codex" | "claude-desktop" | "chrome";
+export type PurgeTarget = "claude-code" | "codex" | "claude-desktop" | "chrome" | "codex-desktop" | "antigravity" | "gemini-cli";

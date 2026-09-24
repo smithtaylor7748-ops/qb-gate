@@ -51,6 +51,11 @@ jobs:
           $releaseLines | Set-Content dist-installers/SHA256SUMS.txt -Encoding ascii
           Copy-Item LICENSE,LICENSE-ADDITIONAL-TERMS.md,LICENSE-COMMERCIAL.md,ATTRIBUTION.md,THIRD_PARTY_NOTICES.txt -Destination dist-installers
           Copy-Item docs/dependencies.json -Destination dist-installers
+      # 0.25.3 起：面板的「发现新版本」弹窗读 update.json（版本号 + 中文说明），
+      # Release 正文也从同一份 .github/release-notes.md 生成。update.json 不进 SHA256SUMS ——
+      # 它只提供版本号与说明，安装包的真假看 SHA256SUMS.txt。
+      - name: Update manifest and release notes
+        run: node scripts/update-manifest.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: qb-gate-windows
@@ -61,14 +66,4 @@ jobs:
         with:
           files: dist-installers/*
           generate_release_notes: true
-          body: |
-            Windows 10 / 11 x64 安装包，由上方标签对应的源码在 GitHub Actions 上构建。安装包尚未做代码签名，下载后请对照 SHA256SUMS.txt 核对哈希。
-
-            使用前请务必阅读 DISCLAIMER.md（免责声明）：本项目是非官方项目，与任何服务商无隶属或合作关系，不对账户状态作任何承诺。中转站功能（含智能调度）仍在内测，界面里已经出现，但暂时不能正常使用。
-
-            问题反馈：GitHub Issues，或 QQ 群「门禁值班室」1109462206。
-
-            Windows 10 / 11 x64. This installer was built from the source tag shown above.
-            Verify the downloaded installer against SHA256SUMS.txt. This project does not yet configure code signing.
-            Read README.md, DISCLAIMER.md and docs/MIGRATION-0.12.zh-CN.md before upgrading.
-            Third-party notices and the source license are included with this release and inside the installer.
+          body_path: target/release-body.md

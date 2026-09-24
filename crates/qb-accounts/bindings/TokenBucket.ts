@@ -10,8 +10,17 @@ export type TokenBucket = {
 day: string, 
 /**
  * 官方写下的模型名，原样给出，不做任何美化或归并。
+ * `usage.speed` 不是 `standard` 的回复在后面带 ` (<speed>)` —— 那一档另有价。
  */
-model: string, input: number, output: number, cache_write: number, cache_read: number, 
+model: string, input: number, output: number, 
+/**
+ * 缓存写合计（5 分钟档 + 1 小时档）。
+ */
+cache_write: number, 
+/**
+ * 其中 1 小时档。单价是 5 分钟档的 1.6 倍（输入 ×2 对 ×1.25），见文件头。
+ */
+cache_write_1h: number, cache_read: number, 
 /**
  * 这个桶里有几条回复。
  */

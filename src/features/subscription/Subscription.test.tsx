@@ -11,6 +11,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 /**
  * 使用者定的口径：页面上不出现特定国家、地区、发卡行与已删掉的卡商。
  * 这条测试盯着**渲染出来的文字**，不是源码 —— 文案改回去当场红。
+ * 唯一的例外是倍率按 1 美元 = 7 元折算（2026-09-24 使用者定的）：页面上只写「元」。
  */
 const BANNED = [
   "中国",
@@ -94,27 +95,22 @@ describe("Subscription page", () => {
 
   it("computes the multiplier the way the user specified: spend ÷ monthly value", () => {
     render(<Subscription />);
-    const amount = screen.getByLabelText("你为会员付了多少钱（每月）");
-    // 默认套餐是 Claude Max 20x：$8,000 上限。40 ÷ 8000 = 0.005×
+    const amount = screen.getByLabelText("你为会员付了多少钱（元 / 月）");
+    // 默认套餐是 Claude Max 20x：周额度中间值 $4,000 × 4 = $16,000。40 元 ÷ 16000 ≈ 0.003×
     fireEvent.change(amount, { target: { value: "40" } });
-    expect(screen.getByText("0.005×")).toBeTruthy();
-    expect(screen.getByText(/相当于中转站倍率 0\.005×/)).toBeTruthy();
+    expect(screen.getByText("0.003×")).toBeTruthy();
+    expect(screen.getByText(/相当于中转站倍率 0\.003×/)).toBeTruthy();
+    // 官方那一档按 1:7 折成元：$200 × 7 ÷ $16,000 = 0.0875 → 0.088×，跟价目表同一个数。
+    expect(screen.getByText(/\$200 × 7 ÷ \$16,000 = 0\.088×/)).toBeTruthy();
 
-    // 汇率：280 ÷ 7 = $40，结果不变。
-    fireEvent.change(amount, { target: { value: "280" } });
-    fireEvent.change(screen.getByLabelText("汇率（1 美元 = ？）"), {
-      target: { value: "7" },
-    });
-    expect(screen.getByText("0.005×")).toBeTruthy();
-
-    // 中转站给 $100 额度 → 0.4×，是官方 0.025× 的 16 倍。
+    // 中转站给 $100 额度 → 40 ÷ 100 = 0.4×，是官方 0.0875× 的 4.6 倍。
     fireEvent.change(screen.getByLabelText("中转站给你的额度（美元，选填）"), {
       target: { value: "100" },
     });
     expect(screen.getByText("0.4×")).toBeTruthy();
-    expect(screen.getByText("16 倍")).toBeTruthy();
+    expect(screen.getByText("4.6 倍")).toBeTruthy();
 
-    // 换套餐会把分母换成那档的上限：ChatGPT Pro 20x $14,000。
+    // 换套餐会把分母换成那档的：ChatGPT Pro 20x 周 $2,500 × 4 = $10,000。
     fireEvent.change(screen.getByLabelText("按哪档官方套餐折算"), {
       target: { value: "chatgpt-pro-20" },
     });
@@ -124,13 +120,48 @@ describe("Subscription page", () => {
           "一个月总共能用多少刀（API 等值，美元）",
         ) as HTMLInputElement
       ).value,
-    ).toBe("14000");
-    expect(screen.getByText("0.003×")).toBeTruthy();
+    ).toBe("10000");
+    expect(screen.getByText("0.004×")).toBeTruthy();
+  });
+
+  // 使用者 2026-09-24 在旧版上算的那一笔：Claude Pro 折成元是 140，÷ $1,400 = 0.1×，
+  // 而旧价目表写的是 $20 ÷ $1,400 = 0.014× —— 同一页两个数。现在两边都是 0.1×。
+  it("agrees with the plan table for the same plan (Claude Pro, 140 元)", () => {
+    render(<Subscription />);
+    fireEvent.change(screen.getByLabelText("按哪档官方套餐折算"), {
+      target: { value: "claude-pro" },
+    });
+    fireEvent.change(screen.getByLabelText("你为会员付了多少钱（元 / 月）"), {
+      target: { value: "140" },
+    });
+    expect(screen.getByText(/相当于中转站倍率 0\.1×/)).toBeTruthy();
+    expect(screen.getByText(/\$20 × 7 ÷ \$1,400 = 0\.1×/)).toBeTruthy();
+    expect(screen.getByText("和自己订阅官方一个价位")).toBeTruthy();
+    const row = screen
+      .getByText("Claude Pro", {
+        selector: ".qb-sub-plan-name",
+      })
+      .closest("tr")!;
+    expect(row.textContent).toContain("0.1×");
+  });
+
+  it("labels the 1:7 conversion, says it leans expensive, and drops the old claims", () => {
+    render(<Subscription />);
+    expect(
+      screen.getByRole("columnheader", { name: "等效倍率（1:7）" }),
+    ).toBeTruthy();
+    expect(screen.getByText(/实际汇率一般在 6\.8 左右/)).toBeTruthy();
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("7 是往贵了取的");
+    // 按美元除美元的旧数（Max 20x 0.013×）与据此说的「比任何中转站都便宜」不许回来。
+    expect(text).not.toContain("0.013×");
+    expect(text).not.toContain("比任何中转站都便宜");
+    expect(text).not.toContain("比最便宜的逆向中转还低");
   });
 
   it("never shows NaN or Infinity for bad input", () => {
     render(<Subscription />);
-    const amount = screen.getByLabelText("你为会员付了多少钱（每月）");
+    const amount = screen.getByLabelText("你为会员付了多少钱（元 / 月）");
     fireEvent.change(amount, { target: { value: "abc" } });
     expect(screen.getByText("请填一个正数")).toBeTruthy();
     fireEvent.change(amount, { target: { value: "40" } });

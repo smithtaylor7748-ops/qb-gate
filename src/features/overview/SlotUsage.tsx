@@ -42,6 +42,8 @@
  * 3. **推算的恢复时刻要标「推算」。** 桌面端那份只有用量没有重置时刻，
  *    拿不到实测值时是从样本的断崖下跌反推的，误差约半个采样间隔。
  */
+import { RefreshCw } from "lucide-react";
+import { Button, Gauge } from "../../ui";
 import type { SlotUsage, UsageWindow } from "../../lib/api";
 
 /** 五小时窗口的分钟数。读数比这还旧，那份五小时读数必然跨过了窗口。 */
@@ -73,12 +75,6 @@ function fmtAge(min: number): string {
   return `${Math.round(min / (60 * 24))} 天前`;
 }
 
-function tone(left: number): "ok" | "warn" | "danger" {
-  if (left >= 50) return "ok";
-  if (left >= 20) return "warn";
-  return "danger";
-}
-
 /**
  * 这份读数是不是已经跨过了那个窗口。
  *
@@ -88,7 +84,13 @@ function expiredIn(usage: SlotUsage, limit: number): boolean {
   return usage.age_minutes > limit;
 }
 
-function Gauge({
+/**
+ * Claude 这一侧的一根条：把 `UsageWindow` 摆成共用 [`Gauge`] 要的形状。
+ *
+ * ⛔ 条子本体不在这里画了（`src/ui/Gauge.tsx`）—— 三个账户页共用同一根，
+ * 各画一份的话，同一根绿条在两个页面上说的迟早会是相反的事。
+ */
+function WindowGauge({
   name,
   window: w,
   expired,
@@ -102,64 +104,93 @@ function Gauge({
 }) {
   // 没这一项就整条不画。画一条空槽会被读成「剩 0」。
   if (!w) return null;
-
   if (expired) {
-    return (
-      <span className="gauge gauge--dead">
-        <span className="gauge-name">{name}</span>
-        <span className="gauge-note">读数已过期，不是当前值</span>
-      </span>
-    );
+    return <Gauge name={name} used={null} note="读数已过期，不是当前值" />;
   }
-
-  const left = Math.max(0, 100 - w.used);
   return (
-    <span className="gauge">
-      <span className="gauge-name">{name}</span>
-      <span
-        className="gauge-track"
-        title={`已用 ${w.used}%，剩 ${left}%`}
-        role="img"
-        aria-label={`${name}已用 ${w.used}%，剩 ${left}%`}
-      >
-        {/* 上色的那段 = 已经用掉的。空槽 = 还剩的。
-            颜色按剩余量给：长度说「用了多少」，颜色说「还够不够」。 */}
-        <span
-          className={`gauge-used gauge-used--${tone(left)}`}
-          style={{ width: `${w.used}%` }}
-        />
-      </span>
-      <strong className={`gauge-pct qb-tone-${tone(left)}`}>剩 {left}%</strong>
-      {binding && (
-        <span
-          className="gauge-binding"
-          title="两个窗口里紧的那个，先到顶的就是它"
-        >
-          卡这儿
-        </span>
-      )}
-      {w.resets_at ? (
-        <span
-          className="gauge-reset"
-          title={
-            w.estimated
-              ? "从样本里那次断崖下跌反推的，不是官方客户端写下的时刻，误差约七八分钟"
-              : "官方客户端写下的重置时刻"
-          }
-        >
-          ↻ {fmtReset(w.resets_at)}
-          {w.estimated && <em>推算</em>}
-        </span>
-      ) : (
-        <span className="gauge-reset" title="两源都没给出这个窗口的重置时刻">
-          ↻ 未知
-        </span>
-      )}
-    </span>
+    <Gauge
+      name={name}
+      used={w.used}
+      binding={binding}
+      extra={
+        w.resets_at ? (
+          <span
+            className="gauge-reset"
+            title={
+              w.estimated
+                ? "从样本里那次断崖下跌反推的，不是官方客户端写下的时刻，误差约七八分钟"
+                : "官方客户端写下的重置时刻"
+            }
+          >
+            ↻ {fmtReset(w.resets_at)}
+            {w.estimated && <em>推算</em>}
+          </span>
+        ) : (
+          <span className="gauge-reset" title="两源都没给出这个窗口的重置时刻">
+            ↻ 未知
+          </span>
+        )
+      }
+    />
   );
 }
 
-export default function SlotUsageBars({ usage }: { usage: SlotUsage }) {
+/**
+ * 额度区右边那颗刷新图标（2026-09-23，三个账户页同一个位置）。
+ *
+ * ⛔ Claude 这一侧**不联网**：点它只是立刻重读一遍本机记录（桌面端的样本、Claude Code
+ * 的快照）—— Claude 的额度只读本机这条没变。所以悬停文字要说清楚「不联网」。
+ */
+function RefreshButton({
+  onRefresh,
+  refreshing,
+}: {
+  onRefresh: () => void;
+  refreshing?: boolean;
+}) {
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      className="slotusage-refresh"
+      icon={<RefreshCw size={12} />}
+      aria-label="重读这个账户的额度"
+      title="立刻重读一遍本机的额度记录（不联网）"
+      loading={refreshing}
+      onClick={onRefresh}
+    />
+  );
+}
+
+export default function SlotUsageBars({
+  usage,
+  onRefresh,
+  refreshing,
+}: {
+  /** `null` = 两源都没有读数：只画一句话和刷新图标，**不画假数字**。 */
+  usage: SlotUsage | null;
+  /** 不给就不画刷新图标（账户详情页头部）。 */
+  onRefresh?: () => void;
+  refreshing?: boolean;
+}) {
+  const refreshable = onRefresh ? " slotusage--refreshable" : "";
+  if (!usage) {
+    return (
+      <div className={`slotusage${refreshable}`}>
+        <div className="slotusage-bars">
+          <span
+            className="gauge-src"
+            title="这个槽位的桌面端样本和 Claude Code 快照里都还没有额度记录。用它跑一次 Claude Code 或开一次桌面端就会有。"
+          >
+            还没有额度读数
+          </span>
+        </div>
+        {onRefresh && (
+          <RefreshButton onRefresh={onRefresh} refreshing={refreshing} />
+        )}
+      </div>
+    );
+  }
   const fhDead = expiredIn(usage, FIVE_HOUR_MIN);
   const sdDead = expiredIn(usage, SEVEN_DAY_MIN);
 
@@ -173,19 +204,24 @@ export default function SlotUsageBars({ usage }: { usage: SlotUsage }) {
   }
 
   return (
-    <div className="slotusage">
-      <Gauge
-        name="5 小时"
-        window={usage.five_hour}
-        expired={fhDead}
-        binding={bind === "five"}
-      />
-      <Gauge
-        name="7 天"
-        window={usage.seven_day}
-        expired={sdDead}
-        binding={bind === "seven"}
-      />
+    <div className={`slotusage${refreshable}`}>
+      <div className="slotusage-bars">
+        <WindowGauge
+          name="5 小时"
+          window={usage.five_hour}
+          expired={fhDead}
+          binding={bind === "five"}
+        />
+        <WindowGauge
+          name="7 天"
+          window={usage.seven_day}
+          expired={sdDead}
+          binding={bind === "seven"}
+        />
+      </div>
+      {onRefresh && (
+        <RefreshButton onRefresh={onRefresh} refreshing={refreshing} />
+      )}
       <span
         className="gauge-src"
         title={

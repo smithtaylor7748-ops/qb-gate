@@ -23,40 +23,14 @@
 //! 本机路由那头（`arm_official_codex` / `OAuthPassthrough`）不在这里，在命令层一并编排。
 
 use crate::error::{GateError, Result};
-use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use ts_rs::TS;
 
-/// 写进槽位 `config.toml` 的 provider id。跟中转环境用的 `qb_relay` 分开，
-/// 一眼分得清「这是识别改的」还是「这是中转环境」。
-pub const PROVIDER_ID: &str = "qb_turnstate";
+// marker（`Takeover` / `takeover()` / `PROVIDER_ID`）0.25.0 起住在 `crate::turnstate_marker`
+// —— `workspace::launch` 也要读它，放这里会跟 `usecase → workspace` 成环。原样再导出，
+// 调用点（`commands/station.rs`、`commands/plugins.rs`、`lib.rs`）不用改。
+pub use crate::turnstate_marker::{takeover, Takeover, PROVIDER_ID};
 const PROVIDER_NAME: &str = "QB Gate 识别（本机路由）";
 const BACKUP_NAME: &str = "config.toml.qb-turnstate-backup";
-
-/// 「识别开着」的落盘记录。
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct Takeover {
-    pub slot_id: String,
-    pub slot_label: String,
-    /// 被接管的槽位目录（`…\<slot>\home`）。
-    pub home: String,
-    /// 接管前 `model_provider` 是什么；`None` = 原来没写（官方默认）。关闭时按它恢复。
-    pub previous_model_provider: Option<String>,
-    pub applied_at: String,
-}
-
-fn marker_path() -> PathBuf {
-    crate::paths::state_dir().join("turnstate-takeover.json")
-}
-
-/// 现在有没有接管中的槽位（= 识别开着没）。
-pub fn takeover() -> Option<Takeover> {
-    crate::config_io::read_optional(&marker_path())
-        .ok()
-        .flatten()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-}
 
 /// 把 `item` 保证成标准表（不是内联表）。§7.11 的坑：链式索引在空文档上建出来的是内联表，
 /// `as_table_mut()` 对它返回 `None`，于是「删掉另一种」那类逻辑会静默失效。
@@ -197,7 +171,7 @@ pub fn enable(base_url: &str) -> Result<Takeover> {
         previous_model_provider: previous,
         applied_at: chrono::Utc::now().to_rfc3339(),
     };
-    crate::config_io::replace(&marker_path(), Some(&serde_json::to_vec_pretty(&take)?))?;
+    crate::turnstate_marker::write(&take)?;
     crate::audit::write(&format!(
         "识别已开启：槽位「{}」的 config.toml 已指向本机路由（{}）",
         take.slot_label, base_url
@@ -223,7 +197,7 @@ pub fn disable() -> Result<Option<Takeover>> {
             // 文件没了（槽位被删 / 移走）：没什么可恢复的，只把 marker 清掉。
         }
     }
-    crate::config_io::replace(&marker_path(), None)?;
+    crate::turnstate_marker::clear()?;
     crate::audit::write(&format!(
         "识别已关闭：槽位「{}」的 config.toml 已恢复",
         take.slot_label

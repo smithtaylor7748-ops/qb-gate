@@ -14,6 +14,10 @@ pub enum LaunchTarget {
     ClaudeCode,
     ClaudeDesktop,
     Codex,
+    /// 反重力 Hub（0.26.0）。Electron 单实例 + 托盘后台运行，档位同桌面端。
+    Antigravity,
+    /// 反重力 IDE（VS Code 分支）。跟 Hub 共用门禁开关。
+    AntigravityIde,
 }
 
 impl LaunchTarget {
@@ -28,6 +32,8 @@ impl LaunchTarget {
             crate::domain::Client::ClaudeCode => LaunchTarget::ClaudeCode,
             crate::domain::Client::ClaudeDesktop => LaunchTarget::ClaudeDesktop,
             crate::domain::Client::Codex => LaunchTarget::Codex,
+            crate::domain::Client::Antigravity => LaunchTarget::Antigravity,
+            crate::domain::Client::AntigravityIde => LaunchTarget::AntigravityIde,
         }
     }
 
@@ -36,6 +42,8 @@ impl LaunchTarget {
             LaunchTarget::ClaudeCode => "Claude Code",
             LaunchTarget::ClaudeDesktop => "Claude 桌面端",
             LaunchTarget::Codex => "Codex 桌面端",
+            LaunchTarget::Antigravity => "反重力",
+            LaunchTarget::AntigravityIde => "反重力 IDE",
         }
     }
 
@@ -45,6 +53,8 @@ impl LaunchTarget {
             LaunchTarget::ClaudeCode => "claude-code",
             LaunchTarget::ClaudeDesktop => "claude-desktop",
             LaunchTarget::Codex => "codex",
+            LaunchTarget::Antigravity => "antigravity",
+            LaunchTarget::AntigravityIde => "antigravity-ide",
         }
     }
 
@@ -55,20 +65,27 @@ impl LaunchTarget {
     pub fn watch_mode(self) -> WatchMode {
         match self {
             LaunchTarget::ClaudeCode => WatchMode::Cli,
-            LaunchTarget::ClaudeDesktop | LaunchTarget::Codex => WatchMode::Desktop,
+            LaunchTarget::ClaudeDesktop
+            | LaunchTarget::Codex
+            | LaunchTarget::Antigravity
+            | LaunchTarget::AntigravityIde => WatchMode::Desktop,
         }
     }
 
     /// 这个可执行文件归门禁管吗 —— 起之前要验 IP 解锁，起来之后持租约。
     ///
-    /// Codex 只有在设置里打开开关之后才归门禁管；关着的时候
-    /// 「启动 Codex」就是单纯起个进程，不验 IP、不动任何 ACL。
+    /// Codex 跟着设置走：0.25.0 起**默认归门禁管**（使用者定的），在「IP 锁」弹窗里
+    /// 移出之后「启动 Codex」才是单纯起个进程 —— 不验 IP、不动任何 ACL、不持租约。
     ///
     /// ⚠ 这**不是**「判不过时收不收这个会话」—— 那是 [`Self::stops_with_gate`]。
     /// 两件事必须分开，理由见那个函数。
     pub fn gated(self) -> bool {
         match self {
             LaunchTarget::Codex => crate::settings::codex_under_gate(),
+            // 反重力两档共用一个开关（0.26.0，默认归门禁）：同一个 Google 账户，只管一个就是给另一个留门。
+            LaunchTarget::Antigravity | LaunchTarget::AntigravityIde => {
+                crate::settings::antigravity_under_gate()
+            }
             _ => true,
         }
     }
@@ -187,7 +204,30 @@ pub fn resolve(target: LaunchTarget) -> Result<PathBuf> {
             .ok_or_else(|| {
                 GateError::Other("未找到 Codex 桌面端，请先安装 Microsoft Store 桌面应用。".into())
             }),
+        // 跟检测、上锁共用 `install::antigravity` 那一张表。
+        LaunchTarget::Antigravity | LaunchTarget::AntigravityIde => {
+            let product = if self_is_hub(target) {
+                crate::install::antigravity::Product::Hub
+            } else {
+                crate::install::antigravity::Product::Ide
+            };
+            let local = dirs::data_local_dir().unwrap_or_default();
+            let exe = product.launcher(&local);
+            if exe.is_file() {
+                Ok(exe)
+            } else {
+                Err(GateError::Other(format!(
+                    "找不到{}（{}）。没装的话到「软件」页按官网链接装好；面板不分发 Google 的安装包。",
+                    product.label(),
+                    exe.display()
+                )))
+            }
+        }
     }
+}
+
+fn self_is_hub(target: LaunchTarget) -> bool {
+    matches!(target, LaunchTarget::Antigravity)
 }
 
 #[cfg(test)]
@@ -250,6 +290,59 @@ mod tests {
                 "{target:?} 的中转会话不该被门禁收掉"
             );
         }
+    }
+
+    /// GPT（Codex）默认归门禁管（0.25.0，使用者定的；设置里存的是反义的
+    /// `codex_outside_gate`）。⛔ 单测不许写运行期状态文件，所以这里只看默认值那条路：
+    /// 没有 settings.json 时 `codex_under_gate()` 读到的就是 `Settings::default()`。
+    /// 真机上的开关行为由 `settings.rs` 的测试钉。
+    #[test]
+    fn codex_is_gated_by_default() {
+        use crate::domain::IdentityKind;
+        assert!(!crate::settings::Settings::default().codex_outside_gate);
+        // gated() 直接跟着设置走，别的目标恒为 true。
+        assert_eq!(
+            LaunchTarget::Codex.gated(),
+            crate::settings::codex_under_gate()
+        );
+        // 归门禁时官方身份要收、中转身份不收 —— 跟 Claude 两个目标同一条规矩。
+        if LaunchTarget::Codex.gated() {
+            assert!(LaunchTarget::Codex.stops_with_gate(IdentityKind::Official));
+            assert!(!LaunchTarget::Codex.stops_with_gate(IdentityKind::Relay));
+        }
+        assert_eq!(LaunchTarget::Codex.watch_mode(), WatchMode::Desktop);
+    }
+
+    /// 反重力两档默认归门禁（使用者 2026-09-20 定的），档位是桌面档（零宽限），
+    /// 两档共用一个开关 —— 同一个 Google 账户只管一半就是留门。
+    #[test]
+    fn antigravity_is_gated_by_default_on_the_desktop_tier() {
+        use crate::domain::IdentityKind;
+        assert!(!crate::settings::Settings::default().antigravity_outside_gate);
+        for t in [LaunchTarget::Antigravity, LaunchTarget::AntigravityIde] {
+            assert_eq!(t.gated(), crate::settings::antigravity_under_gate());
+            assert_eq!(t.watch_mode(), WatchMode::Desktop);
+            if t.gated() {
+                assert!(t.stops_with_gate(IdentityKind::Official));
+            }
+        }
+        assert_eq!(
+            LaunchTarget::Antigravity.gated(),
+            LaunchTarget::AntigravityIde.gated(),
+            "两档必须共用一个开关"
+        );
+        assert_eq!(
+            LaunchTarget::of(crate::domain::Client::Antigravity),
+            LaunchTarget::Antigravity
+        );
+        assert_eq!(
+            LaunchTarget::of(crate::domain::Client::AntigravityIde),
+            LaunchTarget::AntigravityIde
+        );
+        assert_ne!(
+            LaunchTarget::Antigravity.holder(),
+            LaunchTarget::AntigravityIde.holder()
+        );
     }
 
     #[test]

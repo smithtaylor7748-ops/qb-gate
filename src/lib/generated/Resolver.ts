@@ -4,4 +4,21 @@ export type Resolver = { address: string, country_code: string | null, country_n
 /**
  * 来自网卡配置而非真实解析回显。
  */
-from_adapter: boolean, interface: string | null, is_private: boolean, is_domestic: boolean, };
+from_adapter: boolean, interface: string | null, 
+/**
+ * 网卡配置那一行来自**非硬件网卡**（TUN / TAP / WireGuard / VPN），读自
+ * `Get-NetAdapter` 的 `HardwareInterface`（2026-09-24）。原来按网卡名里有没有 `tun`
+ * 认 —— 那是本机 `xray_tun` 的名字，别人的隧道可能叫 `Clash`、`Meta`、`wg0`。
+ */
+tunnel: boolean, 
+/**
+ * 网卡配置那一行：这张网卡此刻连着（`InterfaceOperationalStatus` = Up）。
+ * 断开的网卡上还挂着上次的 DNS（比如断开的 WLAN 上的路由器地址），用不上，不参与判定。
+ * 回显那几行恒为 `true` —— 它们就是实际发生的查询。
+ */
+connected: boolean, 
+/**
+ * 网卡配置那一行：发往这个解析器的查询从哪儿出去（`Find-NetRoute`）——
+ * `Some(true)` 进隧道，`Some(false)` 从物理网卡直接出去，`None` 查不出。回显那几行是 `None`。
+ */
+via_tunnel: boolean | null, is_private: boolean, is_domestic: boolean, };

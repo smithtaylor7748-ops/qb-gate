@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="no-referrer" />
+    <title>QB Gate · 浏览器采集</title>
+  </head>
+  <body>
+    <main class="probe">
+      <h1>QB Gate · 浏览器采集</h1>
+      <p id="status" role="status">
+        正在读取这个浏览器的语言、时区、字体与 WebRTC……
+      </p>
+      <p class="probe-note">
+        结果只发回本机的 QB Gate 面板（127.0.0.1），不经过任何外部服务器；
+        这个链接只能用一次，两分钟后作废。完成后直接关掉这个页面就行。
+      </p>
+    </main>
+    <script type="module" src="/src/probe/main.ts"></script>
+  </body>
+</html>

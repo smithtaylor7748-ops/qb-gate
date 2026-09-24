@@ -91,13 +91,18 @@ pub async fn install_run(
 }
 
 /// 托管安装 / 升级。安装器只管文件，重锁与还租约在这里的维护窗口收尾时做。
+///
+/// ⛔ **调用方必须已经拿着 `operations::exclusive()` 的锁**（`install_run` / `upgrade_execute`
+/// 都是）。这里**不许再拿一次**：那把锁是 tokio 的 `Mutex`，不可重入 —— 0.22.6 到 0.27.0
+/// 这里多了一句 `operations::exclusive().await?`，于是软件页的「安装 / 重新下载安装」
+/// 和托管那份的「升级」一点下去就在自己手里的锁上永远等着：按钮转圈不停、
+/// 一段进度都不出、也没有任何报错。托管安装在待办里一直标着「未验证」，正是它。
 async fn managed_install(
     app: tauri::AppHandle,
     which: install::managed::App,
     channel: &str,
     state: &AppState,
 ) -> Result<install::winget::InstallResult> {
-    let _guard = operations::exclusive().await?;
     use install::winget::{InstallResult, InstallTarget, Method};
     let rep = Reporter::new(app, events::TASK_INSTALL, install::managed::TOTAL);
     let guard = gate::Maintenance::observing(&state.gate);
@@ -452,10 +457,57 @@ pub async fn upgrade_execute(
     r
 }
 
-// ------------------------------------------------------------ 应用更新
+// ------------------------------------------------------------ 应用更新（0.25.3）
 
-/// 返回更新配置状态。仓库未创建前保持安全的未配置状态，启动时调用也不会联网。
+/// 上一次问到的更新状态。**不联网。**
 #[tauri::command]
 pub fn update_status() -> update::UpdateStatus {
     update::status()
+}
+
+/// 问一次 GitHub 有没有新版。
+///
+/// `manual = false` 是界面启动时那一次 —— 设置里关了「启动时检查更新」就不发请求；
+/// `manual = true` 是设置页的「检查更新」。**只问，不下载、不安装。**
+#[tauri::command]
+pub async fn update_check(manual: bool) -> update::UpdateStatus {
+    update::check(manual).await
+}
+
+/// 「跳过这个版本」。`None` = 取消跳过。
+#[tauri::command]
+pub async fn update_skip(version: Option<String>) -> Result<update::UpdateStatus> {
+    let _guard = operations::exclusive_soon().await?;
+    update::skip(version)
+}
+
+/// **一键更新**：下载 → 按同一个 Release 的 `SHA256SUMS.txt` 核对 → 面板退出 →
+/// 退出处理重锁之后启动安装包（`/P /UPDATE /R`，装完自己重新打开面板）。
+///
+/// 只能由使用者在更新弹窗里点出来。拿的是**不查就绪**的那把锁：启动卡在「需要完成数据恢复」时
+/// 也许正是新版能读懂的数据，那时候更新不该被拦下（2026-09-22 那次降级事故的反面）。
+/// 锁本身还是要拿 —— 别的安装、迁移正跑着的时候退出，等于把它们腰斩。
+#[tauri::command]
+pub async fn update_install(app: tauri::AppHandle) -> Result<()> {
+    let _guard = operations::exclusive_unchecked().await;
+    let rep = Reporter::new(app.clone(), events::TASK_SELF_UPDATE, 4);
+    match update::prepare(&rep).await {
+        Ok((path, sha256)) => {
+            audit::write(&format!(
+                "一键更新：{} 已下载并核对 SHA-256，面板退出后启动安装包",
+                path.display()
+            ));
+            rep.done("已核对，面板即将退出并开始安装，装完会自己重新打开");
+            update::set_pending(path, sha256);
+            // 留一小会儿给界面把最后那句显示出来，再退。
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            app.exit(0);
+            Ok(())
+        }
+        Err(e) => {
+            audit::write(&format!("一键更新失败：{e}"));
+            rep.fail(&e.to_string());
+            Err(e)
+        }
+    }
 }

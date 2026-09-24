@@ -27,6 +27,10 @@ installers-cache/
 *.log
 *.pem
 *.key
+# 例外：Codex 桌面端直装要用的 Microsoft 根证书（**公开的根证书，不是私钥**），
+# `codex_store.rs` 用 `include_bytes!` 编进去 —— 被上面那条 `*.pem` 挡在仓库外的话，
+# 干净克隆（包括 CI）连编译都过不了。0.25.3 推 GitHub 前查出来的。
+!crates/qb-install/src/install/codex_store/microsoft-root-2011.pem
 .auth.json
 auth.json
 .credentials.json

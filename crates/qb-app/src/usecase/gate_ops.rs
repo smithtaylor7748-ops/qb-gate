@@ -60,6 +60,15 @@ pub async fn stop_managed(
     if let Err(e) = crate::plugins::sillytavern::stop().await {
         errors.push(e.to_string());
     }
+    // 酒馆的 GPT 桥接活在面板进程里，它起的 `codex exec` 子进程跟酒馆一样归门禁收 ——
+    // 出口 IP 不合格时留着它，等于留一条能继续对官方发请求的路。
+    if let Err(e) = crate::gpt_bridge::stop() {
+        errors.push(e.to_string());
+    }
+    // Gemini 桥接同理（0.26.0）：它起的 Gemini CLI 子进程带着 Google 登录往外发请求。
+    if let Err(e) = crate::gemini_bridge::stop() {
+        errors.push(e.to_string());
+    }
     if let Err(e) = crate::sessions::stop_matching(|s| all_sessions || s.gated) {
         errors.push(e.to_string());
     }

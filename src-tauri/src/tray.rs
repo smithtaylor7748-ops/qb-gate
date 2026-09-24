@@ -141,10 +141,11 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             // 但账户不存在「取消激活」这个操作。
             let mark = if s.active { "● " } else { "   " };
             let plan = s.plan.clone().unwrap_or_else(|| "套餐未知".into());
+            // ⛔ 菜单项的 **id 仍然是 label** —— 点下去要按它找槽位。变的只是看得见的那一行。
             MenuItem::with_id(
                 app,
                 format!("{ID_ACCOUNT}:{}", s.label),
-                format!("{mark}{} · {plan}", s.label),
+                format!("{mark}{} · {plan}", s.display_name()),
                 !s.active,
                 None::<&str>,
             )
@@ -175,7 +176,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let active_label = slots
         .iter()
         .find(|s| s.active)
-        .map(|s| s.label.clone())
+        .map(|s| s.display_name())
         .unwrap_or_else(|| "无".into());
     let accounts_menu = Submenu::with_items(
         app,

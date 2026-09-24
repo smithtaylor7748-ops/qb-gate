@@ -19,4 +19,21 @@ export type SoftwareReport = { claudeCode: Software,
 /**
  * 本机全部 Claude Code 副本（不含桌面端存根）。
  */
-claudeCodeInstalls: Array<ClaudeInstall>, claudeDesktop: Software, codex: Software, browsers: Array<Software>, };
+claudeCodeInstalls: Array<ClaudeInstall>, claudeDesktop: Software, codex: Software, 
+/**
+ * Codex 桌面端（Microsoft Store 包，0.28.0）。跟 `codex` 那个 CLI 是两个东西：
+ * 账户页起的是它，直装（`codex_store`）装的也是它。
+ */
+codexDesktop: Software, 
+/**
+ * 反重力 Hub（0.26.0）。
+ */
+antigravity: Software, 
+/**
+ * 反重力 IDE（0.26.0）。
+ */
+antigravityIde: Software, 
+/**
+ * 官方 Gemini CLI（0.26.0，酒馆的 Gemini 桥接用）。
+ */
+geminiCli: Software, browsers: Array<Software>, };

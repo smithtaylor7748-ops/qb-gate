@@ -8,8 +8,12 @@
 //! # 每个开关的默认值都必须是「最不意外」的那个
 //!
 //! 默认值决定了用户装完不动任何设置时的行为。任何会让某个命令**突然跑不起来**
-//! 的开关，默认都得是关的 —— 否则用户升级一次面板，第二天发现 codex 打不开，
+//! 的开关，默认都得是关的 —— 否则用户升级一次面板，第二天发现命令打不开，
 //! 而他根本不知道是这个程序干的。
+//!
+//! 一个明确的例外：GPT（Codex）归门禁管这件事，0.25.0 起**默认开**，
+//! 是使用者自己定的（见 `codex_outside_gate`）。他要的是「Claude 怎么管，GPT 就怎么管」，
+//! 而「门禁默认只管一半」在他看来才是意外。
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -20,14 +24,45 @@ use crate::error::Result;
 #[ts(export)]
 #[serde(default)]
 pub struct Settings {
-    /// Codex 要不要也归 IP 门禁管。
+    /// GPT（Codex）要不要**退出** IP 门禁。
     ///
-    /// **默认 false，而且必须一直是 false。** 打开之后 `codex` 会跟
-    /// `claude.exe` 一样被加上 Deny ExecuteFile —— 出口 IP 不在白名单时
-    /// 命令直接被系统拒绝执行。这对「请求不能从没核实过的 IP 出去」是对的，
-    /// 但对一个正在用 Codex 干活的人来说是个突然的变化，
-    /// 所以只能由他自己在设置里打开。
-    pub codex_under_gate: bool,
+    /// **默认 false = 归门禁管。** 0.25.0 之前这个开关叫 `codex_under_gate`、默认关，
+    /// 理由是文件头那条「默认值不能让命令突然跑不起来」。**使用者 2026-09-20 明确要求
+    /// 「默认定死被 IP 锁接管」**，于是把开关反过来存：记的是「退出」而不是「加入」。
+    /// 反过来存不是花样，是升级路径 —— 旧 `settings.json` 里躺着的 `codex_under_gate: false`
+    /// 变成未知键被忽略，所有人升级后自动落到「归门禁」，不用写迁移；
+    /// 以后在「IP 锁」弹窗里手动移出的才会写下 `codex_outside_gate: true`。
+    ///
+    /// 归门禁的含义跟 Claude 一样：`codex.exe` 加 Deny ExecuteFile、GPT 桌面端起之前
+    /// 验 IP 解锁、起来之后持租约、看门狗判不过就收。突然跑不起来的那道风险由
+    /// 「白名单为空时不上锁」兜着（`gate::lock_all` 的硬约束）。
+    ///
+    /// 读的一侧仍叫 [`codex_under_gate()`]，语义不变、调用点不用改。
+    pub codex_outside_gate: bool,
+
+    /// 反重力（Antigravity Hub 与 IDE）要不要**退出** IP 门禁（0.26.0）。
+    ///
+    /// **默认 false = 归门禁管**，跟 GPT 那条同款反义存法（使用者的原话：软件页新增这个
+    /// 软件，「也被 IP 锁保护」）。归门禁的含义：`Antigravity.exe`、它的 `language_server.exe`、
+    /// IDE 的两份 exe 与它的语言服务器一起加 Deny ExecuteFile，起之前验 IP 解锁、
+    /// 起来之后持租约、看门狗判不过就收（桌面档，零宽限）。
+    ///
+    /// 两个产品共用一个开关：它们往外发请求用的是同一个 Google 账户，
+    /// 只锁一个就是给另一个留门。读的一侧是 [`antigravity_under_gate()`]。
+    pub antigravity_outside_gate: bool,
+
+    /// 反重力的联网额度要不要问（0.32.0 起；2026-09-23 从「只管 Hub」扩成「Hub + 账户槽位」）。
+    ///
+    /// **默认 true。** 字段名没改，是为了已经写进 `settings.json` 的旧值照样生效。
+    /// 开着的时候也**只在使用者点刷新图标时**才问（2026-09-23 使用者定的），没有定时器。
+    ///
+    /// Hub 的邮箱在凭据里那个 `id_token` 的载荷中，是纯本机解码，**不受这个开关影响**；
+    /// 反重力 IDE 写在本机的 `userStatus` 也照读。
+    ///
+    /// 关掉它，点刷新图标会得到一句「设置里关掉了」，界面只剩本机那些数。
+    /// 边界与免责措辞在 `qb-app::usecase::antigravity_quota` 的模块头与 DISCLAIMER §6。
+    #[serde(default = "yes")]
+    pub antigravity_hub_quota: bool,
 
     /// 门禁被动关上之后，出口 IP 回到白名单时要不要自动重新放行。
     ///
@@ -66,8 +101,7 @@ pub struct Settings {
     /// 会话内门禁（装进 Claude Code 的 hook）要不要开。
     ///
     /// **默认 false** —— 它会在门禁判不过时拦下每一次请求，是个会让
-    /// 「本来能用的东西突然不能用」的开关，跟 `codex_under_gate` 同一档，
-    /// 必须由使用者自己打开。
+    /// 「本来能用的东西突然不能用」的开关，必须由使用者自己打开。
     ///
     /// 这个字段存的是**意图**，不是现状：每个槽位的 `settings.json` 里
     /// 装没装才是现状。切换账户后 `usecase::hook_ops::follow_active_slot`
@@ -108,12 +142,36 @@ pub struct Settings {
     ///
     /// 要用的人自己在设置里打开，界面上把「要语言包、要注销」写在开关旁边。
     pub align_display_language_on_start: bool,
+
+    /// 启动面板时问一次 GitHub 有没有新版（0.25.3，使用者要的「打开软件时弹窗收到更新通知」）。
+    ///
+    /// **默认 true** —— 这个功能本来就是为「装了老版本、不会自己去 GitHub 看」的人做的，
+    /// 默认关就等于没做。它只问本项目自己发布页上的一个小文件（`install::self_update`），
+    /// 不带任何账户信息；**只提醒，不自动装** —— 装要使用者在弹窗里点「一键更新」。
+    /// 关掉之后启动时一个请求都不发，设置页的「检查更新」照样能手动点。
+    #[serde(default = "yes")]
+    pub update_check_on_start: bool,
+
+    /// 使用者在更新弹窗里点过「跳过这个版本」的那一版。启动检查遇到**正好这一版**就不弹，
+    /// 更新的版本照弹。设置页仍然显示它、仍然能从那里更新。
+    ///
+    /// 只经 `update_skip` 改：`settings_save` 原样保留旧值 —— 设置页拿着一份打开页面时读的
+    /// 旧设置去存别的开关，不该顺手把刚点的「跳过」冲掉。
+    pub update_skipped_version: Option<String>,
+}
+
+/// `#[serde(default)]` 对 `bool` 给的是 `false`。要默认开的字段用这个 ——
+/// 升级上来的旧配置文件里没有那个键，落到 `false` 就等于悄悄替使用者关掉了功能。
+fn yes() -> bool {
+    true
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            codex_under_gate: false,
+            codex_outside_gate: false,
+            antigravity_outside_gate: false,
+            antigravity_hub_quota: true,
             gate_auto_rearm: true,
             managed_apps_dir: None,
             country_allowlist: Vec::new(),
@@ -123,6 +181,8 @@ impl Default for Settings {
             align_locale_on_start: true,
             // 要语言包 + 要注销，代价跟上面两个不是一个量级 —— 见字段上的说明。
             align_display_language_on_start: false,
+            update_check_on_start: true,
+            update_skipped_version: None,
         }
     }
 }
@@ -209,9 +269,22 @@ pub fn write_without_invalidating_the_gate_verdict(s: &Settings) -> Result<()> {
     Ok(())
 }
 
-/// 门禁那边每次枚举目标都要问一次，单独提出来省得到处 `load()`。
+/// GPT（Codex）归不归门禁管。门禁那边每次枚举目标都要问一次，单独提出来省得到处 `load()`。
+///
+/// 存的是反义的 `codex_outside_gate`（见字段说明），这里翻回来 —— 调用点关心的是
+/// 「管不管」，不是「文件里怎么记」。
 pub fn codex_under_gate() -> bool {
-    load().codex_under_gate
+    !load().codex_outside_gate
+}
+
+/// 反重力（Hub + IDE）归不归门禁管。默认归；反义存法同 [`codex_under_gate()`]。
+pub fn antigravity_under_gate() -> bool {
+    !load().antigravity_outside_gate
+}
+
+/// 反重力的联网额度（Hub + 账户槽位）要不要问。默认开，见字段说明。
+pub fn antigravity_hub_quota() -> bool {
+    load().antigravity_hub_quota
 }
 
 /// 看门狗收摊之后要不要转入重整待命。默认开。
@@ -257,20 +330,47 @@ pub fn managed_apps_dir() -> std::path::PathBuf {
 mod tests {
     use super::*;
 
+    /// GPT 默认归门禁管（使用者 2026-09-20 定的，见字段说明）。
     #[test]
-    fn codex_gate_defaults_to_off() {
-        // 打开它会让 codex 在 IP 不合规时**直接跑不起来**。
-        // 默认开着的话，用户升级一次面板第二天就发现 codex 打不开，
-        // 而且不知道是这个程序干的。
-        assert!(!Settings::default().codex_under_gate);
+    fn codex_gate_defaults_to_on() {
+        assert!(!Settings::default().codex_outside_gate);
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(
+            !s.codex_outside_gate,
+            "旧配置文件里没有这个字段，不能默成退出门禁"
+        );
+    }
+
+    /// 反重力默认归门禁管（使用者 2026-09-20 定的：「也被 IP 锁保护」）。
+    /// 0.26.0 之前的文件没有这个键，升上来必须落到「归门禁」。
+    #[test]
+    fn antigravity_gate_defaults_to_on() {
+        assert!(!Settings::default().antigravity_outside_gate);
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!s.antigravity_outside_gate);
+        let s: Settings = serde_json::from_str(r#"{"antigravity_outside_gate":true}"#).unwrap();
+        assert!(s.antigravity_outside_gate);
+    }
+
+    /// 升级路径：0.25.0 之前的文件写的是 `codex_under_gate: false`。
+    /// 那个键现在是未知键，必须被忽略 —— 旧文件升上来要落到「归门禁」，
+    /// 而不是把「以前没纳入」延续下去。
+    #[test]
+    fn an_old_codex_under_gate_false_no_longer_opts_out() {
+        let s: Settings = serde_json::from_str(r#"{"codex_under_gate":false}"#).unwrap();
+        assert!(!s.codex_outside_gate);
+        // 反过来也一样：旧键的 true 不会被误读成「退出」。
+        let s: Settings = serde_json::from_str(r#"{"codex_under_gate":true}"#).unwrap();
+        assert!(!s.codex_outside_gate);
+        // 新键才算数。
+        let s: Settings = serde_json::from_str(r#"{"codex_outside_gate":true}"#).unwrap();
+        assert!(s.codex_outside_gate);
     }
 
     /// 重整待命默认必须是**开**的。
     ///
-    /// 跟 `codex_under_gate` 正好相反，理由也相反：
-    /// 那个开关打开会让命令**突然跑不起来**，所以默认关；
-    /// 这个开关关掉会让门**关上之后永远不自己开**，所以默认开。
-    /// 两边守的是同一条：默认值要是「最不意外」的那个。
+    /// 关掉会让门**关上之后永远不自己开**，所以默认开 ——
+    /// 默认值要是「最不意外」的那个。
     #[test]
     fn auto_rearm_defaults_to_on() {
         assert!(Settings::default().gate_auto_rearm);
@@ -285,7 +385,7 @@ mod tests {
     fn broken_or_missing_file_falls_back_to_defaults() {
         for text in ["", "{ not json", "null", "[]"] {
             let s: Settings = serde_json::from_str(text).unwrap_or_default();
-            assert!(!s.codex_under_gate);
+            assert!(!s.codex_outside_gate, "读不出来就是默认：归门禁");
         }
     }
 
@@ -293,14 +393,15 @@ mod tests {
     fn unknown_keys_do_not_break_older_builds() {
         // 新版加了字段、用户又装回旧版时，旧版得能照常读。
         let s: Settings =
-            serde_json::from_str(r#"{"codex_under_gate":true,"something_new":42}"#).unwrap();
-        assert!(s.codex_under_gate);
+            serde_json::from_str(r#"{"codex_outside_gate":true,"something_new":42}"#).unwrap();
+        assert!(s.codex_outside_gate);
     }
 
     #[test]
     fn missing_field_uses_the_default_not_an_error() {
         let s: Settings = serde_json::from_str("{}").unwrap();
-        assert!(!s.codex_under_gate);
+        assert!(!s.codex_outside_gate);
+        assert!(s.gate_auto_rearm);
     }
 
     /// 国家白名单默认必须是**空**的。
@@ -339,6 +440,21 @@ mod tests {
         assert!(!Settings::default().disable_telemetry);
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.disable_telemetry, "旧配置文件没有这个字段，不能默成开");
+    }
+
+    /// 启动时检查更新默认**开**：0.25.3 之前的文件没有这个键，升上来必须落到「开」——
+    /// 否则装了带更新功能的那一版，也永远收不到下一版的提醒。
+    #[test]
+    fn update_check_defaults_to_on_and_nothing_is_skipped() {
+        assert!(Settings::default().update_check_on_start);
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(
+            s.update_check_on_start,
+            "旧配置文件里没有这个字段，不能默成关"
+        );
+        assert!(s.update_skipped_version.is_none());
+        let s: Settings = serde_json::from_str(r#"{"update_check_on_start":false}"#).unwrap();
+        assert!(!s.update_check_on_start);
     }
 
     #[test]

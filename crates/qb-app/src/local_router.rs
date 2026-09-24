@@ -401,8 +401,18 @@ pub fn client_base_url(client: Client, port: u16) -> String {
         // Models and auxiliary requests do not identify their client by endpoint.
         Client::Codex => format!("{base}{CODEX_PREFIX}"),
         Client::ClaudeDesktop => format!("{base}{DESKTOP_PREFIX}"),
+        // 反重力没有中转路径（端点写死在它自己的 app.asar 里），`workspace::environment_save`
+        // 与 `router_environment` 在入口就拒绝，这一支**永远不该被写进任何配置**。
+        // 仍给一个一眼认得出来源的路径，而不是静默套用别的软件的前缀：万一哪天漏到
+        // 配置里，404 的地址本身就在说明为什么。`route_of` 不认它，请求到路由就是 404。
+        Client::Antigravity | Client::AntigravityIde => {
+            format!("{base}{NO_RELAY_PREFIX}/{}", client_key(client))
+        }
     }
 }
+
+/// 没有中转路径的软件在 [`client_base_url`] 里拿到的前缀。只用来把错误说清楚。
+pub const NO_RELAY_PREFIX: &str = "/qb-no-relay-path";
 
 /// 走本机路由的环境在配置文件里填哪把 Key。
 ///
@@ -445,6 +455,8 @@ fn client_key(c: Client) -> &'static str {
         Client::ClaudeCode => "claude-code",
         Client::ClaudeDesktop => "claude-desktop",
         Client::Codex => "codex",
+        Client::Antigravity => "antigravity",
+        Client::AntigravityIde => "antigravity-ide",
     }
 }
 
@@ -656,6 +668,14 @@ async fn proxy(
         .path_and_query()
         .map(|p| p.as_str().to_string())
         .unwrap_or_else(|| "/".into());
+    // 没有中转路径的软件（反重力）拿到的是 `NO_RELAY_PREFIX` 前缀。理论上永远
+    // 到不了这里（入口就拒绝建环境），真到了也不许落到别的软件的线上 —— 把原因说清楚。
+    if raw_path.starts_with(NO_RELAY_PREFIX) {
+        return Ok(text(
+            StatusCode::NOT_FOUND,
+            "这个软件没有中转路径：它的 API 端点写死在客户端自己的程序里，本机路由无法为它换上游。",
+        ));
+    }
     // 先认这一发是哪个软件发来的,再按那个软件去绑线 ——
     // 三个软件各有各的当前上游,认错软件就会打到别人的站上。
     // 变量名叫 caller 不叫 client —— 这个函数的参数里已经有一个 reqwest::Client。
@@ -973,6 +993,24 @@ mod tests {
             let (got, forward) = route_of(after_host);
             assert_eq!(got, client, "{full} 被认成了 {got:?}");
             assert_eq!(forward, path, "{full} 转给上游时前缀没剥干净");
+        }
+    }
+
+    /// 反重力没有中转路径。它拿到的 base_url 必须**一眼认得出是「没有路」**，
+    /// 而且 `route_of` 不许把它认成任何一个有线路的软件 —— 认成了就是悄悄用上别人的 Key。
+    #[test]
+    fn antigravity_gets_a_no_route_base_that_never_maps_onto_another_client() {
+        for client in [Client::Antigravity, Client::AntigravityIde] {
+            let base = client_base_url(client, DEFAULT_PORT);
+            assert!(base.contains(NO_RELAY_PREFIX), "{base}");
+            let after_host = base
+                .strip_prefix(&format!("http://127.0.0.1:{DEFAULT_PORT}"))
+                .unwrap()
+                .to_string();
+            assert!(after_host.starts_with(NO_RELAY_PREFIX));
+            // 前缀不是任何一个有线路的软件的前缀。
+            assert!(!after_host.starts_with(CODEX_PREFIX));
+            assert!(!after_host.starts_with(DESKTOP_PREFIX));
         }
     }
 

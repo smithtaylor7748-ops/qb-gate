@@ -103,6 +103,9 @@ fn client_key(c: Client) -> &'static str {
         Client::ClaudeCode => "claude-code",
         Client::ClaudeDesktop => "claude-desktop",
         Client::Codex => "codex",
+        // 反重力没有中转路径，不在 `ALL_CLIENTS` 里；给个名字只是让 match 完整。
+        Client::Antigravity => "antigravity",
+        Client::AntigravityIde => "antigravity-ide",
     }
 }
 
@@ -543,6 +546,10 @@ fn client_config_path(client: Client) -> Result<(std::path::PathBuf, &'static st
         Client::Codex => (dir.join("config.toml"), "toml"),
         Client::ClaudeDesktop => (dir.join(qb_app::workspace::DESKTOP_CONFIG_FILE), "desktop"),
         Client::ClaudeCode => (dir.join("settings.json"), "json"),
+        // `router_environment` 在上一行已经拒绝了反重力；到不了这里。
+        Client::Antigravity | Client::AntigravityIde => {
+            return Err(GateError::Other("反重力没有中转路径".into()))
+        }
     })
 }
 

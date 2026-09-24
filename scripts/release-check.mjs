@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
+import { loadReleaseNotes } from "./update-manifest.mjs";
 const json = (p) => JSON.parse(readFileSync(p, "utf8"));
 const pkg = json("package.json");
 assert.equal(pkg.version, json("src-tauri/tauri.conf.json").version);
@@ -25,8 +26,15 @@ assert.ok(
   existsSync("LICENSE-ADDITIONAL-TERMS.md"),
   "LICENSE-ADDITIONAL-TERMS.md (AGPL section 7 terms) is missing",
 );
+// 0.25.3：面板的更新弹窗显示的就是这份说明（经 update.json）。提了版本号却没换说明，
+// 装着旧版的人会看到一段写着上一版内容的「更新内容」—— 在这里就拦下来。
+loadReleaseNotes();
 for (const [file, needle] of [
   ["README.md", "LICENSE-ADDITIONAL-TERMS.md"],
+  // 英文介绍页是 README 的另一种语言，附加条款第 1 条要求的署名与指向同样要在。
+  ["README.en.md", "LICENSE-ADDITIONAL-TERMS.md"],
+  ["README.en.md", "Based on QB Gate, Copyright (C) 2026 smithtaylor7748-ops."],
+  ["README.md", "基于 QB Gate，版权所有 (C) 2026 smithtaylor7748-ops。"],
   ["src-tauri/tauri.conf.json", "licenses/LICENSE-ADDITIONAL-TERMS.md"],
   [".github/workflows/release.yml", "LICENSE-ADDITIONAL-TERMS.md"],
   [

@@ -133,10 +133,13 @@ export function ManagedDirControl({
             <Button onClick={() => setOpen(false)} disabled={busy}>
               取消
             </Button>
+            {/* ⛔ `disabled` 也要看页面那一份：框是在页面空闲时打开的，
+                但使用者可以开着它去点别的按钮，回来再按「确定」——
+                那一下就排在另一个 `exclusive()` 后面无限等。 */}
             <Button
               variant="primary"
               loading={busy}
-              disabled={!probe?.ok || probing}
+              disabled={!probe?.ok || probing || disabled}
               onClick={() => void apply()}
             >
               {anyInstalled ? "确定并迁移" : "确定"}
@@ -185,7 +188,15 @@ export function ManagedDirControl({
  * 使用者的两种选择：**彻底清除**（能卸载的用它自己的卸载命令，其余删文件，一点痕迹不留），
  * 或者**保留** —— 保留什么都不用做，它们照样被执行锁锁住。
  */
-export function ExternalsBlock() {
+/**
+ * `disabled` 由**页面**传进来。
+ *
+ * ⛔ 0.28.0 之前这三个组件（改目录 / 回滚 / 清外部副本）各有各的 `busy`，
+ * 跟软件页那个 `busy` 互不知情 —— 于是安装跑着的时候这几个按钮全是亮的，
+ * 点下去的命令全都要拿同一把 `operations::exclusive()`，排在安装后面**无限等**。
+ * 症状：按钮一直转、没有报错、什么都不发生，只能重启面板（坑 7.51 的形状）。
+ */
+export function ExternalsBlock({ disabled = false }: { disabled?: boolean }) {
   const toast = useToast();
   const managed = useResource("managed", R.managed);
   const externals = useResource("externals", R.externals);
@@ -250,6 +261,7 @@ export function ExternalsBlock() {
           size="sm"
           className="ml-auto"
           loading={externals.loading}
+          disabled={disabled}
           onClick={() => void externals.refresh()}
         >
           {externals.data ? "重新扫描" : "扫描"}
@@ -290,7 +302,7 @@ export function ExternalsBlock() {
                 <Button
                   variant="danger"
                   size="sm"
-                  disabled={busy || !installed(a)}
+                  disabled={busy || disabled || !installed(a)}
                   onClick={() => setAsk(a)}
                 >
                   彻底清除 {MANAGED_APP_LABEL[a]} 的这些副本
@@ -362,7 +374,11 @@ export function ExternalsBlock() {
  * 界面上要说清两件容易误解的事：回滚**不影响正在跑的会话**（Windows 不卸
  * 已加载的映像，下次启动才生效），以及版本库里的每一份**照样是锁着的**。
  */
-export function VersionHistoryBlock() {
+export function VersionHistoryBlock({
+  disabled = false,
+}: {
+  disabled?: boolean;
+}) {
   const toast = useToast();
   const app: ManagedApp = "claude-code";
   // ⛔ 走资源层，不要在这里 `useState` + `useEffect` 自己取。
@@ -420,7 +436,7 @@ export function VersionHistoryBlock() {
                   size="sm"
                   icon={<Undo2 size={12} />}
                   loading={busy === v.version}
-                  disabled={!!busy}
+                  disabled={!!busy || disabled}
                   onClick={() => setAsk(v)}
                 >
                   回滚

@@ -128,7 +128,31 @@ export function useResource<T>(
     refresh: useCallback(() => refresh(key), [key]),
   };
 }
-export async function refresh(key: string): Promise<void> {
+/**
+ * 重新取一份。
+ *
+ * # ⛔ 定义依赖组件 state 时，必须把新定义显式传进来
+ *
+ * `definitions.set(key, def)` 发生在 `useResource` **渲染时**。而 `setState`
+ * 排的是下一次渲染 —— 所以
+ *
+ * ```ts
+ * setChannel("stable");
+ * void upgrade.refresh();   // ❌ 注册表里还是 latest 那份定义
+ * ```
+ *
+ * 取回来的是**旧渠道**的结果，然后当成新渠道的显示出去。软件页的升级渠道
+ * 下拉就是这么错了一整版：选 stable、查的是 latest、界面写着 stable 的读数。
+ * 这跟 `resources.ts` 里 `upgradeOf` 那段注释警告的是同一件事，只是低了一层。
+ *
+ * 所以要在同一个事件里换定义又重取，走 `refresh(key, R.xxxOf(新值))`。
+ * 传进来的定义会顺手写回注册表，后续的 `invalidate` / 自动重取才跟得上。
+ */
+export async function refresh<T>(
+  key: string,
+  override?: ResourceDef<T>,
+): Promise<void> {
+  if (override) definitions.set(key, override as ResourceDef<unknown>);
   const def = definitions.get(key);
   if (!def) return;
   // fetchQuery joins an in-flight request. Cancelling here makes two callers

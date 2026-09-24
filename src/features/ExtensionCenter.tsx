@@ -29,6 +29,7 @@ import {
   type InstallRequest,
 } from "../lib/workspace";
 import CodexEgressPanel from "../plugins/CodexEgressPanel";
+import AntigravityPanel from "../plugins/AntigravityPanel";
 import TavernPanel from "../plugins/TavernPanel";
 
 const KIND_ICON = {
@@ -38,7 +39,7 @@ const KIND_ICON = {
   template: FileCode2,
 };
 /** 目录里默认露出来的。其余的装过才显示，见下面 `list` 的注释。 */
-const SURFACED = new Set(["sillytavern", "codex-egress"]);
+const SURFACED = new Set(["sillytavern", "codex-egress", "antigravity-ui"]);
 
 export default function ExtensionCenter() {
   const { id } = useParams();
@@ -398,7 +399,13 @@ function ExtensionDetail({ manifest: m }: { manifest: ExtensionManifest }) {
               >
                 接入已配置的本地安装
               </Button>
-              {m.id === "codex-egress" ? <CodexEgressPanel /> : <TavernPanel />}
+              {m.id === "codex-egress" ? (
+                <CodexEgressPanel />
+              ) : m.id === "antigravity-ui" ? (
+                <AntigravityPanel />
+              ) : (
+                <TavernPanel />
+              )}
             </>
           ) : m.kind === "template" ? (
             <div className="qb-form">

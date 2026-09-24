@@ -56,6 +56,11 @@ impl Protocols {
                 (None, None) => None,
                 (a, b) => Some(a.unwrap_or(false) || b.unwrap_or(false)),
             },
+            // 反重力没有中转路径（端点写死在客户端里），**不是「还没探」，是「探了也没用」**：
+            // 回 `Some(false)`，界面上如实显示成「不支持」而不是「未检测」。
+            crate::domain::Client::Antigravity | crate::domain::Client::AntigravityIde => {
+                Some(false)
+            }
         }
     }
 }

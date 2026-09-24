@@ -70,6 +70,9 @@ fn main() {
         qb_gate_lib::usecase::egress_checks::EgressChecks::export_all_to(&root)?;
         qb_gate_lib::accounts::tokens::TokenUsage::export_all_to(&root)?;
         qb_gate_lib::usecase::token_summary::TokenSummary::export_all_to(&root)?;
+        qb_gate_lib::usecase::token_summary::TokenDay::export_all_to(&root)?;
+        qb_gate_lib::usecase::token_summary::UsageOverview::export_all_to(&root)?;
+        qb_gate_lib::usecase::token_summary::CodexUsageSummary::export_all_to(&root)?;
         qb_gate_lib::usecase::account_probe::ProbeResult::export_all_to(&root)?;
         qb_gate_lib::relay::presets::Preset::export_all_to(&root)?;
         qb_gate_lib::relay::WireApi::export_all_to(&root)?;
@@ -86,6 +89,8 @@ fn main() {
         qb_gate_lib::sysenv::checkup::EnvHit::export_all_to(&root)?;
         qb_gate_lib::sysenv::checkup::Checkup::export_all_to(&root)?;
         qb_gate_lib::sysenv::checkup::State::export_all_to(&root)?;
+        qb_app::browser_probe::BrowserReport::export_all_to(&root)?;
+        qb_app::browser_probe::ProbeStart::export_all_to(&root)?;
         // 启动时对齐（0.19.0）：区域格式与显示语言改之前长什么样，用来还原。
         qb_gate_lib::sysenv::locale::LocaleState::export_all_to(&root)?;
         // 系统代理（0.19.0，「两个口子」之二）。改之前的那一份也是这个形状，
@@ -150,9 +155,58 @@ fn main() {
         qb_gate_lib::commands::accounts::SwitchReport::export_all_to(&root)?;
         qb_gate_lib::commands::install::MigrateReport::export_all_to(&root)?;
         qb_gate_lib::plugins::sillytavern::TavernConfig::export_all_to(&root)?;
+        qb_gate_lib::plugins::sillytavern::TavernBackend::export_all_to(&root)?;
+        qb_app::gpt_bridge::GptBridgeStatus::export_all_to(&root)?;
+        // 0.26.0：反重力 + Gemini 桥接。
+        qb_app::gemini_bridge::GeminiBridgeStatus::export_all_to(&root)?;
+        qb_accounts::gemini::GeminiAccounts::export_all_to(&root)?;
+        qb_accounts::gemini::GeminiSlot::export_all_to(&root)?;
+        qb_gate_lib::install::antigravity::Product::export_all_to(&root)?;
+        qb_app::usecase::antigravity_ops::AntigravityStatus::export_all_to(&root)?;
+        qb_app::usecase::antigravity_ops::ProductStatus::export_all_to(&root)?;
+        qb_gate_lib::plugins::antigravity_ui::UiConfig::export_all_to(&root)?;
+        qb_gate_lib::plugins::antigravity_ui::UiStatus::export_all_to(&root)?;
+        qb_gate_lib::plugins::antigravity_ui::UiSource::export_all_to(&root)?;
+        qb_gate_lib::plugins::antigravity_ui::UiLogLine::export_all_to(&root)?;
+        qb_gate_lib::plugins::antigravity_ui::DangerRules::export_all_to(&root)?;
+        qb_gate_lib::plugins::antigravity_ui::DangerRule::export_all_to(&root)?;
+        // 0.30.0：反重力 IDE 槽位、IDE 写下的账户状态与额度、本机用量。
+        qb_accounts::antigravity::ide::AntigravityIdeAccounts::export_all_to(&root)?;
+        qb_accounts::antigravity::ide::AntigravityIdeSlot::export_all_to(&root)?;
+        // 0.32.0：合并之后的账户槽位（一条 = 一个账户，两半）、Hub 自己那份身份。
+        qb_accounts::antigravity::account::AntigravityAccounts::export_all_to(&root)?;
+        qb_accounts::antigravity::account::AntigravityAccount::export_all_to(&root)?;
+        qb_accounts::antigravity::hub::AntigravityHubIdentity::export_all_to(&root)?;
+        // 2026-09-23：反重力的联网额度（账户槽位与 Hub 共用一个形状）。
+        qb_app::usecase::antigravity_quota::AntigravityOnlineQuota::export_all_to(&root)?;
+        qb_app::usecase::antigravity_quota::AntigravityQuotaWindow::export_all_to(&root)?;
+        qb_app::usecase::antigravity_quota::QuotaGroup::export_all_to(&root)?;
+        qb_app::usecase::antigravity_quota::QuotaSpan::export_all_to(&root)?;
+        // GPT / Gemini CLI 的联网额度与酒馆自检（2026-09-22 加的，原来漏了这几行）。
+        qb_app::usecase::tavern_quota::TavernGptQuota::export_all_to(&root)?;
+        qb_app::usecase::tavern_quota::TavernQuotaWindow::export_all_to(&root)?;
+        qb_app::usecase::tavern_quota::TavernGeminiQuota::export_all_to(&root)?;
+        qb_app::usecase::tavern_quota::TavernGeminiModelQuota::export_all_to(&root)?;
+        qb_app::usecase::tavern_quota::TavernRoleplayTest::export_all_to(&root)?;
+        // 0.32.0：Codex 自己写在会话记录里的额度窗口。
+        qb_accounts::codex::ratelimit::CodexRateLimitScan::export_all_to(&root)?;
+        qb_accounts::codex::ratelimit::CodexRateLimits::export_all_to(&root)?;
+        qb_accounts::codex::ratelimit::CodexWindow::export_all_to(&root)?;
+        qb_accounts::codex::ratelimit::CodexCredits::export_all_to(&root)?;
+        qb_accounts::antigravity::status::AntigravityIdentity::export_all_to(&root)?;
+        qb_accounts::antigravity::status::AntigravityModelQuota::export_all_to(&root)?;
+        qb_accounts::antigravity::usage::AntigravityUsageScan::export_all_to(&root)?;
+        qb_app::usecase::antigravity_ops::AntigravityUsage::export_all_to(&root)?;
+        qb_app::usecase::antigravity_ops::AntigravityModelUsage::export_all_to(&root)?;
         qb_gate_lib::plugins::codex_egress::EgressConfig::export_all_to(&root)?;
         qb_gate_lib::plugins::codex_egress::EgressInstall::export_all_to(&root)?;
         qb_gate_lib::usecase::turnstate_ops::Takeover::export_all_to(&root)?;
+        // 0.32.0：Claude 桥自己那两个网页搬进面板之后要的契约。
+        qb_gate_lib::plugins::tavern_bridge_api::BridgeHealth::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_bridge_api::BridgeSettings::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_bridge_api::BridgeSettingsView::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_bridge_api::BridgeCall::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_bridge_api::BridgeTelemetry::export_all_to(&root)?;
         qb_gate_lib::plugins::tavern_locate::TavernEvidence::export_all_to(&root)?;
         qb_gate_lib::plugins::tavern_locate::TavernCandidate::export_all_to(&root)?;
         qb_gate_lib::plugins::tavern_locate::TavernSurvey::export_all_to(&root)?;

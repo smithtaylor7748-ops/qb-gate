@@ -172,6 +172,8 @@ export const CLIENT_NAMES: Record<Client, string> = {
   "claude-code": "Claude Code",
   "claude-desktop": "Claude 桌面端",
   codex: "Codex",
+  antigravity: "反重力",
+  "antigravity-ide": "反重力 IDE",
 };
 export const KIND_NAMES = {
   application: "应用集成",

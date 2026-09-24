@@ -61,7 +61,25 @@ export interface Score {
   measured: number;
   assessed: number;
   missing: number;
+  /** 没达标的**关键项**（见 [`CRITICAL`]）。非空时档位封顶在「偏差」，不管总分多少。 */
+  critical: string[];
 }
+
+/**
+ * 关键项：任何一项**失败**，档位封顶「偏差」（2026-09-24，参照 CheckClaude 的「关键项一票否决」）。
+ *
+ * 加权总分会把一个致命问题摊薄 —— API 回 403（Anthropic 不接受这个出口）只占
+ * 「出口一致性」那 10 分里的一行，总分照样可以是 95、档位照样是「良好」。
+ * 这几项任何一项失败，别的项再好也没用，所以直接封顶，并在评分卡上点名。
+ *
+ * 权重表不动 —— 封顶只改档位，不改总分（总分仍然如实反映各项拿了多少）。
+ */
+export const CRITICAL: Record<string, string> = {
+  anthropic_reach: "Anthropic 服务可达",
+  claude_dns: "claude.ai 的解析",
+  ipv6: "IPv6 出口",
+  browser_webrtc: "WebRTC 出口",
+};
 
 /**
  * 权重表。加起来正好 100。
@@ -134,10 +152,14 @@ export function computeScore({
   // 一项都没检测过就不给分数。给 0 分是在冤枉用户，给满分是在替没做过的
   // 检测打包票，两个都不对。
   const total = possible === 0 ? null : Math.round((earned / possible) * 100);
+  const critical = (egress?.items ?? [])
+    .filter((i) => i.state === "fail" && i.id in CRITICAL)
+    .map((i) => CRITICAL[i.id]);
 
   return {
     total,
-    band: bandOf(total),
+    band: critical.length > 0 ? "poor" : bandOf(total),
+    critical,
     items,
     measured: [!!ip?.ip && !ipError, dns, signals, gate, egress].filter(Boolean)
       .length,
@@ -188,18 +210,33 @@ function purityItem(progress: Progress, ip?: IpInfo): ScoreItem {
   };
 }
 
+/**
+ * 2026-09-24 之前测的 DNS 报告 —— 按网卡名找「以太网」、断开的网卡也扣分的那一版评分。
+ * DNS 的结果是存盘的（`persist`），升级之后旧报告还会被读出来：那个分数按旧规则算，
+ * 不许再进总分，界面请使用者重测一次。认法：旧报告没有 `adapters_note`。
+ */
+export function isLegacyDnsReport(dns: DnsReport): boolean {
+  return typeof (dns as { adapters_note?: unknown }).adapters_note !== "string";
+}
+
 function dnsItem(dns?: DnsReport): ScoreItem {
   const base = { id: "dns" as const, label: "DNS 泄露", weight: WEIGHTS.dns };
   if (!dns) return { ...base, earned: null, detail: "还没检测过" };
-  if (!dns.resolvers.some((r) => !r.from_adapter))
+  if (isLegacyDnsReport(dns))
+    return {
+      ...base,
+      earned: null,
+      detail: "评分规则改过（2026-09-24），请重测一次",
+    };
+  if (dns.score === null || !dns.resolvers.some((r) => !r.from_adapter))
     return { ...base, earned: null, detail: "未收到真实解析回显，结果不完整" };
   // DnsReport.score 已经是 100 分制且方向一致（高了好）。
   return {
     ...base,
     earned: Math.round((dns.score / 100) * base.weight),
     detail:
-      dns.ethernet_safe === true
-        ? `${dns.score} / 100 · 以太网无泄露`
+      dns.findings.length === 0
+        ? `${dns.score} / 100 · 没有发现泄露`
         : `${dns.score} / 100 · ${dns.findings.length} 项问题`,
   };
 }

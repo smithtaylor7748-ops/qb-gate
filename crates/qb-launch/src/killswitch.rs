@@ -34,6 +34,14 @@ pub enum Evidence {
     BridgeAndDataDir,
     /// node.exe 跑的是 `@anthropic-ai/claude-code` 包 —— npm 装的 Claude Code。
     NpmPackage,
+    /// 可执行文件在反重力（Hub 或 IDE）的安装目录底下（0.26.0）。
+    ///
+    /// 这里**路径就是证据**，跟 Claude 那条「Anthropic 签名」不同：`claude.exe` 可能装在
+    /// 任何地方，只能靠签名认；而反重力的两个安装目录是固定的
+    /// （`install::antigravity`），目录底下的每一份 exe 都是它的进程 —— 主程序、
+    /// 语言服务器、第三方汉化壳留下的 `*.original.exe`。别的 IDE 也有叫
+    /// `language_server.exe` 的东西，所以**按目录认，不按名字认**。
+    AntigravityInstall,
 }
 
 /// 这个进程属于哪一边。**只用于告诉用户「关掉了什么」，不参与判定。**
@@ -50,6 +58,8 @@ pub enum Role {
     Code,
     /// 酒馆桥接
     Bridge,
+    /// 反重力（Hub 与 IDE，含它们的语言服务器）
+    Antigravity,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -111,7 +121,19 @@ pub struct RawProcess {
 ///
 /// `data_dir` 是本项目的桥接数据目录，比对时统一转小写做包含匹配 ——
 /// Windows 路径大小写不敏感，但 `Win32_Process` 报回来的大小写并不稳定。
-pub fn classify(p: &RawProcess, data_dir: &str) -> Option<Evidence> {
+pub fn classify(
+    p: &RawProcess,
+    data_dir: &str,
+    local: Option<&std::path::Path>,
+) -> Option<Evidence> {
+    // ⓪ 反重力：可执行文件在它的安装目录底下。放在最前面 —— 这一条只看路径，
+    //    不看签名，所以取不到签名的进程（语言服务器多半没签）也认得出来。
+    if let (Some(path), Some(local)) = (p.path.as_deref(), local) {
+        if crate::install::antigravity::product_of(std::path::Path::new(path), local).is_some() {
+            return Some(Evidence::AntigravityInstall);
+        }
+    }
+
     // ① Anthropic 签名
     if let Some(signer) = &p.signer {
         if signer.to_lowercase().contains("anthropic") {
@@ -154,6 +176,7 @@ pub fn role_of(
     match e {
         Evidence::BridgeAndDataDir => Role::Bridge,
         Evidence::NpmPackage => Role::Code,
+        Evidence::AntigravityInstall => Role::Antigravity,
         Evidence::AnthropicSigned => {
             let Some(path) = p.path.as_deref().map(std::path::Path::new) else {
                 return Role::Code;
@@ -201,14 +224,19 @@ pub enum Triage {
 ///
 /// 否决在 `classify` **之后**表达、之前生效：证据够不够是一回事，
 /// 能不能动是另一回事，两件事分开才说得清放过的理由。
-pub fn triage(p: &RawProcess, data_dir: &str, self_chain: &[u32]) -> Triage {
+pub fn triage(
+    p: &RawProcess,
+    data_dir: &str,
+    local: Option<&std::path::Path>,
+    self_chain: &[u32],
+) -> Triage {
     if self_chain.contains(&p.pid) {
         return Triage::Spare(format!(
             "PID {} {} —— 面板自己或它的祖先，收了会把面板一起带走，放过",
             p.pid, p.name
         ));
     }
-    match classify(p, data_dir) {
+    match classify(p, data_dir, local) {
         Some(e) => Triage::Kill(e),
         None => Triage::Spare(format!(
             "PID {} {} —— 两条证据都不满足，放过",
@@ -225,6 +253,9 @@ pub fn triage(p: &RawProcess, data_dir: &str, self_chain: &[u32]) -> Triage {
 ///
 /// `node.exe` 是 2026-09-09 补的：npm 装的 Claude Code 跑起来就是 node.exe，
 /// 原来的清单里没有它，注释里却写着有 —— 注释对了，代码漏了。
+///
+/// 反重力那五个名字是 0.26.0 补的（Hub 主程序、IDE 主程序与第三方壳留下的 original、
+/// 两个语言服务器）。名字只用来缩小枚举范围，判定看的是路径（`install::antigravity::product_of`）。
 const SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
 
@@ -242,7 +273,7 @@ while ($cur -gt 0 -and $parent.ContainsKey($cur) -and $hops -lt 64) {
   $hops++
 }
 
-$names = @('claude.exe','Update.exe','python.exe','pythonw.exe','node.exe')
+$names = @('claude.exe','Update.exe','python.exe','pythonw.exe','node.exe','Antigravity.exe','Antigravity IDE.exe','Antigravity IDE.original.exe','language_server.exe','language_server_windows_x64.exe')
 
 # 按可执行文件路径缓存签名结果。本机十几个 claude.exe 共用同一个路径，
 # 不缓存就是十几次 Get-AuthenticodeSignature，每次几百毫秒。
@@ -342,7 +373,7 @@ pub async fn preview() -> Result<KillReport> {
 
     for p in snap.procs {
         let on_self_chain = snap.self_chain.contains(&p.pid);
-        match triage(&p, &dd, &snap.self_chain) {
+        match triage(&p, &dd, local.as_deref(), &snap.self_chain) {
             Triage::Kill(evidence) => {
                 let role = role_of(&p, evidence, local.as_deref(), roaming.as_deref());
                 targets.push(KillTarget {
@@ -536,6 +567,63 @@ pub async fn execute_desktop() -> Result<KillReport> {
     Ok(report)
 }
 
+/// 正在跑的反重力进程（某一个产品，或两个都要）。**枚举失败返回 `Err`，不许退化成「没有」。**
+///
+/// 走的是跟一键关闭同一套枚举 + 证据（[`preview`]），只是把目标收窄到
+/// [`Role::Antigravity`]、再按安装目录分产品 —— 不另起一份按名字筛的脚本，
+/// 那会是第二张位置表。
+pub async fn antigravity_processes(
+    product: Option<crate::install::antigravity::Product>,
+) -> Result<Vec<KillTarget>> {
+    let local = dirs::data_local_dir();
+    Ok(only_antigravity(
+        preview().await?.targets,
+        product,
+        local.as_deref(),
+    ))
+}
+
+/// 关掉正在跑的反重力（起之前用：它是 Electron 单实例 + 托盘后台运行，
+/// 不退干净的话新起的那一个只会把旧窗口拉到前面，进程不归面板托管、租约也挂不上）。
+///
+/// 判定、祖先链否决、PID + 创建时间核验跟 [`execute`] 是同一套；不重锁 ——
+/// 调用方接着就要验 IP 起进程。
+pub async fn execute_antigravity(
+    product: Option<crate::install::antigravity::Product>,
+) -> Result<KillReport> {
+    let local = dirs::data_local_dir();
+    let mut report = preview().await?;
+    report.targets = only_antigravity(report.targets, product, local.as_deref());
+    for t in &report.targets {
+        match crate::sessions::terminate_verified(t.pid, t.process_created) {
+            Ok(()) => report.killed.push(t.pid),
+            Err(e) => report.failed.push((t.pid, e.to_string())),
+        }
+    }
+    Ok(report)
+}
+
+/// 一批该收的进程里只留反重力那一边，可再按产品收窄。纯函数，可单测。
+pub fn only_antigravity(
+    targets: Vec<KillTarget>,
+    product: Option<crate::install::antigravity::Product>,
+    local: Option<&std::path::Path>,
+) -> Vec<KillTarget> {
+    targets
+        .into_iter()
+        .filter(|t| t.role == Role::Antigravity)
+        .filter(|t| match (product, local, t.path.as_deref()) {
+            (None, _, _) => true,
+            (Some(want), Some(local), Some(path)) => {
+                crate::install::antigravity::product_of(std::path::Path::new(path), local)
+                    == Some(want)
+            }
+            // 要分产品却没有根目录或路径可比：宁可放过，不误杀。
+            _ => false,
+        })
+        .collect()
+}
+
 /// 一批该收的进程里只留桌面端那一边。纯函数，可单测。
 ///
 /// 按 [`Role`] 筛，**不按进程名筛**：Claude Code 和桌面端跑的都叫 `claude.exe`，
@@ -583,7 +671,10 @@ async fn execute_scoped(official_only: bool) -> Result<KillReport> {
 /// 两份就会分叉，而分叉的症状是「校验时算的是一批、真去停的是另一批」——
 /// 没有任何报错，只是某个会话没被收掉，然后在它脚下换了资料目录。
 pub fn needs_clearing(s: &Session) -> bool {
-    s.context.identity_kind == IdentityKind::Official && s.context.client != Client::Codex
+    s.context.identity_kind == IdentityKind::Official
+        && s.context.client != Client::Codex
+        // 反重力同理：Google 账户，跟 Claude 槽位无关（0.26.0）。
+        && !s.context.client.is_antigravity()
 }
 
 /// 清场没清干净时给使用者看的那句话。
@@ -719,14 +810,14 @@ mod tests {
             None,
             Some("CN=Anthropic PBC, O=Anthropic PBC"),
         );
-        assert_eq!(classify(&p, DD), Some(Evidence::AnthropicSigned));
+        assert_eq!(classify(&p, DD, None), Some(Evidence::AnthropicSigned));
     }
 
     #[test]
     fn bridge_plus_data_dir_is_enough() {
         let cmd = format!(r"python.exe -u C:\proj\bridge.py --data-dir {DD} --port 5001");
         let p = proc("python.exe", Some(&cmd), None);
-        assert_eq!(classify(&p, DD), Some(Evidence::BridgeAndDataDir));
+        assert_eq!(classify(&p, DD, None), Some(Evidence::BridgeAndDataDir));
     }
 
     #[test]
@@ -737,27 +828,27 @@ mod tests {
             Some(r"python.exe -u D:\other\bridge.py"),
             None,
         );
-        assert_eq!(classify(&p, DD), None);
+        assert_eq!(classify(&p, DD, None), None);
     }
 
     #[test]
     fn data_dir_without_bridge_is_spared() {
         let cmd = format!(r"python.exe -u other.py --data-dir {DD}");
         let p = proc("python.exe", Some(&cmd), None);
-        assert_eq!(classify(&p, DD), None);
+        assert_eq!(classify(&p, DD, None), None);
     }
 
     #[test]
     fn name_alone_never_qualifies() {
         // 这条是本文件存在的理由：叫 claude.exe 不构成任何证据。
         let p = proc("claude.exe", Some("claude.exe --help"), None);
-        assert_eq!(classify(&p, DD), None);
+        assert_eq!(classify(&p, DD, None), None);
     }
 
     #[test]
     fn unrelated_signer_is_spared() {
         let p = proc("python.exe", None, Some("CN=Python Software Foundation"));
-        assert_eq!(classify(&p, DD), None);
+        assert_eq!(classify(&p, DD, None), None);
     }
 
     #[test]
@@ -765,7 +856,7 @@ mod tests {
         let cmd =
             r"python.exe -u bridge.py --data-dir c:\users\me\appdata\local\claudetavernbridge";
         let p = proc("python.exe", Some(cmd), None);
-        assert_eq!(classify(&p, DD), Some(Evidence::BridgeAndDataDir));
+        assert_eq!(classify(&p, DD, None), Some(Evidence::BridgeAndDataDir));
     }
 
     // ---------------------------------------------------------- triage
@@ -774,7 +865,7 @@ mod tests {
     fn self_and_ancestors_are_never_killed() {
         // 证据是够的 —— 但它是面板自己的祖先，收了会把面板一起带走。
         let p = proc("claude.exe", None, Some("CN=Anthropic PBC"));
-        match triage(&p, DD, &[9999, 1234, 7]) {
+        match triage(&p, DD, None, &[9999, 1234, 7]) {
             Triage::Spare(why) => assert!(why.contains("祖先"), "理由要说清为什么放过：{why}"),
             other => panic!("祖先链上的进程不能被收：{other:?}"),
         }
@@ -784,7 +875,7 @@ mod tests {
     fn evidence_still_kills_when_not_an_ancestor() {
         let p = proc("claude.exe", None, Some("CN=Anthropic PBC"));
         assert_eq!(
-            triage(&p, DD, &[9999, 7]),
+            triage(&p, DD, None, &[9999, 7]),
             Triage::Kill(Evidence::AnthropicSigned)
         );
     }
@@ -792,7 +883,7 @@ mod tests {
     #[test]
     fn spare_reason_survives_for_no_evidence() {
         let p = proc("claude.exe", Some("claude.exe --help"), None);
-        match triage(&p, DD, &[]) {
+        match triage(&p, DD, None, &[]) {
             Triage::Spare(why) => assert!(why.contains("两条证据")),
             other => panic!("没证据就必须放过：{other:?}"),
         }
@@ -869,7 +960,7 @@ mod tests {
     fn empty_data_dir_does_not_match_everything() {
         // data_dir 取不到时不能退化成「命令行里有 bridge.py 就杀」。
         let p = proc("python.exe", Some("python.exe -u bridge.py"), None);
-        assert_eq!(classify(&p, ""), None);
+        assert_eq!(classify(&p, "", None), None);
     }
 
     // ---------------------------------------------------------- ③ npm
@@ -879,21 +970,21 @@ mod tests {
         // node.exe 是 OpenJS 签名的，① 永远认不出 npm 装的 Claude Code。
         let cmd = r#""C:\Program Files\nodejs\node.exe" C:\Users\me\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\cli.js"#;
         let p = proc("node.exe", Some(cmd), Some("CN=OpenJS Foundation"));
-        assert_eq!(classify(&p, DD), Some(Evidence::NpmPackage));
+        assert_eq!(classify(&p, DD, None), Some(Evidence::NpmPackage));
         // 正斜杠写法也要认。
         let p = proc(
             "node.exe",
             Some("node C:/x/node_modules/@anthropic-ai/claude-code/cli.js"),
             None,
         );
-        assert_eq!(classify(&p, DD), Some(Evidence::NpmPackage));
+        assert_eq!(classify(&p, DD, None), Some(Evidence::NpmPackage));
     }
 
     #[test]
     fn node_alone_or_package_path_alone_is_not_enough() {
         // 只有 node.exe：满地都是。
         let p = proc("node.exe", Some(r"node C:\work\server.js"), None);
-        assert_eq!(classify(&p, DD), None);
+        assert_eq!(classify(&p, DD, None), None);
         // 只有那串路径、但进程不是 node：可能只是别的程序把它当参数传了一下。
         let p = proc(
             "code.exe",
@@ -902,14 +993,14 @@ mod tests {
             ),
             None,
         );
-        assert_eq!(classify(&p, DD), None);
+        assert_eq!(classify(&p, DD, None), None);
         // 名字相近的别的包不算。
         let p = proc(
             "node.exe",
             Some(r"node C:\x\node_modules\@anthropic-ai\sdk\index.js"),
             None,
         );
-        assert_eq!(classify(&p, DD), None);
+        assert_eq!(classify(&p, DD, None), None);
     }
 
     // ---------------------------------------------------------- 角色
@@ -1005,5 +1096,117 @@ mod tests {
         );
         // 整段脚本走 -Command 传参，双引号要过一轮命令行转义 —— 干脆一个都不要。
         assert!(!DESKTOP_SCRIPT.contains('"'), "脚本里不许有双引号");
+    }
+
+    /// 反重力按**安装目录**认，不按签名、不按名字：语言服务器多半没签名，
+    /// 而别的 IDE 也有叫 `language_server.exe` 的东西。
+    #[test]
+    fn antigravity_is_recognised_by_install_directory_only() {
+        let local = std::path::Path::new(r"C:\Users\me\AppData\Local");
+        let mk = |path: &str, name: &str, signer: Option<&str>| RawProcess {
+            pid: 42,
+            name: name.into(),
+            path: Some(path.into()),
+            signer: signer.map(String::from),
+            created: 1,
+            ..Default::default()
+        };
+        let hub = mk(
+            r"C:\Users\me\AppData\Local\Programs\antigravity\Antigravity.exe",
+            "Antigravity.exe",
+            Some("CN=Google LLC"),
+        );
+        assert_eq!(
+            classify(&hub, DD, Some(local)),
+            Some(Evidence::AntigravityInstall)
+        );
+        assert_eq!(
+            role_of(&hub, Evidence::AntigravityInstall, Some(local), None),
+            Role::Antigravity
+        );
+        // 语言服务器没签名也算。
+        let ls = mk(
+            r"C:\Users\me\AppData\Local\Programs\antigravity\resources\bin\language_server.exe",
+            "language_server.exe",
+            None,
+        );
+        assert_eq!(
+            classify(&ls, DD, Some(local)),
+            Some(Evidence::AntigravityInstall)
+        );
+        // IDE 目录下第三方壳留下的 original 也算。
+        let orig = mk(
+            r"C:\Users\me\AppData\Local\Programs\Antigravity IDE\Antigravity IDE.original.exe",
+            "Antigravity IDE.original.exe",
+            Some("CN=Google LLC"),
+        );
+        assert_eq!(
+            classify(&orig, DD, Some(local)),
+            Some(Evidence::AntigravityInstall)
+        );
+        // 别处的同名文件不算 —— 不按名字认。
+        let other = mk(
+            r"C:\Users\me\AppData\Local\Programs\Windsurf\language_server.exe",
+            "language_server.exe",
+            None,
+        );
+        assert_eq!(classify(&other, DD, Some(local)), None);
+        // 不知道根目录就认不出（宁可放过）。
+        assert_eq!(classify(&hub, DD, None), None);
+    }
+
+    /// 起 Hub 之前只关 Hub、起 IDE 之前只关 IDE：两个产品各自单实例，互不牵连。
+    #[test]
+    fn only_antigravity_can_be_narrowed_to_one_product() {
+        use crate::install::antigravity::Product;
+        let local = std::path::Path::new(r"C:\Users\me\AppData\Local");
+        let t = |pid: u32, role: Role, path: &str| KillTarget {
+            process_created: 1,
+            pid,
+            name: String::new(),
+            path: Some(path.into()),
+            evidence: Evidence::AntigravityInstall,
+            role,
+        };
+        let all = vec![
+            t(
+                1,
+                Role::Antigravity,
+                r"C:\Users\me\AppData\Local\Programs\antigravity\Antigravity.exe",
+            ),
+            t(
+                2,
+                Role::Antigravity,
+                r"C:\Users\me\AppData\Local\Programs\Antigravity IDE\Antigravity IDE.exe",
+            ),
+            t(
+                3,
+                Role::Desktop,
+                r"C:\Users\me\AppData\Local\AnthropicClaude\claude.exe",
+            ),
+        ];
+        let pids = |v: Vec<KillTarget>| v.into_iter().map(|t| t.pid).collect::<Vec<_>>();
+        assert_eq!(
+            pids(only_antigravity(all.clone(), None, Some(local))),
+            vec![1, 2]
+        );
+        assert_eq!(
+            pids(only_antigravity(
+                all.clone(),
+                Some(Product::Hub),
+                Some(local)
+            )),
+            vec![1]
+        );
+        assert_eq!(
+            pids(only_antigravity(
+                all.clone(),
+                Some(Product::Ide),
+                Some(local)
+            )),
+            vec![2]
+        );
+        // 要分产品却没有根目录：一个都不收。
+        assert!(only_antigravity(all, Some(Product::Hub), None).is_empty());
     }
 }

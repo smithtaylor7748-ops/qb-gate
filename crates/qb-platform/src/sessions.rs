@@ -167,8 +167,41 @@ pub fn start(
     Ok(session)
 }
 
+/// 反重力 IDE 的用户数据目录（槽位）从编排层传到 [`desktop_arguments`] 用的 env 键。
+///
+/// 面板自己的名字，IDE 不认它 —— 它只是把目录搬到「按 client 给参数的那一处」的载体。
+pub const ANTIGRAVITY_IDE_USER_DATA_ENV: &str = "QB_ANTIGRAVITY_IDE_USER_DATA_DIR";
+
+/// 起客户端时要多带的命令行参数。**只有这里给参数**，别在调用方另拼一份。
+///
+/// # Codex 桌面端
+///
 /// The Windows desktop's Chromium singleton is selected before JS reads env vars.
+///
+/// # 反重力 IDE：补一个调试端口（0.27.0）
+///
+/// 汉化引擎靠 Chrome DevTools 协议注入脚本，而 IDE 是 VS Code 分支 —— **默认不开调试端口**，
+/// 也就没有 `DevToolsActivePort` 文件可读（Hub 不一样，它自己的 `main.js` 会补 `0`）。
+/// 传 `0` 让 Chromium 自己挑一个空闲端口并写进它的用户数据目录，面板再从那个文件读回来；
+/// 写死一个端口会在端口被占时静默失败。
+///
+/// 三件事顺带钉在这里：
+///
+/// - 这个端口**只绑回环**（Chromium 的行为），而且只对**面板起的**那一份生效 ——
+///   使用者自己从开始菜单起的 IDE 没有端口，汉化引擎附不上去；
+/// - 不给 Hub 传：它自己已经补过了，重复传是另一回事的开始；
+/// - 使用者装了第三方汉化壳时 `launcher()` 起的是那层壳，壳**有可能不把这个参数传给里层**。
+///   那种情况下端口文件不会出现 —— 界面上要说成一句可操作的话，不是静默。
 pub fn desktop_arguments(client: Client, env: &[(String, String)]) -> Vec<String> {
+    if client == Client::AntigravityIde {
+        // 0.30.0：有激活槽位时把它的用户数据目录交给 IDE（VS Code 标准开关）。
+        // 目录由编排层放进 env 里带过来 —— 跟 Codex 的 `CODEX_ELECTRON_USER_DATA_PATH` 同一个搬法。
+        let mut args = vec!["--remote-debugging-port=0".to_string()];
+        if let Some((_, dir)) = env.iter().find(|(k, _)| k == ANTIGRAVITY_IDE_USER_DATA_ENV) {
+            args.push(format!("--user-data-dir={dir}"));
+        }
+        return args;
+    }
     if client != Client::Codex {
         return Vec::new();
     }
@@ -446,6 +479,48 @@ impl OwnedProgram {
         self.process.stop()
     }
 }
+/// ⛔ **不许把 shell 本身当成 `exe` 交给这条路。**
+///
+/// [`quote_argument`] 给**每一个**参数都套引号 —— 对普通程序这是对的（Windows 的 CRT
+/// 按这套规则反解析），但 `cmd.exe` / `powershell.exe` **自己解析命令行、而且不先脱引号**，
+/// 于是 `"/c"` / `"/k"` / `"-File"` 不再是开关。
+///
+/// 0.26.0–0.28.0 的 `gemini_cli_install` 就这么写的：
+///
+/// ```text
+/// "C:\Windows\System32\cmd.exe" "/k" "npm install -g @google/gemini-cli && …"
+/// ```
+///
+/// `cmd` 把后面那一整串当命令名去找，报 `is not recognized`，而 `/k` 让窗口留在原地 ——
+/// 使用者看到的是「弹出了一个命令窗口，什么都没装」，面板这边**一点错都没报**。
+///
+/// 要跑 shell 有两条现成的路，都别绕开：
+///
+/// * 要等它、要进度 → `qb_install::install::winget::run_streaming("cmd", &["/c", …])`
+///   （每个参数一个 argv，隐藏窗口，逐行回显）；
+/// * 要给使用者一个看得见的窗口 → 把脚本写成 `.cmd` / `.bat` 文件，把**那个文件**
+///   当成 `exe` 传进来（走本函数的 batch 分支，开关由我们自己拼、不经过 `quote_argument`）。
+fn reject_shell_entrypoint(exe: &str, args: &[String]) -> Result<()> {
+    let name = exe
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(exe)
+        .to_ascii_lowercase();
+    let is_shell = matches!(
+        name.as_str(),
+        "cmd" | "cmd.exe" | "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe"
+    );
+    // 没有参数就没有开关可毁（`cmd.exe` 单独起一个交互窗口是合法用法）。
+    if is_shell && !args.is_empty() {
+        return Err(GateError::Other(format!(
+            "不能把 {name} 直接当成启动目标：这条路会给每个参数加引号，\
+             /c、/k、-File 这些开关会被 shell 当成普通字符串，命令根本不会执行。\
+             要等它就用 winget::run_streaming，要给窗口就先写成 .cmd 文件再起那个文件。"
+        )));
+    }
+    Ok(())
+}
+
 fn quote_argument(arg: &str) -> String {
     let mut out = String::from("\"");
     let mut slashes = 0;
@@ -521,6 +596,7 @@ mod native {
             // Batch entrypoints need cmd, but the executable path is a quoted argument and delayed expansion is off.
             let batch = exe.to_ascii_lowercase().ends_with(".cmd")
                 || exe.to_ascii_lowercase().ends_with(".bat");
+            super::reject_shell_entrypoint(&exe, args)?;
             if exe.contains(['"', '\r', '\n', '%', '!']) {
                 return Err(GateError::Other(
                     "启动路径含不支持的命令字符，请使用托管安装".into(),
@@ -901,5 +977,75 @@ mod tests {
         );
         assert!(desktop_arguments(Client::ClaudeCode, &env).is_empty());
         assert!(desktop_arguments(Client::ClaudeDesktop, &env).is_empty());
+    }
+
+    /// 反重力 IDE 起的时候要补一个**随机**调试端口，汉化引擎才有 `DevToolsActivePort` 可读。
+    ///
+    /// 两件事一起钉住：
+    ///
+    /// - 端口必须是 `0`（让 Chromium 自己挑）。写死某个号码在别人机器上会撞占用，
+    ///   而症状是「汉化偶尔不生效」，查不出来；
+    /// - **Hub 不许跟着补** —— 它自己的 `main.js` 已经补过了。
+    #[test]
+    fn only_the_antigravity_ide_gets_a_debug_port_and_it_is_a_random_one() {
+        assert_eq!(
+            desktop_arguments(Client::AntigravityIde, &[]),
+            vec!["--remote-debugging-port=0"]
+        );
+        assert!(desktop_arguments(Client::Antigravity, &[]).is_empty());
+        assert!(desktop_arguments(Client::ClaudeCode, &[]).is_empty());
+        assert!(desktop_arguments(Client::ClaudeDesktop, &[]).is_empty());
+        assert!(desktop_arguments(Client::Codex, &[]).is_empty());
+    }
+
+    /// 0.30.0：IDE 槽位 = `--user-data-dir`。目录从 env 里那一个键来；别的 client 不吃它。
+    #[test]
+    fn an_antigravity_ide_slot_becomes_a_user_data_dir_switch_next_to_the_debug_port() {
+        let env = vec![(
+            ANTIGRAVITY_IDE_USER_DATA_ENV.to_string(),
+            "C:\\slots\\work one\\user-data".to_string(),
+        )];
+        assert_eq!(
+            desktop_arguments(Client::AntigravityIde, &env),
+            vec![
+                "--remote-debugging-port=0",
+                "--user-data-dir=C:\\slots\\work one\\user-data"
+            ]
+        );
+        assert!(
+            desktop_arguments(Client::Antigravity, &env).is_empty(),
+            "Hub 没有槽位"
+        );
+        assert!(desktop_arguments(Client::Codex, &env).is_empty());
+    }
+
+    /// 把 shell 当启动目标会毁掉它的开关 —— 这条钉住那道拦截。
+    ///
+    /// 实机复现过（0.29.0 之前的 `gemini_cli_install`）：`"cmd.exe" "/k" "npm install …"`
+    /// 里那个加了引号的 `/k`，`cmd` 不认，于是 npm 一次都没跑起来，而窗口留在原地 ——
+    /// 界面上却是一句「已打开安装窗口」。
+    #[test]
+    fn a_shell_can_never_be_the_launch_target_when_it_has_switches() {
+        let args = vec!["/k".to_string(), "npm install -g whatever".to_string()];
+        for shell in [
+            r"C:\Windows\System32\cmd.exe",
+            "cmd.exe",
+            "CMD.EXE",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "pwsh.exe",
+        ] {
+            let err = reject_shell_entrypoint(shell, &args)
+                .expect_err("shell + 开关必须被拦下来")
+                .to_string();
+            assert!(
+                err.contains("winget::run_streaming"),
+                "报错要指出替代做法，实际是：{err}"
+            );
+        }
+        // 不带参数的 shell 是合法的（起一个交互窗口），普通程序一律放行。
+        assert!(reject_shell_entrypoint("cmd.exe", &[]).is_ok());
+        assert!(reject_shell_entrypoint(r"C:\Program Files\nodejs\node.exe", &args).is_ok());
+        // 路径里带 cmd 字样但不是 shell 的，别误伤。
+        assert!(reject_shell_entrypoint(r"C:\tools\cmdline-tool.exe", &args).is_ok());
     }
 }

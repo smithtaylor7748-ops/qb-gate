@@ -107,7 +107,7 @@ impl Reading {
 ///
 /// Cloudflare 在认不出时给 `XX`，走 Tor 时给 `T1` —— 这两个都**不是国家**，
 /// 当成国家会让白名单判定凭空多出一个永远不匹配的值。
-fn normalize_country(raw: &str) -> Option<String> {
+pub(crate) fn normalize_country(raw: &str) -> Option<String> {
     let c = raw.trim().to_uppercase();
     if c.len() != 2 || !c.chars().all(|ch| ch.is_ascii_alphabetic()) {
         return None;
@@ -136,7 +136,11 @@ fn client() -> Result<reqwest::Client> {
 /// ⛔ **门禁判定永远不许用它。** 让代理软件决定门禁看到的出口，等于把门禁的地基
 /// 拆掉 —— 随便一个本地代理就能把出口伪装成白名单里那个。这份客户端的唯一用途是
 /// 跟 `client()` 的结果**对比**，把「两条路出去的地方不一样」这件事告诉使用者。
-fn build_client(bypass_proxy: bool) -> Result<reqwest::Client> {
+///
+/// `pub`（2026-09-24）：体检的「服务可达」「IPv6 出口」要走**跟门禁同一条路**，
+/// 所以复用这一份，不另建一个配置可能不一样的客户端（`probe::reach`）。
+/// 注意 reqwest 的「跟随系统代理」只认 `ProxyServer`，**不认 PAC**。
+pub fn build_client(bypass_proxy: bool) -> Result<reqwest::Client> {
     let b = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
         .user_agent("QB Gate/0.1");

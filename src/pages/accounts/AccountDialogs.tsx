@@ -22,6 +22,7 @@ import { useEffect, useState } from "react";
 import { api, type KillReport } from "../../lib/api";
 import { AFTER, R } from "../../lib/resources";
 import { invalidate, useResource, useSession } from "../../lib/store";
+import { slotName } from "../../lib/slotName";
 import { workspaceApi } from "../../lib/workspace";
 import {
   Button,
@@ -111,6 +112,8 @@ function SwitchFlow() {
   const data = accounts.data;
   const slot = data?.slots.find((s) => s.label === label) ?? null;
   const current = data?.slots.find((s) => s.active)?.label;
+  // 给人看的那一串：「邮箱 - 命名」。`label` 仍然是传给后端的那个键。
+  const shown = slot ? slotName(slot.email, slot.label) : (label ?? "");
 
   // 每次打开都重来一遍：先扫一遍会关掉哪些进程，框里要报数。
   useEffect(() => {
@@ -151,18 +154,18 @@ function SwitchFlow() {
         try {
           await launchOfficialCode(label);
           toast.ok(
-            `已切到 ${label}（${closedWord}），并起了一个 Claude Code。` +
+            `已切到 ${shown}（${closedWord}），并起了一个 Claude Code。` +
               `登录界面由它自己弹出，面板不经手你的账号密码。`,
           );
         } catch (e) {
           toast.error(
-            `已切到 ${label}，但 Claude Code 没起来：${e instanceof Error ? e.message : String(e)}。` +
+            `已切到 ${shown}，但 Claude Code 没起来：${e instanceof Error ? e.message : String(e)}。` +
               `回总览点「Claude Code」再试一次。`,
           );
         }
       } else {
         toast.ok(
-          `已切到 ${label}：${r.switched.join("，")}。${closedWord}。要用哪个，回总览自己点。`,
+          `已切到 ${shown}：${r.switched.join("，")}。${closedWord}。要用哪个，回总览自己点。`,
         );
       }
       close();
@@ -180,16 +183,16 @@ function SwitchFlow() {
     if (!data) return null;
     if (slot?.desktop_profile) {
       return desktop
-        ? `桌面端会换成 ${label} 的资料。`
+        ? `桌面端会换成 ${shown} 的资料。`
         : `桌面端这次不换资料，继续用${data.desktop.active ? ` ${data.desktop.active} 的` : "现在的"}。`;
     }
     if (!desktop) {
       return data.desktop.managed
-        ? `桌面端没有 ${label} 的资料，这次不动它（继续用 ${data.desktop.active ?? "现在"} 的）。`
+        ? `桌面端没有 ${shown} 的资料，这次不动它（继续用 ${data.desktop.active ?? "现在"} 的）。`
         : "桌面端现在没按账户分开，这次不动它。";
     }
     return [
-      `会给桌面端新建一份 ${label} 的空白资料并切过去，打开桌面端后要重新登录。`,
+      `会给桌面端新建一份 ${shown} 的空白资料并切过去，打开桌面端后要重新登录。`,
       !data.desktop.managed && current
         ? `现在桌面端用的那份资料会存为 ${current} 的，切回 ${current} 时原样回来。`
         : null,
@@ -203,9 +206,7 @@ function SwitchFlow() {
       open={!!label}
       onCancel={close}
       onConfirm={() => void doSwitch()}
-      title={
-        thenLogin ? `切换到 ${label ?? ""} 并登录？` : `切换到 ${label ?? ""}？`
-      }
+      title={thenLogin ? `切换到 ${shown} 并登录？` : `切换到 ${shown}？`}
       confirmLabel={
         thenLogin ? "关闭官方会话、切换并登录" : "关闭官方会话并切换"
       }
@@ -230,8 +231,8 @@ function SwitchFlow() {
       <div className="mt-3">
         <Checkbox checked={desktop} onChange={setDesktop} disabled={busy}>
           {slot?.desktop_profile
-            ? `桌面端也切到 ${label}`
-            : `桌面端也按账户分开：给 ${label} 建一份空白的桌面端资料`}
+            ? `桌面端也切到 ${shown}`
+            : `桌面端也按账户分开：给 ${shown} 建一份空白的桌面端资料`}
         </Checkbox>
         {desktopHint && <p className="notice mt-1">{desktopHint}</p>}
       </div>
@@ -400,6 +401,7 @@ function DeleteSlotDialog() {
   const [busy, setBusy] = useState(false);
 
   const slot = accounts.data?.slots.find((s) => s.label === label) ?? null;
+  const shown = slot ? slotName(slot.email, slot.label) : (label ?? "");
 
   // 每次打开都回到默认值：留着上一次的选择，下一次就会在使用者没看清的
   // 情况下把桌面端资料也带走。
@@ -436,7 +438,7 @@ function DeleteSlotDialog() {
       open={!!label}
       onCancel={close}
       onConfirm={() => void doDelete()}
-      title={`删除槽位 ${label ?? ""}？`}
+      title={`删除槽位 ${shown}？`}
       confirmLabel="删除"
       confirmWord="删除"
       loading={busy}

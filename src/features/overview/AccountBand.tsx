@@ -14,6 +14,7 @@ import {
   Wine,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import BridgeSettings, { BridgeSettingsCorner } from "../tavern/BridgeSettings";
 import { useNavigate } from "react-router-dom";
 
 import { api, type LaunchTarget } from "../../lib/api";
@@ -21,6 +22,7 @@ import { workspaceApi, type Client } from "../../lib/workspace";
 import { AFTER, R } from "../../lib/resources";
 import { invalidate, useResource, useSession } from "../../lib/store";
 import { endTask, resetTask, useTask } from "../../lib/tasks";
+import { slotName } from "../../lib/slotName";
 import { Button, Card, ConfirmDialog, useToast } from "../../ui";
 
 import {
@@ -44,6 +46,9 @@ const LAUNCH_TASK = {
   "claude-code": "launch-claude-code",
   "claude-desktop": "launch-claude-desktop",
   codex: "launch-codex",
+  // 反重力两档不从这一栏起（有自己的 AntigravityBand），键只是让 Record 完整。
+  antigravity: "launch-antigravity",
+  "antigravity-ide": "launch-antigravity-ide",
 } as const;
 
 // ---------------------------------------------------------------- 主体
@@ -51,6 +56,7 @@ const LAUNCH_TASK = {
 export default function AccountBand() {
   const toast = useToast();
   const navigate = useNavigate();
+  const [bridgeOpen, setBridgeOpen] = useState(false);
 
   const accounts = useResource("accounts", R.accounts);
   const plugins = useResource("plugins", R.plugins);
@@ -204,6 +210,9 @@ export default function AccountBand() {
                       key={s.label}
                       slot={s}
                       onOpen={requestAccountDetail}
+                      // 额度条右边的刷新图标（2026-09-23）：Claude 只重读本机，不联网。
+                      onRefresh={() => void accounts.refresh()}
+                      refreshing={accounts.loading}
                       actions={
                         <>
                           {s.active ? (
@@ -243,12 +252,12 @@ export default function AccountBand() {
                             size="sm"
                             variant="danger"
                             icon={<Trash2 size={12} />}
-                            aria-label={`删除 ${s.label}`}
+                            aria-label={`删除 ${slotName(s.email, s.label)}`}
                             disabled={!!busy || s.active}
                             title={
                               s.active
                                 ? "当前账户删不了：请先切换到另一个账户。"
-                                : `删除 ${s.label}`
+                                : `删除 ${slotName(s.email, s.label)}`
                             }
                             onClick={() => requestDelete(s.label)}
                           />
@@ -299,7 +308,8 @@ export default function AccountBand() {
                   <PlayCircle size={14} aria-hidden="true" />
                   启动
                 </h2>
-                <span className="notice ml-auto">门禁不过，一个进程都不起</span>
+                {/* 原来标题右边常驻一句「门禁不过，一个进程都不起」，2026-09-23 使用者删了。
+                    代价说明还在磁贴下面那一行（CLAUDE.md 要求代价常驻）。 */}
               </div>
 
               <div className="launchcol">
@@ -343,6 +353,9 @@ export default function AccountBand() {
                       ? () => navigate("/extensions/sillytavern")
                       : launchTavern
                   }
+                  corner={
+                    <BridgeSettingsCorner onClick={() => setBridgeOpen(true)} />
+                  }
                 />
                 <KillBar variant="tile" />
               </div>
@@ -382,6 +395,12 @@ export default function AccountBand() {
           <strong>没保存的对话会丢</strong>。
         </p>
       </ConfirmDialog>
+      {/* 0.32.0：三条桥的端口与模型 —— 三个账户页共用同一个组件。 */}
+      <BridgeSettings
+        open={bridgeOpen}
+        provider="claude"
+        onClose={() => setBridgeOpen(false)}
+      />
     </>
   );
 }

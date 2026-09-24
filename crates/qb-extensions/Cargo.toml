@@ -29,6 +29,8 @@ rusqlite.workspace = true
 toml_edit.workspace = true
 uuid.workspace = true
 ts-rs.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

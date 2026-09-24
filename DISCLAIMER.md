@@ -1,6 +1,6 @@
 # 免责声明
 
-**最后更新：2026-09-16｜适用版本：v0.22.6 及之后的版本**
+**最后更新：2026-09-20｜适用版本：v0.25.0 及之后的版本**
 
 请在下载、构建、安装或运行 QB Gate 之前**完整读完本文件**。下载、构建、安装或运行本项目，
 即表示你已阅读、理解并接受以下全部条款；不接受其中任何一条，请不要使用本项目。
@@ -125,8 +125,9 @@ Anthropic《消费者条款》《使用政策》及其公布的支持国家和�
 
 本项目的设计约束（`README.md` 的「免责声明」一节同样列出）：
 
-1. **不发任何网络请求去查额度，不调用 OAuth 内部接口**；额度与用量只读官方客户端
-   自己写在本机的文件，且仅用于显示，代码中不存在「用完自动换号」的路径；
+1. Claude 的额度与用量只读官方客户端自己写在本机的文件；GPT、Gemini CLI 与反重力的额度只在
+   使用者点刷新图标时查询各自官方内部接口（一次只查那一个账户，打开页面不查、没有定时器），
+   且仅用于显示，代码中不存在「用完自动换号」的路径；
 2. 账户切换**只能由人手动触发**，无定时器、无看门狗、无自动调用点；
 3. 任意时刻只有一个账户处于激活状态；
 4. **所有账户必须是使用者本人合法拥有的**。
@@ -154,8 +155,9 @@ Anthropic《消费者条款》《使用政策》及其公布的支持国家和�
 
 ### 执行锁与看门狗
 
-- 执行锁给 Claude 程序（以及你选择纳入门禁的 Codex）的每一份副本加 NTFS
-  `Deny ExecuteFile` 规则。**上锁后双击程序会被系统拒绝执行**，这是设计如此，
+- 执行锁给 Claude 程序与 GPT（Codex）程序的每一份副本加 NTFS
+  `Deny ExecuteFile` 规则（v0.25.0 起 GPT **默认纳入**门禁，与 Claude 同一套规则：
+  桌面端起之前验出口 IP、起来之后归看门狗管；可在「IP 锁」弹窗里把 GPT 移出）。**上锁后双击程序会被系统拒绝执行**，这是设计如此，
   必须走面板入口。
 - 门禁放行期间，看门狗每 15–20 秒复核一次出口 IP。**出口 IP 不在白名单、国家不合格、
   或者查不到出口 IP 时，第一轮就上锁并关闭受门禁管理的 Claude 会话**，
@@ -253,12 +255,12 @@ ipinfo）问国家，三家说的不一样时**按最严的算，判不合格**�
 下面几件事会改动系统或浏览器的网络配置。它们与「翻墙」是两回事 ——
 它们不提供任何你本来没有的网络通路，只是**防止已有的通路绕开你设定的出口**：
 
-| 功能 | 做什么 | 边界 |
-|---|---|---|
-| **禁用本机 IPv6**（0.22.1 起，**默认开启**） | 启动面板时关闭整机网卡的 IPv6 绑定（含隐藏、虚拟网卡），按需请求管理员授权 | 位于 IP 纯净度中；关闭开关时恢复各网卡原设置，退出面板后保留当前状态；失败或已移除网卡的原值会保留供重试恢复 |
-| **浏览器出站锁** | 给你点名的那一个浏览器加 Windows 防火墙**出站**规则：只许走你指定的 VPN / TUN 接口，物理网卡直连一律拦掉 | 只按该浏览器的 exe 路径生效，**不碰任何其它程序**；只加出站规则，不改路由表、不做转发；面板里看得到当前规则，也能一键撤销 |
-| **系统代理修改** | 在你点了「修」之后修改系统代理设置，改之前记录原值 | **不自动改、不在启动时改**，只在你当次点了才改；面板里能回滚到原值 |
-| **浏览器策略**（WebRTC、安全 DNS） | 在你点击后，为当前 Windows 用户写入 Chrome 策略，限制 WebRTC 暴露本机地址、调整安全 DNS | 只写当前用户（HKCU），**不碰整机策略**；面板里能撤销 |
+| 功能                                         | 做什么                                                                                                   | 边界                                                                                                                      |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **禁用本机 IPv6**（0.22.1 起，**默认开启**） | 启动面板时关闭整机网卡的 IPv6 绑定（含隐藏、虚拟网卡），按需请求管理员授权                               | 位于 IP 纯净度中；关闭开关时恢复各网卡原设置，退出面板后保留当前状态；失败或已移除网卡的原值会保留供重试恢复              |
+| **浏览器出站锁**                             | 给你点名的那一个浏览器加 Windows 防火墙**出站**规则：只许走你指定的 VPN / TUN 接口，物理网卡直连一律拦掉 | 只按该浏览器的 exe 路径生效，**不碰任何其它程序**；只加出站规则，不改路由表、不做转发；面板里看得到当前规则，也能一键撤销 |
+| **系统代理修改**                             | 在你点了「修」之后修改系统代理设置，改之前记录原值                                                       | **不自动改、不在启动时改**，只在你当次点了才改；面板里能回滚到原值                                                        |
+| **浏览器策略**（WebRTC、安全 DNS）           | 在你点击后，为当前 Windows 用户写入 Chrome 策略，限制 WebRTC 暴露本机地址、调整安全 DNS                  | 只写当前用户（HKCU），**不碰整机策略**；面板里能撤销                                                                      |
 
 必须说清楚的代价：
 
@@ -325,27 +327,39 @@ Codex 账户槽位的配置（没有槽位才是默认 `~/.codex`；退出时恢
 **这不是一个只读的检测工具。** 以下操作会真实、且部分不可恢复地修改你的系统，
 请在执行前确认你理解其代价：
 
-| 功能 | 实际做了什么 | 可逆性 |
-|---|---|---|
-| **执行锁** | 给 `claude.exe`（以及你选择纳入的 `codex.exe`）的每一份副本加 NTFS `Deny ExecuteFile` 规则 | 可逆。但**上锁后双击程序会被系统拒绝执行**，这是设计如此；必须走面板入口 |
-| **看门狗** | 出口 IP 不合格或查不到时，上锁并关闭受门禁管理的会话 | 会话被关时**未保存的对话会丢失**，没有宽限期 |
-| **会话内门禁** | 在当前槽位的 `settings.json` 里写入两条带 `_qb_gate` 标记的 hook | 可逆（面板里停用，或手动删除这两条） |
-| **一键关闭 / 切换账户** | 结束满足双重证据的 Claude 进程（切换账户前也会这样做），再切换槽位指向 | 未保存内容丢失 |
-| **删除账户槽位** | 删除该槽位的整个登录目录 | **不可恢复**，需要重新登录 |
-| **托管安装、升级、回滚** | 下载并替换 Claude Code / Codex 程序文件，旧版本收进版本库 | 可回滚（版本库最多留 3 份） |
-| **清理多余副本** | 删除面板托管目录之外的 Claude Code / Codex 副本 | **不可恢复** |
-| **完全卸载**（Claude Code / Codex / Claude 桌面端） | 按类清掉程序、版本库、缓存与登记、配置与会话、认证、环境变量与 PATH 项、Shell 配置行、凭据管理器条目、启动项与账户槽位 | **不可恢复。** 账户槽位删掉之后，所有账户都要重新登录 |
-| **⚠ Chrome 完全卸载** | 卸载 Chrome 并**删除整个 `User Data` 目录** | **不可恢复。书签、保存的密码、扩展、全部网站登录态一并永久丢失** |
-| **禁用本机 IPv6**（默认开启） | 每次启动面板时关闭整机网卡的 IPv6 绑定 | 可逆（关闭开关恢复原值）。可能短暂断网，需要管理员授权 |
-| **⚠ 浏览器出站锁** | 给指定浏览器加 Windows 防火墙出站规则，物理网卡直连一律拦掉 | 可逆（面板里撤销）。**规则不随面板退出消失** —— 面板关了、甚至卸载了它还在，浏览器可能因此上不了网 |
-| **系统代理修改** | 在你点了「修」之后改系统代理设置，改前记录原值 | 可逆（回滚到原值）。**改错会当场断网**，影响整机所有跟随系统代理的程序 |
-| **浏览器策略** | 为当前用户写入 Chrome 的 WebRTC、安全 DNS 策略 | 可逆（面板里撤销） |
-| **启动时对齐**（时区、区域格式默认开启；显示语言默认关闭） | 每次启动面板时，按出口 IP 归属地调整系统时区、区域格式、显示语言 | 可逆（设置里关闭，「高级维护」里可恢复时区）。改时区要管理员权限；显示语言要装语言包并注销后生效 |
-| **停用旧启动脚本** | 每次启动面板时，把桌面上五个固定名称的旧版启动脚本（如 `ClaudeIpGate.cmd`）移进数据目录下的备份文件夹 | 可逆（从备份文件夹搬回） |
-| **配置快照恢复、中转环境配置** | 覆盖或合并写入客户端的配置文件 | 写入前会备份，但请自行确认备份完整 |
-| **账户迁移** | 复制历史账户目录到新的槽位布局 | 会先备份，但请自行确认备份完整 |
-| **扩展（酒馆、MCP、Skills）** | 写入所选环境的配置；按你的操作启动第三方程序（桥接、SillyTavern、MCP 服务等） | 可卸载；第三方程序做了什么，由其自身负责 |
-| **AI 提示词**（卸载提示词、DNS 高级检测等） | 把内置提示词交给你选择的 AI 执行；AI 可能读取系统信息、执行命令、修改或删除文件 | 取决于 AI 实际做了什么。**请逐条审阅 AI 要执行的操作后再允许** |
+| 功能                                                             | 实际做了什么                                                                                                                                                                                                                                                                                                | 可逆性                                                                                                                                                                                                                                                                                                         |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **执行锁**                                                       | 给 `claude.exe` 与 `codex.exe`（GPT 默认纳入，可在「IP 锁」弹窗移出）的每一份副本加 NTFS `Deny ExecuteFile` 规则；v0.26.0 起**反重力（Google Antigravity）默认也纳入**：Hub 与 IDE 的主程序、语言服务器、第三方汉化壳留下的 `*.original.exe`（软件页可移出）                                                | 可逆。但**上锁后双击程序会被系统拒绝执行**，这是设计如此；必须走面板入口。反重力自动更新装出的新程序在下一次上锁之前没有锁（见 KNOWN-ISSUES）                                                                                                                                                                  |
+| **看门狗**                                                       | 出口 IP 不合格或查不到时，上锁并关闭受门禁管理的会话                                                                                                                                                                                                                                                        | 会话被关时**未保存的对话会丢失**，没有宽限期                                                                                                                                                                                                                                                                   |
+| **会话内门禁**                                                   | 在当前槽位的 `settings.json` 里写入两条带 `_qb_gate` 标记的 hook                                                                                                                                                                                                                                            | 可逆（面板里停用，或手动删除这两条）                                                                                                                                                                                                                                                                           |
+| **一键关闭 / 切换账户**                                          | 结束满足双重证据的 Claude 进程（切换账户前也会这样做），再切换槽位指向                                                                                                                                                                                                                                      | 未保存内容丢失                                                                                                                                                                                                                                                                                                 |
+| **删除账户槽位**                                                 | 删除该槽位的整个登录目录                                                                                                                                                                                                                                                                                    | **不可恢复**，需要重新登录                                                                                                                                                                                                                                                                                     |
+| **托管安装、升级、回滚**                                         | 下载并替换 Claude Code / Codex 程序文件，旧版本收进版本库                                                                                                                                                                                                                                                   | 可回滚（版本库最多留 3 份）                                                                                                                                                                                                                                                                                    |
+| **清理多余副本**                                                 | 删除面板托管目录之外的 Claude Code / Codex 副本                                                                                                                                                                                                                                                             | **不可恢复**                                                                                                                                                                                                                                                                                                   |
+| **完全卸载**（Claude Code / Codex / Claude 桌面端）              | 按类清掉程序、版本库、缓存与登记、配置与会话、认证、环境变量与 PATH 项、Shell 配置行、凭据管理器条目、启动项与账户槽位                                                                                                                                                                                      | **不可恢复。** 账户槽位删掉之后，所有账户都要重新登录                                                                                                                                                                                                                                                          |
+| **⚠ Chrome 完全卸载**                                            | 卸载 Chrome 并**删除整个 `User Data` 目录**                                                                                                                                                                                                                                                                 | **不可恢复。书签、保存的密码、扩展、全部网站登录态一并永久丢失**                                                                                                                                                                                                                                               |
+| **禁用本机 IPv6**（默认开启）                                    | 每次启动面板时关闭整机网卡的 IPv6 绑定                                                                                                                                                                                                                                                                      | 可逆（关闭开关恢复原值）。可能短暂断网，需要管理员授权                                                                                                                                                                                                                                                         |
+| **⚠ 浏览器出站锁**                                               | 给指定浏览器加 Windows 防火墙出站规则，物理网卡直连一律拦掉                                                                                                                                                                                                                                                 | 可逆（面板里撤销）。**规则不随面板退出消失** —— 面板关了、甚至卸载了它还在，浏览器可能因此上不了网                                                                                                                                                                                                             |
+| **系统代理修改**                                                 | 在你点了「修」之后改系统代理设置，改前记录原值                                                                                                                                                                                                                                                              | 可逆（回滚到原值）。**改错会当场断网**，影响整机所有跟随系统代理的程序                                                                                                                                                                                                                                         |
+| **浏览器策略**                                                   | 为当前用户写入 Chrome 的 WebRTC、安全 DNS 策略                                                                                                                                                                                                                                                              | 可逆（面板里撤销）                                                                                                                                                                                                                                                                                             |
+| **启动时对齐**（时区、区域格式默认开启；显示语言默认关闭）       | 每次启动面板时，按出口 IP 归属地调整系统时区、区域格式、显示语言                                                                                                                                                                                                                                            | 可逆（设置里关闭，「高级维护」里可恢复时区）。改时区要管理员权限；显示语言要装语言包并注销后生效                                                                                                                                                                                                               |
+| **停用旧启动脚本**                                               | **每台机器只做一次**（v0.29.0 改；此前是每次启动都做）：把桌面上五个固定名称的旧版启动脚本（如 `ClaudeIpGate.cmd`）移进数据目录下的备份文件夹，并落一个标记文件。                                                                                                                                           | 可逆（从备份文件夹搬回）。删掉数据目录下的 `legacy-launchers-migrated` 会让它下次启动再扫一次桌面                                                                                                                                                                                                              |
+| **配置快照恢复、中转环境配置**                                   | 覆盖或合并写入客户端的配置文件                                                                                                                                                                                                                                                                              | 写入前会备份，但请自行确认备份完整                                                                                                                                                                                                                                                                             |
+| **账户迁移**                                                     | 复制历史账户目录到新的槽位布局                                                                                                                                                                                                                                                                              | 会先备份，但请自行确认备份完整                                                                                                                                                                                                                                                                                 |
+| **扩展（酒馆、MCP、Skills）**                                    | 写入所选环境的配置；按你的操作启动第三方程序（桥接、SillyTavern、MCP 服务等）                                                                                                                                                                                                                               | 可卸载；第三方程序做了什么，由其自身负责                                                                                                                                                                                                                                                                       |
+| **酒馆的 GPT 桥接**（v0.25.0，内置）                             | 在你点击后，于 `127.0.0.1` 起一个 OpenAI 兼容端点，每个请求驱动一次官方 Codex CLI 的 `codex exec`（用你当前激活的 GPT 槽位登录）；写一个密钥文件与一个空的运行目录到本程序的数据目录                                                                                                                        | 可停止；默认不落会话文件（`--ephemeral`）。它联网的是官方 Codex CLI 自己，见第 8 节                                                                                                                                                                                                                            |
+| **启动 / 关闭反重力**（v0.26.0）                                 | 起之前先**关掉正在跑的同一个程序**（它是单实例），归门禁时先验出口 IP；之后由面板托管（面板退出它一起退出）。「关闭」会结束 Hub / IDE 及其语言服务器                                                                                                                                                        | 未保存内容丢失。登录资料在它自己那里（Hub：Windows 凭据管理器；IDE：它自己的用户数据目录），面板不碰                                                                                                                                                                                                           |
+| **反重力 IDE 的登录槽位**（v0.30.0）                             | 「新建」在本程序数据目录下建一个空的 IDE 用户数据目录（只复制你默认资料里的 `User\settings.json` 与 `keybindings.json`），「启动」用 VS Code 的公开开关 `--user-data-dir` 把 IDE 指到它；你在 IDE 自己的窗口里登录。「切换」只改本程序记的激活槽位。**Hub 没有槽位**（它的令牌在 Windows 凭据管理器）       | 可逆：移除只把目录挪进归档。新槽位是一份全新的 IDE（设置以外的状态从头来）；平时面板只问它状态库里令牌那一行的长度；只有你点这个账户的额度刷新图标时才读令牌、过期了在内存里换新（不写回、不复制，见下面「反重力账户与 Hub 的联网额度」）                                                                                                                                                                       |
+| **反重力的汉化与审批引擎**（v0.26.0，内置）                      | 在你点「附加」（或从面板起 Hub 后按设置自动）之后，连上反重力 Hub **自己开着**的 Chrome DevTools 调试端口，往它的页面里注入一段脚本：按字典替换界面文字；**自动点掉审批卡**（按你选的选项档：仅本次 / 对话内 / 项目内 / 全局）；命中高危规则的命令不点并记日志。脚本、字典、规则取自 EasyAntigravity（MIT） | 可停止；页面里的脚本随下次刷新消失，不改反重力任何文件。**自动审批等于替你放行智能体要执行的命令**——它只拦你规则里写了的那些，规则默认九条，其余一律放行；请自行评估后再开                                                                                                                                     |
+| **关闭反重力 Hub 的自动检查更新**（v0.26.0，可选）               | 在你点击后，往它的 `%APPDATA%\Antigravity\app_storage.json` 并入一个键 `autoCheckForUpdates`                                                                                                                                                                                                                | 可逆（再点一次）。重启 Hub 生效                                                                                                                                                                                                                                                                                |
+| **GPT 的内部额度**（2026-09-23 起只手动）                        | 在你点 GPT 账户行右侧的刷新图标时，用**那一个** Codex 槽位的官方 access token 请求 `https://chatgpt.com/backend-api/wham/usage`，取回 5 小时 / 7 天窗口、剩余百分比与重置时间。打开页面不查，没有定时器。访问令牌已经到点时**不发请求、也不替官方客户端换新**（OpenAI 的刷新令牌每换一次就轮换，面板换了会让桌面端手里那份作废、被登出），只提示你打开一次桌面端让它自己换新；服务端拒绝了这份登录（401）时，那一行改显示「登录已失效」 | 只读；令牌只在内存请求作用域存在；不自动换号、不参与路由，读不出来不显示 0 |
+| **Gemini CLI 的内部额度**（2026-09-23 起只手动）                 | 在你点反重力用量卡上 Gemini CLI 那一格的「刷新」时，用当前账户 CLI 那一半的令牌请求 Code Assist `loadCodeAssist` / `retrieveUserQuota`，取回逐模型剩余比例与重置时间。**访问令牌过期时（它只有一小时），用同一份里的刷新令牌向 `oauth2.googleapis.com` 换一张新的**（2026-09-23 起），换新要带的客户端标识从你本机装的 Gemini CLI 包里读出来（面板自己不内置）；Google 说刷新令牌作废了时，账户行上 CLI 那一半改显示「登录已失效」 | 只读，令牌不落盘；换来的访问令牌**只放内存**，不写回 `oauth_creds.json`（Google 的刷新令牌换新之后不作废，CLI 手里那份照样能用）；接口改版或 401/403 时显示原因，不伪造额度。这同样是在用 Gemini CLI 客户端的身份跟 Google 说话，是否符合你与 Google 之间的条款由你自行判断 |
+| **反重力账户与 Hub 的联网额度**（2026-09-23，可关）              | 在你点反重力账户行右侧的刷新图标（或用量卡上 Hub 那一格的「刷新」）时，读取**官方客户端存在本机的令牌**（IDE 槽位的状态库 / Hub 在凭据管理器里那一条），向 Google 发三个只读请求：`v1internal:loadCodeAssist`（档位、AI 积分）、`v1internal:retrieveUserQuotaSummary`（Claude / Gemini 两组 × 5 小时 / 每周额度；免费档 Google 不给这一份时再问 `v1internal:fetchAvailableModels`）。**访问令牌过期时，面板用同一份里的刷新令牌向 `oauth2.googleapis.com` 换一张新的**，换新要带的客户端标识从你本机装的反重力里读出来（面板自己不内置）。请求形状照官方 IDE（`User-Agent` 报 `antigravity/<本机 IDE 版本>`） | 只读，不发任何会改账户状态的调用（例如「登记档位」的 `onboardUser`）；换来的访问令牌**只放内存**，不写回 IDE、不写回凭据管理器、不进日志。面板这样做就是在用反重力客户端的身份跟 Google 说话 —— 这一点是否符合你与 Google 之间的条款，由你自行判断。读不出来时界面如实说原因，不显示猜出来的数；关掉开关 `antigravity_hub_quota` 就不再联网 |
+| **Claude 桥的设置与调用日志**（v0.32.0）                         | 在你打开酒馆插件页时，向**你自己那份 `bridge.py`** 的本机回环端口读 / 写它自己的设置与调用日志（`/api/settings`、`/api/telemetry`）                                                                                                                                                                         | 只连 `127.0.0.1`，不出本机。改的是 `bridge.py` 自己的 `settings.json`；「清空调用日志」**不可逆**，点之前会弹确认框。面板**不分发** `bridge.py`                                                                                                                                                                |
+| **酒馆的 Gemini 桥接**（v0.26.0，内置）                          | 在你点击后，于 `127.0.0.1` 起一个 OpenAI 兼容端点，每个请求起一次**官方 Gemini CLI** 的无交互模式（用你当前激活的 Gemini CLI 槽位登录，`GEMINI_CLI_HOME` 指向槽位）；写一个密钥文件与一个空的运行目录到本程序的数据目录                                                                                     | 可停止。它联网的是官方 Gemini CLI 自己；**它驱动的不是反重力本体**，见第 8 节                                                                                                                                                                                                                                  |
+| **Gemini CLI 槽位登录 / 安装**（v0.26.0，安装部分 v0.29.0 改写） | 「登录」打开一个 Gemini CLI 的交互窗口让它自己走 Google 登录；「安装」在后台跑 `npm install -g @google/gemini-cli` 并把输出显示在软件页的进度条里（原来是弹一个命令窗口，而那个窗口里 npm 从来没跑起来过）                                                                                                  | 面板不分发 Gemini CLI；它写下的凭据文件平时只看在不在，只有你点额度的「刷新」时才读（见上一行）；npm 装了什么由 npm 与该包负责                                                                                                                                                                                                                                   |
+| **安装 / 更新反重力**（v0.29.0）                                 | 在你点击并确认后：先**关掉正在跑的那一份**（它是单实例，开着装不上），然后 A 路 `winget install` 官方包、没成则从 Google 自己的下载域（`storage.googleapis.com` / `edgedl.me.gvt1.com` / `dl.google.com`）取官方安装器，**核对 Authenticode 签名主体含 Google** 之后静默运行它；装完把执行锁加回去          | 未保存内容丢失。**面板不分发、不托管、不镜像 Google 的安装包** —— 装的就是你自己去官网点下载得到的同一个文件，安装行为由 Google 的安装器负责。官网不公布安装包哈希，所以校验靠「只从 Google 的域下载」加「必须验出 Google 签名」；读不出签名就不装                                                             |
+| **AI 提示词**（卸载提示词、DNS 高级检测等）                      | 把内置提示词交给你选择的 AI 执行；AI 可能读取系统信息、执行命令、修改或删除文件                                                                                                                                                                                                                             | 取决于 AI 实际做了什么。**请逐条审阅 AI 要执行的操作后再允许**                                                                                                                                                                                                                                                 |
 
 **`Chrome 完全卸载` 是本项目破坏性最强的功能之一。** 点下去就没有回头路，
 执行前请自行备份书签与密码。维护者的建议很直白：**不清楚自己在做什么时，不要用这个功能。**
@@ -353,6 +367,7 @@ Codex 账户槽位的配置（没有槽位才是默认 `~/.codex`；退出时恢
 另需知悉的**已知门禁缺口**（设计使然，非缺陷）：
 `%LOCALAPPDATA%\AnthropicClaude\app-<版本>\claude.exe` 无法加 Deny ACE，只能靠看门狗关闭；
 npm 全局安装出来的 `codex.cmd` 挡得住 `codex` 命令本身，挡不住直接调用其内部 node 脚本；
+Gemini CLI 是 `node` 跑的脚本，同样锁不住；反重力自动更新装出的新程序在下一次上锁之前没有锁；
 执行锁不会冻结已经在运行的进程发出的网络请求。完整清单见 `docs/KNOWN-ISSUES.zh-CN.md`。
 
 > **本项目提供的不是安全边界，不要把它当作强制访问控制使用。**
@@ -367,28 +382,38 @@ npm 全局安装出来的 `codex.cmd` 挡得住 `codex` 命令本身，挡不住
 
 ### 7.1 不需要你点击就会发生的网络请求
 
-| 什么时候 | 地址 | 用途 |
-|---|---|---|
-| 每次启动面板 | `platform.claude.com`、`developers.openai.com` 的定价文档页 | 更新官方参考价（中转站计价用），拉不到就用内置快照 |
-| 启动时对齐（默认开启）、恢复上次的放行、门禁放行期间的看门狗巡检 | `my.ippure.com`、`www.cloudflare.com/cdn-cgi/trace`、`ipinfo.io`，兜底 `api.ipify.org`、`icanhazip.com` | 查询出口 IP 与归属国家 |
-| 打开中转站页面时；开启智能调度之后每约 60 秒（内测） | 你自己添加的中转站地址 | 读取站点账单与健康数据（不调用模型） |
+| 什么时候                                                         | 地址                                                                                                    | 用途                                               |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| 每次启动面板                                                     | `platform.claude.com`、`developers.openai.com` 的定价文档页                                             | 更新官方参考价（中转站计价用），拉不到就用内置快照 |
+| 每次启动面板（0.25.3 起，设置里「启动时检查更新」可关）          | `github.com` 上本项目最新 Release 的 `update.json`（经 GitHub 的下载服务器取回）                        | 看有没有新版本；只读版本号与更新说明，不带任何账户信息，**不下载、不安装** |
+| 启动时对齐（默认开启）、恢复上次的放行、门禁放行期间的看门狗巡检 | `my.ippure.com`、`www.cloudflare.com/cdn-cgi/trace`、`ipinfo.io`，兜底 `api.ipify.org`、`icanhazip.com` | 查询出口 IP 与归属国家                             |
+| 打开中转站页面时；开启智能调度之后每约 60 秒（内测）             | 你自己添加的中转站地址                                                                                  | 读取站点账单与健康数据（不调用模型）               |
 
 这些请求都会让对方看到你的出口 IP。
 
 ### 7.2 你点击之后才发生的网络请求
 
-| 功能 | 地址 |
-|---|---|
-| DNS 泄露检测 | `bash.ws`（**由原理决定**，该服务会看到你的 DNS 解析来源） |
-| 中文环境检测里的 WebRTC 一项 | `stun.l.google.com`（Google 的公共 STUN 服务器） |
-| 指定 IP 查询 | `api.ipquery.io` |
-| 账户可用性检测 | `api.anthropic.com`（携带该槽位的本地令牌，见第 4 节） |
-| 安装、升级 Claude Code | `downloads.claude.ai`；兜底为官方安装脚本 `claude.ai/install.ps1` |
-| 安装、升级 Codex | `api.github.com`、`github.com`（openai/codex 的官方发布页） |
-| 安装 Claude 桌面端、Chrome | 由 Windows 的 `winget` 联网下载 |
-| 中转站连接诊断、站点检验（内测） | 你自己填写的中转站地址（**可能产生费用**） |
-| 导入 Skills | `github.com`、`raw.githubusercontent.com` 与你填写的仓库 |
-| MCP 连接测试 | 你导入的 MCP 服务，或运行你导入的命令 |
+| 功能                                                       | 地址                                                                     |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------ |
+| DNS 泄露检测                                               | `bash.ws`（**由原理决定**，该服务会看到你的 DNS 解析来源）               |
+| 中文环境检测里的 WebRTC 一项                               | `stun.l.google.com`（Google 的公共 STUN 服务器）                         |
+| 环境体检 · Anthropic 服务可达（2026-09-24 起）             | `api.anthropic.com` 一次 POST（**不带任何凭据**、不带账户信息，只看状态码）；`claude.ai`、`www.anthropic.com` 的 `robots.txt`。系统代理开着时绕过与跟随代理各发一轮 |
+| 环境体检 · IPv6 真实出口（2026-09-24 起）                  | `api6.ipify.org`，不通再 `ipv6.icanhazip.com`、`v6.ident.me`（只有 IPv6 地址的回显服务）；有 IPv6 出口时再问 `ipinfo.io` 它在哪个国家 |
+| 中文环境 · 用默认浏览器测（2026-09-24 起）                 | 面板在本机 `127.0.0.1` 上临时开一个一次性页面，由你的默认浏览器打开：页面只把结果交回本机面板（只收一份、两分钟作废、结果只在内存里），WebRTC 一项同上用 `stun.l.google.com` |
+| 指定 IP 查询                                               | `api.ipquery.io`                                                         |
+| 账户可用性检测                                             | `api.anthropic.com`（携带该槽位的本地令牌，见第 4 节）                   |
+| 安装、升级 Claude Code                                     | `downloads.claude.ai`；兜底为官方安装脚本 `claude.ai/install.ps1`        |
+| 安装、升级 Codex                                           | `api.github.com`、`github.com`（openai/codex 的官方发布页）              |
+| 安装 Claude 桌面端、Chrome                                 | 由 Windows 的 `winget` 联网下载                                          |
+| 中转站连接诊断、站点检验（内测）                           | 你自己填写的中转站地址（**可能产生费用**）                               |
+| 导入 Skills                                                | `github.com`、`raw.githubusercontent.com` 与你填写的仓库                 |
+| MCP 连接测试                                               | 你导入的 MCP 服务，或运行你导入的命令                                    |
+| 酒馆的 GPT 桥接（点「起 GPT 酒馆」之后，酒馆每发一条消息） | 由官方 Codex CLI 自己联网（`chatgpt.com`），本程序不经手请求、不经手令牌 |
+| GPT 账户行的额度刷新图标                                   | `chatgpt.com`（`backend-api/wham/usage`，携带那个槽位的访问令牌）         |
+| 反重力用量卡上 Gemini CLI 那一格的「刷新」                 | `cloudcode-pa.googleapis.com`（携带 CLI 那一半的访问令牌）；访问令牌过期时先到 `oauth2.googleapis.com` 换新 |
+| 反重力账户行的额度刷新图标、用量卡上 Hub 那一格的「刷新」  | `daily-cloudcode-pa.googleapis.com`（按 GCP 条款管的账户是 `cloudcode-pa.googleapis.com`）；访问令牌过期时先到 `oauth2.googleapis.com` 换新 |
+| 设置页的「检查更新」（0.25.3 起）                          | 同上表的 `update.json`                                                   |
+| 更新弹窗里的「一键更新」（0.25.3 起）                      | `github.com` 上本项目那一版 Release 的 `SHA256SUMS.txt` 与安装包。**核对 SHA-256 一致才安装**；安装时面板会退出，它启动的桌面端、对话、酒馆一起关闭 |
 
 其他外部网址（IPQualityScore、ippure.com、Scamalytics、IPRoyal、各厂商控制台、官方文档、
 新手指引等）一律**在你点击后由系统浏览器打开**，程序本身不代你访问，也不携带任何凭证。
@@ -411,6 +436,39 @@ npm 全局安装出来的 `codex.cmd` 挡得住 `codex` 命令本身，挡不住
   不解析数据库、不解密 Cookie、不读取登录态、不外传。介意的话请不要使用这些功能。
 - **酒馆自动定位**：按目录扫描本机磁盘，找桥接与 SillyTavern 的特征文件；
   有深度、数量与时间上限，不碰网络盘。
+- **反重力**（v0.26.0）：读它的 `%APPDATA%\Antigravity\DevToolsActivePort`（调试端口）、
+  `app_storage.json`（只看「自动检查更新」那个键）、`logs\language_server.log`（只看有没有
+  「Auth succeeded」这一行，作为**零凭证**的登录态信号）。
+  Gemini CLI 槽位在桥接与账户列表路径只看 `oauth_creds.json` **在不在、是不是空的**，不读内容；
+  你点 Gemini CLI 额度的「刷新」时，会读取其中的访问令牌、刷新令牌与过期时刻访问 Code Assist，
+  只取额度字段；访问令牌过期了在内存里换新，不写回（见下面「Gemini CLI · 额度窗口」）。
+- **反重力 · 账户状态与用量**（v0.30.0）：读反重力 IDE 用户数据目录里的
+  `User\globalStorage\state.vscdb`（激活槽位的，或你的默认那份）：平时令牌那一行**只问长度**；
+  `antigravityUnifiedStateSync.userStatus` 那一行解出邮箱、显示名、档位与各模型的剩余额度、
+  重置时间（IDE 自己写的，只有 IDE 开着时才更新，界面标明「IDE 写入」的时刻）。
+  读 `~\.gemini\antigravity*\conversations\*.db`
+  里每一次模型生成的元数据（模型名、token 数、时间戳）与每一步的创建时间 ——
+  **这些库里也存着你的对话内容**（`step_payload` 等列），面板不读那些列、不外传；
+  介意的话请不要打开反重力页。这些读取不联网。
+- **反重力 · 联网额度**（2026-09-23）：**只在你点刷新图标时**，读那个账户 IDE 状态库里的
+  令牌那一行（访问令牌、刷新令牌、过期时刻）或 Hub 在凭据管理器里那一条的 `token` 段；
+  访问令牌过期时用刷新令牌换一张新的，**只放内存**，不写回 IDE 的库、不写回凭据管理器。
+  换新要带的客户端标识，从你本机装的反重力 IDE 的 `resources\app\out\main.js`
+  （读不出再扫语言服务器程序）里现读，用完即丢。
+- **GPT · 额度窗口**：点那一行的刷新图标时，读取那个 Codex 槽位的
+  access token，请求 ChatGPT `backend-api/wham/usage`，只取五小时 / 七天剩余百分比
+  与重置时刻；本机 `rollout-*.jsonl` 仍只用于离线快照与用量统计。令牌不写入日志、快照或前端。
+- **Gemini CLI · 额度窗口**：点那一格的「刷新」时，读取当前账户 CLI 那一半的
+  访问令牌、刷新令牌与过期时刻，请求 Code Assist `loadCodeAssist` / `retrieveUserQuota`，只取模型名、
+  剩余比例与重置时刻。访问令牌过期时（2026-09-23 起）用刷新令牌向 `oauth2.googleapis.com`
+  换一张新的，**只放内存**，不写回 `oauth_creds.json`；换新要带的客户端标识从你本机装的
+  `@google/gemini-cli` 包（入口脚本及同目录的 `.js`）里现读，用完即丢。
+  令牌不写入日志、快照或前端；失败时显示原因，不显示 0%。
+- **反重力 Hub · 账户**（v0.32.0）：读 Windows 凭据管理器里那一条
+  `gemini:antigravity`（反重力 Hub 自己写的）。打开反重力页时**只取其中 `id_token` 的载荷**
+  解出邮箱与验证状态 —— 一次本机 base64 解码，**零网络**；访问令牌与刷新令牌只在你点
+  Hub 那一格的「刷新」时读（见上面「联网额度」）。这是面板**唯一一处读取凭据管理器内容**的地方；
+  0.31.0 之前它只问「那条在不在」。不想让它读，就不要打开反重力页。
 
 ### 7.4 凭证与日志
 
@@ -428,11 +486,49 @@ npm 全局安装出来的 `codex.cmd` 挡得住 `codex` 命令本身，挡不住
 
 - 第三方开源来源与许可逐条列在 [`ATTRIBUTION.md`](ATTRIBUTION.md)：
   抄了代码的、只用了公开接口的、看过但未采用的，分开说明。
-- **SillyTavern 采用 AGPLv3。本项目不分发它，也不分发桥接脚本 `bridge.py`。**
+- **SillyTavern 采用 AGPLv3。本项目不分发它，也不分发 Claude 那条桥接脚本 `bridge.py`。**
   面板只在你已自行安装的前提下启动它们。
   **若你自行分发这些组件，AGPLv3 的义务由你自己承担。**
-  桥接功能涉及第三方前端如何使用凭证发起请求，**其合规性取决于该桥接脚本的具体实现，
+  Claude 桥接涉及第三方前端如何使用凭证发起请求，**其合规性取决于该桥接脚本的具体实现，
   不在本项目的审阅范围内，使用者需自行对照相应服务条款确认。**
+- **酒馆的 GPT 桥接是本项目自带的**（v0.25.0，`crates/qb-app/src/gpt_bridge.rs`），所以要把它
+  做什么、不做什么说清楚：
+  - 它是一个只监听 `127.0.0.1` 的 OpenAI 兼容端点，只在你点「起 GPT 酒馆」之后存在，
+    密钥由本程序生成、只给本机的酒馆用；
+  - 酒馆每发一条消息，它起一次**未经修改的官方 Codex CLI** 的公开无交互模式
+    （`codex exec --json`，只读沙箱），`CODEX_HOME` 指向你当前激活的 GPT 账户槽位 ——
+    登录是官方客户端自己完成的，桥接本身不读、不复制、不转发 `auth.json`；另有一条
+    **仅在你点刷新图标时触发的 GPT 额度探针**，会在内存中读取那个槽位的 access token
+    请求 `backend-api/wham/usage`，不保存、不展示令牌，也没有 API Key 回退；
+    `model_provider` 强制为官方，不经本机路由；
+  - 默认 `--ephemeral`，对话不落进槽位的会话历史；你在插件面板里打开「记入槽位用量」才写入；
+  - 它不改酒馆的配置文件，酒馆里的连接由你自己配；没有增量流式，不传图、不给工具，
+    Codex 自带的系统提示无法替换，角色扮演的质量取决于模型自己；
+  - **它不是 OpenAI 的产品，也未经 OpenAI 审阅。** OpenAI 对「第三方前端经官方 CLI 使用
+    ChatGPT 登录」目前没有公开的明确允许或禁止条款（2026-09-20 查证）；官方自己提供 `codex exec`
+    与 SDK 作无交互用途，但这不等于对「酒馆 + ChatGPT 订阅」这种组合的许可。
+    **是否使用、是否符合你与 OpenAI 之间的条款，由你自行判断并承担后果**（见第 4、11 节）。
+- **酒馆的 Gemini 桥接是本项目自带的**（v0.26.0，`crates/qb-app/src/gemini_bridge.rs`）：
+  - 它驱动的是**Google 官方的 Gemini CLI**（`@google/gemini-cli`，Node 包），**不是反重力本体**：
+    反重力 Hub 没有公开的无交互模式（它的 `--headless` 走语言服务器未公开的 stdin 协议），
+    令牌在 Windows 凭据管理器里。用同一个 Google 账户在 Gemini CLI 里再登一次；
+    **额度是否与反重力订阅共享，本项目没有核实过**；
+  - 只监听 `127.0.0.1`，只在你点「起 Gemini 酒馆」之后存在，密钥由本程序生成、只给本机的酒馆用；
+    每发一条消息起一次未修改的 CLI 的公开无交互模式（stdin 喂提示词、`--output-format json`），
+    `GEMINI_CLI_HOME` 指向你当前激活的槽位 —— 登录是 CLI 自己完成的。另有一条
+    **仅在你点刷新时触发的 Gemini 额度探针**，会在内存中读取当前账户 CLI 那一半的令牌
+    请求 Code Assist `loadCodeAssist` / `retrieveUserQuota`（访问令牌过期了在内存里换新，不写回），
+    不保存、不展示令牌，也不设 `GEMINI_API_KEY` 回退；
+  - 没有增量流式，不传图、不给工具；不改酒馆的配置文件；
+  - **它不是 Google 的产品，也未经 Google 审阅。** Google 对「第三方前端经官方 CLI 使用个人 Google
+    登录」是否允许，本项目没有找到公开的明确条款（2026-09-20 查证）。
+    **是否使用、是否符合你与 Google 之间的条款，由你自行判断并承担后果**（见第 4、11 节）。
+- **反重力的汉化与审批引擎**（v0.26.0）取自 EasyAntigravity（MIT，作者 Astwarp）：注入脚本、
+  汉化字典、高危规则原样带入，见 `ATTRIBUTION.md`。**它的「免 TUN 代理」（往 Google 安装目录丢一个
+  `version.dll`、注入语言服务器）本项目没有采用**：那是一份来源与许可不明的第三方二进制，
+  且属于修改官方程序。本项目不做这件事，需要的人请自行使用 EasyAntigravity 并自负其风险。
+  引擎通过反重力 Hub 自己开着的 Chrome DevTools 调试端口工作 —— 那是它的设计，不是本项目打开的；
+  同一台机器上任何程序都能连上那个端口，这一点与本项目无关但你应当知道。
 - **MCP 服务与 Skills 是第三方代码。** 扩展中心的收录不是安全认证；安装、运行之前
   请自行检查来源与内容，它们做了什么由其作者负责。
 - 外部链接指向的官方文档、第三方博客、视频、品牌名称与商家页面
@@ -527,6 +623,14 @@ no trademark license, affiliation or endorsement.
   DNS-leak, locale and egress checks are informational heuristics built on public
   third-party APIs. Aligning the system time zone and regional format with the exit IP
   does not lower any ban risk and does not change where you are.
+- **The GPT bridge for SillyTavern (v0.25.0) is built into this project.** It is a loopback-only
+  OpenAI-compatible endpoint that, for each message, runs the unmodified official Codex CLI in its
+  documented non-interactive mode (`codex exec --json`, read-only sandbox) with `CODEX_HOME`
+  pointed at your active GPT account slot. The project never reads, copies or forwards
+  `auth.json` or any token, has no API-key fallback, forces the official `model_provider`,
+  and defaults to `--ephemeral`. OpenAI has published no explicit rule allowing or forbidding
+  third-party front-ends that use a ChatGPT sign-in through the official CLI (checked
+  2026-09-20); whether this combination complies with your terms with OpenAI is your call.
 - **Relay stations (including smart scheduling) are an internal beta: visible in the UI
   but not yet usable.** The project provides, sells and endorses no relay service. Using
   third-party relays may breach model providers' terms. The relay feature includes a
@@ -540,21 +644,31 @@ no trademark license, affiliation or endorsement.
   uninstall, deleting account slots, removing redundant copies, and the Chrome uninstall
   that **permanently deletes the entire `User Data` directory**. The IP lock applies a
   `Deny ExecuteFile` ACE, after which double-clicking the executable is refused by
-  Windows **by design**. The watchdog closes gated sessions without a grace period;
+  Windows **by design**. Since v0.25.0 the GPT (Codex) side is gated by default like
+  Claude (opt-out in the IP-lock dialog). The watchdog closes gated sessions without a grace period;
   unsaved conversations are lost.
 - **This is not a security boundary.** Known bypasses exist (see §6). Real
   enforcement requires AppLocker/WDAC, which is out of scope.
 - **Accounts.** You must own every account you use with it. Anthropic's policies prohibit
-  creating or rotating accounts to evade limits or bans. The project makes no network
-  request to query quota and calls no OAuth-internal endpoint; usage is read only from
-  files the official client writes locally, for display. Account switching is manual only.
+  creating or rotating accounts to evade limits or bans. Claude quota and usage are never
+  queried over the network: they are read only from files the official client writes
+  locally, for display. GPT and Antigravity / Gemini CLI quotas are fetched only when you
+  click that row's refresh icon (endpoints in §7.2). Account switching is manual only.
   The optional account check sends one minimal request to Anthropic's public models
   endpoint with the slot's local token, only when you click it.
 - **No telemetry, no data collection, no cloud sync, no project server.** Some requests
   happen without a click: official pricing pages at every startup, exit-IP lookups
-  for startup alignment and while the gate is open, and relay billing reads when you open
-  the relay page or turn on smart scheduling. Everything
-  else happens only on explicit user action. All endpoints are listed in §7.
+  for startup alignment and while the gate is open, relay billing reads when you open
+  the relay page or turn on smart scheduling, and (since 0.25.3, can be turned off in
+  Settings) one read of this project's `update.json` on GitHub at startup to see whether a
+  newer version exists. Updates are never installed automatically: "Update now" in the
+  update dialog downloads the installer from this project's GitHub release, installs it only
+  if its SHA-256 matches that release's `SHA256SUMS.txt`, and closes the panel and the
+  sessions it started while installing. Everything
+  else happens only on explicit user action — including the environment checks added on
+  2026-09-24, which send one request to Anthropic's API **without any credential**, fetch two
+  `robots.txt` files, query IPv6-only echo services, and can open a one-time page on
+  `127.0.0.1` in your default browser. All endpoints are listed in §7.
 - **Affiliate disclosure:** the IPRoyal link in this project carries a referral
   code (`?r=sulianyan`) that may generate commission. No other link carries a referral
   parameter.

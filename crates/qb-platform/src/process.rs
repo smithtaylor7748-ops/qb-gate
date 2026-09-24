@@ -44,6 +44,96 @@ pub fn hidden_tokio(cmd: tokio::process::Command) -> tokio::process::Command {
     cmd
 }
 
+// ---------------------------------------------------------------- Job
+
+/// 一个 `KILL_ON_JOB_CLOSE` 的 Job 对象：最后一个句柄一关（包括面板进程退出），
+/// 挂进去的进程树全部结束。
+///
+/// 给那些**面板自己拿着 stdio 管道**的短命子进程用（酒馆的 GPT 桥接每个请求起一次
+/// `codex exec`）：它们走不了 `sessions::start`（那条路不给管道），但同样不能在面板
+/// 退出后变成孤儿 —— 一个还在跑的 `codex.exe` 会继续替使用者烧额度。
+/// `tokio::process::Command` 的 `kill_on_drop` 只管 `Child` 被 drop 的那一刻，
+/// 面板被杀、崩溃时 drop 根本不会跑；Job 是内核层的，靠得住。
+pub struct KillOnCloseJob(#[cfg(windows)] isize);
+
+#[cfg(windows)]
+impl KillOnCloseJob {
+    pub fn new() -> crate::error::Result<Self> {
+        use windows::Win32::System::JobObjects::*;
+        unsafe {
+            let job = CreateJobObjectW(None, None)
+                .map_err(|e| crate::error::GateError::Other(format!("建不出 Job 对象：{e}")))?;
+            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if let Err(e) = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const _,
+                std::mem::size_of_val(&info) as u32,
+            ) {
+                let _ = windows::Win32::Foundation::CloseHandle(job);
+                return Err(crate::error::GateError::Other(format!(
+                    "Job 对象设不上 KILL_ON_JOB_CLOSE：{e}"
+                )));
+            }
+            Ok(Self(job.0 as isize))
+        }
+    }
+
+    /// 把一个已经起来的子进程挂进来。
+    ///
+    /// 起来之后才挂有一个极短的窗口（子进程在这之前派生的孙进程不在 Job 里）；
+    /// 对 `codex exec` 这种先要读 stdin、解析配置再干活的程序可以接受。
+    pub fn assign(&self, child: &tokio::process::Child) -> crate::error::Result<()> {
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::JobObjects::AssignProcessToJobObject;
+        let raw = child.raw_handle().ok_or_else(|| {
+            crate::error::GateError::Other("子进程句柄已经没了，挂不进 Job".into())
+        })?;
+        unsafe {
+            AssignProcessToJobObject(HANDLE(self.0 as *mut core::ffi::c_void), HANDLE(raw))
+                .map_err(|e| crate::error::GateError::Other(format!("子进程挂不进 Job：{e}")))
+        }
+    }
+
+    /// 结束 Job 里的全部进程（不关句柄，之后还能继续挂新的）。
+    pub fn terminate_all(&self) {
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::JobObjects::TerminateJobObject;
+        unsafe {
+            let _ = TerminateJobObject(HANDLE(self.0 as *mut core::ffi::c_void), 1);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for KillOnCloseJob {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = windows::Win32::Foundation::CloseHandle(windows::Win32::Foundation::HANDLE(
+                self.0 as *mut core::ffi::c_void,
+            ));
+        }
+    }
+}
+
+// Job 句柄只是一个内核对象的引用，跨线程传递是安全的。
+#[cfg(windows)]
+unsafe impl Send for KillOnCloseJob {}
+#[cfg(windows)]
+unsafe impl Sync for KillOnCloseJob {}
+
+#[cfg(not(windows))]
+impl KillOnCloseJob {
+    pub fn new() -> crate::error::Result<Self> {
+        Ok(Self())
+    }
+    pub fn assign(&self, _child: &tokio::process::Child) -> crate::error::Result<()> {
+        Ok(())
+    }
+    pub fn terminate_all(&self) {}
+}
+
 // ---------------------------------------------------------------- PowerShell
 
 /// 把输出编码钉死成 UTF-8 的前奏。

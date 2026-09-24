@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use ts_rs::TS;
 
+pub mod ratelimit;
 pub mod usage;
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -49,6 +50,136 @@ struct Entry {
 
 pub fn root() -> PathBuf {
     crate::paths::state_dir().join("codex-accounts")
+}
+
+/// 当前激活槽位的目录，供需要把请求交给官方 Codex API 的显式操作使用。
+///
+/// 这里只返回路径与登录状态；访问令牌由调用方在最短作用域内读取，绝不进入
+/// 账户列表、TS 绑定或 UI 状态。
+pub fn active(root: &Path) -> Result<Option<(String, PathBuf, bool)>> {
+    let index = load(root)?;
+    let Some(id) = index.active.as_deref() else {
+        return Ok(None);
+    };
+    let Some(entry) = index.slots.iter().find(|e| e.id == id) else {
+        return Ok(None);
+    };
+    let home = root.join(&entry.id).join("home");
+    config_io::ensure_plain_path(&home)?;
+    let logged_in = config_io::read_optional(&home.join("auth.json"))
+        .ok()
+        .flatten()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|v| {
+            v.get("tokens")?
+                .get("access_token")?
+                .as_str()
+                .map(|s| !s.is_empty())
+        })
+        .unwrap_or(false);
+    Ok(Some((entry.label.clone(), home, logged_in)))
+}
+
+/// 激活槽位的 id。没有槽位 / 没激活就是 `None`。
+///
+/// 联网额度按槽位 id 记「最近一次」，酒馆那条「查激活槽位」也要知道是哪一个。
+pub fn active_id(root: &Path) -> Result<Option<String>> {
+    Ok(load(root)?.active)
+}
+
+/// Read one account slot by id without changing which slot is active.
+///
+/// Quota refreshes are account-scoped: the UI must be able to query every
+/// visible slot instead of accidentally querying whichever slot happens to be
+/// active. Credentials are still read only inside the short-lived quota
+/// request and the tuple never crosses the IPC boundary.
+pub fn slot(root: &Path, id: &str) -> Result<Option<(String, PathBuf, bool)>> {
+    let index = load(root)?;
+    let Some(entry) = index.slots.iter().find(|entry| entry.id == id) else {
+        return Ok(None);
+    };
+    let home = root.join(&entry.id).join("home");
+    config_io::ensure_plain_path(&home)?;
+    let logged_in = config_io::read_optional(&home.join("auth.json"))
+        .ok()
+        .flatten()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|value| {
+            value
+                .get("tokens")?
+                .get("access_token")?
+                .as_str()
+                .map(|token| !token.is_empty())
+        })
+        .unwrap_or(false);
+    Ok(Some((entry.label.clone(), home, logged_in)))
+}
+
+/// 读取当前槽位的 access token。调用方必须只在一次已授权的内部额度请求期间使用，
+/// 不得序列化、记录日志或返回给前端。
+pub fn read_access_token(home: &Path) -> Result<Option<String>> {
+    let Some(bytes) = config_io::read_optional(&home.join("auth.json"))? else {
+        return Ok(None);
+    };
+    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    Ok(value
+        .pointer("/tokens/access_token")
+        .and_then(serde_json::Value::as_str)
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned))
+}
+
+/// 访问令牌什么时候过期（JWT 的 `exp`，Unix 秒）。**只解码公开的那一段，不验签名。**
+///
+/// 联网额度问之前先看一眼（2026-09-23）：过期的令牌发出去只会换来一个 401，而那个 401
+/// 原来被说成「登录令牌已失效，请重新登录」—— 其实只是访问令牌到点了，官方 Codex 下次跑起来
+/// 会自己换新。⛔ 面板**不替它换**：OpenAI 的刷新令牌每换一次就轮换，面板一换，
+/// 槽位 `auth.json` 里那份就作废，桌面端下次换新时被登出、弹出登录页。
+pub fn access_token_expiry(access_token: &str) -> Option<i64> {
+    jwt_claims(access_token)?.get("exp")?.as_i64()
+}
+
+/// 从官方 access token 的公开 JWT claims 里取 ChatGPT account id，供官方额度
+/// 端点的 `ChatGPT-Account-Id` 请求头使用。只返回 id，不返回或保存 token。
+pub fn chatgpt_account_id(access_token: &str) -> Option<String> {
+    let claims = jwt_claims(access_token)?;
+    claims
+        .pointer("/https://api.openai.com/auth/chatgpt_account_id")
+        .or_else(|| claims.pointer("/https://api.openai.com/auth/account_id"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
+/// Read the account id from the official auth file when it is available.
+///
+/// Newer Codex builds persist this value beside `access_token` rather than in
+/// the JWT claims.  Keep the JWT path as a compatibility fallback, but never
+/// return the credential itself.
+pub fn chatgpt_account_id_from_home(home: &Path) -> Result<Option<String>> {
+    let Some(bytes) = config_io::read_optional(&home.join("auth.json"))? else {
+        return Ok(None);
+    };
+    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let file_id = [
+        value.pointer("/tokens/account_id"),
+        value.pointer("/tokens/accountId"),
+        value.pointer("/account_id"),
+        value.pointer("/accountId"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(serde_json::Value::as_str)
+    .map(str::trim)
+    .find(|id| !id.is_empty())
+    .map(str::to_owned);
+    if file_id.is_some() {
+        return Ok(file_id);
+    }
+    let token = value
+        .pointer("/tokens/access_token")
+        .and_then(serde_json::Value::as_str);
+    Ok(token.and_then(chatgpt_account_id))
 }
 
 fn load(root: &Path) -> Result<Index> {
@@ -212,6 +343,19 @@ pub fn select(root: &Path, id: &str) -> Result<()> {
     index.launched_at = None;
     save(root, &index)
 }
+/// 桌面端关掉了：清掉「当前启动的是哪个槽位」那三个字段，激活槽位不动。
+///
+/// 不清的话账户页会一直拿着一个已经不存在的 pid 去比对 —— 比不上就退回
+/// 「所选槽位历史 · 未检测到运行」，倒也不会错，但 `launched` 里留着的槽位 id
+/// 会让 [`archive`] 拒绝移除它，而使用者明明已经把桌面端关了。
+pub fn mark_closed(root: &Path) -> Result<()> {
+    let mut index = load(root)?;
+    index.launched = None;
+    index.launched_pid = None;
+    index.launched_at = None;
+    save(root, &index)
+}
+
 pub fn mark_launched(root: &Path, id: &str, pid: u32, started: &str) -> Result<()> {
     directory(root, id)?;
     let mut index = load(root)?;
@@ -320,5 +464,41 @@ mod tests {
             jwt_claims("a.eyJlbWFpbCI6ImFAZXhhbXBsZS50ZXN0In0.b").unwrap()["email"],
             "a@example.test"
         );
+    }
+
+    /// 过期时刻从公开的那一段读（编的令牌：载荷只有 `{"exp":1790000000}`）；读不出来就是 `None`。
+    #[test]
+    fn the_access_token_expiry_comes_from_the_jwt_exp_claim() {
+        assert_eq!(
+            access_token_expiry("h.eyJleHAiOjE3OTAwMDAwMDB9.s"),
+            Some(1_790_000_000)
+        );
+        assert_eq!(access_token_expiry("not-a-jwt"), None);
+        assert_eq!(
+            access_token_expiry("a.eyJlbWFpbCI6ImFAZXhhbXBsZS50ZXN0In0.b"),
+            None,
+            "没有 exp 就说不知道，不猜"
+        );
+    }
+
+    #[test]
+    fn account_id_prefers_the_auth_file_value() {
+        let home = std::env::temp_dir().join(format!("qb-codex-account-id-{}", config_io::id()));
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            home.join("auth.json"),
+            br#"{"tokens":{"access_token":"not-a-jwt","account_id":"acct-file"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            chatgpt_account_id_from_home(&home).unwrap().as_deref(),
+            Some("acct-file")
+        );
+        std::fs::write(home.join("auth.json"), br#"{"account_id":"acct-root"}"#).unwrap();
+        assert_eq!(
+            chatgpt_account_id_from_home(&home).unwrap().as_deref(),
+            Some("acct-root")
+        );
+        std::fs::remove_dir_all(home).unwrap();
     }
 }

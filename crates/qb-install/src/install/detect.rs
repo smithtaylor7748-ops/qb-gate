@@ -1,7 +1,7 @@
 //! 本机环境检测：Claude 桌面端 / Claude Code / 浏览器 / Codex。
 
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -173,6 +173,234 @@ async fn msix_desktop() -> Option<MsixPackage> {
     None
 }
 
+/// 官方 Gemini CLI（`@google/gemini-cli`）的包目录可能落在哪。
+///
+/// npm 全局前缀不是只有一个地方：`NPM_CONFIG_PREFIX` 覆盖一切；默认是 `%APPDATA%\npm`；
+/// nvm-windows / MSI 装的 Node 把全局包放进 `%ProgramFiles%\nodejs`。**一个都不能假设**
+/// —— 这是「开源兼容性」那条规矩（别人的 npm 前缀跟你的不一样）。
+/// 顺序 = 优先级：显式前缀 → npm 默认 → Node 安装目录 → 面板托管目录。
+pub fn gemini_cli_roots() -> Vec<PathBuf> {
+    let pkg = |prefix: PathBuf| {
+        prefix
+            .join("node_modules")
+            .join("@google")
+            .join("gemini-cli")
+    };
+    let env_dir = |k: &str| {
+        let v = std::env::var(k).unwrap_or_default();
+        (!v.trim().is_empty()).then(|| PathBuf::from(v))
+    };
+    [
+        env_dir("NPM_CONFIG_PREFIX"),
+        env_dir("APPDATA").map(|p| p.join("npm")),
+        env_dir("ProgramFiles").map(|p| p.join("nodejs")),
+        env_dir("LOCALAPPDATA").map(|p| p.join("npm")),
+        Some(crate::install::managed::root().join("gemini-cli")),
+    ]
+    .into_iter()
+    .flatten()
+    .map(pkg)
+    .collect()
+}
+
+/// 一个包目录下，官方 CLI 的入口 `.js` 可能叫什么。
+///
+/// # ⛔ 不写死 `dist\index.js`
+///
+/// 0.26.0 这里写死的就是 `dist\index.js`，而 npm 上的 `@google/gemini-cli` 把入口放在
+/// `bundle\gemini.js`（它 `package.json` 的 `"bin": {"gemini": "bundle/gemini.js"}`）。
+/// 猜错的代价不是「找不到」这么轻：0.29.0 把 npm 那条命令修好之后，**包真的装上了**，
+/// 而面板回读检测照样落空，于是每次都报「npm 报告成功，而检测仍然找不到入口文件」，
+/// 使用者看到的是「Gemini CLI 还是装不上」，软件页也一直显示未安装
+/// （审计日志 2026-09-21 02:32 / 18:16 两条）。顺带，酒馆的 Gemini 桥接也因此从没起来过。
+///
+/// 入口现在**问包自己**（`package.json` 的 `bin`），两种见过的布局只作兜底。
+pub fn gemini_cli_entries(pkg_root: &Path) -> Vec<PathBuf> {
+    let declared = std::fs::read(pkg_root.join("package.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| match v.get("bin") {
+            // `"bin": "bundle/gemini.js"`
+            Some(serde_json::Value::String(s)) => Some(s.clone()),
+            // `"bin": {"gemini": "bundle/gemini.js"}`；键改了名就取第一条。
+            Some(serde_json::Value::Object(m)) => m
+                .get("gemini")
+                .and_then(|x| x.as_str())
+                .or_else(|| m.values().find_map(|x| x.as_str()))
+                .map(String::from),
+            _ => None,
+        })
+        // manifest 里写的是 posix 分隔符，拼之前逐段拆开。
+        .map(|rel| {
+            rel.split('/')
+                .fold(pkg_root.to_path_buf(), |p, s| p.join(s))
+        });
+    let mut out: Vec<PathBuf> = Vec::new();
+    for p in declared.into_iter().chain([
+        pkg_root.join("bundle").join("gemini.js"),
+        pkg_root.join("dist").join("index.js"),
+    ]) {
+        // `bin` 指的通常就是兜底里的那一条，列两遍只会让诊断输出看着像出了错。
+        if !out.contains(&p) {
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// Gemini CLI 包里哪些文件可能写着它自己的 OAuth 客户端标识（2026-09-23）。
+///
+/// 跟反重力那条（`antigravity::oauth_client_sources`）同一个套路：联网额度要给 Gemini CLI 的
+/// 访问令牌换新时，从**本机装的官方包**里现读签发它的那个客户端的标识 —— 仓库里一个字都不写
+/// （CLAUDE.md「联网额度」第 4 条）。只列存在的，按优先级：入口脚本、入口同目录的其余 `.js`
+/// （打包器可能拆块，最多 [`MAX_BUNDLE_SIBLINGS`] 个）、没打包的布局里 core 包的 `oauth2.js`。
+pub fn gemini_cli_oauth_client_sources() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for root in gemini_cli_roots() {
+        for p in gemini_cli_oauth_client_sources_in(&root) {
+            if !out.contains(&p) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// 一个包目录里扫哪些文件。拆块再多也只看这么多个，免得一次刷新读上百个文件。
+const MAX_BUNDLE_SIBLINGS: usize = 40;
+
+/// [`gemini_cli_oauth_client_sources`] 的一个包目录那一段（单测喂临时目录）。
+pub fn gemini_cli_oauth_client_sources_in(pkg_root: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut push = |p: PathBuf| {
+        if p.is_file() && !out.contains(&p) {
+            out.push(p);
+        }
+    };
+    for entry in gemini_cli_entries(pkg_root) {
+        if !entry.is_file() {
+            continue;
+        }
+        push(entry.clone());
+        if let Some(dir) = entry.parent() {
+            let mut siblings: Vec<PathBuf> = std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "js"))
+                .collect();
+            siblings.sort();
+            for s in siblings.into_iter().take(MAX_BUNDLE_SIBLINGS) {
+                push(s);
+            }
+        }
+    }
+    push(
+        [
+            "node_modules",
+            "@google",
+            "gemini-cli-core",
+            "dist",
+            "src",
+            "code_assist",
+            "oauth2.js",
+        ]
+        .iter()
+        .fold(pkg_root.to_path_buf(), |p, s| p.join(s)),
+    );
+    out
+}
+
+/// 官方 Gemini CLI 的入口脚本可能落在哪（0.26.0；0.31.0 改成问包自己）。
+///
+/// 它是 Node 包，没有原生 exe：`gemini.cmd` 只是 `node <入口>` 的壳。
+/// 桥接直接用 `node` 起入口脚本（不经 cmd 那层引号转义），所以这里给的是**入口 `.js`**。
+pub fn gemini_cli_candidates() -> Vec<PathBuf> {
+    gemini_cli_roots()
+        .iter()
+        .flat_map(|r| gemini_cli_entries(r))
+        .collect()
+}
+
+/// 找不到时，把「找过哪些地方」说出来。
+///
+/// 位置对不上是这条链上最容易犯的错（见 [`gemini_cli_entries`]），而「没找到」
+/// 这三个字既不说找过哪、也不说该往哪看。列出来，下一个人一眼就能对照盘上的真实位置。
+pub fn gemini_cli_searched() -> String {
+    let roots = gemini_cli_roots();
+    let shown: Vec<String> = roots
+        .iter()
+        .take(3)
+        .map(|p| p.display().to_string())
+        .collect();
+    format!(
+        "找过：{}{}",
+        shown.join("；"),
+        if roots.len() > shown.len() {
+            format!("（等 {} 处）", roots.len())
+        } else {
+            String::new()
+        }
+    )
+}
+
+/// `node.exe`：先 `where`，再 `%ProgramFiles%\nodejs`。
+pub fn node_exe() -> Option<PathBuf> {
+    if let Ok(out) = crate::process::hidden_std(std::process::Command::new("where"))
+        .arg("node.exe")
+        .output()
+    {
+        if out.status.success() {
+            if let Some(first) = String::from_utf8_lossy(&out.stdout).lines().next() {
+                let p = PathBuf::from(first.trim());
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    for k in ["ProgramFiles", "ProgramW6432"] {
+        let p = PathBuf::from(std::env::var(k).unwrap_or_default())
+            .join("nodejs")
+            .join("node.exe");
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Gemini CLI 装没装（给软件页）。版本读**包目录**的 `package.json`，不起进程。
+///
+/// 版本原来是从入口往上数两层取的（`dist\index.js` → `dist` → 包目录）。入口一旦不在
+/// 两层深的地方（`bin` 可以指向包根下任何一个文件），数出来的就是别人的 manifest。
+/// 现在包目录是已知的那一个，不靠数层数。
+pub fn gemini_cli() -> Software {
+    let found = gemini_cli_roots().into_iter().find_map(|root| {
+        gemini_cli_entries(&root)
+            .into_iter()
+            .find(|p| p.is_file())
+            .map(|entry| (root, entry))
+    });
+    let version = found.as_ref().and_then(|(root, _)| {
+        let v: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("package.json")).ok()?).ok()?;
+        v.get("version")?.as_str().map(String::from)
+    });
+    let entry = found.map(|(_, e)| e);
+    Software {
+        id: "gemini-cli",
+        name: "Gemini CLI",
+        installed: entry.is_some(),
+        version,
+        path: entry,
+        advisory: node_exe().is_none().then(|| {
+            "找不到 node.exe：Gemini CLI 是 Node 包，酒馆的 Gemini 桥接要用 node 起它。".into()
+        }),
+    }
+}
+
 /// Codex CLI 可能落在哪。
 ///
 /// 顺序 = 优先级。**npm 全局排第一** —— 旧版只查 `.local\bin` 和
@@ -189,6 +417,22 @@ pub fn codex_candidates() -> Vec<PathBuf> {
         PathBuf::from(std::env::var("APPDATA").unwrap_or_default())
             .join("npm")
             .join("codex.cmd"),
+        // npm 包里真正干活的原生 exe（0.25.0）。`codex.cmd` 只是 `node codex.js` 的壳，
+        // 壳锁不住（批处理由 cmd.exe 读进去执行），这一份才是能加 Deny ACE 的本体 ——
+        // 0.25.0 之前它不在表里，「挡得住 codex 命令、挡不住内部脚本」那条缺口就是它。
+        // 酒馆的 GPT 桥接也优先拿它跑 `codex exec`（exe 不用过 cmd 那层引号转义）。
+        PathBuf::from(std::env::var("APPDATA").unwrap_or_default())
+            .join("npm")
+            .join("node_modules")
+            .join("@openai")
+            .join("codex")
+            .join("node_modules")
+            .join("@openai")
+            .join("codex-win32-x64")
+            .join("vendor")
+            .join("x86_64-pc-windows-msvc")
+            .join("bin")
+            .join("codex.exe"),
         home().join(".local").join("bin").join("codex.exe"),
         local().join("Programs").join("codex").join("codex.exe"),
     ];
@@ -310,6 +554,58 @@ pub fn parse_codex_version(raw: Option<&str>) -> Option<String> {
         .then(|| tail.to_string())
 }
 
+/// Codex 桌面端（Store 包）。位置表只有 `codex_desktop` 那一张：`Get-AppxPackage` 认包族名，
+/// exe 是 `app\ChatGPT.exe`（新）或 `app\Codex.exe`（旧）。
+///
+/// 查询失败（PowerShell 起不来）如实报「查不到」进 `advisory`，**不降级成「未安装」**。
+pub async fn codex_desktop() -> Software {
+    let found = tokio::task::spawn_blocking(super::codex_desktop::detect)
+        .await
+        .map_err(|e| crate::error::GateError::Other(e.to_string()))
+        .and_then(|r| r);
+    match found {
+        Ok(d) => codex_desktop_software(d),
+        Err(e) => Software {
+            id: "codex-desktop",
+            name: "Codex 桌面端",
+            installed: false,
+            version: None,
+            path: None,
+            advisory: Some(format!("查不到 Store 包的状态（不等于没装）：{e}")),
+        },
+    }
+}
+
+/// 把 `Get-AppxPackage` 的盘点结果折成一条 [`Software`]。**纯函数，有单测。**
+///
+/// # ⛔ `installed` 与 `version` 不许各算各的
+///
+/// 0.28.0 之前这里是 `installed: d.executable.is_some()` 配 `version: d.version`，
+/// 两个字段来自探测脚本里**两个互不相干的分支**：`$pkg.Version` 只要包在册就有，
+/// `$exe` 还要那两个写死的 exe 名之一真的存在。于是
+/// `installed:false, version:Some("26.x")` 是可达的 —— 界面上 Pill 写「未安装」、
+/// 版本行写着一个真版本号、路径行还断言「Get-AppxPackage 里没有 OpenAI.Codex」。
+/// 三句话互相矛盾，而且最后那句是**假的**。
+///
+/// 真相是：**包在册就是装了**，只是找不到可执行文件 —— 那正是 §7.42 那种
+/// 「注册失效」的样子，而且有现成的下一步（强制重装）。报成「未安装」会把人引到
+/// 「去 Store 装一个」，而他早就装了。
+fn codex_desktop_software(d: super::codex_desktop::CodexDesktop) -> Software {
+    let exe_missing = d.executable.is_none() && d.version.is_some();
+    Software {
+        id: "codex-desktop",
+        name: "Codex 桌面端",
+        installed: d.executable.is_some() || d.version.is_some(),
+        version: d.version,
+        path: d.executable.map(PathBuf::from),
+        advisory: exe_missing.then(|| {
+            "Store 包在册，但找不到它的可执行文件 —— 多半是注册坏了。\
+             点「更新 / 重装」并勾上「强制重装」可以修。"
+                .to_string()
+        }),
+    }
+}
+
 /// 浏览器只探常见安装位置，用于「是否需要重装 / 语言时区是否同步」的提示。
 ///
 /// ⚠ Chrome 的落点走 [`crate::install::chrome::chrome_exe`]，**不要在这里
@@ -364,6 +660,103 @@ fn edge_exe() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 官方 `@google/gemini-cli` 的 manifest 就是这个形状（2026-09-21 实机核过 0.60.0）。
+    fn write_pkg(dir: &Path, bin: &str, entry_rel: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("package.json"),
+            format!(r#"{{"name":"@google/gemini-cli","version":"0.60.0","bin":{bin}}}"#),
+        )
+        .unwrap();
+        let entry = entry_rel
+            .split('/')
+            .fold(dir.to_path_buf(), |p, s| p.join(s));
+        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        std::fs::write(&entry, "#!/usr/bin/env node\n").unwrap();
+    }
+
+    #[test]
+    fn the_entry_comes_from_the_package_manifest_not_a_guess() {
+        // 0.26.0–0.30.0 写死的是 `dist\index.js`，而官方包的入口一直是
+        // `bundle\gemini.js` —— 于是包装上了、面板照样报「找不到入口文件」。
+        let tmp = std::env::temp_dir().join(format!("qb-gemini-entry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        write_pkg(&tmp, r#"{"gemini":"bundle/gemini.js"}"#, "bundle/gemini.js");
+
+        let found = gemini_cli_entries(&tmp).into_iter().find(|p| p.is_file());
+        assert_eq!(
+            found.as_deref(),
+            Some(tmp.join("bundle").join("gemini.js").as_path()),
+            "入口要问 package.json 的 bin，不能靠猜目录名"
+        );
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    /// 换新 Gemini CLI 令牌时从哪找它的客户端标识：入口排第一，同目录的拆块跟在后面，
+    /// 不是 `.js` 的不扫，不存在的一律不列。**只建临时目录，不碰真实安装。**
+    #[test]
+    fn the_client_identity_sources_start_at_the_entry_and_only_list_real_js_files() {
+        let tmp = std::env::temp_dir().join(format!("qb-gemini-oauth-src-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        write_pkg(&tmp, r#"{"gemini":"bundle/gemini.js"}"#, "bundle/gemini.js");
+        std::fs::write(tmp.join("bundle").join("chunk-a.js"), "x").unwrap();
+        std::fs::write(tmp.join("bundle").join("readme.md"), "x").unwrap();
+
+        let found = gemini_cli_oauth_client_sources_in(&tmp);
+        assert_eq!(found.first(), Some(&tmp.join("bundle").join("gemini.js")));
+        assert!(found.contains(&tmp.join("bundle").join("chunk-a.js")));
+        assert!(!found.iter().any(|p| p.ends_with("readme.md")));
+        assert_eq!(found.len(), 2, "入口只列一次：{found:?}");
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn a_string_bin_and_the_old_layout_both_still_resolve() {
+        // `"bin": "dist/index.js"`（字符串形）与旧布局都得认 —— 兜底不是摆设：
+        // 包换过一次布局，就会再换第二次。
+        let tmp = std::env::temp_dir().join(format!("qb-gemini-str-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        write_pkg(&tmp, r#""dist/index.js""#, "dist/index.js");
+        assert_eq!(
+            gemini_cli_entries(&tmp)
+                .into_iter()
+                .find(|p| p.is_file())
+                .as_deref(),
+            Some(tmp.join("dist").join("index.js").as_path())
+        );
+
+        // manifest 读不出来时，两种见过的布局仍在候选里。
+        std::fs::remove_file(tmp.join("package.json")).unwrap();
+        assert_eq!(
+            gemini_cli_entries(&tmp)
+                .into_iter()
+                .find(|p| p.is_file())
+                .as_deref(),
+            Some(tmp.join("dist").join("index.js").as_path())
+        );
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn the_npm_prefix_is_not_assumed_to_be_appdata_npm() {
+        // 开源兼容性：`NPM_CONFIG_PREFIX`、nvm-windows（`%ProgramFiles%\nodejs`）
+        // 各自把全局包放在别处。只查 `%APPDATA%\npm` 的话，那些机器上「装了也认不出」。
+        let roots = gemini_cli_roots();
+        assert!(
+            roots.len() >= 2,
+            "候选前缀不该只有一个，实际 {}",
+            roots.len()
+        );
+        assert!(
+            roots
+                .iter()
+                .all(|r| r.ends_with(Path::new("node_modules/@google/gemini-cli"))),
+            "每条候选都该指向包目录本身：{roots:?}"
+        );
+        // 说得出找过哪 —— 「没找到」三个字不该是唯一的线索。
+        assert!(gemini_cli_searched().starts_with("找过："));
+    }
 
     #[test]
     fn codex_version_drops_the_product_name() {
@@ -436,16 +829,204 @@ pub struct SoftwareReport {
     pub claude_code_installs: Vec<super::inventory::Install>,
     pub claude_desktop: Software,
     pub codex: Software,
+    /// Codex 桌面端（Microsoft Store 包，0.28.0）。跟 `codex` 那个 CLI 是两个东西：
+    /// 账户页起的是它，直装（`codex_store`）装的也是它。
+    pub codex_desktop: Software,
+    /// 反重力 Hub（0.26.0）。
+    pub antigravity: Software,
+    /// 反重力 IDE（0.26.0）。
+    pub antigravity_ide: Software,
+    /// 官方 Gemini CLI（0.26.0，酒馆的 Gemini 桥接用）。
+    pub gemini_cli: Software,
     pub browsers: Vec<Software>,
 }
 
 /// 盘一次本机现状。
 pub async fn report() -> SoftwareReport {
+    let (antigravity, antigravity_ide) = antigravity().await;
     SoftwareReport {
         claude_code: claude_code().await,
         claude_code_installs: claude_code_installs(),
         claude_desktop: claude_desktop().await,
         codex: codex().await,
+        codex_desktop: codex_desktop().await,
+        antigravity,
+        antigravity_ide,
+        gemini_cli: gemini_cli(),
         browsers: browsers(),
+    }
+}
+
+/// 反重力两个产品的检测。位置表在 `install::antigravity`；版本读主程序的
+/// `VersionInfo.ProductVersion`（Hub 的 electron-builder 与 IDE 的安装器都写它），
+/// 一次 PowerShell 两个都读，读不出来只影响显示、不影响任何锁。
+pub async fn antigravity() -> (Software, Software) {
+    use super::antigravity::Product;
+    let local = local();
+    let launchers: Vec<(Product, PathBuf)> = Product::ALL
+        .into_iter()
+        .map(|p| (p, p.launcher(&local)))
+        .collect();
+    let versions = product_versions(
+        &launchers
+            .iter()
+            .filter(|(_, p)| p.is_file())
+            .map(|(_, p)| p.clone())
+            .collect::<Vec<_>>(),
+    )
+    .await;
+    let mut out = launchers.into_iter().map(|(product, exe)| {
+        let installed = exe.is_file();
+        Software {
+            id: product.key(),
+            name: product.label(),
+            installed,
+            version: if installed {
+                versions.get(&exe.display().to_string()).cloned().flatten()
+            } else {
+                None
+            },
+            path: installed.then_some(exe),
+            advisory: None,
+        }
+    });
+    let hub = out.next().expect("Product::ALL 有两个");
+    let ide = out.next().expect("Product::ALL 有两个");
+    (hub, ide)
+}
+
+/// 一批 exe 的 `ProductVersion`。**键是传进去的路径原样**。取不到的是 `None`。
+#[cfg(windows)]
+async fn product_versions(exes: &[PathBuf]) -> std::collections::HashMap<String, Option<String>> {
+    let mut out = std::collections::HashMap::new();
+    if exes.is_empty() {
+        return out;
+    }
+    // 单引号在 Windows 文件名里合法，塞进 PowerShell 单引号串前要按它的规矩翻倍。
+    let list = exes
+        .iter()
+        .map(|p| format!("'{}'", p.display().to_string().replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(",");
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'
+$rows = @(foreach ($f in @({list})) {{
+  $v = $null
+  try {{ $v = [string](Get-Item -LiteralPath $f -ErrorAction Stop).VersionInfo.ProductVersion }} catch {{ }}
+  [pscustomobject]@{{ Path = $f; Version = $v }}
+}})
+ConvertTo-Json -InputObject $rows -Compress"
+    );
+    let Ok(o) = crate::process::powershell_tokio(&script).output().await else {
+        return out;
+    };
+    let text = String::from_utf8_lossy(&o.stdout);
+    let Ok(rows) = serde_json::from_str::<Vec<serde_json::Value>>(text.trim()) else {
+        return out;
+    };
+    for r in rows {
+        let Some(path) = r.get("Path").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let version = r
+            .get("Version")
+            .and_then(|v| v.as_str())
+            .map(|v| four_part_to_three(v.trim()))
+            .filter(|v| !v.is_empty());
+        out.insert(path.to_string(), version);
+    }
+    out
+}
+
+/// `2.15.0.0`（VersionInfo 的四段）→ `2.15.0`。只去掉第四段且它是 0 的情形，别的原样。
+#[cfg_attr(not(windows), allow(dead_code))]
+fn four_part_to_three(v: &str) -> String {
+    let parts: Vec<&str> = v.split('.').collect();
+    if parts.len() == 4 && parts[3] == "0" {
+        parts[..3].join(".")
+    } else {
+        v.to_string()
+    }
+}
+
+#[cfg(not(windows))]
+async fn product_versions(_exes: &[PathBuf]) -> std::collections::HashMap<String, Option<String>> {
+    std::collections::HashMap::new()
+}
+
+#[cfg(test)]
+mod antigravity_tests {
+    use super::*;
+    /// VersionInfo 给的是四段（`2.15.0.0`），界面上显示三段；不是 `.0` 结尾的四段原样保留。
+    #[test]
+    fn version_info_four_parts_display_as_three() {
+        assert_eq!(four_part_to_three("2.15.0.0"), "2.15.0");
+        assert_eq!(four_part_to_three("2.15.0.7"), "2.15.0.7");
+        assert_eq!(four_part_to_three("1.2.3"), "1.2.3");
+        assert_eq!(four_part_to_three(""), "");
+    }
+}
+
+#[cfg(test)]
+mod codex_desktop_tests {
+    use super::*;
+    use crate::install::codex_desktop::CodexDesktop;
+
+    fn found(exe: Option<&str>, version: Option<&str>) -> CodexDesktop {
+        CodexDesktop {
+            executable: exe.map(String::from),
+            version: version.map(String::from),
+            running: false,
+            processes: Vec::new(),
+        }
+    }
+
+    /// ⛔ **「没装」和「有版本号」不许同时成立。**
+    ///
+    /// 这是 0.28.0 之前软件页那三句互相矛盾的话的根源（Pill 写未安装、版本行写着
+    /// 一个真版本号、路径行断言包不在册）。`installed` 与 `version` 来自探测脚本里
+    /// 两个互不相干的分支，谁都没错，错在没人负责让它们对上。
+    #[test]
+    fn a_registered_package_is_installed_even_when_the_exe_is_missing() {
+        let s = codex_desktop_software(found(None, Some("26.915.4065.0")));
+        assert!(s.installed, "包在册就是装了");
+        assert_eq!(s.version.as_deref(), Some("26.915.4065.0"));
+        assert!(s.path.is_none());
+        // 并且要说得出下一步做什么，不是一片空白。
+        let advisory = s.advisory.expect("找不到 exe 要有说明");
+        assert!(advisory.contains("强制重装"), "{advisory}");
+    }
+
+    #[test]
+    fn nothing_registered_is_plainly_not_installed() {
+        let s = codex_desktop_software(found(None, None));
+        assert!(!s.installed);
+        assert!(s.version.is_none());
+        assert!(s.advisory.is_none());
+    }
+
+    #[test]
+    fn a_normal_install_reports_path_and_version_with_no_advisory() {
+        let s = codex_desktop_software(found(Some(r"C:\x\app\Codex.exe"), Some("26.1")));
+        assert!(s.installed);
+        assert_eq!(s.version.as_deref(), Some("26.1"));
+        assert!(s.path.is_some());
+        assert!(s.advisory.is_none());
+    }
+
+    /// 反过来的那一半：有版本号 ⇒ 一定 installed。挨个形状扫一遍。
+    #[test]
+    fn a_version_always_implies_installed() {
+        for exe in [None, Some(r"C:\x\app\ChatGPT.exe")] {
+            for version in [None, Some("26.1")] {
+                let s = codex_desktop_software(found(exe, version));
+                if s.version.is_some() {
+                    assert!(s.installed, "有版本号却报未安装：exe={exe:?}");
+                }
+                if s.path.is_some() {
+                    assert!(s.installed, "有路径却报未安装：version={version:?}");
+                }
+            }
+        }
     }
 }

@@ -35,7 +35,12 @@ pub fn is_owned_env(name: &str, target: Target) -> bool {
         // Codex 读 OPENAI_*，但那也是别的 OpenAI 工具在读的 —— 删它会误伤，
         // 所以只认 CODEX_ 前缀那一类。
         Target::Codex => n.starts_with("CODEX_"),
-        Target::Chrome => false,
+        // 桌面端跟 CLI 共用 CODEX_HOME 那一族：归 CLI 那个目标管，卸桌面端不动它。
+        Target::CodexDesktop => false,
+        // GEMINI_API_KEY 别的 Google 工具也在读，跟 OPENAI_* 同一个理由不碰；
+        // GEMINI_CLI_HOME 是 CLI 独有的。
+        Target::GeminiCli => n == "GEMINI_CLI_HOME",
+        Target::Chrome | Target::Antigravity => false,
     }
 }
 
@@ -55,7 +60,8 @@ pub fn is_owned_path_entry(entry: &str, target: Target) -> bool {
         }
         Target::Codex => e.contains("\\claudeipgate\\apps\\codex"),
         Target::ClaudeDesktop => e.contains("\\anthropicclaude"),
-        Target::Chrome => false,
+        // Store 包、反重力的安装器、npm 包都不往 PATH 里加自己的项。
+        Target::Chrome | Target::CodexDesktop | Target::Antigravity | Target::GeminiCli => false,
     }
 }
 
@@ -94,8 +100,12 @@ pub fn is_owned_credential(entry: &str, target: Target) -> bool {
         Target::ClaudeCode | Target::ClaudeDesktop => {
             e.contains("anthropic") || e.contains("claude")
         }
-        Target::Codex => e.contains("openai") || e.contains("codex"),
-        Target::Chrome => false,
+        Target::Codex | Target::CodexDesktop => e.contains("openai") || e.contains("codex"),
+        // 反重力的令牌就在凭据管理器里（语言服务器 CredWrite）。只按名字含 antigravity 认 ——
+        // 名字不含它的条目面板认不出，界面上要如实说。
+        Target::Antigravity => e.contains("antigravity"),
+        // Gemini CLI 的凭据是文件（<GEMINI_CLI_HOME>\.gemini\oauth_creds.json），随槽位一起删。
+        Target::Chrome | Target::GeminiCli => false,
     }
 }
 
@@ -243,6 +253,67 @@ pub async fn collect(target: Target) -> Result<Facts> {
         }
         Target::Chrome => {
             f.browser_data = existing(vec![crate::install::chrome::chrome_user_data()]);
+        }
+        Target::CodexDesktop => {
+            // Store 包在不在：查不到（PowerShell 起不来）就当不在 —— 但这里不是「不在 = 没装」
+            // 的降级：规划里没有 AppxRemove 时界面会说「没扫到」，而不是报成功。
+            f.codex_desktop_package =
+                tokio::task::spawn_blocking(crate::install::codex_desktop::detect)
+                    .await
+                    .ok()
+                    .and_then(|r| r.ok())
+                    .is_some_and(|d| d.executable.is_some());
+            let mut dirs_: Vec<PathBuf> = Vec::new();
+            // Store 包自己的数据目录。
+            if let Some(l) = local.as_ref() {
+                dirs_.push(
+                    l.join("Packages")
+                        .join(crate::install::codex_desktop::PACKAGE_FAMILY),
+                );
+            }
+            // 每个 GPT 槽位下桌面端那份 Electron 资料（`<槽位>\desktop`）；`home` 是 CLI 也在用的
+            // 登录身份，**不动**。没有槽位时的默认位置是 `~\.codex\desktop`。
+            let root = qb_accounts::codex::root();
+            if let Ok(list) = qb_accounts::codex::list(&root) {
+                for s in list.slots {
+                    if let Ok(dir) = qb_accounts::codex::directory(&root, &s.id) {
+                        dirs_.push(crate::workspace::codex_slot_dirs(&dir).1);
+                    }
+                }
+            }
+            dirs_.push(home.join(".codex").join("desktop"));
+            f.config_dirs = existing(dirs_);
+        }
+        Target::Antigravity => {
+            use crate::install::antigravity::{self, Product};
+            if let Some(l) = local.as_ref() {
+                f.antigravity_dirs = existing(Product::ALL.iter().map(|p| p.dir(l)).collect());
+            }
+            let mut dirs_: Vec<PathBuf> = Product::ALL.iter().map(|p| p.data_dir(&home)).collect();
+            if let Some(r) = roaming.as_ref() {
+                dirs_.extend(
+                    Product::ALL
+                        .iter()
+                        .map(|p| antigravity::user_data_dir(*p, r)),
+                );
+            }
+            f.config_dirs = existing(dirs_);
+        }
+        Target::GeminiCli => {
+            let cands = crate::install::detect::gemini_cli_candidates();
+            // 候选表的顺序是 npm 全局在前、托管目录在后（`gemini_cli_candidates` 的说明）。
+            f.gemini_npm = cands.first().is_some_and(|p| p.is_file());
+            let managed = crate::install::managed::root().join("gemini-cli");
+            f.gemini_managed = managed.is_dir().then_some(managed);
+            let root = qb_accounts::gemini::root();
+            if let Ok(list) = qb_accounts::gemini::list(&root) {
+                f.account_slots = existing(
+                    list.slots
+                        .into_iter()
+                        .filter_map(|s| qb_accounts::gemini::directory(&root, &s.id).ok())
+                        .collect(),
+                );
+            }
         }
     }
 
@@ -432,6 +503,26 @@ async fn apply(item: &purge::Item, target: Target) -> std::result::Result<String
         Action::CredentialDelete => run("cmdkey", &[&format!("/delete:{subject}")])
             .await
             .map(|_| format!("已删除凭据条目 {subject}")),
+        // Store 包：按包族名找到就卸。包族名是 `Get-AppxPackage` 自己吐出来的常量，
+        // 不含引号；这里仍按 PowerShell 单引号串的规矩转义，不留拼接口子。
+        Action::AppxRemove => {
+            let family = subject.replace('\'', "''");
+            let script = format!(
+                "$ErrorActionPreference = 'Stop'; \
+                 $p = @(Get-AppxPackage | Where-Object {{ $_.PackageFamilyName -eq '{family}' }}); \
+                 if ($p.Count -eq 0) {{ throw 'Get-AppxPackage 里没有这个包' }}; \
+                 $p | Remove-AppxPackage -ErrorAction Stop"
+            );
+            let out = crate::process::powershell_tokio(&script).output().await;
+            match out {
+                Ok(o) if o.status.success() => Ok(format!("已卸载 Store 包 {subject}")),
+                Ok(o) => Err(format!(
+                    "{subject} 卸不掉：{}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                )),
+                Err(e) => Err(format!("{subject} 卸不掉（PowerShell 起不来）：{e}")),
+            }
+        }
         Action::StartupRemove => {
             // 别名是一个文件，计划任务要走 schtasks —— 按对象自己的形态处理。
             let p = PathBuf::from(&subject);
@@ -544,18 +635,58 @@ pub async fn execute(target: Target, state: &crate::gate::GateState) -> Result<R
         return Ok(rep);
     }
 
-    if matches!(target, Target::ClaudeCode | Target::ClaudeDesktop) {
-        match crate::killswitch::execute().await {
+    // 先清场。关不掉就别往下走：正在跑的 exe 删不掉，删一半比不删更糟。
+    match target {
+        Target::ClaudeCode => match crate::killswitch::execute().await {
             Ok(k) => rep
                 .notes
                 .push(format!("先关掉了 {} 个 Claude 进程。", k.killed.len())),
             Err(e) => {
-                // 关不掉就别往下走：正在跑的 exe 删不掉，删一半比不删更糟。
                 return Err(crate::error::GateError::Other(format!(
                     "没能先关闭 Claude，什么都没动：{e}"
                 )));
             }
+        },
+        // ⛔ 只收桌面端那一侧（`Role::Desktop`：桌面端本身 + 它 Code 页拉起的会话）。
+        // 0.28.0 之前这里跟 Claude Code 一样 `execute()` 全收 —— 卸个桌面端把终端里
+        // 正在写的 Claude Code 会话也关了，而界面上写的是「开着的桌面端会先被关掉」。
+        Target::ClaudeDesktop => match crate::killswitch::execute_desktop().await {
+            Ok(k) => rep
+                .notes
+                .push(format!("先关掉了 {} 个桌面端进程。", k.killed.len())),
+            Err(e) => {
+                return Err(crate::error::GateError::Other(format!(
+                    "没能先关闭 Claude 桌面端，什么都没动：{e}"
+                )));
+            }
+        },
+        // Store 包正在跑时 Remove-AppxPackage 会失败。按官方包的 exe 路径认进程，不按名字。
+        Target::CodexDesktop => {
+            if let Err(e) = tokio::task::spawn_blocking(crate::install::codex_desktop::close)
+                .await
+                .map_err(|e| crate::error::GateError::Other(e.to_string()))
+                .and_then(|r| r)
+            {
+                return Err(crate::error::GateError::Other(format!(
+                    "没能先关闭 Codex 桌面端，什么都没动：{e}"
+                )));
+            }
+            rep.notes
+                .push("先关掉了正在跑的 Codex 桌面端（如果有）。".into());
         }
+        // Electron 单实例 + 托盘常驻，跑着的时候整个目录删不掉。两个产品一起收。
+        Target::Antigravity => match crate::killswitch::execute_antigravity(None).await {
+            Ok(k) => rep
+                .notes
+                .push(format!("先关掉了 {} 个反重力进程。", k.killed.len())),
+            Err(e) => {
+                return Err(crate::error::GateError::Other(format!(
+                    "没能先关闭反重力，什么都没动：{e}"
+                )));
+            }
+        },
+        // Codex CLI 不清场（面板不按进程名杀）；Gemini CLI 是按请求起的短命进程；Chrome 走它自己的流程。
+        Target::Codex | Target::GeminiCli | Target::Chrome => {}
     }
 
     let guard = crate::gate::Maintenance::with_unlock(state);

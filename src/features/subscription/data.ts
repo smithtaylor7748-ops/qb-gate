@@ -1,17 +1,23 @@
 /**
- * 订阅页的全部资料：套餐价、实测等值、中转站的问题、路线里要用的数字、FAQ、来源。
+ * 订阅页的全部资料：套餐价、周额度、中转站的问题、路线里要用的数字、FAQ、来源。
  *
  * 文案改这里，组件只负责排版。每一条带数字的都有出处（`SOURCES` 里按 id 引用），
- * 复核日期是 `REVIEWED_ON` —— 价格与实测值会过时，改数字的同时把日期一起改掉。
+ * 复核日期是 `REVIEWED_ON` —— 价格与额度会过时，改数字的同时把日期一起改掉。
+ *
+ * 额度口径（2026-09-24 使用者定的）：取 linux.do 那个帖子里网友估算区间的**中间值**，
+ * 以周为单位；原来那组 SemiAnalysis 的「月上限」（Max 20x $8,000 等）作废。
  *
  * 口径（使用者定的，别改）：
  *   - 不提任何特定国家、货币或发卡行。「国内」的定义见 `ScopeNotice`。
+ *     唯一的例外是倍率（2026-09-24 使用者定的）：官方月价按 1 美元 = 7 元折成元再比，
+ *     界面上标明「1:7」、往贵了取、实际一般 6.8 左右（`multiplier.ts` 文件头）。
+ *     页面上写「元」，不写那几个被测试盯着的词。
  *   - 免税州地址与地址生成器只作格式参考，填表用本人真实地址，这类提醒一律红字。
  *   - 中转站的每一条坏处都标明是「报道 / 研究 / 使用者反馈 / 官方条款」，
  *     未经官方证实的就写「未证实」，不把社区反馈写成事实。
  */
 
-export const REVIEWED_ON = "2026-09-19";
+export const REVIEWED_ON = "2026-09-24";
 
 export const ADDRESS_GENERATOR_URL =
   "https://usaddressgen.com/tax-free-address/";
@@ -37,11 +43,28 @@ export interface Plan {
   /** iOS 内购月付（App Store 页面实读），美元。 */
   iosMonthly: number;
   /**
-   * SemiAnalysis 2026-06 实测：买下套餐、跑长任务到周限额、按 API 牌价折算
-   * 出来的**上限**。`null` = 那次实测没测这一档。
+   * 周额度：按官方 API 牌价折算的美元。取 linux.do「国内外 AI 订阅性价比」帖
+   * （`SOURCES` 的 `linuxdo-quota`，2026-08/09）里网友估算区间的**中间值**
+   * （2026-09-24 使用者定的口径：「额度取这个帖子里的中间值」）。
+   * `null` = 帖子里没有这一档。
    */
-  apiValue: number | null;
+  weeklyValue: number | null;
+  /** 帖子里的原区间（只给了一个数时两头相同），界面上标注用。 */
+  weeklyRange: [number, number] | null;
+  /** 帖子里单独给的 5 小时额度区间（目前只有 Plus 有）。 */
+  fiveHourRange?: [number, number];
   note?: string;
+}
+
+/**
+ * 一个月按几个周限算。帖子作者的说法是「官方经常重置，一个月可以用远超 4 个周限」——
+ * 这里保守地按 4 个算，界面上写明。
+ */
+export const WEEKS_PER_MONTH = 4;
+
+/** 一个月能用到的 API 等值 = 周额度中间值 × 4。帖子里没有这一档就是 `null`。 */
+export function monthlyValue(plan: Plan): number | null {
+  return plan.weeklyValue === null ? null : plan.weeklyValue * WEEKS_PER_MONTH;
 }
 
 export const PLANS: Plan[] = [
@@ -51,7 +74,9 @@ export const PLANS: Plan[] = [
     name: "Claude Pro",
     webMonthly: 20,
     iosMonthly: 20,
-    apiValue: 400,
+    // 帖子写「周 200-500 刀？不确定」；回帖另有 $300～400（用 Opus 5）、约 $200 两种说法。
+    weeklyValue: 350,
+    weeklyRange: [200, 500],
     note: "年付 $17/月（$200 一次付清）；iOS 年付 $214.99",
   },
   {
@@ -60,7 +85,9 @@ export const PLANS: Plan[] = [
     name: "Claude Max 5x",
     webMonthly: 100,
     iosMonthly: 124.99,
-    apiValue: 2000,
+    // 帖子只给了一个数：「周能到 2500 刀，ccusage 统计口径」。
+    weeklyValue: 2500,
+    weeklyRange: [2500, 2500],
     note: "只有月付；iOS 内购比网页贵 25%",
   },
   {
@@ -69,7 +96,8 @@ export const PLANS: Plan[] = [
     name: "Claude Max 20x",
     webMonthly: 200,
     iosMonthly: 249.99,
-    apiValue: 8000,
+    weeklyValue: 4000,
+    weeklyRange: [3000, 5000],
     note: "只有月付；iOS 内购比网页贵 25%",
   },
   {
@@ -78,8 +106,9 @@ export const PLANS: Plan[] = [
     name: "ChatGPT Go",
     webMonthly: 8,
     iosMonthly: 8,
-    apiValue: null,
-    note: "2025-08 起在 170 多个国家和地区上线的入门档，没有实测数据",
+    weeklyValue: null,
+    weeklyRange: null,
+    note: "2025-08 起在 170 多个国家和地区上线的入门档，没有额度数据",
   },
   {
     id: "chatgpt-plus",
@@ -87,7 +116,9 @@ export const PLANS: Plan[] = [
     name: "ChatGPT Plus",
     webMonthly: 20,
     iosMonthly: 19.99,
-    apiValue: 700,
+    weeklyValue: 130,
+    weeklyRange: [100, 160],
+    fiveHourRange: [20, 30],
   },
   {
     id: "chatgpt-pro-5",
@@ -95,7 +126,8 @@ export const PLANS: Plan[] = [
     name: "ChatGPT Pro 5x",
     webMonthly: 100,
     iosMonthly: 100,
-    apiValue: 3500,
+    weeklyValue: 600,
+    weeklyRange: [500, 700],
     note: "2026-04-09 新增，Codex 用量是 Plus 的 5 倍",
   },
   {
@@ -104,9 +136,20 @@ export const PLANS: Plan[] = [
     name: "ChatGPT Pro 20x",
     webMonthly: 200,
     iosMonthly: 200,
-    apiValue: 14000,
+    weeklyValue: 2500,
+    weeklyRange: [2000, 3000],
     note: "Codex 用量是 Plus 的 20 倍",
   },
+];
+
+/**
+ * 帖子里跟额度一起说的那几句前提。**界面上跟数字放在一起**，不放悬停：
+ * 这些数离了前提就会被当成承诺。
+ */
+export const QUOTA_CAVEATS: string[] = [
+  "全部是网友估算，不是官方数字；帖子作者自己写着「不一定准」。",
+  "Claude 那几档是 2026 年 8 月官方临时给 1.5 倍额度时测的，帖子说之后会降到 1.25 倍，可能更少。",
+  "账号被风控后额度会大幅缩水（帖子里说 ChatGPT Pro 有被压到周限只剩 $200～300 的），同一档不同账号也有多有少。",
 ];
 
 export const VENDOR_LABEL: Record<Vendor, string> = {
@@ -114,7 +157,10 @@ export const VENDOR_LABEL: Record<Vendor, string> = {
   chatgpt: "ChatGPT（OpenAI）",
 };
 
-/** 中转站常见的倍率区间。倍率 = 你付的钱 ÷ 同样用量按官方 API 牌价要付的钱。 */
+/**
+ * 中转站常见的倍率区间。倍率是站内标价相对官方牌价的倍数，按站内额度算 ——
+ * 常见的充值口径是 1 元 = 1 美元额度，所以 1× 就是每 $1 官方牌价的用量付 1 元。
+ */
 export interface RelayBand {
   id: string;
   label: string;
@@ -136,7 +182,7 @@ export const RELAY_BANDS: RelayBand[] = [
     label: "官转（转卖官方 API Key）",
     min: 0.8,
     max: 1.5,
-    note: "拿的是官方 API，但你付的是牌价的 0.8～1.5 倍，还是比订阅贵几十倍",
+    note: "拿的是官方 API，站内标价是牌价的 0.8～1.5 倍；按常见的 1 元 = 1 美元额度充值，仍比自己订阅贵好几倍",
   },
 ];
 
@@ -238,7 +284,7 @@ export const OFFICIAL_BENEFITS: Benefit[] = [
   },
   {
     title: "按时间窗口算，不按 token 扣",
-    body: "订阅额度按 5 小时窗口滚动，跑长任务不用盯着余额；SemiAnalysis 实测 Max 20x 一个月能跑到约 $8,000 的 API 用量。",
+    body: "订阅额度按 5 小时与每周两个窗口滚动，跑长任务不用盯着余额；网友估算 Max 20x 一周能跑到约 $3,000～5,000 的 API 用量（中间值 $4,000）。",
   },
   {
     title: "有条款、有收银台、有申诉",
@@ -354,7 +400,7 @@ export const FAQ_LIST: FaqItem[] = [
   },
   {
     q: "ChatGPT Go 是什么？值得选吗？",
-    a: "Go 是 2025 年 8 月起在 170 多个国家和地区上线的 $8/月 入门档，比 Plus 便宜但用量和功能都少，也没有实测「API 等值」数据。只是偶尔聊聊天可以先从 Go 开始；要用 Codex 跑代码任务，直接看 Plus 或 Pro。",
+    a: "Go 是 2025 年 8 月起在 170 多个国家和地区上线的 $8/月 入门档，比 Plus 便宜但用量和功能都少，也没有额度数据。只是偶尔聊聊天可以先从 Go 开始；要用 Codex 跑代码任务，直接看 Plus 或 Pro。",
   },
   {
     q: "支付宝里搜不到礼品卡怎么办？",
@@ -417,16 +463,11 @@ export const SOURCES: Source[] = [
     note: "2026-04-09 新增 $100 档：Codex 用量 5× Plus；$200 档 20× Plus",
   },
   {
-    id: "semianalysis",
-    label: "SemiAnalysis 实测（2026-06，zmescience 转述）",
-    url: "https://www.zmescience.com/research/technology/a-200-chatgpt-plan-would-cost-them-14000-if-you-used-it-to-the-max/",
-    note: "买下每档套餐跑到限额：Plus ≈ $700、Pro 20x ≈ $14,000、Max 20x ≈ $8,000",
-  },
-  {
-    id: "semianalysis-all",
-    label: "SemiAnalysis 各档数字（techjacksolutions 整理）",
-    url: "https://techjacksolutions.com/ai-brief/a-200-subscription-costs-openai-up-to-14000-in-compute-semia/",
-    note: "Claude Pro ≈ $400 · Max 5x ≈ $2,000 · ChatGPT Pro 5x ≈ $3,500",
+    id: "linuxdo-quota",
+    label:
+      "linux.do ·【持续更新】国内外 AI 订阅性价比（网友估算，2026-08 / 09）",
+    url: "https://linux.do/t/topic/2831355",
+    note: "周额度：Claude Pro $200～500、Max 5x 约 $2,500、Max 20x $3,000～5,000；ChatGPT Plus $100～160（5 小时 $20～30）、Pro 5x $500～700、Pro 20x $2,000～3,000。本页取中间值",
   },
   {
     id: "register-anthropic",

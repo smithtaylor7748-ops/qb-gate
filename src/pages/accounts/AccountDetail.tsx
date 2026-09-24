@@ -34,6 +34,7 @@ import {
 } from "../../lib/api";
 import { R } from "../../lib/resources";
 import { res, useResource, useSession } from "../../lib/store";
+import { slotName } from "../../lib/slotName";
 import { Button, Modal, Pill, fmtDaysLeft } from "../../ui";
 import { daysTone } from "../../features/overview/SlotRow";
 import SlotUsageBars from "../../features/overview/SlotUsage";
@@ -87,7 +88,7 @@ export default function AccountDetail() {
     <Modal
       open={!!label && !!slot}
       onClose={close}
-      title={`账户 ${label ?? ""}`}
+      title={`账户 ${slot ? slotName(slot.email, slot.label) : (label ?? "")}`}
       size="huge"
       footer={<Button onClick={close}>关闭</Button>}
     >

@@ -44,8 +44,11 @@ const SIZE = { w: 1180, h: 820 };
  */
 const SHOTS = [
   ["", "overview.png"],
-  ["accounts", "accounts.png"],
+  // 原来这里还有一张 `accounts` —— 官方账户早就是首页 `/` 了，那个路径会被重定向回首页，
+  // 拍出来跟 overview.png 一模一样。0.32.0 起用量明细是单独一页（从用量卡页脚进），README 引它。
+  ["usage?side=claude", "usage.png"],
   ["relays", "relay.png"],
+  ["subscription", "subscription.png"],
   ["software", "software.png"],
   ["extensions", "extensions.png"],
   ["settings", "settings.png"],

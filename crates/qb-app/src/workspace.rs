@@ -144,6 +144,7 @@ pub fn environment_save(mut e: Environment) -> Result<Environment> {
     // 桌面端从 0.18.0 起可以有独立中转环境 —— 走的是它自己的
     // 「第三方网关」部署模式，见 [`desktop_gateway_json`]。
     // 0.17.0 之前这里直接回绝，因为 configuration_files 还不会写它那份配置。
+    reject_if_no_relay_path(e.client)?;
     if e.name.trim().is_empty() {
         return Err(GateError::Other("请填写使用环境名称".into()));
     }
@@ -216,8 +217,24 @@ pub fn router_environment_id(client: Client) -> String {
         Client::ClaudeCode => "claude-code",
         Client::ClaudeDesktop => "claude-desktop",
         Client::Codex => "codex",
+        // 永远建不出来（`router_environment` 入口就拒绝），id 只是让报错里有个名字。
+        Client::Antigravity => "antigravity",
+        Client::AntigravityIde => "antigravity-ide",
     };
     format!("qb-router-{c}")
+}
+
+/// 反重力没有中转路径：它把 API 端点写死在自己的 `app.asar` 里
+/// （`--api_server_url` / `--cloud_code_endpoint`），只认 Google 登录。
+/// 中转侧的每个入口都调这一句拒绝，**不许静默建一份指错地方的配置**。
+pub fn reject_if_no_relay_path(client: Client) -> Result<()> {
+    if client.is_antigravity() {
+        return Err(GateError::Other(
+            "反重力没有中转路径：它的 API 端点写死在客户端程序里、只认 Google 登录，本机路由和中转环境都换不了它的上游。它只能作为官方账户启动。"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 /// 本机路由那个 provider 的 id。整机一个。
@@ -234,6 +251,7 @@ pub const ROUTER_PROVIDER_ID: &str = "qb-router";
 /// 会保留的是**使用者后来改过的部分**:已经存在就只补齐那几个非填不可的
 /// 字段(见下面那几行),名字、模型、工作目录一律不动。
 pub fn router_environment(client: Client) -> Result<Environment> {
+    reject_if_no_relay_path(client)?;
     let db = Repository::open()?;
     if db.get::<Provider>("providers", ROUTER_PROVIDER_ID).is_err() {
         db.put(
@@ -259,6 +277,8 @@ pub fn router_environment(client: Client) -> Result<Environment> {
             Client::Codex => "Codex · 走本机路由",
             Client::ClaudeDesktop => "Claude 桌面端 · 走本机路由",
             Client::ClaudeCode => "Claude Code · 走本机路由",
+            // 上面 `reject_if_no_relay_path` 已经拦下；这一支只是让 match 完整。
+            Client::Antigravity | Client::AntigravityIde => "反重力 · 没有中转路径",
         }
         .into(),
         client,
@@ -327,6 +347,11 @@ pub fn client_base(raw: &str, client: Client) -> Result<String> {
 fn official_dir(client: Client, id: &str) -> Result<PathBuf> {
     if client == Client::ClaudeDesktop {
         return Err(GateError::Other("桌面端无需迁移 Code 配置".into()));
+    }
+    if client.is_antigravity() {
+        return Err(GateError::Other(
+            "反重力的官方目录里没有可迁移的 API 配置（它只认 Google 登录）".into(),
+        ));
     }
     if client == Client::Codex {
         return Ok(dirs::home_dir().unwrap_or_default().join(".codex"));
@@ -603,6 +628,7 @@ pub fn save_plan(mut plan: LaunchPlan) -> Result<LaunchPlan> {
         return Err(GateError::Other("请输入启动方案名称".into()));
     }
     if plan.identity_kind == IdentityKind::Relay {
+        reject_if_no_relay_path(plan.client)?;
         let e: Environment = Repository::open()?.get("environments", &plan.identity_id)?;
         if e.client != plan.client {
             return Err(GateError::Other("启动方案客户端与环境不匹配".into()));
@@ -880,6 +906,10 @@ pub fn configuration_files(db: &Repository, e: &Environment) -> Result<Vec<Edit>
                 expected: old,
                 body: Some(serde_json::to_vec_pretty(&body)?),
             });
+        }
+        Client::Antigravity | Client::AntigravityIde => {
+            // `environment_save` 在入口就拒绝了这两档；到这里说明有人绕过了入口，照样拒绝。
+            reject_if_no_relay_path(e.client)?;
         }
     }
     Ok(edits)
@@ -1311,6 +1341,116 @@ pub async fn close_desktop_for_relay(
     ))
 }
 
+/// `Client` 的反重力两档 → 位置表里的产品。只在这两档上调，别的客户端调它是 bug。
+pub fn antigravity_product(client: Client) -> crate::install::antigravity::Product {
+    use crate::install::antigravity::Product;
+    match client {
+        Client::AntigravityIde => Product::Ide,
+        // Hub；别的客户端根本不该走到这里，按 Hub 处理只是为了让函数是全函数。
+        _ => Product::Hub,
+    }
+}
+
+/// 起反重力之前，把正在跑的那个产品关干净。返回关掉时它有几个进程。
+///
+/// 反重力是 Electron 单实例（`requestSingleInstanceLock`）+ 托盘「后台运行」：在跑的时候
+/// 再起一遍，新起的进程只会把旧窗口拉到前面然后退出 —— `sessions::start` 会把它记成
+/// 「启动后立即退出」，而真正在跑的那份既不归面板托管、租约也挂不上。
+/// 三步与 [`close_desktop_for_relay`] 同款：
+/// 1. 面板自己起的会话按会话停、交回租约；
+/// 2. 其余的走 [`crate::killswitch::execute_antigravity`]：一键关闭同一套证据（按安装目录认）、
+///    祖先链否决、PID + 创建时间核验；
+/// 3. 等进程真的从进程表里消失才返回。
+///
+/// ⛔ 关不干净就返回 `Err`，调用方**不许接着启动**。
+pub async fn close_antigravity_for_launch(
+    product: crate::install::antigravity::Product,
+    gate_state: &crate::gate::GateState,
+    before_closing: impl FnOnce(usize),
+) -> Result<usize> {
+    let running = crate::killswitch::antigravity_processes(Some(product)).await?;
+    if running.is_empty() {
+        return Ok(0);
+    }
+    before_closing(running.len());
+    let client = match product {
+        crate::install::antigravity::Product::Hub => Client::Antigravity,
+        crate::install::antigravity::Product::Ide => Client::AntigravityIde,
+    };
+    let stopped = crate::sessions::stop_matching(|s| s.context.client == client)?;
+    for id in &stopped {
+        crate::gate::release_holder(gate_state, id)?;
+    }
+    let report = crate::killswitch::execute_antigravity(Some(product)).await?;
+    if !report.failed.is_empty() {
+        return Err(GateError::Other(format!(
+            "{}没关干净，没有启动：{}",
+            product.label(),
+            report
+                .failed
+                .iter()
+                .map(|(pid, why)| format!("PID {pid}：{why}"))
+                .collect::<Vec<_>>()
+                .join("；")
+        )));
+    }
+    for _ in 0..10 {
+        if crate::killswitch::antigravity_processes(Some(product))
+            .await?
+            .is_empty()
+        {
+            crate::audit::write(&format!(
+                "起{}之前，先关掉了正在运行的那一份（{} 个进程）",
+                product.label(),
+                running.len()
+            ));
+            return Ok(running.len());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    }
+    Err(GateError::Other(format!(
+        "{}没退干净，没有启动。请从托盘完全退出它后再点启动。",
+        product.label()
+    )))
+}
+
+/// 一个 GPT 账户槽位下 Codex 桌面端要用的两个目录：`(<槽位>\home, <槽位>\desktop)`。
+///
+/// `home` 是 `CODEX_HOME`（auth.json / config.toml / sessions 都在里面），
+/// `desktop` 是 Electron 的 userData —— 两个是**兄弟**，不是父子。0.24 账户页
+/// 裸 spawn 给的就是这一对；换成走 `sessions::start` 之后目录不能变，否则那个槽位
+/// 的桌面端会在另一份 userData 上从头来过（窗口状态、缓存、登录态全丢）。
+pub fn codex_slot_dirs(slot_dir: &Path) -> (PathBuf, PathBuf) {
+    (slot_dir.join("home"), slot_dir.join("desktop"))
+}
+
+/// 官方身份的 Codex 该用哪套目录（0.25.0 起）。
+///
+/// `slot_id` 非空 → 那个 GPT 账户槽位；为空 → 当前激活的槽位；一个槽位都没有
+/// 才退回 `~/.codex`（桌面端资料在它下面的 `desktop\`，跟 0.24 一样）。
+/// 0.25.0 之前这里永远是 `~/.codex` —— 账户页因此绕开了这条门禁链、自己裸 spawn。
+pub fn codex_official_dirs(slot_id: &str) -> Result<(PathBuf, PathBuf)> {
+    let root = qb_accounts::codex::root();
+    let slot = if slot_id.is_empty() {
+        qb_accounts::codex::list(&root)?
+            .slots
+            .into_iter()
+            .find(|s| s.active)
+            .map(|s| qb_accounts::codex::directory(&root, &s.id))
+            .transpose()?
+    } else {
+        Some(qb_accounts::codex::directory(&root, slot_id)?)
+    };
+    Ok(match slot {
+        Some(dir) => codex_slot_dirs(&dir),
+        None => {
+            let home = dirs::home_dir().unwrap_or_default().join(".codex");
+            let desktop = home.join("desktop");
+            (home, desktop)
+        }
+    })
+}
+
 /// Windows 的「拒绝访问」有三副面孔：本地化文案、英文文案、HRESULT。任一命中都算。
 fn looks_like_access_denied(msg: &str) -> bool {
     msg.contains("0x80070005") || msg.contains("Access is denied") || msg.contains("拒绝访问")
@@ -1327,6 +1467,10 @@ pub async fn launch(
     // 只有 4 个测试的原因。
     gate_state: &crate::gate::GateState,
 ) -> Result<Session> {
+    if kind == IdentityKind::Relay {
+        // 反重力没有中转路径；`environment_save` 已经拦下建环境，这里再兜一道。
+        reject_if_no_relay_path(client)?;
+    }
     let target = crate::launch::LaunchTarget::of(client);
     let exe = crate::launch::resolve(target)?;
     // ⛔ 桌面端是 Electron 单实例：已经在跑的时候再起一遍，只会把旧窗口
@@ -1395,6 +1539,10 @@ pub async fn launch(
                 Client::Codex => "CODEX_HOME",
                 Client::ClaudeDesktop => "CLAUDE_USER_DATA_DIR",
                 Client::ClaudeCode => "CLAUDE_CONFIG_DIR",
+                // 函数开头已经拒绝了反重力的中转身份；这里只是让 match 完整。
+                Client::Antigravity | Client::AntigravityIde => {
+                    return Err(GateError::Other("反重力没有中转路径".into()))
+                }
             }
             .into(),
             e.config_dir.clone(),
@@ -1419,6 +1567,35 @@ pub async fn launch(
             env.push(("OPENAI_API_KEY".into(), key));
         }
         (e.config_dir, env, e.revision)
+    } else if client.is_antigravity() {
+        // 反重力（0.26.0）：官方身份、**单一身份** —— 令牌在 Windows 凭据管理器里（按用户全局），
+        // 目录隔离隔不开，所以没有槽位、也不传任何配置目录变量：起的就是使用者本机那份。
+        // `config_dir` 只记语言服务器的数据目录，给界面看，面板一个字不改。
+        //
+        // ⛔ 它是 Electron 单实例 + 托盘后台运行：在跑就再起一遍，新起的只会把旧窗口拉到前面，
+        // 进程不归面板托管、租约挂不上 —— 跟桌面端中转那条一样，先替使用者关干净。
+        let product = antigravity_product(client);
+        close_antigravity_for_launch(product, gate_state, |_| {}).await?;
+        let home = dirs::home_dir().unwrap_or_default();
+        // 0.30.0：**IDE** 有槽位了 —— 一个槽位一个 `--user-data-dir`（VS Code 标准开关，
+        // 登录令牌在那个目录的 `state.vscdb` 里，探针 2026-09-21 核过是干净的一份）。
+        // 目录经 env 带给 `sessions::desktop_arguments`，那是「按 client 给参数」的唯一一处。
+        // 没有激活槽位 → 起默认那份（使用者原来的 `%APPDATA%\Antigravity IDE`），一个字不动。
+        // Hub 照旧单一身份：它的令牌在凭据管理器里，目录隔不开。
+        let mut env = Vec::new();
+        let mut config_dir = product.data_dir(&home).display().to_string();
+        if client == Client::AntigravityIde {
+            let root = qb_accounts::antigravity::account::root();
+            if let Some((_, _, dir)) = qb_accounts::antigravity::account::active_ide(&root)? {
+                std::fs::create_dir_all(&dir)?;
+                env.push((
+                    crate::sessions::ANTIGRAVITY_IDE_USER_DATA_ENV.to_string(),
+                    dir.display().to_string(),
+                ));
+                config_dir = dir.display().to_string();
+            }
+        }
+        (config_dir, env, 0)
     } else {
         let roots = crate::accounts::AccountRoots::current();
         if client != Client::Codex
@@ -1427,19 +1604,32 @@ pub async fn launch(
         {
             return Err(GateError::Other("请先在官方账户页切换到此账户".into()));
         }
-        let dir = if client == Client::Codex {
-            dirs::home_dir().unwrap_or_default().join(".codex")
+        let (dir, desktop) = if client == Client::Codex {
+            let (home, desktop) = codex_official_dirs(id)?;
+            (home, Some(desktop))
         } else {
-            crate::accounts::active_slot_dir(&roots)
-                .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".claude"))
+            (
+                crate::accounts::active_slot_dir(&roots)
+                    .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".claude")),
+                None,
+            )
         };
         if client != Client::ClaudeDesktop {
-            crate::residue::check_official(client, &dir)?;
+            // 官方 Codex 槽位被 turn-state「识别」接管时，config.toml 里的
+            // `model_provider = "qb_turnstate"` 是面板自己写的、指向本机路由 —— 那正是
+            // 识别开着时「起 Codex 仍是账户页那颗按钮」要走的配置，不是残留。
+            // 残留检查认不出这一层（它在 L2，不认识 marker），这里替它认。
+            let ours = client == Client::Codex
+                && crate::turnstate_marker::takeover()
+                    .is_some_and(|t| Path::new(&t.home) == dir.as_path());
+            if !ours {
+                crate::residue::check_official(client, &dir)?;
+            }
         }
         if client == Client::ClaudeCode {
             crate::gate::hook::ensure_for_dir(&dir)?;
         }
-        let env = if client == Client::ClaudeDesktop {
+        let mut env = if client == Client::ClaudeDesktop {
             vec![]
         } else {
             vec![(
@@ -1452,12 +1642,23 @@ pub async fn launch(
                 dir.display().to_string(),
             )]
         };
+        if let Some(desktop) = desktop {
+            env.push((
+                "CODEX_ELECTRON_USER_DATA_PATH".into(),
+                desktop.display().to_string(),
+            ));
+        }
         (dir.display().to_string(), env, 0)
     };
     let mut env = env;
-    if client == Client::Codex {
+    if client == Client::Codex
+        && !env
+            .iter()
+            .any(|(k, _)| k == "CODEX_ELECTRON_USER_DATA_PATH")
+    {
         // The desktop app reads CODEX_HOME reliably with an explicit Electron profile.
         // A separate userData directory also keeps the user's existing desktop task alive.
+        // 官方槽位那一支已经在上面给了 `<槽位>\desktop`；这里兜的是中转环境。
         env.push((
             "CODEX_ELECTRON_USER_DATA_PATH".into(),
             Path::new(&config_dir).join("desktop").display().to_string(),
@@ -1526,6 +1727,18 @@ pub async fn launch(
 mod tests {
     use super::*;
 
+    /// GPT 槽位下桌面端的两个目录是**兄弟**（`<槽位>\home` / `<槽位>\desktop`），
+    /// 跟 0.24 账户页裸 spawn 给的一模一样 —— 换启动方式不能换目录，否则桌面端
+    /// 会在另一份 userData 上从头来过。
+    #[test]
+    fn codex_slot_dirs_are_siblings_under_the_slot() {
+        let slot = Path::new(r"C:\x\codex-accounts\20260918-1");
+        let (home, desktop) = codex_slot_dirs(slot);
+        assert_eq!(home, slot.join("home"));
+        assert_eq!(desktop, slot.join("desktop"));
+        assert_eq!(home.parent(), desktop.parent(), "不是 home 下面套 desktop");
+    }
+
     fn env(client: Client, via_router: bool) -> Environment {
         Environment {
             id: "e".into(),
@@ -1558,6 +1771,31 @@ mod tests {
         }
     }
 
+    /// 反重力没有中转路径：建环境、走本机路由、存中转启动方案三处入口都要拒绝，
+    /// 拒绝的话里要说清是「端点写死在客户端里」——不是「暂不支持」。
+    #[test]
+    fn antigravity_has_no_relay_environment() {
+        for client in [Client::Antigravity, Client::AntigravityIde] {
+            let err = reject_if_no_relay_path(client).unwrap_err().to_string();
+            assert!(err.contains("没有中转路径"), "{err}");
+            assert!(err.contains("写死"), "{err}");
+            // 有中转路径的三个照常通过。
+        }
+        for client in [Client::ClaudeCode, Client::ClaudeDesktop, Client::Codex] {
+            assert!(reject_if_no_relay_path(client).is_ok());
+        }
+        // base_url 一眼认得出是「没有路」，而不是套用别的软件的前缀。
+        let base = client_base_url_of(Client::Antigravity);
+        assert!(
+            base.contains(crate::local_router::NO_RELAY_PREFIX),
+            "{base}"
+        );
+    }
+
+    fn client_base_url_of(c: Client) -> String {
+        crate::local_router::client_base_url(c, crate::local_router::DEFAULT_PORT)
+    }
+
     /// 桌面端换的是**整个数据目录**，不是 base_url 那个变量。
     ///
     /// ⛔ 0.17.0 之前这一档给的是 `vec![]`，注释说桌面端不吃环境变量 ——
@@ -1572,6 +1810,8 @@ mod tests {
                 Client::Codex => "CODEX_HOME",
                 Client::ClaudeDesktop => "CLAUDE_USER_DATA_DIR",
                 Client::ClaudeCode => "CLAUDE_CONFIG_DIR",
+                // 反重力不传配置目录变量（单一身份，起的就是本机那份）。
+                Client::Antigravity | Client::AntigravityIde => "",
             }
         };
         assert_eq!(keys(Client::ClaudeDesktop), "CLAUDE_USER_DATA_DIR");
@@ -1825,6 +2065,7 @@ mod tests {
                 Client::ClaudeCode => "settings.json",
                 Client::ClaudeDesktop => DESKTOP_CONFIG_FILE,
                 Client::Codex => "config.toml",
+                Client::Antigravity | Client::AntigravityIde => unreachable!("没有中转路径"),
             };
             let path = dir.join(name);
             let original = std::fs::read_to_string(&path).unwrap();

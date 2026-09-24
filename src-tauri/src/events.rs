@@ -16,7 +16,8 @@ use tauri::Emitter;
 /// 这里只是个别名，免得本模块里到处写全路径。
 pub const CHANNEL: &str = qb_contract::channels::TASK;
 
-/// 任务名。前端 `TaskName` 与这四个字符串一一对应。
+/// 任务名。前端 `src/lib/tasks.ts` 的 `TaskName` 与这张表**逐个字符串一一对应**，
+/// 由下面的 `task_names_match_the_frontend_union` 读那个文件核对（两个方向都查）。
 pub const TASK_INSTALL: &str = "install";
 pub const TASK_UPGRADE: &str = "upgrade";
 pub const TASK_TAVERN_START: &str = "tavern-start";
@@ -25,9 +26,40 @@ pub const TASK_DNS_PROBE: &str = "dns-probe";
 pub const TASK_LAUNCH_CODE: &str = "launch-claude-code";
 pub const TASK_LAUNCH_DESKTOP: &str = "launch-claude-desktop";
 pub const TASK_LAUNCH_CODEX: &str = "launch-codex";
+pub const TASK_LAUNCH_ANTIGRAVITY: &str = "launch-antigravity";
+pub const TASK_LAUNCH_ANTIGRAVITY_IDE: &str = "launch-antigravity-ide";
 pub const TASK_KILL_PREVIEW: &str = "killswitch-preview";
 pub const TASK_KILL_EXECUTE: &str = "killswitch-execute";
 pub const TASK_CHROME: &str = "chrome-reinstall";
+/// Codex 桌面端直装（0.28.0）。
+pub const TASK_INSTALL_CODEX_DESKTOP: &str = "install-codex-desktop";
+/// 反重力 Hub / IDE 一键安装（0.29.0）。两个产品共用一条进度，一次只装一个。
+pub const TASK_INSTALL_ANTIGRAVITY: &str = "install-antigravity";
+/// `npm install -g @google/gemini-cli`（0.29.0）。原来是弹窗口、没有进度。
+pub const TASK_INSTALL_GEMINI_CLI: &str = "install-gemini-cli";
+/// QB Gate 自己的一键更新（0.25.3）：取哈希清单 → 下载 → 核对 → 退出并交给安装包。
+pub const TASK_SELF_UPDATE: &str = "self-update";
+
+/// 上面全部任务名。**加常量就要加进这里**，否则核对测试抓不到。
+pub const ALL_TASKS: &[&str] = &[
+    TASK_INSTALL,
+    TASK_UPGRADE,
+    TASK_TAVERN_START,
+    TASK_EGRESS_INSTALL,
+    TASK_DNS_PROBE,
+    TASK_LAUNCH_CODE,
+    TASK_LAUNCH_DESKTOP,
+    TASK_LAUNCH_CODEX,
+    TASK_LAUNCH_ANTIGRAVITY,
+    TASK_LAUNCH_ANTIGRAVITY_IDE,
+    TASK_KILL_PREVIEW,
+    TASK_KILL_EXECUTE,
+    TASK_CHROME,
+    TASK_INSTALL_CODEX_DESKTOP,
+    TASK_INSTALL_ANTIGRAVITY,
+    TASK_INSTALL_GEMINI_CLI,
+    TASK_SELF_UPDATE,
+];
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskProgress {
@@ -214,34 +246,47 @@ mod tests {
     // 不发事件的那一份现在是 `sink::Silent`，它在 qb-foundation 里，
     // 不链接任何 GUI 运行时。
 
+    /// 后端常量与前端 `TaskName` 必须是**同一个集合**。
+    ///
+    /// # 这条测试原来兜不住它自称兜住的东西
+    ///
+    /// 0.28.0 之前它写的是两个手抄的字面量数组比大小，注释说「多一个少一个都对不上」——
+    /// 而 `TASK_EGRESS_INSTALL` 在两边都存在、却**两个数组里都没抄进去**，
+    /// `launch-antigravity` / `launch-antigravity-ide` 更是只有前端有、后端连常量都没有。
+    /// 手抄一份来核对另一份，抄漏的那一项天然不会被发现 —— 跟 `real_multiplier`
+    /// 恒等于两个数相乘是同一类失效：**衡量它的那个量本身是假的**。
+    ///
+    /// 现在直接读前端那个文件，两个方向都查。
     #[test]
     fn task_names_match_the_frontend_union() {
-        // 前端 `TaskName` 是一个字面量联合类型，多一个少一个都对不上。
-        assert_eq!(
-            [
-                TASK_INSTALL,
-                TASK_UPGRADE,
-                TASK_TAVERN_START,
-                TASK_DNS_PROBE,
-                TASK_LAUNCH_CODE,
-                TASK_LAUNCH_DESKTOP,
-                TASK_LAUNCH_CODEX,
-                TASK_KILL_PREVIEW,
-                TASK_KILL_EXECUTE,
-                TASK_CHROME,
-            ],
-            [
-                "install",
-                "upgrade",
-                "tavern-start",
-                "dns-probe",
-                "launch-claude-code",
-                "launch-claude-desktop",
-                "launch-codex",
-                "killswitch-preview",
-                "killswitch-execute",
-                "chrome-reinstall",
-            ]
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri 的上一级就是仓库根")
+            .join("src/lib/tasks.ts");
+        let src = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("读不到 {}：{e}", path.display()));
+        let body = src
+            .split_once("export type TaskName =")
+            .expect("tasks.ts 里没有 TaskName")
+            .1
+            .split_once(';')
+            .expect("TaskName 没有以分号结束")
+            .0;
+        let mut front: Vec<&str> = body
+            .split('|')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.trim_matches('"'))
+            .collect();
+        front.sort_unstable();
+        let mut back: Vec<&str> = ALL_TASKS.to_vec();
+        back.sort_unstable();
+
+        let only_back: Vec<_> = back.iter().filter(|n| !front.contains(n)).collect();
+        let only_front: Vec<_> = front.iter().filter(|n| !back.contains(n)).collect();
+        assert!(
+            only_back.is_empty() && only_front.is_empty(),
+            "任务名对不上。只有后端有：{only_back:?}；只有前端有：{only_front:?}"
         );
     }
 }

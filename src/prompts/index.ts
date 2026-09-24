@@ -135,8 +135,94 @@ export const CLEAN_REINSTALL_PROMPT: PromptDef = {
 3. 卸载执行记录（每一步的结果，失败的单独列出并说明原因）
 4. 重装结果与版本号
 
+## 面板够不到的两块，请一并盘点
+QB Gate 面板的「完全卸载」只扫当前 Windows 用户账户，这两块它够不到，交给你：
+
+1. **WSL 发行版**：先 \`wsl -l -v\` 列出每个发行版，逐个查
+   \`~/.claude\`、\`~/.claude.json\`、\`~/.local/bin/claude\`、\`~/.local/share/claude\`、
+   \`~/.npm-global\` 或 \`npm root -g\` 下的 \`@anthropic-ai/claude-code\`，
+   以及 \`~/.bashrc\` / \`~/.zshrc\` / \`~/.profile\` 里设 \`ANTHROPIC_*\` / \`CLAUDE_*\` 的行
+2. **本机其它 Windows 用户账户**：C:\\Users\\<其他用户>\\ 下同样的位置
+   （.claude、.claude.json、.local\\bin、AppData\\Roaming\\Claude、AppData\\Local\\AnthropicClaude）。
+   **看得到但没权限删的，列出来告诉我，不要提权硬删**
+
 ## 边界
 - 只处理 Claude 相关的软件与数据，不碰其他程序
+- 不要改系统安全设置、不要动防火墙规则、不要改用户账户
+- 删除操作要能说清楚删的是什么；说不清楚的先问我`,
+};
+
+export const CODEX_REINSTALL_PROMPT: PromptDef = {
+  id: "codex-reinstall",
+  title: "Codex（CLI 与桌面端）的完整卸载与重装",
+  modelHint:
+    "建议选高级模型。涉及删除文件、Store 包与注册表，判断失误会误删无关数据。",
+  body: `你是一名 Windows 系统维护工程师。请帮我把本机的 OpenAI Codex（命令行 CLI 与 Microsoft Store 桌面端）完整卸载干净，然后重新安装。
+
+## 用途说明
+我要做的是一次**彻底的干净重装**，常见原因：安装损坏、Store 包注册失效（启动一律「拒绝访问 os error 5」）、
+配置写坏、要把机器转交他人、或要清除我自己留在本机的数据。目标是让重装后的环境与全新安装一致。
+
+## 第一阶段：先盘点，不删除
+列出你找到的所有相关内容，**这一阶段不要删任何东西**：
+
+1. 桌面端（Microsoft Store 包）
+   Get-AppxPackage -Name OpenAI.Codex | Select Name,Version,PackageFamilyName,InstallLocation
+   - 数据目录：%LOCALAPPDATA%\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\
+   - 桌面端自带的 CLI：%LOCALAPPDATA%\\OpenAI\\Codex\\bin\\<hash>\\codex.exe
+2. 命令行 CLI 的几种落点（可能同时装了不止一份）
+   - npm 全局：npm ls -g @openai/codex；%APPDATA%\\npm\\codex.cmd 与 node_modules\\@openai\\
+   - winget：winget list --id OpenAI.Codex；%LOCALAPPDATA%\\Microsoft\\WinGet\\Packages\\OpenAI.Codex*
+   - 官方压缩包手动解压的：%USERPROFILE%\\.local\\bin\\codex.exe、%LOCALAPPDATA%\\Programs\\codex\\
+3. 配置、会话与凭证
+   - %USERPROFILE%\\.codex\\（config.toml、sessions\\、auth.json —— **auth.json 只报位置，不要打开看内容**）
+   - CODEX_HOME 环境变量指向的目录（如果设了）
+   - 凭据管理器：cmdkey /list 里含 openai / codex 的条目（只列名字）
+4. 环境变量与 Shell 配置
+   - 用户级：CODEX_* 前缀的变量；PowerShell profile / .bashrc 里设它们的行
+   - **OPENAI_API_KEY 别的工具也在用，列出来但默认不删，删之前问我**
+5. 正在运行的进程
+   Get-Process ChatGPT,Codex,codex -ErrorAction SilentlyContinue | Select Id,Path
+
+把结果整理成一张表给我：路径 / 类型 / 大小 / 是不是能安全删除。
+
+## 第二阶段：等我确认后执行卸载
+我确认之后按顺序做：
+
+1. 先关掉所有相关进程（桌面端窗口、终端里的 codex 会话）
+2. Store 包：Get-AppxPackage -Name OpenAI.Codex | Remove-AppxPackage
+   npm 装的：npm uninstall -g @openai/codex；winget 装的：winget uninstall --id OpenAI.Codex -e
+   手动解压的再直接删目录
+3. 删除上面盘点出的配置、会话、凭证、环境变量、Shell 配置行
+4. 清理注册表里对应的卸载登记（HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ 下）
+
+**已知的坑，请特别注意：**
+- Store 包正在跑的时候 Remove-AppxPackage 会失败，先退干净桌面端（托盘图标也要退）
+- WindowsApps 下的文件不要手动删，权限被系统锁着，只能走 Remove-AppxPackage
+- 正在运行的 exe 删不掉（Windows 允许改名，不允许删除），遇到「拒绝访问」先确认是不是被占用
+- 删除前请再次确认路径，**不要误删 %APPDATA% 或 %LOCALAPPDATA% 下的无关目录**
+
+## 第三阶段：重装
+1. 桌面端：从 Microsoft Store 装（apps.microsoft.com/detail/9plm9xgg6vks），或用 winget install --id 9PLM9XGG6VKS --source msstore
+2. CLI：从 github.com/openai/codex 的 Releases 下载，**校验 SHA-256 与 OpenAI 数字签名之后再放进 PATH**，哈希对不上就停下来告诉我
+3. 安装完成后报告两边的版本号
+
+## 面板够不到的两块，请一并盘点
+QB Gate 面板的「完全卸载」只扫当前 Windows 用户账户，这两块它够不到，交给你：
+
+1. **WSL 发行版**：先 \`wsl -l -v\` 列出每个发行版，逐个查 \`~/.codex\`、\`npm root -g\` 下的
+   \`@openai/codex\`、\`~/.local/bin/codex\`，以及 shell 配置里设 \`CODEX_*\` 的行
+2. **本机其它 Windows 用户账户**：C:\\Users\\<其他用户>\\ 下同样的位置。
+   **看得到但没权限删的，列出来告诉我，不要提权硬删**
+
+## 输出格式
+1. 盘点表
+2. 等我确认
+3. 卸载执行记录（每一步的结果，失败的单独列出并说明原因）
+4. 重装结果与版本号
+
+## 边界
+- 只处理 Codex 相关的软件与数据，不碰其他程序（ChatGPT 网页登录态、浏览器数据都不在内）
 - 不要改系统安全设置、不要动防火墙规则、不要改用户账户
 - 删除操作要能说清楚删的是什么；说不清楚的先问我`,
 };
@@ -180,6 +266,7 @@ export const BROWSER_REINSTALL_PROMPT: PromptDef = {
 export const ALL_PROMPTS = [
   DNS_LEAK_PROMPT,
   CLEAN_REINSTALL_PROMPT,
+  CODEX_REINSTALL_PROMPT,
   BROWSER_REINSTALL_PROMPT,
 ];
 

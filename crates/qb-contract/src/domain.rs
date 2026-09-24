@@ -17,6 +17,26 @@ pub enum Client {
     ClaudeCode,
     ClaudeDesktop,
     Codex,
+    /// Google Antigravity Hub（`Programs\antigravity\Antigravity.exe`，0.26.0）。
+    ///
+    /// **只有官方身份，没有中转路径**：它把 API 端点写死在自己的 `app.asar` 里
+    /// （`--api_server_url` / `--cloud_code_endpoint`），只认 Google 登录。
+    /// 中转侧的每一处（`environment_save` / `router_environment` / 线路池）都要
+    /// **显式拒绝**这两个变体，不许静默兜底 —— 兜底出来的是一份指错地方、
+    /// 而且没人说得清为什么起不来的配置。
+    Antigravity,
+    /// Google Antigravity IDE（`Programs\Antigravity IDE\`，VS Code 分支）。
+    /// 跟 Hub 用同一个 Google 账户往外发请求，所以门禁要一起管；启动、上锁、
+    /// 收进程都是独立的可执行文件，故独立成一档。中转侧同样显式拒绝。
+    AntigravityIde,
+}
+
+impl Client {
+    /// 是不是反重力那两档。门禁开关（`settings::antigravity_under_gate`）、
+    /// 「没有中转路径」的拒绝、看门狗档位都按这一组走。
+    pub fn is_antigravity(self) -> bool {
+        matches!(self, Client::Antigravity | Client::AntigravityIde)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

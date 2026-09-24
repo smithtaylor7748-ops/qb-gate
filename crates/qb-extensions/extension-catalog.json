@@ -2,20 +2,22 @@
   {
     "id": "sillytavern",
     "name": "SillyTavern",
-    "description": "接入已有酒馆安装，管理桥接、运行状态、角色卡与备份。",
+    "description": "接入已有酒馆安装，管理桥接、运行状态、角色卡与备份。一份酒馆两条桥：Claude 走你自己的 bridge.py，GPT 走面板内置的桥接（驱动官方 codex exec）。",
     "kind": "application",
     "source": "https://github.com/SillyTavern/SillyTavern",
     "version": "integration-1",
     "license": "AGPL-3.0 (external application)",
     "clients": [
-      "claude-code"
+      "claude-code",
+      "codex"
     ],
     "install_method": "connect",
     "configuration": "{}",
     "dependencies": [
       "SillyTavern",
-      "Python",
-      "Claude Code"
+      "Python（Claude 桥接用）",
+      "Claude Code（Claude 桥接用）",
+      "Codex CLI（GPT 桥接用）"
     ]
   },
   {
@@ -140,6 +142,23 @@
     "configuration": "{\"client\":\"codex\",\"wire_api\":\"responses\",\"auth_style\":\"env_key\"}",
     "dependencies": [
       "服务商和 API 凭证"
+    ]
+  },
+  {
+    "id": "antigravity-ui",
+    "name": "反重力 · 汉化与审批",
+    "description": "通过反重力 Hub 自己开着的 Chrome DevTools 协议，往它的页面里注入 EasyAntigravity 的脚本：界面汉化、审批卡自动点选、高危命令拦截。不起 Hub、不改它任何文件、不碰凭据；不做它的「免 TUN 代理」。",
+    "kind": "application",
+    "source": "https://github.com/DSDS-CMHL/EasyAntigravity",
+    "version": "1.1.4",
+    "license": "MIT (script, dictionaries and rules vendored; the version.dll proxy is deliberately not included)",
+    "clients": [
+      "antigravity"
+    ],
+    "install_method": "builtin",
+    "configuration": "{}",
+    "dependencies": [
+      "反重力 Hub（官网安装，位置表自动认出）"
     ]
   }
 ]

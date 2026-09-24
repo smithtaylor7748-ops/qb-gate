@@ -6,20 +6,20 @@
 
 ## 已执行
 
-| 检查 | 实际结果 |
-| --- | --- |
-| TypeScript + Vite 生产构建 | 通过 |
-| Vitest 缓存回归 | 5 项通过 |
-| Rust 回归 | 335 项通过，0 失败；原始基线 294 项，审查后新增 7 项 |
-| Clippy `--lib -- -D warnings` | 通过 |
-| 前端格式检查 | 通过 |
-| Rust 格式 | `cargo fmt --check` 通过 |
-| Rust 导出 TypeScript | 已重新生成，`npm run types:check` 一致 |
-| 浏览器响应式、主题、缩放 | 72 个组合通过 |
-| 浏览器交互 | 4 个流程通过：扩展目录隔离、搜索与返回、切页保留草稿、Escape 关闭弹窗 |
-| 公开源码检查 | 206 个候选文件通过高置信度凭证与个人路径检查；不等同于人工隐私审计 |
-| npm 依赖审计 | 最近一次结果为 0 项漏洞 |
-| 依赖清单 | 已记录 716 个依赖，包含构建/测试和其他平台依赖；随附可获取的许可证文本 |
+| 检查                          | 实际结果                                                               |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| TypeScript + Vite 生产构建    | 通过                                                                   |
+| Vitest 缓存回归               | 5 项通过                                                               |
+| Rust 回归                     | 335 项通过，0 失败；原始基线 294 项，审查后新增 7 项                   |
+| Clippy `--lib -- -D warnings` | 通过                                                                   |
+| 前端格式检查                  | 通过                                                                   |
+| Rust 格式                     | `cargo fmt --check` 通过                                               |
+| Rust 导出 TypeScript          | 已重新生成，`npm run types:check` 一致                                 |
+| 浏览器响应式、主题、缩放      | 72 个组合通过                                                          |
+| 浏览器交互                    | 4 个流程通过：扩展目录隔离、搜索与返回、切页保留草稿、Escape 关闭弹窗  |
+| 公开源码检查                  | 206 个候选文件通过高置信度凭证与个人路径检查；不等同于人工隐私审计     |
+| npm 依赖审计                  | 最近一次结果为 0 项漏洞                                                |
+| 依赖清单                      | 已记录 716 个依赖，包含构建/测试和其他平台依赖；随附可获取的许可证文本 |
 
 浏览器结果见 `ui-regression.json`；截图见 `screenshots/`。五个入口、四种窗口宽度、浅深主题，以及 1.25 / 1.5 deviceScaleFactor 均纳入检查。截图使用虚构演示数据。
 
@@ -31,16 +31,16 @@ v0.12.1 的前端重排：总览恢复 v0.11.0 的综合评分版式（权重堆
 
 同日做了一轮源码审查，修掉的问题与对应回归：
 
-| 问题 | 新增回归 |
-| --- | --- |
+| 问题                                                                                   | 新增回归                                                                                                                      |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | 看门狗自己写了一套处置，`decide` 退化成只有单测在调（改 `unknown_grace()` 不再有效果） | 判定接回主循环；`Tick` / `StopReason` / `decide` 收窄为 `pub(super)`，再断链会让 `cargo clippy --lib -- -D warnings` 编译失败 |
-| 一条读不了或结不清的恢复记录会把面板永久锁在恢复页 | `one_unreadable_journal_neither_blocks_the_others_nor_is_deleted`：坏记录只登记不中断，可显式移入 quarantine，目录外路径拒绝 |
-| 三张历史表只增不减，且每次操作后全量回前端 | `history_is_capped_but_live_sessions_are_never_dropped`：受保护的会话不占额度也不删 |
-| 恢复记录（内含配置全文密文）永不清理 | `retention_spares_unsettled_referenced_and_fresh_records`：未结清、被环境回滚指着、未到期的都不删 |
-| Skills 可以「装」到不读 `skills/` 的 Codex，还显示已安装 | `skills_are_never_offered_or_installed_for_codex`：含目录 JSON 的声明 |
-| 「检查来源更新」会冲掉 ATTRIBUTION 里核对过的固定提交 | `curated_pins_are_the_ones_attribution_signed_for`：目录里的哈希必须能在 ATTRIBUTION.md 里找到 |
-| 中转会话被门禁按官方口径关停 | `relay_sessions_still_unlock_but_are_never_stopped_by_the_gate`：解锁与关停是两个判断 |
-| 数据库里的目录行能把精选条目重新指到别的仓库和版本 | `a_database_row_cannot_repoint_a_curated_entry`：合并时来源与版本一律以内置目录为准 |
+| 一条读不了或结不清的恢复记录会把面板永久锁在恢复页                                     | `one_unreadable_journal_neither_blocks_the_others_nor_is_deleted`：坏记录只登记不中断，可显式移入 quarantine，目录外路径拒绝  |
+| 三张历史表只增不减，且每次操作后全量回前端                                             | `history_is_capped_but_live_sessions_are_never_dropped`：受保护的会话不占额度也不删                                           |
+| 恢复记录（内含配置全文密文）永不清理                                                   | `retention_spares_unsettled_referenced_and_fresh_records`：未结清、被环境回滚指着、未到期的都不删                             |
+| Skills 可以「装」到不读 `skills/` 的 Codex，还显示已安装                               | `skills_are_never_offered_or_installed_for_codex`：含目录 JSON 的声明                                                         |
+| 「检查来源更新」会冲掉 ATTRIBUTION 里核对过的固定提交                                  | `curated_pins_are_the_ones_attribution_signed_for`：目录里的哈希必须能在 ATTRIBUTION.md 里找到                                |
+| 中转会话被门禁按官方口径关停                                                           | `relay_sessions_still_unlock_but_are_never_stopped_by_the_gate`：解锁与关停是两个判断                                         |
+| 数据库里的目录行能把精选条目重新指到别的仓库和版本                                     | `a_database_row_cannot_repoint_a_curated_entry`：合并时来源与版本一律以内置目录为准                                           |
 
 这一轮**没有**新增实机验收；下面「未执行」一节仍然全部成立。
 

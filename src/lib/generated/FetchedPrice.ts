@@ -11,7 +11,18 @@ export type FetchedPrice = { model: string, input_per_mtok: number, output_per_m
 /**
  * 抓不到就留空,由 [`Catalog`] 按标准倍数补并标成 `Derived`。
  */
-cache_read_per_mtok: number | null, cache_write_per_mtok: number | null, 
+cache_read_per_mtok: number | null, 
+/**
+ * 5 分钟档缓存写。
+ */
+cache_write_per_mtok: number | null, 
+/**
+ * 1 小时档缓存写(只有 Anthropic 的表有)。
+ *
+ * `serde(default)`:0.25.1 之前抓回来存进库里的那些行没有这个字段,
+ * 读出来就是 `None`,由 [`Catalog`] 按 [`CACHE_WRITE_1H_RATIO`] 推。
+ */
+cache_write_1h_per_mtok: number | null, 
 /**
  * 长上下文那一档的价。
  *

@@ -1949,6 +1949,13 @@ body:has(.official-page) {
 .account-launch .tile {
   justify-content: center;
 }
+/* GPT 页只有三个动作（启动 / 酒馆 / 一键关闭），2×2 会缺一格 ——
+   让「一键关闭」那格横跨两列，看起来是刻意排的，不像少了一块。
+   单列布局（窄到 auto-fit 只排得下一列）时这一条自动失效：`span 2` 在
+   只有一列的网格里就是整行。 */
+.launchcol-wide {
+  grid-column: 1 / -1;
+}
 .account-usage .ustats {
   flex: 1;
   min-height: 0;
@@ -1993,6 +2000,82 @@ body:has(.official-page) {
   justify-content: space-between;
   gap: 4px;
   margin-top: 6px;
+}
+/* 反重力那一侧：引擎卡里三个开关。只引 tokens.css 的变量。
+   （0.27.0 起启动卡用的是跟 Claude 页同一套 `.launchcol` 磁贴，
+   原来那套 `.ag-product*` 行式布局连同规则一起删了 —— 留着就是第二套版式。） */
+.ag-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 6px 0;
+}
+.ag-flags .checkbox {
+  font-size: 12px;
+}
+.ag-engine .ustats {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+/* 0.32.0：一条账户行底下那排「两半」的徽标与按钮。
+   横向可折行 —— 窄窗口下 IDE / CLI 两枚徽标各占一行也比被裁掉强
+   （`.account-slot-list` 是固定高度的四行网格，裁切会被 test:ui 抓到）。 */
+.ag-halves {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.ag-half {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+/* 用量卡的身份行一行到底、省略号；弹窗里的配额 / 按模型两张表。只引变量。 */
+.ag-identity {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ag-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.ag-table th {
+  text-align: left;
+  padding: 4px 8px;
+  color: var(--text-2);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ag-table td {
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.ag-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ag-rule {
+  display: grid;
+  gap: 4px;
+}
+.ag-log {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow: auto;
+}
+.ag-log-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
 }
 .codex-slot-identity {
   overflow: hidden;
@@ -2062,11 +2145,35 @@ body:has(.official-page) {
     flex: 1;
   }
   .account-slot-list .gauge-reset,
-  .account-slot-list .gauge-binding {
+  .account-slot-list .gauge-binding,
+  /* GPT 用量卡里那两根额度条（0.32.0）跟槽位行同一个待遇：窄档先收重置时刻。
+     「还剩多少」和「哪个窗口卡着你」是这两根条的全部意义，重置时刻在明细里有。 */
+  .account-usage .slotusage .gauge-reset {
     display: none;
   }
   .account-slot-list .gauge-track {
     min-width: 20px;
+  }
+  /* 0.32.0：反重力那一侧一行有三层（名字 / 两半的徽标 / 配额条），
+     680×640 这一档四行网格装不下第三层 —— 收掉它。
+     ⛔ 收的是**配额条与那句状态**，不是两半的徽标：徽标回答的是
+     「这个账户能不能用」，收掉它这一行就只剩一个名字，等于没说话。
+     配额在右下角那张用量卡和 `/usage` 上都有，收掉不丢信息。 */
+  .account-slot-list [data-testid="ag-slot"] > .gauge,
+  .account-slot-list [data-testid="ag-slot"] > .notice,
+  .account-slot-list [data-testid="ag-slot"] > .slotusage {
+    display: none;
+  }
+  /* 两半那一行**不许折行**：`.slotrow` 是固定高度网格里的一格，折出来的第二行
+     直接顶出格子（test:ui 当场红）。窄档只留两枚徽标 —— 登录动作在宽一点的窗口
+     或明细里做，而「登没登录」这一位信息是这一行的全部意义，不能收。 */
+  .account-slot-list .ag-halves {
+    flex-wrap: nowrap;
+    gap: 2px 5px;
+    overflow: hidden;
+  }
+  .account-slot-list .ag-halves .btn {
+    display: none;
   }
   .account-launch .tile {
     padding: 6px 4px;
@@ -2087,6 +2194,50 @@ body:has(.official-page) {
     margin-left: 0;
   }
   .account-usage .ustat-sub {
+    display: none;
+  }
+  .account-usage .ag-identity {
+    min-height: 12px;
+    height: 12px;
+    line-height: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .account-usage .ag-cli-quota {
+    display: none;
+  }
+  /* Gemini 的按模型实测额度在窄高账户页仍保留，但压成一行紧凑条，避免
+     它把固定高度的用量卡顶出底部。完整的重置时刻仍在详情页和酒馆面板显示。 */
+  .account-usage .slotusage {
+    /* 680×640 的固定页把按模型细分收进明细页；卡片仍保留最低剩余值，
+       酒馆面板显示完整模型条。 */
+    display: none;
+  }
+  .account-usage .slotusage .gauge {
+    gap: 4px;
+    font-size: 10px;
+  }
+  .account-usage .slotusage .gauge-name {
+    width: 3.5em;
+  }
+  .account-usage .slotusage .gauge-track {
+    min-width: 24px;
+    height: 5px;
+  }
+  .account-usage .slotusage .gauge-pct {
+    min-width: 3.5em;
+  }
+  .account-usage .quota-sources {
+    display: none;
+  }
+}
+@container accounts (max-width: 700px) and (max-height: 840px) {
+  .account-usage .usage-footer {
+    max-height: 24px;
+    overflow: hidden;
+  }
+  .account-usage .usage-footer .btn {
     display: none;
   }
 }
@@ -2166,4 +2317,195 @@ body:has(.official-page) {
   .account-launch .turnstate-entry {
     display: none;
   }
+}
+
+/* ------------------------------------------- 用量明细页（0.32.0，/usage）
+   这一页跟三个账户页相反：它**可以滚动**。趋势图、按模型分布、覆盖率说明
+   在固定高度的账户页上摆不下，所以搬到这条路由上。只引 tokens.css 的变量。 */
+.qb-usage-mix {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.qb-usage-mixrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.qb-usage-mixname {
+  color: var(--text-3);
+  flex: none;
+  width: 9em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qb-usage-mixrow .gauge-track {
+  max-width: none;
+}
+.qb-usage-mixpct {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+  min-width: 4.5em;
+  text-align: right;
+}
+.qb-usage .slotusage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 柱状图（2026-09-24，`src/ui/BarChart.tsx`）。提示框不加阴影：
+   阴影要写色值，而颜色只在 tokens.css 里定义 —— 边框 + 实底已经够把它从图上托起来。 */
+.qb-bars {
+  position: relative;
+  min-width: 0;
+  outline: none;
+  border-radius: var(--radius-md);
+}
+.qb-bars:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-border);
+}
+.qb-bars-tick,
+.qb-bars-axis {
+  font-size: 10px;
+  fill: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.qb-bars-axis--hi {
+  fill: var(--text-2);
+  font-weight: 600;
+}
+.qb-bars-value {
+  font-size: 10.5px;
+  fill: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.qb-bars-tip {
+  position: absolute;
+  top: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 150px;
+  max-width: 230px;
+  padding: 7px 9px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  font-size: 11.5px;
+  z-index: 5;
+}
+.qb-bars-tip--start {
+  transform: none;
+}
+.qb-bars-tip--end {
+  transform: translateX(-100%);
+}
+.qb-bars-tip strong {
+  font-size: 14px;
+  color: var(--text);
+}
+.qb-bars-tip-title {
+  color: var(--text-3);
+}
+.qb-bars-tip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.qb-bars-tip-row > span:first-child {
+  color: var(--text-3);
+}
+
+/* 费用构成的表头行：跟下面几行同一套列宽，只是字小、不画条。 */
+.qb-usage-mixhead {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.qb-usage-mixhead .gauge-pct {
+  font-weight: 500;
+  color: var(--text-3);
+}
+.qb-usage-mixhead .qb-usage-mixspacer {
+  visibility: hidden;
+}
+
+/* 用量明细页：「花了多少」三格、概览两行、表格、重读时的旧图。 */
+.qb-usage-spend {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+.qb-usage-spend .ustat-value {
+  font-size: 22px;
+  font-variant-numeric: normal;
+  font-weight: 600;
+}
+.qb-usage-caveat {
+  margin-top: 6px;
+}
+.qb-usage-stale {
+  opacity: 0.55;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+.qb-usage-switch {
+  display: inline-flex;
+  gap: 4px;
+}
+.qb-usage-tw {
+  overflow-x: auto;
+}
+.qb-usage-tw table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+  min-width: 620px;
+}
+.qb-usage-tw th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-3);
+  font-size: 11px;
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.qb-usage-tw td {
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.qb-usage-tw td.num,
+.qb-usage-tw th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.qb-usage-tw td.num:last-child,
+.qb-usage-tw th.num:last-child {
+  padding-right: 0;
+}
+.qb-usage-tw tr.is-empty td {
+  color: var(--text-3);
+}
+.qb-usage-tw tr.is-current td:first-child {
+  font-weight: 600;
+}
+.qb-usage-tw td.clip {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qb-usage-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
 }

@@ -1,11 +1,20 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, NavLink, useParams } from "react-router-dom";
-import { Archive, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import {
+  Archive,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Trash2,
+} from "lucide-react";
 import {
   api,
   type Settings as Preferences,
   type SnapshotEntry,
+  type UpdateStatus,
 } from "../lib/api";
+import { openUpdateDialog } from "./UpdateDialog";
 import { R } from "../lib/resources";
 import { useResource, useSession } from "../lib/store";
 import { useAction, useWorkspace } from "../lib/workspace";
@@ -137,6 +146,17 @@ function General() {
           ],
         ] as Toggle[]
       ).map(row)}
+      <h2 className="qb-subheading">软件更新</h2>
+      {(
+        [
+          [
+            "update_check_on_start",
+            "启动时检查更新",
+            "打开面板时问一次 GitHub 有没有新版，有就弹窗提醒；只提醒，不会自己安装。",
+          ],
+        ] as Toggle[]
+      ).map(row)}
+      <UpdateLine />
       <p className="qb-help-note">
         IP
         白名单、国家规则与会话门禁集中在“环境与门禁”。安装目录迁移位于“高级维护”。
@@ -164,6 +184,86 @@ function General() {
         </ExternalLink>
       </div>
     </section>
+  );
+}
+/**
+ * 「软件更新」那一行：上次查到什么、什么时候查的、手动「检查更新」。
+ *
+ * 读状态不联网（`update_status` 只读内存）；只有点「检查更新」才问 GitHub。
+ * 查到新版就喊全局那一份更新弹窗（`openUpdateDialog`），这里不另挂一个。
+ */
+function UpdateLine() {
+  const [status, setStatus] = useState<UpdateStatus>();
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    let alive = true;
+    void api
+      .updateStatus()
+      .then((s) => {
+        if (alive) setStatus(s);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const check = async () => {
+    setChecking(true);
+    setError(undefined);
+    try {
+      const s = await api.updateCheck(true);
+      setStatus(s);
+      if (s.update_available) openUpdateDialog(s);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setChecking(false);
+    }
+  };
+  const latest = status?.latest;
+  const at = status?.checked_at
+    ? new Date(status.checked_at).toLocaleTimeString("zh-CN", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
+  const line = !status
+    ? "正在读取…"
+    : status.update_available && latest
+      ? `GitHub 上有新版本 ${latest.version}${status.skipped ? "（这一版你点过跳过，启动时不再提醒）" : ""}`
+      : status.error
+        ? `上次检查没成功：${status.error}`
+        : latest
+          ? `已经是最新版本（GitHub 上最新是 ${latest.version}）`
+          : "这次打开面板后还没检查过。";
+  return (
+    <div className="qb-setting-row">
+      <span>
+        <strong>
+          当前版本 {status?.current_version ?? packageInfo.version}
+        </strong>
+        <small className={status?.error || error ? "notice--danger" : ""}>
+          {error ?? line}
+          {at && !error ? ` · ${at} 查过` : ""}
+        </small>
+      </span>
+      <span className="qb-inline-actions">
+        {status?.update_available && (
+          <Button size="sm" onClick={() => openUpdateDialog(status)}>
+            查看并更新
+          </Button>
+        )}
+        <Button
+          size="sm"
+          icon={<RefreshCw size={14} />}
+          loading={checking}
+          onClick={() => void check()}
+        >
+          检查更新
+        </Button>
+      </span>
+    </div>
   );
 }
 function Backups() {

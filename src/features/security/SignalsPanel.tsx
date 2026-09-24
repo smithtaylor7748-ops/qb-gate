@@ -8,12 +8,20 @@
  * 它**没有自己的进度步骤**，归在 `environment` 那一步里 ——
  * `progress.json` 的五个 key 一个都不能多，见 `steps.ts`。
  */
-import { Play, RotateCw, Stethoscope, Wrench } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Globe, Play, RotateCw, Stethoscope, Wrench } from "lucide-react";
 import { Link } from "react-router-dom";
 
-import type { CheckItem } from "../../lib/api";
+import { api, type CheckItem } from "../../lib/api";
+import {
+  browserName,
+  extraChecks,
+  scanFromReport,
+} from "../../lib/browserProbe";
+import type { BrowserReport } from "../../lib/generated/BrowserReport";
+import type { ProbeStart } from "../../lib/generated/ProbeStart";
 import { R } from "../../lib/resources";
-import { useResource } from "../../lib/store";
+import { peek, put, refresh, useResource, useSession } from "../../lib/store";
 import {
   Button,
   Card,
@@ -24,6 +32,7 @@ import {
   Pill,
   ProgressBar,
   Row,
+  useToast,
 } from "../../ui";
 import { useChecks } from "./useChecks";
 
@@ -107,10 +116,177 @@ export function SignalsScore() {
           label={`中文环境识别得分 ${r.total} / 100`}
         />
       )}
+      {r && (
+        <p className="notice mt-2">
+          {r.source?.kind === "browser" ? (
+            <>
+              来源：<strong>{r.source.browser}</strong>（默认浏览器实测 ·{" "}
+              {r.source.at.slice(5, 16)}）
+            </>
+          ) : (
+            <>
+              来源：面板内置的 WebView2 —— 不是你登 claude.ai 用的那个浏览器。
+              下面「用默认浏览器测」能测那一个。
+            </>
+          )}
+        </p>
+      )}
       <p className="notice mt-2">
         分档：低 0–30、中 31–60、高 61–100；单项 score ≥ 0.25 计为命中。
         全部在本地算，不上传任何数据。
       </p>
+    </Card>
+  );
+}
+
+/** 用哪个会话键记最近一份实测报告。面板开着期间都在；后端内存里也有一份。 */
+const REPORT_KEY = "security.browserProbe";
+
+/**
+ * 用系统默认浏览器实测（2026-09-24，参照 CheckClaude 的 BrowserBridge）。
+ *
+ * 上面那十项默认在面板内置的 WebView2 里测 —— 那不是使用者登 claude.ai 的浏览器。
+ * 点一下，后端在 127.0.0.1 上开一个一次性小服务（`qb-app::browser_probe`），用默认浏览器
+ * 打开 `probe.html`；那一页跑同一份 `signals.ts`，结果交回来后在这里按同一张权重表算分，
+ * 顶掉「中文环境」那一份（带着来源），出口一致性那两行（浏览器语言、WebRTC）也改用实测。
+ */
+export function BrowserProbeCard() {
+  const toast = useToast();
+  const [report, setReport] = useSession<BrowserReport | null>(
+    REPORT_KEY,
+    null,
+  );
+  const [started, setStarted] = useState<ProbeStart | null>(null);
+  const [phase, setPhase] = useState<"idle" | "waiting" | "timeout">("idle");
+  const [err, setErr] = useState("");
+
+  // 面板刷新过页面但后端还开着：内存里那一份拿回来显示。
+  useEffect(() => {
+    if (report) return;
+    void api
+      .browserProbeLast()
+      .then((r) => r && setReport(r))
+      .catch(() => undefined);
+    // 只在第一次挂上时问一次。
+  }, []);
+
+  const run = async () => {
+    setErr("");
+    setPhase("waiting");
+    try {
+      const s = await api.browserProbeStart();
+      setStarted(s);
+      const r = await api.browserProbeWait(s.token);
+      if (!r) {
+        setPhase("timeout");
+        return;
+      }
+      setReport(r);
+      setPhase("idle");
+      const scan = scanFromReport(r);
+      if (scan) put("signals", scan);
+      toast.ok(`${browserName(r.user_agent)} 的采集结果交回来了`);
+      // 出口一致性那两行要用这份实测 —— 已经测过的话顺手重测一次。
+      if (peek("egress")) void refresh("egress");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setPhase("idle");
+    }
+  };
+
+  const copy = () => {
+    if (!started) return;
+    void navigator.clipboard
+      ?.writeText(started.url)
+      .then(() => toast.info("链接复制好了，粘到要测的那个浏览器里打开"))
+      .catch(() => undefined);
+  };
+
+  const extras = report ? extraChecks(report) : [];
+
+  return (
+    <Card
+      as="h3"
+      title="用默认浏览器测"
+      icon={<Globe size={14} />}
+      className="mb-3"
+      actions={
+        <Button
+          size="sm"
+          variant={report ? "default" : "primary"}
+          icon={<Play size={12} />}
+          loading={phase === "waiting"}
+          onClick={() => void run()}
+        >
+          {phase === "waiting"
+            ? "等浏览器交回…"
+            : report
+              ? "再测一次"
+              : "用默认浏览器测"}
+        </Button>
+      }
+    >
+      <p className="notice mb-2">
+        上面那十项默认是在面板<strong>内置的 WebView2</strong> 里测的 ——
+        那不是你登 claude.ai 用的那个浏览器，语言、WebRTC、扩展都可能不一样。
+        点这里，面板在 127.0.0.1 上开一个一次性页面、用系统默认浏览器打开，
+        测它真正的语言、时区、字体、WebRTC 和请求头。结果只回到本机面板；
+        链接只能用一次，两分钟后作废。
+      </p>
+
+      {phase === "waiting" && started && (
+        <div className="mb-2">
+          <p className="notice">
+            {started.opened
+              ? "已经用默认浏览器打开了，等它交回结果（最多两分钟）……"
+              : "页面开好了，但没能替你打开浏览器 —— 把下面的链接复制到浏览器里打开。"}{" "}
+            想测别的浏览器，把链接复制过去打开就行（只认第一次交回的那一份）。
+          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <code className="break-all">{started.url}</code>
+            <Button size="sm" onClick={copy}>
+              复制链接
+            </Button>
+          </div>
+        </div>
+      )}
+      {phase === "timeout" && (
+        <p className="notice notice--danger mb-2">
+          两分钟没等到结果，那个页面已经作废了。浏览器里如果显示「采集失败」，
+          照那一句处理；没打开的话点「再测一次」，或者复制链接手动打开。
+        </p>
+      )}
+      {err && <p className="notice notice--danger mb-2">{err}</p>}
+
+      {report && (
+        <>
+          <p className="notice">
+            最近一次：<strong>{browserName(report.user_agent)}</strong> ·{" "}
+            {report.received_at}
+            {report.accept_language && (
+              <>
+                {" "}
+                · 请求头语言 <code>{report.accept_language}</code>
+              </>
+            )}
+          </p>
+          {extras.map((x) => (
+            <Row
+              key={x.id}
+              side={
+                <Pill tone={ITEM_TONE[x.state]}>{ITEM_LABEL[x.state]}</Pill>
+              }
+            >
+              <span>{x.label}</span>
+              <span className="notice">{x.detail}</span>
+            </Row>
+          ))}
+          <p className="notice mt-1">
+            这两条只报告、不进上面那 100
+            分：它们说明的是浏览器里装了什么，跟出口无关。
+          </p>
+        </>
+      )}
     </Card>
   );
 }
@@ -270,9 +446,11 @@ export function LocalCheckup() {
       }
     >
       <p className="notice mb-2">
-        读注册表与本地配置文件，<strong>不联网、不改任何东西</strong>。
-        查的是浏览器指纹看不到的那几项：系统代理、IPv6、浏览器 DoH 策略， 以及
-        MCP / Codex 配置里有没有写成明文的密钥。
+        读注册表与本地配置文件，<strong>不改任何东西</strong>。
+        查的是浏览器指纹看不到的那几项：代理形态（TUN / 系统代理 / PAC）、
+        出口一致性、Anthropic 服务可达、claude.ai 的解析、IPv6 出口、浏览器 DoH
+        策略、环境变量残留，以及 MCP / Codex 配置里有没有写成明文的密钥。
+        联网的那几项只在你点的这一次发，<strong>都不带任何账户凭据</strong>。
       </p>
 
       {checkup.error && (

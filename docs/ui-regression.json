@@ -37,6 +37,30 @@
       "passed": true
     },
     {
+      "route": "extensions/antigravity-ui",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "usage?side=claude",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "usage?side=gpt",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "usage?side=antigravity",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 1180,
       "theme": "light",
@@ -79,6 +103,30 @@
       "passed": true
     },
     {
+      "route": "extensions/antigravity-ui",
+      "width": 944,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "usage?side=claude",
+      "width": 944,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "usage?side=gpt",
+      "width": 944,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "usage?side=antigravity",
+      "width": 944,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 944,
       "theme": "light",
@@ -121,6 +169,30 @@
       "passed": true
     },
     {
+      "route": "extensions/antigravity-ui",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "usage?side=claude",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "usage?side=gpt",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "usage?side=antigravity",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 786,
       "theme": "light",
@@ -158,6 +230,30 @@
     },
     {
       "route": "extensions/sillytavern",
+      "width": 680,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "extensions/antigravity-ui",
+      "width": 680,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "usage?side=claude",
+      "width": 680,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "usage?side=gpt",
+      "width": 680,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "usage?side=antigravity",
       "width": 680,
       "theme": "light",
       "passed": true
@@ -205,6 +301,30 @@
       "passed": true
     },
     {
+      "route": "extensions/antigravity-ui",
+      "width": 1180,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "usage?side=claude",
+      "width": 1180,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "usage?side=gpt",
+      "width": 1180,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "usage?side=antigravity",
+      "width": 1180,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 1180,
       "theme": "dark",
@@ -247,6 +367,30 @@
       "passed": true
     },
     {
+      "route": "extensions/antigravity-ui",
+      "width": 944,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "usage?side=claude",
+      "width": 944,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "usage?side=gpt",
+      "width": 944,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "usage?side=antigravity",
+      "width": 944,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 944,
       "theme": "dark",
@@ -289,6 +433,30 @@
       "passed": true
     },
     {
+      "route": "extensions/antigravity-ui",
+      "width": 786,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "usage?side=claude",
+      "width": 786,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "usage?side=gpt",
+      "width": 786,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "usage?side=antigravity",
+      "width": 786,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 786,
       "theme": "dark",
@@ -331,6 +499,30 @@
       "passed": true
     },
     {
+      "route": "extensions/antigravity-ui",
+      "width": 680,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "usage?side=claude",
+      "width": 680,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "usage?side=gpt",
+      "width": 680,
+      "theme": "dark",
+      "passed": true
+    },
+    {
+      "route": "usage?side=antigravity",
+      "width": 680,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 680,
       "theme": "dark",
@@ -379,6 +571,34 @@
       "passed": true
     },
     {
+      "route": "extensions/antigravity-ui",
+      "width": 944,
+      "theme": "light",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "usage?side=claude",
+      "width": 944,
+      "theme": "light",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "usage?side=gpt",
+      "width": 944,
+      "theme": "light",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "usage?side=antigravity",
+      "width": 944,
+      "theme": "light",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 944,
       "theme": "light",
@@ -428,6 +648,34 @@
       "passed": true
     },
     {
+      "route": "extensions/antigravity-ui",
+      "width": 944,
+      "theme": "dark",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "usage?side=claude",
+      "width": 944,
+      "theme": "dark",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "usage?side=gpt",
+      "width": 944,
+      "theme": "dark",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
+      "route": "usage?side=antigravity",
+      "width": 944,
+      "theme": "dark",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 944,
       "theme": "dark",
@@ -477,6 +725,34 @@
       "passed": true
     },
     {
+      "route": "extensions/antigravity-ui",
+      "width": 786,
+      "theme": "light",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "usage?side=claude",
+      "width": 786,
+      "theme": "light",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "usage?side=gpt",
+      "width": 786,
+      "theme": "light",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "usage?side=antigravity",
+      "width": 786,
+      "theme": "light",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 786,
       "theme": "light",
@@ -520,6 +796,34 @@
     },
     {
       "route": "extensions/sillytavern",
+      "width": 786,
+      "theme": "dark",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "extensions/antigravity-ui",
+      "width": 786,
+      "theme": "dark",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "usage?side=claude",
+      "width": 786,
+      "theme": "dark",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "usage?side=gpt",
+      "width": 786,
+      "theme": "dark",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "usage?side=antigravity",
       "width": 786,
       "theme": "dark",
       "scale": 1.5,
@@ -625,13 +929,31 @@
     {
       "route": "software:chrome-audit",
       "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "software:antigravity-install",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "software:gemini-install",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "software:pill-matches-version",
+      "width": 1180,
       "theme": "light",
       "passed": true
     }
   ],
   "flows": [
     "catalog isolation",
-    "global search and browser back",
+    "global search and browser back, official-account side from search results",
     "draft navigation persistence",
     "keyboard modal close",
     "overview security modal",
@@ -640,7 +962,12 @@
     "five-item diagnostics and repair review",
     "IPv6 default switch and per-adapter restore",
     "equal fixed account columns and wheel immobility",
-    "station audit model entry and independent billing credentials"
+    "station audit model entry and independent billing credentials",
+    "antigravity side fixed columns, ide slot switch, slot tabs, launch confirmation, engine modal attach/stop, usage details and side sync",
+    "software page: antigravity one-click install confirmation",
+    "software page: gemini cli install reports a verified result",
+    "software page: every pill agrees with its version row",
+    "update dialog: manual check, notes, cost sentence, demo install refusal, reopen from settings"
   ],
   "pageErrors": []
 }

@@ -9,6 +9,7 @@ import { Play } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { R } from "../../lib/resources";
+import { isLegacyDnsReport } from "../../lib/score";
 import { useResource } from "../../lib/store";
 import { useTask } from "../../lib/tasks";
 import { DNS_LEAK_PROMPT, QUICKSTART_DOC } from "../../prompts";
@@ -77,6 +78,8 @@ export function DnsResult() {
   const [showAll, setShowAll] = useState(false);
 
   const report = dns.data;
+  // 存盘的旧报告（2026-09-24 之前的评分规则）：分数不显示，请使用者重测。
+  const legacy = report ? isLegacyDnsReport(report) : false;
   const resolvers = report?.resolvers ?? [];
   const shown = showAll ? resolvers : resolvers.slice(0, HEAD);
 
@@ -117,30 +120,38 @@ export function DnsResult() {
               {report.egress_asn}
             </Metric>
             <Metric label="DNS 评分">
-              <Pill
-                tone={
-                  report.score === 100
-                    ? "ok"
-                    : report.score >= 60
-                      ? "warn"
-                      : "danger"
-                }
-              >
-                {report.score} / 100
-              </Pill>
-            </Metric>
-            <Metric label="以太网状态">
-              {report.ethernet_safe === true ? (
-                <Pill tone="ok">未发现泄露</Pill>
-              ) : report.ethernet_safe === false ? (
-                <Pill tone="danger">发现风险</Pill>
+              {report.score === null || legacy ? (
+                <Pill>—</Pill>
               ) : (
-                <Pill>未检测到以太网</Pill>
+                <Pill
+                  tone={
+                    report.score === 100
+                      ? "ok"
+                      : report.score >= 60
+                        ? "warn"
+                        : "danger"
+                  }
+                >
+                  {report.score} / 100
+                </Pill>
+              )}
+            </Metric>
+            <Metric label="网卡 DNS">
+              {report.adapters_safe === true ? (
+                <Pill tone="ok">走隧道</Pill>
+              ) : report.adapters_safe === false ? (
+                <Pill tone="danger">绕过隧道</Pill>
+              ) : (
+                <Pill>不适用</Pill>
               )}
             </Metric>
           </div>
           <p className="notice mt-2">
-            建议优先选择以太网连接；评分只反映当前检测到的配置。
+            {legacy
+              ? "这份结果是按旧的评分规则测的（按名字找「以太网」、断开的网卡也扣分），请重测一次。"
+              : report.adapters_note}{" "}
+            评分只算适用的项：真实解析里没有国内解析器 70 分；开着 TUN
+            时，连着的网卡（有线、Wi-Fi 都算）上配的 DNS 都走隧道 30 分。
           </p>
 
           {report.findings.length > 0 && (
@@ -163,6 +174,13 @@ export function DnsResult() {
                       {r.from_adapter && (
                         <Pill tone="default">网卡 {r.interface}</Pill>
                       )}
+                      {r.from_adapter && r.connected === false && (
+                        <Pill tone="default">已断开 · 不看</Pill>
+                      )}
+                      {r.from_adapter &&
+                        !r.tunnel &&
+                        r.connected !== false &&
+                        r.via_tunnel === true && <Pill tone="ok">走隧道</Pill>}
                       {r.is_domestic && <Pill tone="danger">国内</Pill>}
                       {r.is_private && <Pill tone="default">内网</Pill>}
                     </>

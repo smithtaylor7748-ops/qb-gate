@@ -404,11 +404,16 @@ function detectEmoji(): DetectOutcome {
   return { raw: `${vendor} 风格`, score };
 }
 
-/** WebRTC ICE 候选泄露。手法与 DNSLeakTester / webrtc-privacy 同源：STUN + 收候选。 */
-function detectWebrtcLeak(): Promise<DetectOutcome> {
+/**
+ * WebRTC 收到的 ICE 候选地址。手法与 DNSLeakTester / webrtc-privacy 同源：STUN + 收候选。
+ *
+ * 单独导出（2026-09-24）：真实浏览器采集那一页要把地址本身交回面板，
+ * 面板拿它跟出口 IP 比 —— 候选地址就是出口的话不算泄露，是别的地址才算。
+ */
+export function webrtcCandidates(): Promise<string[]> {
   return new Promise((resolve) => {
     if (typeof window === "undefined" || !window.RTCPeerConnection) {
-      resolve({ raw: "未发现泄露", score: 0 });
+      resolve([]);
       return;
     }
 
@@ -424,14 +429,7 @@ function detectWebrtcLeak(): Promise<DetectOutcome> {
       } catch {
         /* 已经关了 */
       }
-      if (ips.length === 0) {
-        resolve({ raw: "未发现泄露", score: 0 });
-      } else {
-        resolve({
-          raw: `候选地址泄露（${ips.slice(0, 2).join(", ")}）`,
-          score: 0.5,
-        });
-      }
+      resolve(ips);
     };
 
     try {
@@ -459,6 +457,16 @@ function detectWebrtcLeak(): Promise<DetectOutcome> {
 
     setTimeout(finish, 1000);
   });
+}
+
+/** WebRTC ICE 候选泄露。 */
+async function detectWebrtcLeak(): Promise<DetectOutcome> {
+  const ips = await webrtcCandidates();
+  if (ips.length === 0) return { raw: "未发现泄露", score: 0 };
+  return {
+    raw: `候选地址泄露（${ips.slice(0, 2).join(", ")}）`,
+    score: 0.5,
+  };
 }
 
 export const SIGNALS: SignalDef[] = [
@@ -574,10 +582,28 @@ export interface ScanResult {
   band: RiskBand;
   signals: SignalResult[];
   hits: SignalResult[];
+  /**
+   * 在哪量的（2026-09-24）。没有 = 面板内置的 WebView2（老数据也是这一档）；
+   * `browser` = 用默认浏览器实测的（`lib/browserProbe.ts`）。
+   */
+  source?:
+    | { kind: "panel" }
+    | { kind: "browser"; browser: string; at: string };
 }
 
-export async function runScan(): Promise<ScanResult> {
-  const signals: SignalResult[] = [];
+/**
+ * 一项的原始采集结果。可以序列化 —— 真实浏览器采集那一页（`src/probe/main.ts`）
+ * 在用户的浏览器里跑同一份 `detect()`，把这个交回面板。
+ */
+export interface RawSignal {
+  id: SignalId;
+  raw: string;
+  score: number;
+}
+
+/** 在**当前这个浏览器**里跑一遍十项采集。 */
+export async function collectSignals(): Promise<RawSignal[]> {
+  const out: RawSignal[] = [];
   for (const def of SIGNALS) {
     let outcome: DetectOutcome;
     try {
@@ -585,14 +611,28 @@ export async function runScan(): Promise<ScanResult> {
     } catch {
       outcome = { raw: "检测失败", score: 0 };
     }
-    signals.push({
-      ...def,
-      raw: outcome.raw,
-      score: outcome.score,
-      points: Math.round(outcome.score * def.weight),
-      verdict: signalVerdict(outcome.score),
-    });
+    out.push({ id: def.id, raw: outcome.raw, score: outcome.score });
   }
+  return out;
+}
+
+/**
+ * 把原始结果按权重表算成总分。**分数只在这里算** —— 面板自己采的、真实浏览器交回来的，
+ * 走同一个函数。交回来的东西当不可信数据：认不出的项丢掉，分数夹在 0–1。
+ */
+export function scanFrom(raw: RawSignal[]): ScanResult {
+  const byId = new Map(raw.map((r) => [r.id, r]));
+  const signals: SignalResult[] = SIGNALS.map((def) => {
+    const r = byId.get(def.id);
+    const score = Math.min(1, Math.max(0, Number(r?.score) || 0));
+    return {
+      ...def,
+      raw: typeof r?.raw === "string" ? r.raw.slice(0, 200) : "没有采到",
+      score,
+      points: Math.round(score * def.weight),
+      verdict: signalVerdict(score),
+    };
+  });
   const total = Math.round(signals.reduce((s, x) => s + x.score * x.weight, 0));
   return {
     total,
@@ -600,4 +640,8 @@ export async function runScan(): Promise<ScanResult> {
     signals,
     hits: signals.filter((s) => s.score >= 0.25),
   };
+}
+
+export async function runScan(): Promise<ScanResult> {
+  return { ...scanFrom(await collectSignals()), source: { kind: "panel" } };
 }

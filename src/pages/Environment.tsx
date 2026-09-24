@@ -40,6 +40,7 @@ import {
 
 import {
   api,
+  type Channel,
   type InstallTarget,
   type PurgeItem,
   type PurgeReport,
@@ -47,12 +48,44 @@ import {
   type Risk,
   type SoftwareReport,
 } from "../lib/api";
+import type { Software } from "../lib/generated/Software";
+import {
+  NOT_YET_READ,
+  pillLabel,
+  pillTone,
+  versionLine,
+} from "../lib/software";
 import type { ScanResult } from "../lib/signals";
 import { markStep } from "../lib/progress";
+import { usePending } from "../lib/ipc";
 import { AFTER, R } from "../lib/resources";
-import { invalidate, peek, useResource, useSession } from "../lib/store";
-import { endTask, resetTask, useTask } from "../lib/tasks";
-import { CLEAN_REINSTALL_PROMPT, BROWSER_REINSTALL_PROMPT } from "../prompts";
+import {
+  invalidate,
+  peek,
+  refresh,
+  setSession,
+  useResource,
+  useSession,
+} from "../lib/store";
+import { SIDE_KEY, type Side } from "../lib/side";
+import { useNavigate } from "react-router-dom";
+import { endTask, resetTask, useTask, type TaskState } from "../lib/tasks";
+import { antigravityApi, PRODUCT_LABEL } from "../lib/antigravity";
+import type { AntigravityProduct } from "../lib/generated/AntigravityProduct";
+
+/** winget 上的官方包 id。跟 Rust 侧 `antigravity_setup::winget_id` 是同一对，
+    只出现在确认框的说明文字里 —— 真正拿它去装的是后端那一份。 */
+const AG_WINGET_ID: Record<AntigravityProduct, string> = {
+  hub: "Google.Antigravity",
+  ide: "Google.AntigravityIDE",
+};
+import { codexApi } from "../lib/codexAccounts";
+import {
+  CLEAN_REINSTALL_PROMPT,
+  CODEX_REINSTALL_PROMPT,
+  BROWSER_REINSTALL_PROMPT,
+  type PromptDef,
+} from "../prompts";
 import {
   Button,
   Card,
@@ -63,6 +96,7 @@ import {
   ExternalLink,
   LogView,
   Modal,
+  PathField,
   Pill,
   ProgressBar,
   Row,
@@ -84,6 +118,103 @@ import {
 } from "./managed/ManagedPanel";
 
 const CHROME_PAGE = "https://www.google.com/chrome/";
+const CODEX_STORE_PAGE = "https://apps.microsoft.com/detail/9plm9xgg6vks";
+
+/**
+ * 「卸载提示词」按软件选。0.28.0 之前只分 chrome / 其它，其它一律给 Claude 那份 ——
+ * 于是 Codex 卡点出来的是一份通篇 Claude 路径、跟 Codex 无关的提示词。
+ * 反重力 / Gemini 没有对应的官方重装流程，这两张卡不给提示词按钮，所以这里不会收到它们。
+ */
+function promptFor(target: PurgeTarget): PromptDef {
+  switch (target) {
+    case "chrome":
+      return BROWSER_REINSTALL_PROMPT;
+    case "codex":
+    case "codex-desktop":
+      return CODEX_REINSTALL_PROMPT;
+    default:
+      return CLEAN_REINSTALL_PROMPT;
+  }
+}
+
+/**
+ * 卡片右上角那颗「装没装」的 Pill。
+ *
+ * ⛔ **每一张卡都用它**，别再各写各的三元表达式。文案与色调都来自
+ * `lib/software.ts`，跟版本行同源 —— 这是「Pill 和版本行互相矛盾」那一类 bug
+ * （0.28.0 之前四张卡都有）唯一治得住的办法。
+ */
+function SwPill({ sw, prefix }: { sw: Software | undefined; prefix?: string }) {
+  return (
+    <Pill tone={pillTone(sw)}>
+      {prefix ? `${prefix} ` : ""}
+      {pillLabel(sw)}
+    </Pill>
+  );
+}
+
+/**
+ * 长任务的进度条 + 日志。
+ *
+ * ⛔ **要画在按下去的那张卡里。** 0.28.0 之前 `install` 这个任务的进度块只渲染在
+ * 第一张卡（Claude Code），而 Codex CLI 与 Claude 桌面端的「安装」按钮走的是同一个
+ * 任务名 —— 点的是第三张卡，进度条出现在页面最上面那张卡里，按钮那一带一动不动。
+ * 所以共用任务名的几张卡要用 `show` 指明「这一次是谁在跑」。
+ */
+function TaskBlock({
+  task,
+  show = true,
+  label = "安装进度",
+}: {
+  task: TaskState;
+  show?: boolean;
+  label?: string;
+}) {
+  if (!show || (!task.running && task.log.length === 0)) return null;
+  return (
+    <div className="mt-3">
+      <ProgressBar
+        value={task.total > 0 ? (task.step / task.total) * 100 : undefined}
+        tone={task.error ? "danger" : "accent"}
+        label={label}
+      />
+      <p className="notice mt-1">{task.phase}</p>
+      <LogView lines={task.log} follow={task.running} />
+    </div>
+  );
+}
+
+/**
+ * 「卸载提示词」按钮 + 它下面那句说明。
+ *
+ * ⛔ 一份就够。0.28.0 之前 Chrome 那一列自己抄了一份 `UninstallCol`，
+ * 于是同一个按钮有两套说明：短版「兜面板够不到的地方」、长版还点名了
+ * WSL 与其它 Windows 用户账户。两句话说的是同一件事，而短的那句**没说清**
+ * 到底够不到哪里 —— 卡上那句话本来就是为了回答这个。
+ */
+function PromptButton({
+  onPrompt,
+  disabled,
+}: {
+  onPrompt: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="mt-3 border-t border-line pt-3">
+      <Button
+        size="sm"
+        icon={<Terminal size={13} />}
+        disabled={disabled}
+        onClick={onPrompt}
+      >
+        卸载提示词
+      </Button>
+      <p className="notice mt-1">
+        给别的 AI 用，兜面板够不到的地方：WSL 发行版、其它 Windows 用户账户。
+      </p>
+    </div>
+  );
+}
 
 /** 卡内一栏。三栏之间用左边框分隔，窄屏时自然堆叠。 */
 function Col({ label, children }: { label: string; children: ReactNode }) {
@@ -99,6 +230,7 @@ function Col({ label, children }: { label: string; children: ReactNode }) {
 
 export default function Environment() {
   const toast = useToast();
+  const navigate = useNavigate();
 
   const sw = useResource("software", R.software);
   const managed = useResource("managed", R.managed);
@@ -106,10 +238,7 @@ export default function Environment() {
   // ⛔ 渠道要在 `useResource` 之前拿到：升级计划是**按渠道**查的。
   // 写死 latest 的那一版，下拉选 stable 之后「检查」查的仍是 latest，
   // 而「升级」按 stable 走 —— 界面报的版本和实际要装的版本是两回事。
-  const [channel, setChannel] = useSession<"latest" | "stable">(
-    "env.channel",
-    "latest",
-  );
+  const [channel, setChannel] = useSession<Channel>("env.channel", "latest");
   const upgrade = useResource("upgrade", R.upgradeOf(channel));
   const hook = useResource("hook", R.hook);
   const settings = useResource("settings", R.settings);
@@ -123,9 +252,36 @@ export default function Environment() {
   const installTask = useTask("install");
   const upgradeTask = useTask("upgrade");
   const chromeTask = useTask("chrome-reinstall");
+  const codexDesktopTask = useTask("install-codex-desktop");
+  const antigravityTask = useTask("install-antigravity");
+  const geminiTask = useTask("install-gemini-cli");
+
+  /**
+   * `install` 这一个任务名被三张卡共用（Claude Code / Codex CLI / Claude 桌面端）。
+   * 记下这一次是谁按的，进度条才画得回按钮旁边 —— 见 [`TaskBlock`] 的说明。
+   */
+  const [installOwner, setInstallOwner] = useState<InstallTarget | null>(null);
 
   const [busy, setBusy] = useState("");
   const [prompt, setPrompt] = useState<PurgeTarget | null>(null);
+  /** 有命令等了太久 —— 用来把「我在等后端」说出口，见下面那条横幅。 */
+  const slow = usePending();
+
+  // Codex 桌面端直装（0.28.0）：确认框里的两个选项 + 「检查」查到的 Store 版本。
+  const [askCodexDesktop, setAskCodexDesktop] = useState(false);
+  const [codexForce, setCodexForce] = useState(false);
+  const [codexLocal, setCodexLocal] = useState("");
+  const [codexLatest, setCodexLatest] = useState<string | null>(null);
+
+  // 反重力一键安装（0.29.0）。一次只装一个产品，所以确认框记着是哪一个。
+  const [askAntigravity, setAskAntigravity] = useState(false);
+  const [agProduct, setAgProduct] = useState<AntigravityProduct>("hub");
+  const [agForce, setAgForce] = useState(false);
+  const [agLocal, setAgLocal] = useState("");
+  const [agLatest, setAgLatest] = useState<{
+    hub?: string;
+    ide?: string;
+  } | null>(null);
 
   // 卸载三部曲：盘点 → 确认 → 报告。任一步都可能停下来，所以分三个状态。
   const [plan, setPlan] = useState<{
@@ -210,8 +366,31 @@ export default function Environment() {
     await recordRisk();
   }
 
+  /**
+   * 换升级渠道。
+   *
+   * # ⛔ 不能 `setChannel(x)` 之后直接 `upgrade.refresh()`
+   *
+   * `setChannel` 排的是下一次渲染，而资源定义是在渲染里注册的 ——
+   * 同一个事件里调 `refresh()` 用的还是**旧渠道**那份定义。0.28.0 之前就是这么写的：
+   * 选 stable、查回来的是 latest 的计划、界面当成 stable 显示。不报错，只是在说谎。
+   *
+   * 所以这里现造一份新渠道的定义传给 `refresh`。另外**先把旧渠道那份结论扔掉** ——
+   * 在新结果回来之前，下拉写着 stable 而读数是 latest 的，那一瞬间同样是谎话；
+   * `upgrade` 是 `auto:false` 的手动资源，`invalidate` 对它是「扔掉」，界面退回
+   * 「还没查过版本」（同 `store.ts` 里那条「没查不显示成没问题」）。
+   */
+  function changeChannel(next: Channel) {
+    const checkedBefore = upgrade.data !== undefined;
+    setChannel(next);
+    invalidate("upgrade");
+    // 之前查过才自动再查一遍；没查过就保持「还没查过」，别替使用者起子进程。
+    if (checkedBefore) void refresh("upgrade", R.upgradeOf(next));
+  }
+
   async function runInstall(target: InstallTarget) {
     setBusy(target);
+    setInstallOwner(target);
     resetTask("install");
     try {
       const r = await api.installRun(target);
@@ -281,7 +460,6 @@ export default function Environment() {
     setBusy("purge");
     try {
       const r = await api.purgeExecute(target);
-      setPlan(null);
       setReport({ target, r });
       // `traces` / `browserAudit` 是手动扫的：卸载完那两份答案描述的是
       // 一台已经不存在的机器，`invalidate` 会把它们整个扔掉（store.ts）。
@@ -292,6 +470,119 @@ export default function Environment() {
         "traces",
         "browserAudit",
       );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      // ⛔ 成功失败都关。这一页原来三个弹窗三套生命周期：卸载只在成功时关、
+      // Chrome 在 finally 里关、Codex 桌面端只在成功时关。失败时那个框留在
+      // 屏幕上，正好压着刚弹出来的错误提示 —— 使用者看不到失败原因，
+      // 只看到一个还开着的确认框，多半会再点一次。
+      setPlan(null);
+      setBusy("");
+    }
+  }
+
+  /**
+   * 装（或更新）Codex 桌面端。后端会**先关掉正在跑的桌面端**（Store 包在跑时更新会失败），
+   * 所以走确认框，代价在框里说清。装完把账户页那份 `codexDesktop` 也作废 —— 那边是另一个
+   * 资源键，`AFTER.install` 管不到它。
+   */
+  async function runCodexDesktopInstall() {
+    setBusy("codex-desktop");
+    resetTask("install-codex-desktop");
+    try {
+      const msg = await codexApi.install(codexLocal.trim() || null, codexForce);
+      endTask("install-codex-desktop");
+      toast.ok(msg);
+      invalidate(...AFTER.install, "codexDesktop");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      endTask("install-codex-desktop", msg);
+      toast.error(msg);
+    } finally {
+      // 成功失败都关 —— 跟 `runPurge` / `runChromeReinstall` 一套规矩。
+      setAskCodexDesktop(false);
+      setBusy("");
+    }
+  }
+
+  /**
+   * 一键装反重力（0.29.0）。后端会**先关掉正在跑的那一份**（Electron 单实例 +
+   * 托盘后台运行，开着装不上），所以走确认框，代价在框里说清。
+   *
+   * 装完 `AFTER.install` 之外还要作废 `antigravity`（账户页的资源键；原来写成了不存在的
+   * `antigravityStatus`，这一步从来没生效过）—— 账户页那一侧读的是
+   * 另一个资源键，不作废的话那边会继续显示「未安装 · 到软件页装」。
+   */
+  async function runAntigravityInstall() {
+    setBusy("antigravity");
+    resetTask("install-antigravity");
+    try {
+      const msg = await antigravityApi.install(
+        agProduct,
+        agLocal.trim() || null,
+        agForce,
+      );
+      endTask("install-antigravity");
+      toast.ok(msg);
+      invalidate(...AFTER.install, "antigravity");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      endTask("install-antigravity", msg);
+      toast.error(msg);
+    } finally {
+      // ⛔ 成功失败都关。0.28.0 之前这一页三个弹窗三套生命周期
+      //（有的只在成功时关、有的在 finally 里关），失败之后那个框留在屏幕上
+      // 挡着下面的错误提示。
+      setAskAntigravity(false);
+      setBusy("");
+    }
+  }
+
+  /** 官网上现在是哪一版。只读下载页，不下载不安装。 */
+  async function checkAntigravityLatest() {
+    setBusy("antigravity-latest");
+    try {
+      const [hub, ide] = await Promise.all([
+        antigravityApi.latest("hub").catch(() => undefined),
+        antigravityApi.latest("ide").catch(() => undefined),
+      ]);
+      setAgLatest({ hub, ide });
+      if (!hub && !ide) toast.error("读不到官网的版本号，请稍后再试。");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  /**
+   * `npm install -g @google/gemini-cli`。0.29.0 起**等它装完**。
+   *
+   * 原来这里只是让后端弹一个 cmd 窗口，然后立刻 toast「已打开安装窗口」并
+   * `invalidate(["software"])` —— 而那个窗口里 npm 从来没跑起来过（`/k` 被加了引号），
+   * 那句提示和那次重新检测都是在 npm 还没动的时候发生的。两个都去掉了。
+   */
+  async function runGeminiCliInstall() {
+    setBusy("gemini-cli");
+    resetTask("install-gemini-cli");
+    try {
+      const msg = await antigravityApi.geminiCliInstall();
+      endTask("install-gemini-cli");
+      toast.ok(msg);
+      invalidate(...AFTER.install, "antigravity");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      endTask("install-gemini-cli", msg);
+      toast.error(msg);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  /** Store 上现在是哪一版。只查元数据（FE3），不下载不安装。 */
+  async function checkCodexDesktopLatest() {
+    setBusy("codex-desktop-latest");
+    try {
+      setCodexLatest(await codexApi.latest());
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -353,6 +644,45 @@ export default function Environment() {
 
   const up = upgrade.data;
   const managedOf = (t: string) => managed.data?.apps.find((a) => a.app === t);
+  /** 确认框里那个产品此刻装没装 —— 标题与「危险」样式都看它。 */
+  const agInstalled = !!(agProduct === "hub"
+    ? sw.data?.antigravity.installed
+    : sw.data?.antigravityIde.installed);
+
+  /**
+   * 「纳入 IP 门禁」那颗复选框。**三张卡共用这一份。**
+   *
+   * ⛔ Codex CLI 与 Codex 桌面端写的是**同一个设置键** `codex_outside_gate`
+   * （同一个 OpenAI 账户，只管一个就是给另一个留门）。0.28.0 之前两张卡各抄了一份
+   * 27 行的 JSX，连 `act` 的 key 都不一样（`codex-gate` / `codex-desktop-gate`）——
+   * 改一处漏一处只是时间问题，而症状会是「在这张卡上关掉，那张卡还写着开着」。
+   *
+   * 反义存法（`*_outside_gate` 默认 false = 归门禁）是升级路径，别改成正着存：
+   * 旧配置文件里没有这个键，读出来就是 `false`，于是所有人升级后自动落到「归门禁」。
+   */
+  function gateToggle(
+    field: "codex_outside_gate" | "antigravity_outside_gate",
+    label: string,
+  ) {
+    return (
+      <Checkbox
+        checked={!settings.data?.[field]}
+        disabled={!!busy || !settings.data}
+        onChange={(v) =>
+          void act(
+            `gate:${field}`,
+            () =>
+              api
+                .settingsSave({ ...settings.data!, [field]: !v })
+                .then(() => `${label} ${v ? "已纳入" : "已移出"} IP 门禁`),
+            ["settings", "gate"],
+          )
+        }
+      >
+        纳入 IP 门禁
+      </Checkbox>
+    );
+  }
 
   return (
     <>
@@ -364,13 +694,30 @@ export default function Environment() {
         <Button
           icon={<RotateCw size={13} />}
           loading={sw.loading}
+          disabled={!!busy}
           onClick={() => void rescan()}
         >
           重新扫描
         </Button>
       </header>
 
-      <ManagedDirControl />
+      {/* ⛔ 后端可以慢，界面不许既不动也不说话。
+          `operations::exclusive()` 是一把无界的锁：排在长安装后面的命令会一直等，
+          而前端这边的表现就是「按钮转圈、什么都不发生、没有报错」——
+          0.22.6–0.27.0 那次托管安装死锁（坑 7.51）之所以几个版本没人发现，
+          正是因为它长得跟「正常但很慢」一模一样。这条横幅把「我在等」说出口。
+          ⚠ 这里**不加超时取消**：`invoke` 取消不了，超时只会让 busy 提前清空、
+          按钮亮回来，使用者再点一次 —— 反而制造出两个互斥操作同时在跑。 */}
+      {slow && (
+        <p className="notice notice--warn mb-3">
+          还在等后端回应（<code>{slow.cmd}</code>，已{" "}
+          {Math.round(slow.ms / 1000)}{" "}
+          秒）。安装、下载、卸载这类操作本来就慢；如果同时还有别的操作在跑，
+          这一条会排在它后面。
+        </p>
+      )}
+
+      <ManagedDirControl disabled={!!busy} />
 
       {/* ------------------------------------------------ Claude Code */}
       <Card
@@ -378,11 +725,7 @@ export default function Environment() {
         className="mb-3"
         actions={
           <>
-            {sw.data?.claudeCode.installed ? (
-              <Pill tone="ok">{sw.data.claudeCode.version ?? "已装"}</Pill>
-            ) : (
-              <Pill tone="default">未安装</Pill>
-            )}
+            <SwPill sw={sw.data?.claudeCode} />
             <Button
               size="sm"
               icon={<Download size={13} />}
@@ -431,10 +774,8 @@ export default function Environment() {
                 className="input w-auto"
                 aria-label="升级渠道"
                 value={channel}
-                onChange={(e) => {
-                  setChannel(e.target.value as "latest" | "stable");
-                  void upgrade.refresh();
-                }}
+                disabled={!!busy}
+                onChange={(e) => changeChannel(e.target.value as Channel)}
               >
                 <option value="latest">{CHANNEL_LABEL.latest}</option>
                 <option value="stable">{CHANNEL_LABEL.stable}</option>
@@ -442,6 +783,7 @@ export default function Environment() {
               <Button
                 size="sm"
                 loading={upgrade.loading}
+                disabled={!!busy}
                 onClick={() => void upgrade.refresh()}
               >
                 检查
@@ -462,7 +804,7 @@ export default function Environment() {
               </Button>
             </div>
             <div className="mt-3">
-              <VersionHistoryBlock />
+              <VersionHistoryBlock disabled={!!busy} />
             </div>
           </Col>
 
@@ -532,37 +874,9 @@ export default function Environment() {
           />
         </div>
 
-        {(installTask.running || installTask.log.length > 0) && (
-          <div className="mt-3">
-            <ProgressBar
-              value={
-                installTask.total > 0
-                  ? (installTask.step / installTask.total) * 100
-                  : undefined
-              }
-              tone={installTask.error ? "danger" : "accent"}
-              label="安装进度"
-            />
-            <p className="notice mt-1">{installTask.phase}</p>
-            <LogView lines={installTask.log} follow={installTask.running} />
-          </div>
-        )}
-        {(upgradeTask.running || upgradeTask.log.length > 0) && (
-          <div className="mt-3">
-            <ProgressBar
-              value={
-                upgradeTask.total > 0
-                  ? (upgradeTask.step / upgradeTask.total) * 100
-                  : undefined
-              }
-              tone={upgradeTask.error ? "danger" : "accent"}
-              label="升级进度"
-            />
-            <p className="notice mt-1">{upgradeTask.phase}</p>
-            <LogView lines={upgradeTask.log} follow={upgradeTask.running} />
-          </div>
-        )}
-        <ExternalsBlock />
+        <TaskBlock task={installTask} show={installOwner === "claude-code"} />
+        <TaskBlock task={upgradeTask} label="升级进度" />
+        <ExternalsBlock disabled={!!busy} />
       </Card>
 
       {/* ------------------------------------------------------ Codex */}
@@ -571,11 +885,7 @@ export default function Environment() {
         className="mb-3"
         actions={
           <>
-            {sw.data?.codex.installed ? (
-              <Pill tone="ok">{sw.data.codex.version ?? "已装"}</Pill>
-            ) : (
-              <Pill tone="default">未安装</Pill>
-            )}
+            <SwPill sw={sw.data?.codex} />
             <Button
               size="sm"
               icon={<Download size={13} />}
@@ -590,9 +900,19 @@ export default function Environment() {
       >
         <div className="grid gap-1 lg:grid-cols-3">
           <Col label="版本">
+            {/* ⛔ 跟右上角的 Pill 同源（`lib/software.ts`）。0.28.0 之前这里只读托管那份
+                的记录：npm / winget 装的 Codex，Pill 写着「已装 0.x」、这一栏却写着
+                「未安装」，一张卡两个答案。托管那份的版本更准（读的是安装记录），
+                有就优先用它，没有就退回同一个渲染函数。 */}
             <span className="metric-v mono">
-              {managedOf("codex")?.version ?? "未安装"}
+              {managedOf("codex")?.version ?? versionLine(sw.data?.codex)}
             </span>
+            {sw.data?.codex.installed && !managedOf("codex")?.installed && (
+              <p className="notice mt-1 break-words">
+                这一份不是面板装的：<code>{sw.data.codex.path}</code>
+                。点「安装」会另装一份托管的，之后启动用托管那份。
+              </p>
+            )}
             <p className="notice mt-1 break-words">
               从 <code>github.com/openai/codex</code> 取最新发布，核对 OpenAI
               签名后装进托管目录。 升级就是再点一次「重新下载安装」，旧版留底。
@@ -600,26 +920,11 @@ export default function Environment() {
           </Col>
 
           <Col label="门禁">
-            <Checkbox
-              checked={!!settings.data?.codex_under_gate}
-              disabled={!!busy || !settings.data}
-              onChange={(v) =>
-                void act(
-                  "codex-gate",
-                  () =>
-                    api
-                      .settingsSave({ ...settings.data!, codex_under_gate: v })
-                      .then(() => `Codex ${v ? "已纳入" : "已移出"} IP 门禁`),
-                  ["settings", "gate"],
-                )
-              }
-            >
-              纳入 IP 门禁
-            </Checkbox>
+            {gateToggle("codex_outside_gate", "Codex")}
             <p className="notice mt-1">
               打开后 codex.exe 和 claude.exe 一样上锁：出口 IP
               不在白名单时直接跑不起来。
-              <strong>默认关。</strong>
+              <strong>默认开。</strong>
             </p>
             <p className="notice mt-2">
               打开之后，npm 装的 <code>codex.cmd</code> 仍然管不到 —— 批处理由
@@ -632,9 +937,117 @@ export default function Environment() {
             busy={busy}
             onPlan={startPurge}
             onPrompt={setPrompt}
-            note="正在跑的 Codex 要自己先关掉 —— 面板不按进程名杀进程，正在运行的那份删不掉，会如实出现在复扫结果里。"
+            note="正在跑的 Codex 要自己先关掉 —— 面板不按进程名杀进程，正在运行的那份删不掉，会如实出现在复扫结果里。账户槽位不在内：Codex 桌面端也在用它们的登录身份。"
           />
         </div>
+        <TaskBlock task={installTask} show={installOwner === "codex"} />
+      </Card>
+
+      {/* ------------------------------------------- Codex 桌面端（0.28.0） */}
+      <Card
+        title="Codex 桌面端（Microsoft Store）"
+        className="mb-3"
+        actions={
+          <>
+            {/* 「查不到」是第五档：PowerShell 起不来时后端给 advisory 且 installed=false。
+                那既不是「装了」也不是「没装」，不能折进去（§7.17）。 */}
+            {!sw.data?.codexDesktop.installed &&
+            sw.data?.codexDesktop.advisory &&
+            !sw.data.codexDesktop.version ? (
+              <Pill tone="warn">查不到</Pill>
+            ) : (
+              <SwPill sw={sw.data?.codexDesktop} />
+            )}
+            <Button
+              size="sm"
+              icon={<Download size={13} />}
+              loading={busy === "codex-desktop"}
+              disabled={!!busy}
+              onClick={() => {
+                setCodexForce(false);
+                setCodexLocal("");
+                setAskCodexDesktop(true);
+              }}
+            >
+              {sw.data?.codexDesktop.installed ? "更新 / 重装" : "安装"}
+            </Button>
+          </>
+        }
+      >
+        <p className="notice mb-2 break-words">
+          账户页起的就是它（跟上面的 Codex CLI 是两个东西）。面板不打开 Store
+          也能装：先走 winget 的 Store 源，没成就直连微软的分发接口取官方 MSIX，
+          核对清单 SHA-256 与 OpenAI 签名后 <code>Add-AppxPackage</code>{" "}
+          正规注册 —— 装出来的就是 Store 那个包，自动更新、<code>codex://</code>{" "}
+          都照旧。
+          {sw.data?.codexDesktop.advisory &&
+            ` ${sw.data.codexDesktop.advisory}`}
+        </p>
+
+        <div className="grid gap-1 lg:grid-cols-3">
+          <Col label="版本">
+            <div className="flex flex-wrap items-baseline gap-2">
+              <span className="metric-v mono">
+                {versionLine(sw.data?.codexDesktop)}
+              </span>
+              {codexLatest && (
+                <span className="mono text-accent">Store 上 {codexLatest}</span>
+              )}
+            </div>
+            {/* ⛔ 没有路径 ≠ 包不在册。0.28.0 之前这里无条件断言
+                「Get-AppxPackage 里没有 OpenAI.Codex」—— 而包在册、只是找不到 exe 的
+                那一档（注册坏了）里，这句话是**假的**，跟旁边显示的真版本号直接打架。 */}
+            <p className="notice mt-1 break-words">
+              {sw.data?.codexDesktop.path ? (
+                <span className="mono">{sw.data.codexDesktop.path}</span>
+              ) : sw.data?.codexDesktop.installed ? (
+                "包在册，但找不到它的可执行文件。"
+              ) : (
+                "未检测到 Store 包（Get-AppxPackage 里没有 OpenAI.Codex）。"
+              )}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                loading={busy === "codex-desktop-latest"}
+                disabled={!!busy}
+                onClick={() => void checkCodexDesktopLatest()}
+              >
+                检查 Store 版本
+              </Button>
+              <ExternalLink href={CODEX_STORE_PAGE}>Store 页面</ExternalLink>
+            </div>
+            <p className="notice mt-2">
+              「检查」只问微软的目录接口，不下载、不安装。
+              更新后新包的打包服务要管理员注册，装的时候可能弹一次 UAC。
+            </p>
+          </Col>
+
+          <Col label="门禁">
+            {gateToggle("codex_outside_gate", "Codex")}
+            <p className="notice mt-1">
+              跟 Codex CLI 是<strong>同一个开关</strong>
+              （同一个 OpenAI
+              账户，只管一个就是给另一个留门）。打开后账户页起它之前先验出口
+              IP，看门狗按桌面档盯，查不到 IP 立即关闭。
+              <strong>默认开。</strong>
+            </p>
+            <p className="notice mt-2">
+              Store 包在 <code>WindowsApps</code> 下，加不了执行锁 —— 这一档跟
+              Claude 桌面端的 app-&lt;版本&gt; 一样只能靠看门狗兜。
+            </p>
+          </Col>
+
+          <UninstallCol
+            target="codex-desktop"
+            busy={busy}
+            onPlan={startPurge}
+            onPrompt={setPrompt}
+            note="Store 包走 Remove-AppxPackage，开着的桌面端会先被关掉。清的是包和它的数据（Packages 目录、每个 GPT 槽位的桌面端资料）；槽位里的登录身份（home）不动 —— Codex CLI 也在用它。"
+          />
+        </div>
+
+        <TaskBlock task={codexDesktopTask} />
       </Card>
 
       {/* ------------------------------------------------- 桌面端 */}
@@ -643,16 +1056,12 @@ export default function Environment() {
         className="mb-3"
         actions={
           <>
-            {sw.data?.claudeDesktop.installed ? (
-              <Pill tone="ok">{sw.data.claudeDesktop.version ?? "已装"}</Pill>
-            ) : (
-              <Pill tone="default">未安装</Pill>
-            )}
+            <SwPill sw={sw.data?.claudeDesktop} />
             <Button
               size="sm"
               icon={<Download size={13} />}
               loading={busy === "claude-desktop"}
-              disabled={!!busy || !install.data?.winget_available}
+              disabled={!!busy || install.data?.winget_available === false}
               onClick={() => void runInstall("claude-desktop")}
             >
               {sw.data?.claudeDesktop.installed ? "重新安装" : "安装"}
@@ -663,13 +1072,15 @@ export default function Environment() {
         <div className="grid gap-1 lg:grid-cols-3">
           <Col label="版本">
             <span className="metric-v mono">
-              {sw.data?.claudeDesktop.version ?? "未安装"}
+              {versionLine(sw.data?.claudeDesktop)}
             </span>
             <p className="notice mt-1 break-words">
               位置被官方安装器写死（<code>%LOCALAPPDATA%\AnthropicClaude</code>
               ），它还会自己在 那里更新 ——
               面板接管不了它的目录，所以没有升级按钮，也没有版本库。
-              {!install.data?.winget_available &&
+              {/* ⛔ `=== false` 不是 `!`。`install` 还没回来时那个字段是 undefined，
+                  用 `!` 会在**还不知道**的时候就断言「本机没有 winget」并把按钮灰掉。 */}
+              {install.data?.winget_available === false &&
                 " 本机没有 winget，只能到官方页面手动装。"}
             </p>
           </Col>
@@ -695,6 +1106,201 @@ export default function Environment() {
             note="程序走 winget 卸载，不是逐个删文件 —— 官方卸载器会连启动器与登记一起走。开着的桌面端会先被关掉。"
           />
         </div>
+        <TaskBlock
+          task={installTask}
+          show={installOwner === "claude-desktop"}
+        />
+      </Card>
+
+      {/* ------------------------------------------------- 反重力（0.26.0） */}
+      <Card
+        title="反重力（Google Antigravity）"
+        className="mb-3"
+        actions={
+          <>
+            <SwPill sw={sw.data?.antigravity} prefix="Hub" />
+            <SwPill sw={sw.data?.antigravityIde} prefix="IDE" />
+            <Button
+              size="sm"
+              icon={<Download size={13} />}
+              loading={busy === "antigravity"}
+              disabled={!!busy}
+              onClick={() => {
+                setAgProduct("hub");
+                setAgForce(false);
+                setAgLocal("");
+                setAskAntigravity(true);
+              }}
+            >
+              {sw.data?.antigravity.installed ? "更新 / 重装" : "安装"}
+            </Button>
+          </>
+        }
+      >
+        <div className="grid gap-1 lg:grid-cols-3">
+          <Col label="安装">
+            <p className="notice break-words">
+              面板<strong>不分发 Google 的安装包</strong>：先走 winget
+              的官方包（
+              <code>Google.Antigravity</code> /{" "}
+              <code>Google.AntigravityIDE</code>
+              ），没有 winget 就从 Google 自己的下载域取官方安装器，核过
+              Authenticode 签名主体含 Google 之后静默安装 —— 装出来的跟你自己去
+              <ExternalLink href="https://antigravity.google/download">
+                官网点下载
+              </ExternalLink>
+              是同一个文件。
+            </p>
+            <p className="notice mt-2 break-words">
+              {sw.data?.antigravity.path ? (
+                <span className="mono">{sw.data.antigravity.path}</span>
+              ) : (
+                "Hub：未检测到"
+              )}
+              {agLatest?.hub && (
+                <span className="text-accent"> · 官网 {agLatest.hub}</span>
+              )}
+            </p>
+            <p className="notice mt-1 break-words">
+              {sw.data?.antigravityIde.path ? (
+                <span className="mono">{sw.data.antigravityIde.path}</span>
+              ) : (
+                "IDE：未检测到"
+              )}
+              {agLatest?.ide && (
+                <span className="text-accent"> · 官网 {agLatest.ide}</span>
+              )}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                loading={busy === "antigravity-latest"}
+                disabled={!!busy}
+                onClick={() => void checkAntigravityLatest()}
+              >
+                检查官网版本
+              </Button>
+              <Button
+                size="sm"
+                icon={<Download size={13} />}
+                loading={busy === "antigravity"}
+                disabled={!!busy}
+                onClick={() => {
+                  setAgProduct("ide");
+                  setAgForce(false);
+                  setAgLocal("");
+                  setAskAntigravity(true);
+                }}
+              >
+                {sw.data?.antigravityIde.installed
+                  ? "更新 / 重装 IDE"
+                  : "安装 IDE"}
+              </Button>
+            </div>
+            <UninstallInline
+              target="antigravity"
+              busy={busy}
+              onPlan={startPurge}
+              note="Hub 与 IDE 一起卸（同一个 Google 账户）：先关掉正在跑的，删两个安装目录、~\.gemini\antigravity*、%APPDATA%\Antigravity*，以及凭据管理器里名字含 antigravity 的条目 —— 名字不含它的条目面板认不出，卸完自己去凭据管理器核一眼。"
+            />
+          </Col>
+
+          <Col label="门禁">
+            {gateToggle("antigravity_outside_gate", "反重力")}
+            <p className="notice mt-1">
+              Hub 与 IDE 共用这一个开关（同一个 Google
+              账户，只锁一个就是给另一个留门）：
+              主程序、语言服务器、第三方汉化壳留下的 <code>*.original.exe</code>
+              一起加执行锁，出口 IP
+              不在白名单时跑不起来；起来之后看门狗按桌面档盯， 查不到 IP
+              立即关闭。<strong>默认开。</strong>
+            </p>
+            <p className="notice mt-2">
+              它自动更新装完的新程序在下一次上锁之前没有执行锁 ——
+              在账户页「反重力」 栏可以关掉 Hub
+              的自动检查更新（只并入它自己的一个设置键，重启 Hub 生效）。
+            </p>
+          </Col>
+
+          <Col label="账户与汉化">
+            <p className="notice">
+              启动、关闭、汉化 / 自动审批 / 高危拦截、酒馆的 Gemini 桥接都在
+              「官方账户 · 反重力」那一侧。反重力<strong>没有中转路径</strong>
+              （API 端点写死在客户端里、只认 Google 登录），中转站页不会列它。
+            </p>
+            <Button
+              size="sm"
+              className="mt-2"
+              onClick={() => {
+                setSession<Side>(SIDE_KEY, "antigravity");
+                navigate("/");
+              }}
+            >
+              去「官方账户 · 反重力」
+            </Button>
+          </Col>
+        </div>
+        <TaskBlock task={antigravityTask} />
+      </Card>
+
+      {/* ------------------------------------------------- Gemini CLI（0.26.0） */}
+      <Card
+        title="Gemini CLI"
+        className="mb-3"
+        actions={
+          <>
+            <SwPill sw={sw.data?.geminiCli} />
+            <Button
+              size="sm"
+              icon={<Download size={13} />}
+              loading={busy === "gemini-cli"}
+              disabled={!!busy}
+              onClick={() => void runGeminiCliInstall()}
+            >
+              {sw.data?.geminiCli.installed ? "用 npm 重装" : "用 npm 安装"}
+            </Button>
+          </>
+        }
+      >
+        <div className="grid gap-1 lg:grid-cols-3">
+          <Col label="版本">
+            <span className="metric-v mono">
+              {versionLine(sw.data?.geminiCli)}
+            </span>
+            <p className="notice mt-1 break-words">
+              Google 官方的 <code>@google/gemini-cli</code>（Node 包）。 酒馆的
+              Gemini 桥接每个请求起一次它的无交互模式 ——
+              反重力本体没有公开的无交互 CLI，接酒馆的是它，不是反重力本体。
+              需要本机有 Node.js；没有的话安装会当场说出来，不会让你对着一个
+              空窗口猜。
+              {sw.data?.geminiCli.advisory
+                ? ` ${sw.data.geminiCli.advisory}`
+                : ""}
+            </p>
+            <UninstallInline
+              target="gemini-cli"
+              busy={busy}
+              onPlan={startPurge}
+              note="npm 卸掉 @google/gemini-cli、删托管目录里那份，连同所有 Gemini 账户槽位（酒馆的 Gemini 桥接用的就是它们，清完都要重新登录）。不动 ~\.gemini 本身 —— 反重力的数据也在那底下。"
+            />
+          </Col>
+          <Col label="门禁">
+            <p className="notice">
+              它是 <code>node</code> 跑的脚本，跟 npm 装的{" "}
+              <code>codex.cmd</code>
+              一样加不了执行锁；桥接起它之前按反重力那一档验
+              IP，出口不合格时看门狗 连桥接一起收。
+            </p>
+          </Col>
+          <Col label="登录">
+            <p className="notice">
+              槽位与登录在「官方账户 · 反重力」：每个槽位是一个{" "}
+              <code>GEMINI_CLI_HOME</code>，CLI 自己把 Google
+              登录写在里面，面板只看凭据文件在不在。
+            </p>
+          </Col>
+        </div>
+        <TaskBlock task={geminiTask} />
       </Card>
 
       {/* ------------------------------------------------------ Chrome */}
@@ -703,16 +1309,23 @@ export default function Environment() {
         className="mb-3"
         actions={
           <>
+            {/* Chrome 这一张不走 `SwPill`：它的「装没装」是三个来源兜出来的
+                （审计 / 痕迹 / software），不是一条 `Software`。三档还是同一套：
+                装了 / 没装 / 还没读到。 */}
             {chromeInstalled ? (
               <Pill tone="ok">已装</Pill>
             ) : (
-              <Pill tone="default">
-                {chromeInstalled === undefined ? "还没读到" : "未装"}
+              <Pill tone={chromeInstalled === undefined ? "warn" : "default"}>
+                {chromeInstalled === undefined ? NOT_YET_READ : "未装"}
               </Pill>
             )}
+            {/* ⛔ 扫描也要让 busy 挡住。在 Chrome 清空重装 / 完全卸载跑着的时候扫，
+                扫的是一台正在被改的机器 —— 读出来的那份审计描述的是哪一刻，
+                没人说得清。 */}
             <Button
               size="sm"
               loading={traces.loading || audit.loading}
+              disabled={!!busy}
               onClick={() => {
                 void traces.refresh();
                 void audit.refresh();
@@ -727,7 +1340,7 @@ export default function Environment() {
           <Col label="位置">
             <span className="notice block break-all font-mono">
               {chromePath ??
-                (chromeInstalled === false ? "本机没装 Chrome" : "还没读到")}
+                (chromeInstalled === false ? "本机没装 Chrome" : NOT_YET_READ)}
             </span>
             <p className="notice mt-2">
               Chrome 自己更新，面板不管它的版本。
@@ -954,7 +1567,10 @@ export default function Environment() {
               >
                 完全卸载
               </Button>
-              {tr?.winget_available ? (
+              {/* winget 在不在：`install` 是进页面就自动取的，`traces` 要按「扫描」才有。
+                  0.28.0 之前只看 `tr` —— 扫描之前这里永远只给一条手动链接，
+                  哪怕 winget 明明在。装没装 Chrome 也走顶上那条三源兜底链，不单看 `tr`。 */}
+              {(install.data?.winget_available ?? tr?.winget_available) ? (
                 <Button
                   size="sm"
                   variant="danger"
@@ -962,7 +1578,7 @@ export default function Environment() {
                   disabled={!!busy}
                   onClick={() => setAskChrome(true)}
                 >
-                  {tr.chrome_installed ? "清空并重装" : "安装 Chrome"}
+                  {chromeInstalled === false ? "安装 Chrome" : "清空并重装"}
                 </Button>
               ) : (
                 <ExternalLink href={CHROME_PAGE}>
@@ -970,66 +1586,151 @@ export default function Environment() {
                 </ExternalLink>
               )}
             </div>
-            <div className="mt-3 border-t border-line pt-3">
-              <Button
-                size="sm"
-                icon={<Terminal size={13} />}
-                onClick={() => setPrompt("chrome")}
-              >
-                卸载提示词
-              </Button>
-              <p className="notice mt-1">给别的 AI 用，兜面板够不到的地方。</p>
-            </div>
-            {(chromeTask.running || chromeTask.log.length > 0) && (
-              <div className="mt-3">
-                <ProgressBar
-                  value={
-                    chromeTask.total > 0
-                      ? (chromeTask.step / chromeTask.total) * 100
-                      : undefined
-                  }
-                  tone={chromeTask.error ? "danger" : "accent"}
-                  label="Chrome 重装进度"
-                />
-                <p className="notice mt-1">{chromeTask.phase}</p>
-                <LogView lines={chromeTask.log} follow={chromeTask.running} />
-              </div>
-            )}
+            <PromptButton
+              onPrompt={() => setPrompt("chrome")}
+              disabled={!!busy}
+            />
+            <TaskBlock task={chromeTask} label="Chrome 重装进度" />
           </Col>
         </div>
       </Card>
 
       {/* ---------------------------------------------------- 提示词 */}
-      {prompt && (
-        <Card
-          title={
-            prompt === "chrome"
-              ? BROWSER_REINSTALL_PROMPT.title
-              : CLEAN_REINSTALL_PROMPT.title
-          }
-          tone="accent"
-          className="mb-3"
-          actions={
-            <Button size="sm" variant="ghost" onClick={() => setPrompt(null)}>
-              收起
-            </Button>
-          }
-        >
-          <p className="notice mb-2">
-            {prompt === "chrome"
-              ? BROWSER_REINSTALL_PROMPT.modelHint
-              : CLEAN_REINSTALL_PROMPT.modelHint}
-          </p>
-          <CodeBlock
-            text={
-              prompt === "chrome"
-                ? BROWSER_REINSTALL_PROMPT.body
-                : CLEAN_REINSTALL_PROMPT.body
-            }
-            caption="复制给别的 AI"
+      {/* 弹窗，不是页底的一张卡（0.28.0）。原来内联在整页最下面：点顶上 Claude Code 卡的
+          「卸载提示词」，内容出现在六张卡之后，多半看不见它弹出来了。
+          `Modal` 只在 open 时挂载，所以 `prompt` 为 null 时下面什么都不渲染。 */}
+      <Modal
+        open={!!prompt}
+        onClose={() => setPrompt(null)}
+        title={prompt ? promptFor(prompt).title : ""}
+        size="wide"
+        footer={<Button onClick={() => setPrompt(null)}>关闭</Button>}
+      >
+        {prompt && (
+          <>
+            <p className="notice mb-2">{promptFor(prompt).modelHint}</p>
+            <p className="notice mb-2">
+              这份提示词兜的是面板够不到的地方：WSL 发行版、本机其它 Windows
+              用户账户。复制给别的 AI，让它先盘点、等你确认再动手。
+            </p>
+            <CodeBlock
+              text={promptFor(prompt).body}
+              caption="复制给别的 AI"
+              maxHeight={420}
+            />
+          </>
+        )}
+      </Modal>
+
+      {/* ------------------------------------ Codex 桌面端安装确认（0.28.0） */}
+      <ConfirmDialog
+        open={askCodexDesktop}
+        onCancel={() => setAskCodexDesktop(false)}
+        onConfirm={() => void runCodexDesktopInstall()}
+        title={
+          sw.data?.codexDesktop.installed
+            ? "更新 / 重装 Codex 桌面端？"
+            : "安装 Codex 桌面端？"
+        }
+        confirmLabel={codexLocal.trim() ? "装这个 .msix" : "开始"}
+        loading={busy === "codex-desktop"}
+        danger={!!sw.data?.codexDesktop.installed}
+      >
+        <p>
+          <strong>开着的 Codex 桌面端会先被关掉</strong>
+          （Store
+          包在跑的时候装不上），正在跑的任务会中断，请先保存。账户槽位、登录资料、历史会话都保留。
+        </p>
+        <ol className="mt-2 ml-4 list-decimal">
+          <li>先用 winget 从 Store 源装（系统自己管注册，不用提权）</li>
+          <li>
+            没成就直连微软的分发接口取官方 MSIX（约 800 MB），核对清单 SHA-256
+            与 OpenAI 签名后 <code>Add-AppxPackage</code>
+          </li>
+          <li>装完回读 Get-AppxPackage 核对，不看命令退出码</li>
+        </ol>
+        <p className="notice mt-2">
+          新版包里带打包服务，注册要管理员 —— 走到直连那条时可能弹一次
+          UAC；拒绝就不装，已下好的包留在托管目录里可以手动装。
+        </p>
+        <div className="mt-3">
+          <Checkbox
+            checked={codexForce}
+            disabled={busy === "codex-desktop"}
+            onChange={setCodexForce}
+          >
+            强制重装（同版本也重装，用来修复注册失效 / 拒绝访问 os error 5）
+          </Checkbox>
+        </div>
+        <div className="mt-2">
+          <PathField
+            label="已有 .msix 就填这里（可选）"
+            value={codexLocal}
+            onChange={setCodexLocal}
+            kind="file"
+            disabled={busy === "codex-desktop"}
+            hint="地区拦截拿不到时的退路：自己从可信来源下的官方包。面板仍会核对 OpenAI 签名才注册。"
           />
-        </Card>
-      )}
+        </div>
+      </ConfirmDialog>
+
+      {/* ------------------------------------ 反重力安装确认（0.29.0） */}
+      <ConfirmDialog
+        open={askAntigravity}
+        onCancel={() => setAskAntigravity(false)}
+        onConfirm={() => void runAntigravityInstall()}
+        title={`${agInstalled ? "更新 / 重装" : "安装"} ${PRODUCT_LABEL[agProduct]}？`}
+        confirmLabel={agLocal.trim() ? "装这个安装包" : "开始"}
+        loading={busy === "antigravity"}
+        danger={agInstalled}
+      >
+        <p>
+          <strong>正在跑的{PRODUCT_LABEL[agProduct]}会先被关掉</strong>
+          （它是 Electron 单实例 +
+          托盘后台运行，开着的时候安装器换不动文件，而且多半不报错），
+          未保存的对话会丢，请先保存。登录身份在 Windows
+          凭据管理器里，不受影响。
+        </p>
+        <ol className="mt-2 ml-4 list-decimal">
+          <li>
+            先用 winget 装官方包（<code>{AG_WINGET_ID[agProduct]}</code>）
+          </li>
+          <li>
+            没成就从 Google 自己的下载域取官方安装器，核 Authenticode 签名主体含
+            Google 之后静默安装
+          </li>
+          <li>装完回读检测核对，不看安装器的退出码</li>
+          <li>
+            <strong>装完自动重新上锁</strong> —— 新程序继承的是干净权限，
+            门禁那条执行锁跟着旧文件没了
+          </li>
+        </ol>
+        <p className="notice mt-2">
+          面板<strong>不分发也不托管 Google 的安装包</strong>
+          ：装的就是你自己去官网点下载得到的那一个文件。官网不公布安装包哈希，
+          所以完整性靠「只从 Google 的域下」加「必须验出 Google 签名」两道 ——
+          读不出签名一律不装。
+        </p>
+        <div className="mt-3">
+          <Checkbox
+            checked={agForce}
+            disabled={busy === "antigravity"}
+            onChange={setAgForce}
+          >
+            强制重装（同版本也重装）
+          </Checkbox>
+        </div>
+        <div className="mt-2">
+          <PathField
+            label="已有官方安装包就填这里（可选）"
+            value={agLocal}
+            onChange={setAgLocal}
+            kind="file"
+            disabled={busy === "antigravity"}
+            hint="拿不到网络时的退路：你自己从官网下的那个 .exe。面板仍会核对 Google 签名才跑它。"
+          />
+        </div>
+      </ConfirmDialog>
 
       {/* ------------------------------------------------ 卸载确认框 */}
       <ConfirmDialog
@@ -1144,22 +1845,25 @@ export default function Environment() {
       </Modal>
 
       {/* --------------------------------------------- Chrome 清空重装 */}
+      {/* ⛔ 装没装按 `chromeInstalled` 那条三源兜底链判，而且**没读到时按「装了」说** ——
+          后端 `chrome::reinstall` 自己会去看 exe 在不在、在就清空，前端拿不准时把
+          最重的那份后果说出口，比说成「只装不碰数据」安全。 */}
       <ConfirmDialog
         open={askChrome}
         onCancel={() => setAskChrome(false)}
         onConfirm={() => void runChromeReinstall()}
         title={
-          tr?.chrome_installed
+          chromeInstalled !== false
             ? "清空并重装 Google Chrome？"
             : "安装 Google Chrome？"
         }
         confirmLabel={
-          tr?.chrome_installed ? "我知道会全部清空，开始" : "开始安装"
+          chromeInstalled !== false ? "我知道会全部清空，开始" : "开始安装"
         }
         loading={busy === "chrome"}
-        danger={!!tr?.chrome_installed}
+        danger={chromeInstalled !== false}
       >
-        {tr?.chrome_installed ? (
+        {chromeInstalled !== false ? (
           <>
             <p>
               <strong>这一步会毁掉数据，而且不可恢复。</strong>
@@ -1429,19 +2133,45 @@ function UninstallCol({
         先<strong>只读盘点</strong>：每一处带着绝对路径与归属依据摆给你看，
         输入「卸载」两个字才动手。{note}
       </p>
-      <div className="mt-3 border-t border-line pt-3">
-        <Button
-          size="sm"
-          icon={<Terminal size={13} />}
-          onClick={() => onPrompt(target)}
-        >
-          卸载提示词
-        </Button>
-        <p className="notice mt-1">
-          给别的 AI 用，兜面板够不到的地方：WSL 发行版、其它 Windows 用户账户。
-        </p>
-      </div>
+      <PromptButton onPrompt={() => onPrompt(target)} disabled={!!busy} />
     </Col>
+  );
+}
+
+/**
+ * 塞在某一栏底部的精简版卸载入口（反重力 / Gemini CLI，0.28.0）。
+ *
+ * 这两张卡的三栏各有各的用途，硬加第四栏会把 `lg:grid-cols-3` 挤成四栏窄条；
+ * 而它们也没有对应的官方重装流程，不给「卸载提示词」按钮 —— 只有「完全卸载」，
+ * 走跟别的卡同一套「只读盘点 → 输入确认词 → 执行 → 复扫」。
+ */
+function UninstallInline({
+  target,
+  busy,
+  onPlan,
+  note,
+}: {
+  target: PurgeTarget;
+  busy: string;
+  onPlan: (t: PurgeTarget) => void;
+  note: string;
+}) {
+  return (
+    <div className="mt-3 border-t border-line pt-3">
+      <Button
+        size="sm"
+        variant="danger"
+        icon={<Trash2 size={13} />}
+        loading={busy === `plan-${target}`}
+        disabled={!!busy}
+        onClick={() => onPlan(target)}
+      >
+        完全卸载
+      </Button>
+      <p className="notice mt-1">
+        先<strong>只读盘点</strong>，输入「卸载」两个字才动手。{note}
+      </p>
+    </div>
   );
 }
 

@@ -52,6 +52,17 @@ import type { IpInfo } from "./generated/IpInfo";
 import type { IpLookupReport } from "./generated/IpLookupReport";
 import type { KillReport } from "./generated/KillReport";
 import type { KillRole } from "./generated/KillRole";
+import type { GeminiBridgeStatus } from "./generated/GeminiBridgeStatus";
+import type { BridgeHealth } from "./generated/BridgeHealth";
+import type { BridgeSettings } from "./generated/BridgeSettings";
+import type { BridgeSettingsView } from "./generated/BridgeSettingsView";
+import type { TavernGptQuota } from "./generated/TavernGptQuota";
+import type { TavernGeminiQuota } from "./generated/TavernGeminiQuota";
+import type { TavernRoleplayTest } from "./generated/TavernRoleplayTest";
+import type { BridgeTelemetry } from "./generated/BridgeTelemetry";
+import type { UiStatus } from "./generated/UiStatus";
+import type { UiConfig } from "./generated/UiConfig";
+import type { DangerRules } from "./generated/DangerRules";
 import type { KillTarget } from "./generated/KillTarget";
 import type { LaunchResult } from "./generated/LaunchResult";
 import type { LaunchTarget } from "./generated/LaunchTarget";
@@ -101,14 +112,20 @@ import type { StepState } from "./generated/StepState";
 import type { SwitchReport } from "./generated/SwitchReport";
 import type { SyncReport } from "./generated/SyncReport";
 import type { TavernCandidate } from "./generated/TavernCandidate";
+import type { GptBridgeStatus } from "./generated/GptBridgeStatus";
+import type { TavernBackend } from "./generated/TavernBackend";
 import type { TavernConfig } from "./generated/TavernConfig";
 import type { TavernEvidence } from "./generated/TavernEvidence";
 import type { TavernSurvey } from "./generated/TavernSurvey";
 import type { TokenBucket } from "./generated/TokenBucket";
 import type { TokenSummary } from "./generated/TokenSummary";
 import type { TokenUsage } from "./generated/TokenUsage";
+import type { UsageOverview } from "./generated/UsageOverview";
+import type { BrowserReport } from "./generated/BrowserReport";
+import type { ProbeStart } from "./generated/ProbeStart";
 import type { Trace } from "./generated/Trace";
 import type { TraceReport } from "./generated/TraceReport";
+import type { UpdateInfo } from "./generated/UpdateInfo";
 import type { UpdateStatus } from "./generated/UpdateStatus";
 import type { UpgradeAction } from "./generated/UpgradeAction";
 import type { UpgradePlan } from "./generated/UpgradePlan";
@@ -148,6 +165,11 @@ export type {
   FirewallRule,
   GateStatus,
   GateTarget,
+  GptBridgeStatus,
+  GeminiBridgeStatus,
+  UiStatus,
+  UiConfig,
+  DangerRules,
   HookStatus,
   InstallKind,
   InstallProbe,
@@ -200,6 +222,7 @@ export type {
   StepState,
   SwitchReport,
   SyncReport,
+  TavernBackend,
   TavernCandidate,
   TavernConfig,
   TavernEvidence,
@@ -207,8 +230,10 @@ export type {
   TokenBucket,
   TokenSummary,
   TokenUsage,
+  UsageOverview,
   Trace,
   TraceReport,
+  UpdateInfo,
   UpdateStatus,
   UpgradeAction,
   UpgradePlan,
@@ -344,14 +369,30 @@ export const api = {
   accountsTokens: (label: string) =>
     call<TokenUsage>("accounts_tokens", { label }),
   /**
-   * 用量小结：用了多少 token、缓存命中多少、缓存省下多少钱。
+   * 用量小结（账户卡用，每分钟一次）：token、按官方 API 价折算的美元、
+   * 今天 / 7 天 / 30 天三档、缓存命中。不带最近请求这类明细。
    *
-   * `days`：`1` = 今天，`7` = 含今天的最近七天，`0` = 全部。
-   * 那个美元数是**缓存省下的**（这些 token 按整价重读要多花多少），
-   * **不是你花了多少** —— 订阅账户付的是月费。
+   * `days`：`1` = 今天，`7` / `30` = 含今天的最近 N 天，`0` = 全部。
+   * ⛔ 美元是「同样的 token 走 API 要付多少」，**订阅不按这个收费** —— 界面必须写明。
    */
   accountsTokenSummary: (label: string, days: number) =>
     call<TokenSummary>("accounts_token_summary", { label, days }),
+  /**
+   * 用量明细页：当前槽位的完整小结（按天 / 按模型 / 按小时 / 最近请求）
+   * 加上「按账户」—— 后端把默认目录只扫一遍、分给所有槽位。零网络。
+   */
+  accountsUsageOverview: (label: string, days: number) =>
+    call<UsageOverview>("accounts_usage_overview", { label, days }),
+  /**
+   * 用系统默认浏览器做一次「中文环境」采集（2026-09-24）：后端在 127.0.0.1 上开一个一次性
+   * 小服务并打开默认浏览器。`opened: false` = 没替你打开，界面给链接让你自己开。
+   */
+  browserProbeStart: () => call<ProbeStart>("browser_probe_start"),
+  /** 等那一次交回结果；两分钟没人交回是 `null`。 */
+  browserProbeWait: (token: string) =>
+    call<BrowserReport | null>("browser_probe_wait", { token }),
+  /** 最近一次交回的报告（只在后端内存里，面板重启就没了）。 */
+  browserProbeLast: () => call<BrowserReport | null>("browser_probe_last"),
   /**
    * 「这个账户现在还能用吗」—— 拿槽位里的令牌向官方发**一次**最小认证请求。
    *
@@ -469,7 +510,14 @@ export const api = {
     call<UpgradePlan>("upgrade_plan", { channel }),
   upgradeExecute: (channel: Channel = "latest", force = false) =>
     call<string>("upgrade_execute", { channel, force }),
+  // 应用自己的更新（0.25.3）。`updateStatus` 只读内存不联网；`updateCheck` 才问 GitHub。
+  // ⛔ `updateInstall` 会让面板退出 —— 只能从更新弹窗里那颗「一键更新」调。
   updateStatus: () => call<UpdateStatus>("update_status"),
+  updateCheck: (manual: boolean) =>
+    call<UpdateStatus>("update_check", { manual }),
+  updateSkip: (version: string | null) =>
+    call<UpdateStatus>("update_skip", { version }),
+  updateInstall: () => call<void>("update_install"),
 
   // 一键关闭
   officialSwitchPreview: () => call<KillReport>("official_switch_preview"),
@@ -530,8 +578,61 @@ export const api = {
   pluginList: () => call<PluginStatus[]>("plugin_list"),
   pluginCatalogStatus: () =>
     call<OfficialCatalogStatus>("plugin_catalog_status"),
-  pluginStart: () => call<string>("plugin_start"),
+  /** 起酒馆。缺省 Claude 后端（你自己的 bridge.py）；`"gpt"` 走面板内置的 GPT 桥接。 */
+  pluginStart: (backend?: TavernBackend) =>
+    call<string>("plugin_start", { backend: backend ?? null }),
   pluginStop: () => call<string[]>("plugin_stop"),
+  /** 内置 GPT 桥接的状态（不含密钥）。 */
+  tavernGptStatus: () => call<GptBridgeStatus>("tavern_gpt_status"),
+  /** 酒馆 Custom 源要填的密钥。只在使用者点「复制密钥」时读。 */
+  tavernGptToken: () => call<string>("tavern_gpt_token"),
+  /**
+   * 激活 GPT 槽位的联网额度。`refresh: false` 只读「最近一次」、**绝不联网**；
+   * 只有使用者点了刷新才传 `true`（2026-09-23：联网额度只手动刷新）。
+   */
+  tavernGptQuota: (refresh: boolean) =>
+    call<TavernGptQuota | null>("tavern_gpt_quota", { refresh }),
+  /** 内置 Gemini 桥接的状态（不含密钥）。驱动的是官方 Gemini CLI，不是反重力本体。 */
+  tavernGeminiStatus: () => call<GeminiBridgeStatus>("tavern_gemini_status"),
+  // Claude 桥自己那两个网页搬进面板（0.32.0）。
+  //
+  // 调的是使用者自己那份 `bridge.py` 的 HTTP 接口（只绑回环）。
+  // 面板**不分发它** —— 别人机器上可能是别的版本、甚至没有，
+  // 所以这几条报错时界面要**照实显示后端那句话**，不要当成「没有数据」。
+  tavernBridgeHealth: () => call<BridgeHealth>("tavern_bridge_health"),
+  tavernBridgeSettings: () =>
+    call<BridgeSettingsView>("tavern_bridge_settings"),
+  tavernBridgeSettingsSave: (settings: BridgeSettings) =>
+    call<void>("tavern_bridge_settings_save", { settings }),
+  tavernBridgeTelemetry: (offset: number, limit: number) =>
+    call<BridgeTelemetry>("tavern_bridge_telemetry", { offset, limit }),
+  /** 清空调用日志。**不可逆** —— 调用方先弹确认框。 */
+  tavernBridgeTelemetryClear: () =>
+    call<number>("tavern_bridge_telemetry_clear"),
+  tavernGeminiToken: () => call<string>("tavern_gemini_token"),
+  /** 激活账户 Gemini CLI 那一半的联网额度。`refresh` 同上。 */
+  tavernGeminiQuota: (refresh: boolean) =>
+    call<TavernGeminiQuota | null>("tavern_gemini_quota", { refresh }),
+  tavernBridgeRoleplayTest: (provider: "claude" | "gpt" | "gemini", fixture?: string) =>
+    call<TavernRoleplayTest>("tavern_bridge_roleplay_test", {
+      provider,
+      fixture: fixture ?? null,
+    }),
+
+  // 反重力汉化与审批引擎（插件 antigravity-ui：只注入脚本，不起 Hub、不改文件）
+  antigravityUiStatus: () => call<UiStatus>("antigravity_ui_status"),
+  antigravityUiStart: () => call<UiStatus>("antigravity_ui_start"),
+  antigravityUiStop: () => call<void>("antigravity_ui_stop"),
+  antigravityUiConfigSave: (cfg: UiConfig) =>
+    call<void>("antigravity_ui_config_save", { cfg }),
+  antigravityUiRules: () => call<DangerRules>("antigravity_ui_rules"),
+  antigravityUiRulesSave: (rules: DangerRules) =>
+    call<void>("antigravity_ui_rules_save", { rules }),
+  antigravityUiRulesReset: () =>
+    call<DangerRules>("antigravity_ui_rules_reset"),
+  // ⚠ `geminiCliInstall` 原来在这里也有一份、跟 `lib/antigravity.ts` 里那份一模一样。
+  // 0.29.0 它变成了一个长任务（要带进度、要返回结果），两份定义必然漂开，
+  // 所以只留 `antigravityApi.geminiCliInstall` 那一份。
   tavernConfig: () => call<TavernConfig>("tavern_config"),
   tavernConfigSave: (cfg: TavernConfig) =>
     call<void>("tavern_config_save", { cfg }),

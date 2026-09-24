@@ -180,6 +180,10 @@ impl Route {
             Client::ClaudeCode => "claude-code",
             Client::ClaudeDesktop => "claude-desktop",
             Client::Codex => "codex",
+            // 反重力不该有线路（没有中转路径，`route_save` 在入口拒绝）；这里仍给出
+            // 与 serde 一致的段，免得哪天有人绕过入口时 id 段是空的、两条线路撞成一条。
+            Client::Antigravity => "antigravity",
+            Client::AntigravityIde => "antigravity-ide",
         };
         format!("{c}\u{1f}{station_id}\u{1f}{group}")
     }

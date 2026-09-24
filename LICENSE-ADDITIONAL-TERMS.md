@@ -1,6 +1,6 @@
 # Additional Terms for QB Gate
 
-*Supplementing the GNU Affero General Public License, version 3, under its section 7.*
+_Supplementing the GNU Affero General Public License, version 3, under its section 7._
 
 QB Gate — Copyright (C) 2026 smithtaylor7748-ops
 
@@ -63,7 +63,7 @@ provided for convenience; the English text is authoritative.
 
 # QB Gate 附加条款
 
-*依 GNU Affero 通用公共许可证第 3 版（AGPL-3.0）第 7 节对该许可证的补充。*
+_依 GNU Affero 通用公共许可证第 3 版（AGPL-3.0）第 7 节对该许可证的补充。_
 
 QB Gate — 版权所有 (C) 2026 smithtaylor7748-ops
 

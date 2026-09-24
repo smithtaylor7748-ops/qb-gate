@@ -1,7 +1,7 @@
 {
   "name": "qb-gate",
   "private": true,
-  "version": "0.24.8",
+  "version": "0.25.3",
   "type": "module",
   "description": "官方账户、中转站与扩展的 Windows 本地工作空间",
   "license": "AGPL-3.0-only",

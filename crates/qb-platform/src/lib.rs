@@ -12,6 +12,7 @@
 //! | [`acl`] | 给文件加/摘 Deny ExecuteFile |
 //! | [`firewall`] | 加/摘一条按 exe 限定的出站阻止规则（0.19.0） |
 //! | [`secret`] | DPAPI 封/解一串字节 |
+//! | [`credentials`] | 问一条 Windows 凭据在不在，必要时把 blob 读出来（0.32.0） |
 //! | [`signature`] | 问一个 exe 是谁签的 |
 //! | [`process`] | 隐藏窗口地起子进程、Job 对象 |
 //! | [`config_io`] | 多文件 + SQLite 的两阶段提交与崩溃恢复 |
@@ -39,6 +40,7 @@ pub use qb_foundation::{audit, error, paths, sink};
 #[cfg(windows)]
 pub mod acl;
 pub mod config_io;
+pub mod credentials;
 pub mod endpoint;
 pub mod firewall;
 pub mod legacy;

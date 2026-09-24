@@ -41,6 +41,7 @@ import { useChecks } from "../security/useChecks";
 import ScoreBand from "./ScoreBand";
 import AccountBand from "./AccountBand";
 import GptBand from "./GptBand";
+import AntigravityBand from "./AntigravityBand";
 
 export default function Home() {
   const progress = useProgress();
@@ -211,7 +212,15 @@ export default function Home() {
         )}
       </Modal>
       {/* ---------------------------------------------- Claude / Codex 页签 */}
-      {side === "claude" ? <AccountBand /> : <GptBand />}
+      {/* 不认识的值落回默认那一边（Claude），不落进最后一个分支 —— 原来「不是 Claude
+          也不是 GPT」就显示反重力，一个写错的键值就把人带到另一个产品的页面上。 */}
+      {side === "gpt" ? (
+        <GptBand />
+      ) : side === "antigravity" ? (
+        <AntigravityBand />
+      ) : (
+        <AccountBand />
+      )}
     </div>
   );
 }

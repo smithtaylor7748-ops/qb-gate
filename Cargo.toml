@@ -32,7 +32,7 @@ resolver = "2"
 members = ["src-tauri", "crates/*"]
 
 [workspace.package]
-version = "0.24.8"
+version = "0.25.3"
 edition = "2021"
 rust-version = "1.88"
 license = "AGPL-3.0-only"
@@ -83,6 +83,10 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 futures-util = { version = "0.3", default-features = false }
+# 反重力汉化引擎（0.26.0）要跟 Hub 的 Chrome DevTools 协议说话，那是本机回环上的
+# `ws://127.0.0.1`。只开最小 feature：不带 TLS —— 回环上没有 TLS，也不想为此多拉一套证书栈。
+# MIT，crates.io，`cargo deny` 的 licenses / sources 都过。
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }
 reqwest = { version = "0.12", features = [
   "json",
   "rustls-tls",
@@ -93,6 +97,18 @@ reqwest = { version = "0.12", features = [
 ts-rs = { version = "11", features = ["serde-compat"] }
 sha2 = "0.10"
 hex = "0.4"
+# 反重力 IDE 的状态库把 protobuf 存成 base64（0.30.0，`qb-accounts::antigravity::status`）。
+# 0.22 早就在依赖树里（reqwest / tauri 都用它），不引入新来源。
+base64 = "0.22"
+# 只给 `install::antigravity_setup` 解一次 gzip 用。
+#
+# ⛔ **不要改成给 workspace 的 reqwest 开 `gzip` 特性** —— 那会让**每一个** reqwest
+# 客户端都自动加 `Accept-Encoding: gzip` 并透明解压，其中包括本机路由那条
+# 要求逐字节流式转发的上游连接（`local_router`）。为了一个下载页去改一条
+# SSE 代理的行为，是典型的「在你机器上看着没事」。
+#
+# flate2 本来就在依赖树里（`png` → Tauri 的图标处理），加它不引入任何新 crate。
+flate2 = "1"
 uuid = { version = "1", features = ["v4"] }
 toml_edit = { version = "0.22", features = ["serde"] }
 serde_yaml_ng = "0.10"
@@ -110,6 +126,9 @@ windows = { version = "0.58", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
+  # 凭据管理器（0.32.0）：反重力 Hub 的登录只存在那里，本机别处一个字都没写。
+  # 只用 CredReadW / CredFree，见 qb-platform 的 credentials.rs。
+  "Win32_Security_Credentials",
   # DPAPI：中转站的 API Key 靠它加密落盘，见 qb-platform 的 secret.rs。
   "Win32_Security_Cryptography",
   "Win32_System_Threading",
@@ -127,4 +146,14 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 panic = "unwind"
-strip = true
+# 0.29.0：`true`（= 连符号表一起剥）改成只剥调试信息。
+#
+# 理由不是体积，是**杀软的静态启发式**：「全剥符号 + LTO + opt-level=s + 未签名」
+# 是一组常一起出现在打包/混淆过的样本上的特征。本机 2026-09 连着三次被
+# Trojan:Win32/Bearfoos.A!ml 隔离（见 docs/ANTIVIRUS.zh-CN.md），能改的信号不多，
+# 这是其中最便宜的一个。
+#
+# ⚠ **这一条是四项缓解里把握最小的**，也是唯一一个有代价的（安装包大一点）。
+# 等哪天真上了代码签名，可以先把它改回 `true` 再观察 —— 改之前后各交一次
+# VirusTotal 做对照，别凭感觉。
+strip = "debuginfo"

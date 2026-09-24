@@ -34,9 +34,15 @@ export type TaskName =
   | "launch-claude-code"
   | "launch-claude-desktop"
   | "launch-codex"
+  | "launch-antigravity"
+  | "launch-antigravity-ide"
   | "killswitch-preview"
   | "killswitch-execute"
-  | "chrome-reinstall";
+  | "chrome-reinstall"
+  | "install-codex-desktop"
+  | "install-antigravity"
+  | "install-gemini-cli"
+  | "self-update";
 
 export interface TaskState {
   running: boolean;
@@ -70,19 +76,22 @@ function notify(task: string): void {
   listeners.get(task)?.forEach((l) => l());
 }
 
-function stateOf(task: string): TaskState {
+export function stateOf(task: string): TaskState {
   return states.get(task) ?? IDLE;
 }
 
 /** 日志无上限会把内存吃光；装一个大包能刷出几千行。 */
 const MAX_LOG = 500;
 
-function apply(p: TaskProgress): void {
+export function applyTaskProgress(p: TaskProgress): void {
   const prev = stateOf(p.task);
   const log = p.log ? [...prev.log, p.log].slice(-MAX_LOG) : prev.log;
   states.set(p.task, {
     running: !p.done,
-    phase: p.phase,
+    // 只带日志的那种事件 `phase` 是空串（见 `events::Reporter::log`）。
+    // 照抄过去就会把当前这一段的标题抹掉，界面退回「启动中…」——
+    // 于是**日志刷得越勤，界面上能看见的信息越少**。空串 = 没有新标题，保留旧的。
+    phase: p.phase || prev.phase,
     step: p.step,
     total: p.total,
     log,
@@ -121,12 +130,12 @@ function ensureListening(): void {
   if (unlisten) return;
   // 订阅失败不能变成未捕获的 promise 拒绝：拿不到进度事件只是进度条不动，
   // 面板其它部分照常能用，不该在控制台留一条吓人的红字。
-  unlisten = listen<TaskProgress>(CHANNELS.task, (e) => apply(e.payload)).catch(
-    () => {
-      unlisten = null; // 允许下次挂载时重试
-      return () => undefined;
-    },
-  );
+  unlisten = listen<TaskProgress>(CHANNELS.task, (e) =>
+    applyTaskProgress(e.payload),
+  ).catch(() => {
+    unlisten = null; // 允许下次挂载时重试
+    return () => undefined;
+  });
 }
 
 export function useTask(task: TaskName): TaskState {

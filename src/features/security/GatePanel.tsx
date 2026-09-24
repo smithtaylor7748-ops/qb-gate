@@ -217,6 +217,8 @@ export function AllowlistPanel() {
         )}
       </Card>
 
+      <GateRange />
+
       <CountryGate />
 
       <ConfirmDialog
@@ -553,8 +555,6 @@ export function LockPanel() {
         </Card>
       )}
 
-      <GateRange />
-
       <Card as="h3" title="看门狗" className="mb-3">
         {/* 这两条是说明，不是数据 —— 旧界面把它们做成了跟真实数据行一模一样的
             两栏行，看起来像是在报告当前配置。 */}
@@ -693,28 +693,60 @@ export function LockPanel() {
 }
 
 /**
- * 门禁范围 —— Codex 算不算。
+ * 门禁范围 —— GPT（Codex）算不算。
  *
- * 排在执行锁这一块里，因为它决定的正是「哪些 exe 会被加 Deny ACE」。
+ * 0.25.0 起**默认算**（使用者定的：「默认定死被 IP 锁接管」），存的是反义的
+ * `codex_outside_gate`，所以复选框显示的是它的反面。放在「IP 锁」弹窗里
+ * （评分栏那张 IP 锁卡点开的就是这一个）——使用者要的位置；以前在「执行锁」
+ * 弹窗和一个已经没有路由的旧页面里各一份。
+ *
+ * 归门禁的含义跟 Claude 一样：codex.exe 加 Deny ACE、GPT 桌面端起之前验 IP、
+ * 起来之后持租约、看门狗判不过就收。
  */
 function GateRange() {
   const settings = useResource("settings", R.settings);
   const action = useAction();
-  const [next, setNext] = useState<boolean | null>(null);
+  // 待确认的调整：改的是哪个开关、改成什么。两个开关一个弹窗，文案按 which 分。
+  const [next, setNext] = useState<{
+    which: "codex" | "antigravity";
+    on: boolean;
+  } | null>(null);
+  const underGate = !(settings.data?.codex_outside_gate ?? false);
+  const agUnderGate = !(settings.data?.antigravity_outside_gate ?? false);
   return (
     <Card as="h3" title="门禁范围" className="mb-3">
       <label className="qb-setting-row">
         <span>
-          <strong>将 Codex 纳入门禁</strong>
+          <strong>GPT（Codex）也归门禁管</strong>
           <small>
-            关闭正在运行的 Codex 会话后可调整。与 Claude 共用同一门禁规则。
+            默认开启，与 Claude 共用同一套门禁：启动前验出口
+            IP、看门狗巡检、codex.exe 上执行锁。关闭正在运行的 GPT
+            桌面端后可调整。
           </small>
         </span>
         <input
           type="checkbox"
-          checked={settings.data?.codex_under_gate ?? false}
+          checked={underGate}
           disabled={!settings.data || !!action.pending}
-          onChange={(e) => setNext(e.target.checked)}
+          onChange={(e) => setNext({ which: "codex", on: e.target.checked })}
+        />
+      </label>
+      <label className="qb-setting-row">
+        <span>
+          <strong>反重力（Hub + IDE）也归门禁管</strong>
+          <small>
+            默认开启（0.26.0）。两个产品共用这一个开关：主程序、语言服务器、第三方汉化壳留下的
+            original 一起上执行锁；起之前验出口
+            IP，看门狗按桌面档盯。关闭正在运行的反重力后可调整。
+          </small>
+        </span>
+        <input
+          type="checkbox"
+          checked={agUnderGate}
+          disabled={!settings.data || !!action.pending}
+          onChange={(e) =>
+            setNext({ which: "antigravity", on: e.target.checked })
+          }
         />
       </label>
       <Modal
@@ -730,10 +762,14 @@ function GateRange() {
                   .run(
                     "gate-range",
                     () =>
-                      api.settingsSave({
-                        ...settings.data!,
-                        codex_under_gate: next,
-                      }),
+                      api.settingsSave(
+                        next.which === "codex"
+                          ? { ...settings.data!, codex_outside_gate: !next.on }
+                          : {
+                              ...settings.data!,
+                              antigravity_outside_gate: !next.on,
+                            },
+                      ),
                     "门禁范围已更新",
                   )
                   .then((s) => {
@@ -746,9 +782,13 @@ function GateRange() {
         }
       >
         <p>
-          {next
-            ? "之后启动的 Codex 会话将接受门禁检查，检查未通过会停止受管会话。"
-            : "之后启动的 Codex 会话不接受门禁检查，并解除已知 Codex 程序的执行锁。"}
+          {next?.which === "antigravity"
+            ? next.on
+              ? "之后反重力 Hub / IDE 起之前先验出口 IP，起来之后归看门狗管，检查未通过会被关闭；它们的主程序与语言服务器一并上执行锁。"
+              : "之后反重力独立启动：不验 IP、不受看门狗管，并解除它们身上已知的执行锁。Claude 与 GPT 那两侧不受影响。"
+            : next?.on
+              ? "之后 GPT 桌面端起之前先验出口 IP，起来之后归看门狗管，检查未通过会被关闭；codex.exe 一并上执行锁。"
+              : "之后 GPT 桌面端独立启动：不验 IP、不受看门狗管，并解除已知 codex.exe 上的执行锁。Claude 那一侧不受影响。"}
         </p>
         {action.error && (
           <p className="notice notice--danger">{action.error}</p>

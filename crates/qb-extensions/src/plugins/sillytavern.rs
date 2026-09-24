@@ -25,8 +25,43 @@ pub const PLUGIN_ID: &str = "sillytavern";
 pub const PLUGIN_NAME: &str = "酒馆 SillyTavern";
 
 const BRIDGE_READY_ATTEMPTS: u32 = 40; // 40 × 500ms = 20 秒
-const ST_READY_ATTEMPTS: u32 = 120; // 120 × 500ms = 60 秒
+
+/// 等酒馆应答 HTTP 的上限：360 × 500ms = **180 秒**。
+///
+/// # 为什么从 60 秒改成 180 秒
+///
+/// 酒馆的启动脚本（SillyTavern 自带的 `Start.bat`）**每次都先跑一遍
+/// `npm install`** 校验依赖，装完才 `node server.js`。所以「启动酒馆」这件事
+/// 从来就不是起一个进程那么快：
+///
+/// * 2026-09-21 本机实测，依赖全是热的、npm 只花 2 秒的情况下，从起进程到
+///   `GET /` 回 200 + `text/html` 用了 **47.2 秒**；
+/// * 冷启动（当天第一次、npm 要联网、杀软在扫 449 个包）远不止这个数。
+///
+/// 60 秒的窗口正好卡在这条线上：审计日志里 2026-09-21 02:43:49 起、02:44:57 收 ——
+/// 68 秒，就是「等满 60 秒 + 回滚」。而回滚会**把那份正在启动的酒馆杀掉**，
+/// 于是使用者看到的是「GPT 酒馆启动失败」，重试一次还是失败，
+/// 因为每次都在它起来之前把它掐了。
+///
+/// ⚠ 这个数只是上限，不是等待时长：起来了就立刻返回。调大它不会让正常启动变慢。
+const ST_READY_ATTEMPTS: u32 = 360;
 const POLL_MS: u64 = 500;
+/// 等待期间每隔多少次轮询往界面上报一句「已等 N 秒」。8 × 500ms = 4 秒。
+const ST_TICK_EVERY: u32 = 8;
+
+/// 酒馆的三个后端。一份酒馆、三条桥：Claude 走使用者自己的 `bridge.py`，
+/// GPT 走面板内置的桥接（`qb-app::gpt_bridge`，每个请求驱动一次官方 `codex exec`），
+/// Gemini 走面板内置的另一条（`qb-app::gemini_bridge`，每个请求驱动一次官方 Gemini CLI 的
+/// 无交互模式；0.26.0，反重力本体没有公开的无交互 CLI，见 `qb-accounts::gemini`）。
+/// 三条桥可以同时开，酒馆里各配一个「Custom」连接档。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub enum TavernBackend {
+    Claude,
+    Gpt,
+    Gemini,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export)]
@@ -36,6 +71,41 @@ pub struct TavernConfig {
     pub st_launcher: PathBuf,
     pub bridge_port: u16,
     pub st_port: u16,
+    /// 内置 GPT 桥接监听的端口（0.25.0）。旧配置文件里没有这几项，按默认值读。
+    #[serde(default = "default_gpt_port")]
+    pub gpt_bridge_port: u16,
+    /// 交给 `codex exec -m` 的模型；空 = 不传，用 Codex 自己的默认模型。
+    #[serde(default)]
+    pub gpt_model: String,
+    /// 追加到酒馆角色卡之前的 GPT 系统提示词；空 = 只使用请求里的角色卡。
+    #[serde(default)]
+    pub gpt_system_prompt: String,
+    /// 推理强度（`model_reasoning_effort`）：`low` / `medium` / `high`；空 = 不传。
+    #[serde(default = "default_gpt_effort")]
+    pub gpt_effort: String,
+    /// 要不要把酒馆对话记进槽位的会话目录（`home\sessions`，用量卡会数到它）。
+    /// **默认不记**（`--ephemeral`）：角色扮演对话不该悄悄落进 Codex 的会话历史。
+    #[serde(default)]
+    pub gpt_persist_sessions: bool,
+    /// 内置 Gemini 桥接监听的端口（0.26.0）。
+    #[serde(default = "default_gemini_port")]
+    pub gemini_bridge_port: u16,
+    /// 交给 Gemini CLI `-m` 的模型；空 = 不传，用 CLI 自己的默认模型。
+    #[serde(default)]
+    pub gemini_model: String,
+    /// 追加到酒馆角色卡之前的 Gemini 系统提示词；空 = 只使用请求里的角色卡。
+    #[serde(default)]
+    pub gemini_system_prompt: String,
+}
+
+fn default_gpt_port() -> u16 {
+    5002
+}
+fn default_gemini_port() -> u16 {
+    5003
+}
+fn default_gpt_effort() -> String {
+    "medium".into()
 }
 
 impl Default for TavernConfig {
@@ -49,18 +119,26 @@ impl Default for TavernConfig {
         // 留空之后，`status()` 里的存在性检查一律不过，插件如实停在
         // `PluginState::Missing`（「依赖不齐，展开看缺哪一项」）——
         // 这正是「还没配」的准确描述。用户在设置里填完自己的路径就好。
-        // 端口保留默认值：5001 / 8000 是桥接与酒馆各自的约定端口，与机器无关。
+        // 端口保留默认值：5001 / 5002 / 8000 是两条桥与酒馆各自的约定端口，与机器无关。
         Self {
             bridge_root: PathBuf::new(),
             sillytavern_root: PathBuf::new(),
             st_launcher: PathBuf::new(),
             bridge_port: 5001,
             st_port: 8000,
+            gpt_bridge_port: default_gpt_port(),
+            gpt_model: String::new(),
+            gpt_system_prompt: String::new(),
+            gpt_effort: default_gpt_effort(),
+            gpt_persist_sessions: false,
+            gemini_bridge_port: default_gemini_port(),
+            gemini_model: String::new(),
+            gemini_system_prompt: String::new(),
         }
     }
 }
 
-/// 三个路径里还空着的那几项。**「还没配」和「配错了」必须分开。**
+/// 路径里还空着的那几项。**「还没配」和「配错了」必须分开。**
 ///
 /// 空 `PathBuf` 拼 `bridge.py` 得到的是个相对文件名，于是
 /// `start()` 的 `NotFound` 报出来是「路径不存在: bridge.py」——
@@ -71,16 +149,23 @@ impl Default for TavernConfig {
 /// 两种情况的下一步完全相反：**没配**要去设置里填自己那份部署的位置，
 /// **配错**要拿报出来的绝对路径去对照盘上的真实位置改。合成一句，
 /// 谁都查不出来 —— 跟 `IpUnknown` / `IpNotAllowed` 不许合并是同一条道理。
-fn unset_paths(cfg: &TavernConfig) -> Vec<&'static str> {
-    [
-        (&cfg.bridge_root, "桥接项目目录"),
+///
+/// GPT 后端用不着 `bridge.py`（桥接是面板内置的），只要酒馆那两个路径。
+pub fn unset_paths(cfg: &TavernConfig, backend: TavernBackend) -> Vec<&'static str> {
+    let claude_bridge = (&cfg.bridge_root, "桥接项目目录");
+    let tavern = [
         (&cfg.sillytavern_root, "SillyTavern 目录"),
         (&cfg.st_launcher, "酒馆启动脚本"),
-    ]
-    .into_iter()
-    .filter(|(p, _)| p.as_os_str().is_empty())
-    .map(|(_, label)| label)
-    .collect()
+    ];
+    let all: Vec<(&PathBuf, &'static str)> = match backend {
+        TavernBackend::Claude => std::iter::once(claude_bridge).chain(tavern).collect(),
+        // GPT / Gemini 的桥接都是面板内置的，只要酒馆那两个路径。
+        TavernBackend::Gpt | TavernBackend::Gemini => tavern.into_iter().collect(),
+    };
+    all.into_iter()
+        .filter(|(p, _)| p.as_os_str().is_empty())
+        .map(|(_, label)| label)
+        .collect()
 }
 
 /// 没配时给出的那句话。**面板不分发 SillyTavern，也不分发 bridge.py**
@@ -191,14 +276,40 @@ pub fn load_config_checked() -> Result<TavernConfig> {
         None => Ok(TavernConfig::default()),
     }
 }
+/// 存之前的校验。**纯函数** —— `save_config` 要读磁盘，而单测不许碰真实的运行期状态，
+/// 判定留在它里面就等于没有测试。
+///
+/// ⛔ **四个端口一个都不能漏。** 0.26.0 加了 `gemini_bridge_port` 却没加进这张表，
+/// 于是它能被存成 `0`、或者跟另外三个撞号 —— 撞号的症状是「Gemini 桥接起不来」，
+/// 而没有任何地方说得清为什么（配置是它自己存坏的）。错误文案也要一起说全：
+/// 少说一个，使用者就会对着一句不完整的话去改另外三个。
+pub fn validate(cfg: &TavernConfig) -> Result<()> {
+    let ports = [
+        cfg.bridge_port,
+        cfg.gpt_bridge_port,
+        cfg.gemini_bridge_port,
+        cfg.st_port,
+    ];
+    let distinct = ports.iter().collect::<std::collections::HashSet<_>>().len();
+    if ports.contains(&0) || distinct != ports.len() {
+        return Err(GateError::Other(
+            "酒馆、Claude 桥接、GPT 桥接、Gemini 桥接需要四个互不相同的有效端口".into(),
+        ));
+    }
+    if !["", "low", "medium", "high"].contains(&cfg.gpt_effort.trim()) {
+        return Err(GateError::Other(
+            "GPT 推理强度只能是 low / medium / high（或留空用默认）".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn save_config(cfg: &TavernConfig) -> Result<()> {
     let expected = crate::config_io::read_optional(&config_path())?;
     if let Some(b) = &expected {
         let _: TavernConfig = serde_json::from_slice(b)?;
     }
-    if cfg.bridge_port == 0 || cfg.st_port == 0 || cfg.bridge_port == cfg.st_port {
-        return Err(GateError::Other("应用和桥接需要两个不同的有效端口".into()));
-    }
+    validate(cfg)?;
     crate::config_io::commit(vec![crate::config_io::Edit {
         path: config_path(),
         expected,
@@ -284,7 +395,40 @@ fn find_python() -> Result<PathBuf> {
 
 // ------------------------------------------------------------------ 检测
 
+/// 定位官方 Codex CLI（内置 GPT 桥接要拿它跑 `codex exec`）。
+///
+/// 用检测那张表（`install::detect::codex_candidates`）。**先要 exe，再要 .cmd**：
+/// `.cmd` 得经 `cmd /c` 起，而 `codex exec -c key="value"` 那种带引号的参数过 cmd
+/// 那一层会被吃掉引号 —— 表里 npm 包内部那份原生 exe 就是为此收进来的。
+/// **不在这里起任何进程** —— 版本号、登录态那些留给桥接启动时报。
+pub fn find_official_codex() -> Result<PathBuf> {
+    let candidates: Vec<PathBuf> = crate::install::detect::codex_candidates()
+        .into_iter()
+        .filter(|p| p.is_file())
+        .collect();
+    let is_exe = |p: &PathBuf| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe"));
+    candidates
+        .iter()
+        .find(|p| is_exe(p))
+        .or_else(|| candidates.first())
+        .cloned()
+        .ok_or_else(|| {
+            GateError::NotFound(
+                "官方 Codex CLI（codex.exe / codex.cmd）。到「软件」页安装，或用 npm 装 @openai/codex".into(),
+            )
+        })
+}
+
 pub fn status() -> PluginStatus {
+    status_with(None, None)
+}
+
+/// 同 [`status`]，外加内置 GPT 桥接的真实状态。
+///
+/// 桥接活在面板进程里（`qb-app::gpt_bridge`），这一层（L2）看不见它；命令层拿得到
+/// 就传进来，传 `None` 时退回「端口占没占」这个近似值 —— 那只回答「有人在听」，
+/// 不回答「是不是我们」。
+pub fn status_with(gpt_running: Option<bool>, gemini_running: Option<bool>) -> PluginStatus {
     let cfg = load_config();
     let dd = bridge_data_dir();
     let mut checks = Vec::new();
@@ -339,17 +483,63 @@ pub fn status() -> PluginStatus {
         },
     ));
 
-    // 到这里为止全是依赖项，后面两条是端口现况（永远 ok，只是给人看的）。
+    // 到这里为止是 Claude 后端的依赖项。Claude 那条桥缺东西不该把 GPT 那条也判成
+    // 「依赖不齐」（反之亦然），所以两组分开数。
+    let claude_deps_len = checks.len();
+
+    // GPT 后端的依赖只有一样：官方 Codex CLI。桥接是内置的，酒馆两条路径共用。
+    let codex = find_official_codex();
+    checks.push(DependencyCheck::new(
+        "官方 Codex CLI（GPT 桥接用）",
+        codex.is_ok(),
+        match &codex {
+            Ok(p) => p.display().to_string(),
+            Err(e) => e.to_string(),
+        },
+    ));
+    let gpt_deps_ok = codex.is_ok();
+
+    // Gemini 后端的依赖：官方 Gemini CLI + node。
+    let gemini = find_official_gemini();
+    checks.push(DependencyCheck::new(
+        "官方 Gemini CLI（Gemini 桥接用）",
+        gemini.is_ok(),
+        match &gemini {
+            Ok(g) => format!("{} · {}", g.node.display(), g.entry.display()),
+            Err(e) => e.to_string(),
+        },
+    ));
+    let gemini_deps_ok = gemini.is_ok();
+
+    // 后面几条是端口现况（永远 ok，只是给人看的）。
     // 原来这行写的是 `take(4)` —— 加一条依赖检查就会有一项不参与判定，
     // 而且毫无症状。改成记住条数，加多少条都不会漏。
-    let deps_len = checks.len();
-
     let bridge_up = port_in_use(cfg.bridge_port);
+    let gpt_up = gpt_running.unwrap_or_else(|| port_in_use(cfg.gpt_bridge_port));
+    let gemini_up = gemini_running.unwrap_or_else(|| port_in_use(cfg.gemini_bridge_port));
     let st_up = port_in_use(cfg.st_port);
     checks.push(DependencyCheck::new(
-        format!("桥接端口 {}", cfg.bridge_port),
+        format!("Claude 桥接端口 {}", cfg.bridge_port),
         true,
         if bridge_up { "在监听" } else { "空闲" },
+    ));
+    checks.push(DependencyCheck::new(
+        format!("GPT 桥接端口 {}", cfg.gpt_bridge_port),
+        true,
+        match (gpt_running, gpt_up) {
+            (Some(true), _) => "面板内置桥接在监听",
+            (None, true) => "在监听",
+            _ => "空闲",
+        },
+    ));
+    checks.push(DependencyCheck::new(
+        format!("Gemini 桥接端口 {}", cfg.gemini_bridge_port),
+        true,
+        match (gemini_running, gemini_up) {
+            (Some(true), _) => "面板内置桥接在监听",
+            (None, true) => "在监听",
+            _ => "空闲",
+        },
     ));
     checks.push(DependencyCheck::new(
         format!("酒馆端口 {}", cfg.st_port),
@@ -357,37 +547,71 @@ pub fn status() -> PluginStatus {
         if st_up { "在监听" } else { "空闲" },
     ));
 
-    let deps_ok = checks.iter().take(deps_len).all(|c| c.ok);
-    let unset = unset_paths(&cfg);
-    let (state, detail) = if !unset.is_empty() {
-        // 「还没配」排在「依赖不齐」前面：路径空着时后者那句
-        // 「展开看缺哪一项」会把人引去查 Python 和 Claude，
-        // 而真正缺的是他自己还没填的三个路径。
-        (PluginState::Missing, setup_hint(&unset))
-    } else if !deps_ok {
+    let tavern_deps_ok = checks
+        .iter()
+        .take(claude_deps_len)
+        .filter(|c| c.label == "SillyTavern" || c.label == "酒馆启动脚本")
+        .all(|c| c.ok);
+    let claude_deps_ok = checks.iter().take(claude_deps_len).all(|c| c.ok);
+    let unset_claude = unset_paths(&cfg, TavernBackend::Claude);
+    let unset_gpt = unset_paths(&cfg, TavernBackend::Gpt);
+    let claude_owned = bridge_up && owned_running("bridge").unwrap_or(false);
+    let st_owned = st_up && owned_running("sillytavern").unwrap_or(false);
+    let any_builtin_up = gpt_up || gemini_up;
+    let (state, detail) = if !unset_gpt.is_empty() {
+        // 酒馆本身的路径都没填：两条桥谁也起不了。「还没配」排在「依赖不齐」前面：
+        // 路径空着时后者那句「展开看缺哪一项」会把人引去查 Python 和 Claude，
+        // 而真正缺的是他自己还没填的路径。
+        (PluginState::Missing, setup_hint(&unset_gpt))
+    } else if !tavern_deps_ok || (!claude_deps_ok && !gpt_deps_ok && !gemini_deps_ok) {
         (PluginState::Missing, "依赖不齐，展开看缺哪一项".to_string())
-    } else if bridge_up
-        && st_up
-        && owned_running("bridge").unwrap_or(false)
-        && owned_running("sillytavern").unwrap_or(false)
-    {
+    } else if st_owned && (claude_owned || any_builtin_up) {
+        let mut backends = Vec::new();
+        if claude_owned {
+            backends.push("Claude 桥接");
+        }
+        if gpt_up {
+            backends.push("GPT 桥接");
+        }
+        if gemini_up {
+            backends.push("Gemini 桥接");
+        }
         (
             PluginState::Running,
-            "登记的桥接与酒馆进程正在运行".to_string(),
+            format!("酒馆正在运行，后端：{}", backends.join("与")),
         )
-    } else if bridge_up || st_up {
+    } else if bridge_up || any_builtin_up || st_up {
         (
             PluginState::Broken,
             format!(
-                "只起来了一半：桥接 {}，酒馆 {}",
+                "只起来了一半：Claude 桥接 {}，GPT 桥接 {}，Gemini 桥接 {}，酒馆 {}",
                 if bridge_up { "在" } else { "不在" },
+                if gpt_up { "在" } else { "不在" },
+                if gemini_up { "在" } else { "不在" },
                 if st_up { "在" } else { "不在" }
             ),
         )
     } else {
+        let mut can = Vec::new();
+        if unset_claude.is_empty() && claude_deps_ok {
+            can.push("Claude");
+        }
+        if gpt_deps_ok {
+            can.push("GPT");
+        }
+        if gemini_deps_ok {
+            can.push("Gemini");
+        }
+        let sides = if can.is_empty() {
+            "三条桥都还没齐".to_string()
+        } else if can.len() == 3 {
+            "Claude、GPT、Gemini 三条桥都能起".to_string()
+        } else {
+            format!("能起 {} 桥接", can.join(" / "))
+        };
         (
             PluginState::Ready,
-            format!("就绪，数据目录 {}", dd.display()),
+            format!("就绪 · {sides} · 数据目录 {}", dd.display()),
         )
     };
 
@@ -398,6 +622,35 @@ pub fn status() -> PluginStatus {
         detail,
         checks,
     }
+}
+
+/// 官方 Gemini CLI：`(node.exe, 入口 index.js)`。给内置 Gemini 桥接用。
+///
+/// 位置表在 `install::detect::gemini_cli_candidates`。**不在这里起任何进程。**
+pub fn find_official_gemini() -> Result<GeminiCli> {
+    let entry = crate::install::detect::gemini_cli_candidates()
+        .into_iter()
+        .find(|p| p.is_file())
+        .ok_or_else(|| {
+            GateError::NotFound(format!(
+                "官方 Gemini CLI（@google/gemini-cli）。到「软件」页用 npm 装，\
+                 或手动 npm i -g @google/gemini-cli。{}",
+                crate::install::detect::gemini_cli_searched()
+            ))
+        })?;
+    let node = crate::install::detect::node_exe().ok_or_else(|| {
+        GateError::NotFound(
+            "node.exe。Gemini CLI 是 Node 包，请先装 Node.js 并确认它在 PATH 里".into(),
+        )
+    })?;
+    Ok(GeminiCli { node, entry })
+}
+
+/// 起 Gemini CLI 要的两样。
+#[derive(Debug, Clone)]
+pub struct GeminiCli {
+    pub node: PathBuf,
+    pub entry: PathBuf,
 }
 
 // ------------------------------------------------------------------ PID
@@ -583,8 +836,17 @@ impl Drop for StartAttempt {
         }
     }
 }
+/// 酒馆起来了没。
+///
+/// ⚠ **必须 `.no_proxy()`** —— 跟 [`bridge_healthy`] 同一个理由，这里原来漏了。
+/// reqwest 默认会读环境里的 `HTTP_PROXY` / 系统代理设置，而这个面板的使用者
+/// 十有八九正开着某个代理工具（门禁那一套就是围着出口 IP 转的）。
+/// 一旦环境里有 `HTTP_PROXY`，这条对 `127.0.0.1` 的健康检查就会被送去代理，
+/// 于是**酒馆明明起来了，面板永远等不到它**，最后报「未通过就绪检查」。
+/// 本机当前 `ProxyEnable=0`、没有环境变量，所以没撞上；别人的机器不一定。
 async fn tavern_healthy(port: u16) -> bool {
     let Ok(client) = reqwest::Client::builder()
+        .no_proxy()
         .timeout(std::time::Duration::from_secs(2))
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -609,16 +871,56 @@ async fn tavern_healthy(port: u16) -> bool {
 pub fn page_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
 }
+/// 起 Claude 桥接 + 酒馆（0.20 起的老路，行为不变）。
+///
+/// 阶段 1–3 起 `bridge.py`，4–5 起酒馆 —— 后两段跟 GPT 那条路共用
+/// （[`start_tavern_only`]），所以拆成两个函数。
 pub async fn start(rep: &dyn ProgressSink) -> Result<String> {
     let cfg = load_config_checked()?;
     // 路径没填就在这里停 —— **必须在起任何进程、甚至查 Python 之前**。
     // 往下走的话，第一个撞上的是 `bridge_py.is_file()`，报出来是
     // 「路径不存在: bridge.py」（空目录拼出来的相对文件名），
     // 使用者看不出这是「还没配」而不是「装坏了」。
-    let unset = unset_paths(&cfg);
+    let unset = unset_paths(&cfg, TavernBackend::Claude);
     if !unset.is_empty() {
         return Err(GateError::Other(setup_hint(&unset)));
     }
+    let mut attempt = StartAttempt {
+        created: vec![],
+        finished: false,
+    };
+    start_claude_bridge(rep, &cfg, &mut attempt).await?;
+    let url = start_tavern(rep, &cfg, &mut attempt).await?;
+    attempt.finished = true;
+    rep.done("酒馆与桥接已就绪");
+    Ok(url)
+}
+
+/// 只起酒馆（GPT 后端用：桥接活在面板进程里，由 `qb-app::gpt_bridge` 先起好）。
+///
+/// 酒馆已经在跑就直接回页面地址 —— 两条桥可以共用同一份酒馆。
+pub async fn start_tavern_only(rep: &dyn ProgressSink) -> Result<String> {
+    let cfg = load_config_checked()?;
+    let unset = unset_paths(&cfg, TavernBackend::Gpt);
+    if !unset.is_empty() {
+        return Err(GateError::Other(setup_hint(&unset)));
+    }
+    let mut attempt = StartAttempt {
+        created: vec![],
+        finished: false,
+    };
+    let url = start_tavern(rep, &cfg, &mut attempt).await?;
+    attempt.finished = true;
+    rep.done("酒馆已就绪（内置桥接）");
+    Ok(url)
+}
+
+/// 阶段 1–3：官方 Claude Code + Python + `bridge.py` → 起桥接 → 等 `/health`。
+async fn start_claude_bridge(
+    rep: &dyn ProgressSink,
+    cfg: &TavernConfig,
+    attempt: &mut StartAttempt,
+) -> Result<()> {
     let dd = bridge_data_dir();
     rep.phase(1, "检查依赖与官方身份");
     let claude = find_official_claude()?;
@@ -637,13 +939,9 @@ pub async fn start(rep: &dyn ProgressSink) -> Result<String> {
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".claude"));
     crate::residue::check_official(crate::domain::Client::ClaudeCode, &official)?;
     fix_data_dir_acl(&dd)?;
-    let mut attempt = StartAttempt {
-        created: vec![],
-        finished: false,
-    };
     rep.phase(2, "启动 Claude 桥接");
     if !owned_running("bridge")? {
-        if existing_bridge_pid(&cfg).await?.is_some() {
+        if existing_bridge_pid(cfg).await?.is_some() {
             if !bridge_healthy(cfg.bridge_port).await {
                 return Err(GateError::Other(
                     "已有桥接进程未通过健康检查，请在原启动器中处理".into(),
@@ -691,6 +989,15 @@ pub async fn start(rep: &dyn ProgressSink) -> Result<String> {
             "桥接未通过健康检查；本次启动的进程将清理".into(),
         ));
     }
+    Ok(())
+}
+
+/// 阶段 4–5：起酒馆（已经在跑就复用）→ 等 HTTP 就绪 → 回页面地址。
+async fn start_tavern(
+    rep: &dyn ProgressSink,
+    cfg: &TavernConfig,
+    attempt: &mut StartAttempt,
+) -> Result<String> {
     rep.phase(4, "启动酒馆");
     if !owned_running("sillytavern")? {
         if port_in_use(cfg.st_port) {
@@ -710,21 +1017,55 @@ pub async fn start(rep: &dyn ProgressSink) -> Result<String> {
         )?;
         attempt.created.push("sillytavern".into());
     }
-    rep.phase(5, "等酒馆 HTTP 服务就绪（最长 60 秒）");
-    for _ in 0..ST_READY_ATTEMPTS {
+    let limit = ST_READY_ATTEMPTS * POLL_MS as u32 / 1000;
+    rep.phase(
+        5,
+        &format!("等酒馆 HTTP 服务就绪（最长 {limit} 秒；它自己会先跑一遍 npm 校验依赖）"),
+    );
+    for i in 0..ST_READY_ATTEMPTS {
         if !owned_running("sillytavern")? {
-            return Err(GateError::Other("酒馆进程在就绪前退出".into()));
+            return Err(GateError::Other(
+                "酒馆进程在就绪前退出了。到它自己的窗口看最后几行 —— \
+                 多半是依赖没装上或者端口被占，面板没有停止任何进程。"
+                    .into(),
+            ));
         }
         if tavern_healthy(cfg.st_port).await {
-            attempt.finished = true;
-            rep.done("酒馆与桥接已就绪");
             return Ok(page_url(cfg.st_port));
+        }
+        // 一声不吭地等三分钟，跟卡死没有区别。每 4 秒把段标题刷成「等了多久」。
+        //
+        // 用 `phase` 不用 `log`：这一页只渲染段标题，日志行没有地方显示。
+        if i > 0 && i % ST_TICK_EVERY == 0 {
+            rep.phase(
+                5,
+                &format!(
+                    "等酒馆应答 127.0.0.1:{}：已等 {} 秒 / 最长 {limit} 秒（它自己会先跑一遍 npm 校验依赖，首次启动慢是正常的）",
+                    cfg.st_port,
+                    i * POLL_MS as u32 / 1000,
+                ),
+            );
         }
         tokio::time::sleep(std::time::Duration::from_millis(POLL_MS)).await;
     }
-    Err(GateError::Other(
-        "酒馆未通过 HTTP 就绪检查；本次新启动的进程将清理".into(),
-    ))
+    // ⛔ 等超了**不等于**它坏了，所以不杀。
+    //
+    // 原来这里直接落进 `StartAttempt::drop` 的回滚，把这次起的酒馆一并收掉 ——
+    // 而它当时很可能只是还在装依赖（见 `ST_READY_ATTEMPTS` 的说明）。
+    // 结果是：使用者每点一次「启动」，就把上一次正要起来的酒馆掐掉一次，
+    // 永远等不到那一刻。进程是活的就留着，如实说清楚现在是什么情况。
+    if owned_running("sillytavern").unwrap_or(false) {
+        attempt.created.retain(|n| n != "sillytavern");
+        return Err(GateError::Other(format!(
+            "等了 {limit} 秒，酒馆还没在 127.0.0.1:{} 上应答。\
+             进程还活着，面板没有停它 —— 到它自己的窗口看看进度（首次启动要装依赖，可能更久），\
+             起来之后再点一次「启动」就会直接复用它。",
+            cfg.st_port
+        )));
+    }
+    Err(GateError::Other(format!(
+        "等了 {limit} 秒，酒馆既没应答也不在了；本次新启动的进程将清理。"
+    )))
 }
 pub async fn stop() -> Result<Vec<String>> {
     let mut done = Vec::new();
@@ -745,6 +1086,29 @@ pub async fn stop() -> Result<Vec<String>> {
 mod tests {
     use super::*;
 
+    /// 就绪窗口必须比一次真实冷启动长。
+    ///
+    /// 2026-09-21 本机实测：依赖全是热的（`npm install` 只花 2 秒）时，从起进程到
+    /// `GET /` 回 200 + `text/html` 用了 **47.2 秒**。当时的窗口是 60 秒 ——
+    /// 冷启动一超，回滚就把那份正在启动的酒馆杀掉，于是「GPT 酒馆」怎么点都失败
+    ///（审计日志 2026-09-21 02:43:49 起、02:44:57 收，正好 68 秒）。
+    ///
+    /// 调小这个数之前先想清楚：它只是**上限**，起来了就立刻返回，调大不拖慢任何正常启动。
+    #[test]
+    fn the_readiness_window_outlasts_a_real_cold_start() {
+        let secs = ST_READY_ATTEMPTS * POLL_MS as u32 / 1000;
+        assert!(
+            secs >= 150,
+            "酒馆就绪窗口只有 {secs} 秒，实测热启动就要 47 秒，冷启动更久"
+        );
+        // 等待期间要能周期性上报，否则界面上跟卡死没区别。
+        let tick = ST_TICK_EVERY * POLL_MS as u32 / 1000;
+        assert!(
+            tick > 0 && tick < secs,
+            "每 {tick} 秒才上报一次（总窗口 {secs} 秒），界面上看不出还在等"
+        );
+    }
+
     /// 默认配置里**不许出现任何一台具体机器的路径**。
     ///
     /// 开源之前这里写死过作者本机的 `D:\tools\…`，别人装上就看到一串
@@ -761,6 +1125,36 @@ mod tests {
                 "默认路径必须为空，实得 {}",
                 p.display()
             );
+        }
+    }
+
+    /// 0.26.0–0.31.0 的校验表里没有 `gemini_bridge_port`：它能存成 0、也能跟别的撞号，
+    /// 而症状只是「Gemini 桥接起不来」。这条钉着那张表是全的。
+    #[test]
+    fn every_port_including_gemini_must_be_valid_and_distinct() {
+        assert!(validate(&TavernConfig::default()).is_ok());
+
+        let mut zero = TavernConfig::default();
+        zero.gemini_bridge_port = 0;
+        assert!(validate(&zero).is_err(), "0 不是有效端口");
+
+        for clash in [
+            TavernConfig {
+                gemini_bridge_port: TavernConfig::default().bridge_port,
+                ..TavernConfig::default()
+            },
+            TavernConfig {
+                gemini_bridge_port: TavernConfig::default().gpt_bridge_port,
+                ..TavernConfig::default()
+            },
+            TavernConfig {
+                gemini_bridge_port: TavernConfig::default().st_port,
+                ..TavernConfig::default()
+            },
+        ] {
+            let e = validate(&clash).expect_err("撞号必须拒掉");
+            let msg = e.to_string();
+            assert!(msg.contains("Gemini"), "错误文案要说全四条，实得：{msg}");
         }
     }
 
@@ -789,7 +1183,7 @@ mod tests {
     /// 点一次酒馆只会得到「路径不存在: bridge.py」。
     #[test]
     fn a_fresh_install_reports_all_three_paths_as_unset() {
-        let unset = unset_paths(&TavernConfig::default());
+        let unset = unset_paths(&TavernConfig::default(), TavernBackend::Claude);
         assert_eq!(unset, ["桥接项目目录", "SillyTavern 目录", "酒馆启动脚本"]);
     }
 
@@ -799,9 +1193,15 @@ mod tests {
     /// 使用者就只剩「在三个空框里凭记忆填绝对路径」这一条。
     #[test]
     fn the_setup_hint_offers_the_next_action() {
-        let msg = setup_hint(&unset_paths(&TavernConfig::default()));
+        let msg = setup_hint(&unset_paths(
+            &TavernConfig::default(),
+            TavernBackend::Claude,
+        ));
         assert!(msg.contains("自动定位"), "得给出下一步：{msg}");
         assert!(msg.contains("桥接项目目录"), "得说还缺哪几项：{msg}");
+        // GPT 后端用不着 bridge.py：缺的只有酒馆那两项。
+        let gpt = unset_paths(&TavernConfig::default(), TavernBackend::Gpt);
+        assert_eq!(gpt, ["SillyTavern 目录", "酒馆启动脚本"]);
     }
 
     /// 填了路径就不再算「没配」—— 哪怕填的是个不存在的目录。
@@ -817,7 +1217,7 @@ mod tests {
             st_launcher: PathBuf::from(r"x:\nope\start.cmd"),
             ..Default::default()
         };
-        assert!(unset_paths(&cfg).is_empty());
+        assert!(unset_paths(&cfg, TavernBackend::Claude).is_empty());
     }
 
     /// 填了一半也算没配 —— 空的那一项照样会拼出相对路径。
@@ -827,7 +1227,23 @@ mod tests {
             bridge_root: PathBuf::from(r"x:\nope\bridge-v2"),
             ..Default::default()
         };
-        assert_eq!(unset_paths(&cfg), ["SillyTavern 目录", "酒馆启动脚本"]);
+        assert_eq!(
+            unset_paths(&cfg, TavernBackend::Claude),
+            ["SillyTavern 目录", "酒馆启动脚本"]
+        );
+    }
+
+    /// 0.25.0 之前的 `sillytavern.json` 没有 GPT 那几项，读进来要落默认值，
+    /// 而不是整份读失败退回三个空路径（那会让配好的人看起来像「还没配」）。
+    #[test]
+    fn an_old_config_file_without_gpt_fields_still_loads() {
+        let text = r#"{"bridge_root":"x:/b","sillytavern_root":"x:/st","st_launcher":"x:/st.cmd","bridge_port":5001,"st_port":8000}"#;
+        let cfg: TavernConfig = serde_json::from_str(text).unwrap();
+        assert_eq!(cfg.gpt_bridge_port, 5002);
+        assert_eq!(cfg.gpt_effort, "medium");
+        assert!(cfg.gpt_model.is_empty());
+        assert!(!cfg.gpt_persist_sessions);
+        assert_eq!(cfg.bridge_port, 5001);
     }
 
     #[test]

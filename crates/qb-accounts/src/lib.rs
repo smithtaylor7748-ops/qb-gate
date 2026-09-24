@@ -7,6 +7,8 @@
 //! |---|---|
 //! | [`accounts`] | 槽位：每一份官方登录状态各自一个目录，切换是换目录 |
 //! | [`residue`] | 官方目录里有没有中转 / API 认证残留 |
+//! | [`antigravity`] | 反重力 IDE 槽位（`--user-data-dir`）、IDE 写下的账户状态与额度、本机用量 |
+//! | [`oauth`] | 一份 OAuth 令牌的形状（反重力与 Gemini CLI 共用的叶子模块，没有 `Debug` / `Serialize`） |
 //!
 //! # 合规边界写在这一层
 //!
@@ -30,4 +32,7 @@ pub use qb_platform::{config_io, process};
 pub mod accounts;
 pub mod residue;
 
+pub mod antigravity;
 pub mod codex;
+pub mod gemini;
+pub mod oauth;

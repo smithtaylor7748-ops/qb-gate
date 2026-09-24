@@ -23,8 +23,11 @@ pub async fn launch_claude(
         launch::LaunchTarget::ClaudeCode => domain::Client::ClaudeCode,
         launch::LaunchTarget::ClaudeDesktop => domain::Client::ClaudeDesktop,
         launch::LaunchTarget::Codex => domain::Client::Codex,
+        launch::LaunchTarget::Antigravity => domain::Client::Antigravity,
+        launch::LaunchTarget::AntigravityIde => domain::Client::AntigravityIde,
     };
-    let slot = if client == domain::Client::Codex {
+    // Codex 与反重力各有各的登录，跟 Claude 槽位无关。
+    let slot = if client == domain::Client::Codex || client.is_antigravity() {
         None
     } else {
         accounts::active_label(&accounts::AccountRoots::current())
@@ -72,20 +75,31 @@ pub fn settings_load() -> Result<settings::Settings> {
 
 /// 存设置。
 ///
-/// 打开 `codex_under_gate` 之后**立刻按新的目标清单重新上锁一次**，
-/// 否则「我打开了开关」和「codex 真的被锁上」之间会隔着一次重启，
-/// 中间那段时间界面说管了、实际没管。关掉时同理要把 Codex 上的锁摘掉。
+/// 把 GPT 纳回门禁之后**立刻按新的目标清单重新上锁一次**，
+/// 否则「我改了开关」和「codex 真的被锁上」之间会隔着一次重启，
+/// 中间那段时间界面说管了、实际没管。移出时同理要把 Codex 上的锁摘掉。
+/// （字段是反义的 `codex_outside_gate`，见 `settings.rs`；这里比的是它变没变。）
 #[tauri::command]
 pub async fn settings_save(mut next: settings::Settings) -> Result<settings::Settings> {
     let _guard = operations::exclusive_soon().await?;
     let before = settings::load_checked()?;
-    if before.codex_under_gate != next.codex_under_gate
+    if before.codex_outside_gate != next.codex_outside_gate
         && sessions::list()
             .iter()
             .any(|s| s.context.client == domain::Client::Codex && s.state == "running")
     {
         return Err(GateError::Other(
-            "请先停止正在运行的 Codex 会话，再调整门禁范围".into(),
+            "请先关闭正在运行的 GPT 桌面端，再调整门禁范围".into(),
+        ));
+    }
+    // 反重力同理（0.26.0）：跑着的时候改门禁范围，租约与锁就对不上了。
+    if before.antigravity_outside_gate != next.antigravity_outside_gate
+        && sessions::list()
+            .iter()
+            .any(|s| s.context.client.is_antigravity() && s.state == "running")
+    {
+        return Err(GateError::Other(
+            "请先关闭正在运行的反重力，再调整门禁范围".into(),
         ));
     }
     // 托管目录只能经 `managed_set_dir` 改（它会先实测、再把已装的搬过去）。
@@ -98,10 +112,13 @@ pub async fn settings_save(mut next: settings::Settings) -> Result<settings::Set
     // 要改槽位的 settings.json，还要拦「白名单为空」。让前端在这里直接翻这个
     // 布尔值，就会出现「设置里写着开，实际一个 hook 都没装」的假象。
     next.hook_enabled = before.hook_enabled;
+    // 「跳过这个版本」只经 `update_skip` 改（0.25.3）。设置页拿着打开页面时读的那份旧设置
+    // 去存别的开关，不该顺手把使用者刚在更新弹窗里点的「跳过」冲掉。
+    next.update_skipped_version = before.update_skipped_version.clone();
     usecase::settings_ops::save(&next)?;
 
-    if before.codex_under_gate != next.codex_under_gate {
-        if next.codex_under_gate {
+    if before.codex_outside_gate != next.codex_outside_gate {
+        if !next.codex_outside_gate {
             // 只有门本来就关着的时候才顺手把 Codex 也锁上。租约期内
             // （用户正开着 Claude 在用）不该因为改了个设置就把门关上 ——
             // 等这次租约收回时 lock_all 自然会带上 Codex。
@@ -115,13 +132,35 @@ pub async fn settings_save(mut next: settings::Settings) -> Result<settings::Set
             if gate_closed {
                 let _ = gate::lock_all();
             }
-            audit::write("设置：Codex 已纳入 IP 门禁");
+            audit::write("设置：GPT（Codex）已纳回 IP 门禁");
         } else {
-            // 关掉开关时 Codex 上可能还挂着 Deny ACE。这时它已经不在目标
+            // 移出时 Codex 上可能还挂着 Deny ACE。这时它已经不在目标
             // 清单里了，lock_all / unlock_all 再也不会碰它 —— 不单独摘掉的话，
-            // 用户关了开关 codex 仍然跑不起来，而面板显示一切正常。
+            // 用户移出了 codex 仍然跑不起来，而面板显示一切正常。
             let n = gate::unlock_paths(&gate::targets::codex_lockable());
-            audit::write(&format!("设置：Codex 已移出 IP 门禁，摘除 {n} 处执行锁"));
+            audit::write(&format!(
+                "设置：GPT（Codex）已移出 IP 门禁，摘除 {n} 处执行锁"
+            ));
+        }
+    }
+    // 反重力那个开关同一套处理（0.26.0）：纳回时门关着就顺手锁上，移出时把残留的 Deny 摘掉 ——
+    // 不摘的话使用者移出了反重力仍然起不来，而面板显示一切正常。
+    if before.antigravity_outside_gate != next.antigravity_outside_gate {
+        if !next.antigravity_outside_gate {
+            let gate_closed = gate::collect_targets()
+                .iter()
+                .filter(|t| t.kind != gate::targets::TargetKind::Antigravity)
+                .all(|t| t.locked);
+            if gate_closed {
+                let _ = gate::lock_all();
+            }
+            audit::write("设置：反重力（Hub + IDE）已纳回 IP 门禁");
+        } else {
+            let roots = crate::install::inventory::Roots::current();
+            let n = gate::unlock_paths(&gate::targets::antigravity_lockable(&roots));
+            audit::write(&format!(
+                "设置：反重力（Hub + IDE）已移出 IP 门禁，摘除 {n} 处执行锁"
+            ));
         }
     }
     Ok(settings::load())

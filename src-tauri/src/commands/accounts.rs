@@ -110,6 +110,24 @@ pub async fn accounts_token_summary(
     .map_err(|e| GateError::Other(format!("统计 token 的任务异常结束：{e}")))
 }
 
+/// 用量明细页：当前槽位的完整小结（按天 / 按模型 / 按小时 / 最近请求 / 美元）
+/// 加上「按账户」—— 默认目录只扫一遍，分给所有槽位。零网络请求。
+///
+/// 跟 `accounts_token_summary` 分开：账户卡每分钟读一次，只要那几个合计；
+/// 这一条要把所有槽位都扫一遍，只有打开用量明细页时才值得。
+#[tauri::command]
+pub async fn accounts_usage_overview(
+    label: String,
+    days: i64,
+) -> Result<usecase::token_summary::UsageOverview> {
+    let prices = qb_station::station::pricing::Catalog::new(super::station::stored_prices());
+    tokio::task::spawn_blocking(move || {
+        usecase::token_summary::overview(label.trim(), days, &prices)
+    })
+    .await
+    .map_err(|e| GateError::Other(format!("统计 token 的任务异常结束：{e}")))
+}
+
 /// 「这个账户现在还能用吗」—— 拿槽位里的令牌向官方发一次最小认证请求。
 ///
 /// **只由使用者当次点击触发。** 这是面板唯一一处带着官方身份对外发请求的地方，

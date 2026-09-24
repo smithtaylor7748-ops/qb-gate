@@ -46,13 +46,15 @@ export function useSummaries(): Record<string, Readout> {
       }
     } else if (accounts.data) out["/"] = ["无槽位", "warn"];
 
-    // ---- 软件
+    // ---- 软件：Claude 两样 + 反重力（0.26.0）。读数只说 Claude 那两样装没装，
+    // 反重力装了就在后面加一个字，没装不算「缺」—— 它不是每个人都要的。
     if (software.data) {
       const cc = software.data.claudeCode.installed;
       const cd = software.data.claudeDesktop.installed;
+      const ag = software.data.antigravity.installed;
       out["/software"] =
         cc && cd
-          ? ["都已装", "ok"]
+          ? [ag ? "都已装 +AG" : "都已装", "ok"]
           : cc || cd
             ? ["缺一个", "warn"]
             : ["未安装", "warn"];

@@ -54,6 +54,9 @@ pub enum TargetKind {
     StaleCopy,
     /// Codex CLI。**只在设置里打开「Codex 也归门禁管」之后才会出现在清单里。**
     CodexCli,
+    /// 反重力（Hub 与 IDE 的主程序、语言服务器、第三方壳留下的 `*.original.exe`）。
+    /// 默认归门禁（0.26.0，使用者定的）；在「IP 锁」弹窗里移出后不再出现在清单里。
+    Antigravity,
 }
 
 /// 可锁目标清单，带分类。**不含** `AnthropicClaude\app-*`。
@@ -95,6 +98,15 @@ pub fn lockable_with_kinds() -> Vec<(PathBuf, TargetKind)> {
         );
     }
 
+    // 反重力**默认归门禁**（0.26.0）。两个产品共用一个开关，位置表在 `install::antigravity`。
+    if crate::settings::antigravity_under_gate() {
+        out.extend(
+            antigravity_lockable(&roots)
+                .into_iter()
+                .map(|p| (p, TargetKind::Antigravity)),
+        );
+    }
+
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out.dedup_by(|a, b| a.0 == b.0);
     out
@@ -116,6 +128,18 @@ pub fn codex_lockable() -> Vec<PathBuf> {
         .into_iter()
         .filter(|p| p.is_file())
         .collect()
+}
+
+/// 反重力侧可锁的副本：两个产品下此刻存在的每一份 exe（卸载器除外）。
+///
+/// 主程序也锁 —— 它不是 Claude 桌面端那种 `app-*` 运行时副本：面板起它之前先解锁、
+/// 持租约期间它拉自己的子进程都在解锁状态下，看门狗收的时候先收进程再上锁。
+pub fn antigravity_lockable(roots: &crate::install::inventory::Roots) -> Vec<PathBuf> {
+    roots
+        .local
+        .as_deref()
+        .map(crate::install::antigravity::lockable_paths)
+        .unwrap_or_default()
 }
 
 /// 判断一个路径是不是「不能加 Deny ACE」的桌面端运行时副本。
@@ -147,6 +171,12 @@ pub fn kind_of(p: &Path) -> TargetKind {
         return TargetKind::CodexCli;
     }
     let lower = p.to_string_lossy().to_lowercase().replace('/', "\\");
+    // 反重力按目录认（位置表只有那两个目录）：`\programs\antigravity\` 与 `\programs\antigravity ide\`。
+    if lower.contains("\\programs\\antigravity\\")
+        || lower.contains("\\programs\\antigravity ide\\")
+    {
+        return TargetKind::Antigravity;
+    }
     if lower.contains("\\.local\\share\\claude\\versions\\") {
         TargetKind::NativeVersion
     } else if lower.contains("\\extensions\\anthropic.claude-code") {
@@ -256,6 +286,26 @@ mod tests {
         ] {
             assert_eq!(kind_of(Path::new(p)), TargetKind::CodexCli, "{p}");
         }
+    }
+
+    /// 反重力按目录认：两个产品下的主程序、语言服务器、第三方壳留下的 original 都是同一类。
+    #[test]
+    fn antigravity_is_recognised_by_its_two_install_directories() {
+        for p in [
+            r"C:\Users\me\AppData\Local\Programs\antigravity\Antigravity.exe",
+            r"C:\Users\me\AppData\Local\Programs\antigravity\resources\bin\language_server.exe",
+            r"C:\Users\me\AppData\Local\Programs\Antigravity IDE\Antigravity IDE.original.exe",
+            r"C:\Users\me\AppData\Local\Programs\Antigravity IDE\resources\app\extensions\antigravity\bin\language_server_windows_x64.exe",
+        ] {
+            assert_eq!(kind_of(Path::new(p)), TargetKind::Antigravity, "{p}");
+        }
+        // 别的 IDE 的同名语言服务器不算。
+        assert_ne!(
+            kind_of(Path::new(
+                r"C:\Users\me\AppData\Local\Programs\Windsurf\language_server.exe"
+            )),
+            TargetKind::Antigravity
+        );
     }
 
     #[test]

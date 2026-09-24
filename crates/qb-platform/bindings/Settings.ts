@@ -2,15 +2,47 @@
 
 export type Settings = { 
 /**
- * Codex 要不要也归 IP 门禁管。
+ * GPT（Codex）要不要**退出** IP 门禁。
  *
- * **默认 false，而且必须一直是 false。** 打开之后 `codex` 会跟
- * `claude.exe` 一样被加上 Deny ExecuteFile —— 出口 IP 不在白名单时
- * 命令直接被系统拒绝执行。这对「请求不能从没核实过的 IP 出去」是对的，
- * 但对一个正在用 Codex 干活的人来说是个突然的变化，
- * 所以只能由他自己在设置里打开。
+ * **默认 false = 归门禁管。** 0.25.0 之前这个开关叫 `codex_under_gate`、默认关，
+ * 理由是文件头那条「默认值不能让命令突然跑不起来」。**使用者 2026-09-20 明确要求
+ * 「默认定死被 IP 锁接管」**，于是把开关反过来存：记的是「退出」而不是「加入」。
+ * 反过来存不是花样，是升级路径 —— 旧 `settings.json` 里躺着的 `codex_under_gate: false`
+ * 变成未知键被忽略，所有人升级后自动落到「归门禁」，不用写迁移；
+ * 以后在「IP 锁」弹窗里手动移出的才会写下 `codex_outside_gate: true`。
+ *
+ * 归门禁的含义跟 Claude 一样：`codex.exe` 加 Deny ExecuteFile、GPT 桌面端起之前
+ * 验 IP 解锁、起来之后持租约、看门狗判不过就收。突然跑不起来的那道风险由
+ * 「白名单为空时不上锁」兜着（`gate::lock_all` 的硬约束）。
+ *
+ * 读的一侧仍叫 [`codex_under_gate()`]，语义不变、调用点不用改。
  */
-codex_under_gate: boolean, 
+codex_outside_gate: boolean, 
+/**
+ * 反重力（Antigravity Hub 与 IDE）要不要**退出** IP 门禁（0.26.0）。
+ *
+ * **默认 false = 归门禁管**，跟 GPT 那条同款反义存法（使用者的原话：软件页新增这个
+ * 软件，「也被 IP 锁保护」）。归门禁的含义：`Antigravity.exe`、它的 `language_server.exe`、
+ * IDE 的两份 exe 与它的语言服务器一起加 Deny ExecuteFile，起之前验 IP 解锁、
+ * 起来之后持租约、看门狗判不过就收（桌面档，零宽限）。
+ *
+ * 两个产品共用一个开关：它们往外发请求用的是同一个 Google 账户，
+ * 只锁一个就是给另一个留门。读的一侧是 [`antigravity_under_gate()`]。
+ */
+antigravity_outside_gate: boolean, 
+/**
+ * 反重力的联网额度要不要问（0.32.0 起；2026-09-23 从「只管 Hub」扩成「Hub + 账户槽位」）。
+ *
+ * **默认 true。** 字段名没改，是为了已经写进 `settings.json` 的旧值照样生效。
+ * 开着的时候也**只在使用者点刷新图标时**才问（2026-09-23 使用者定的），没有定时器。
+ *
+ * Hub 的邮箱在凭据里那个 `id_token` 的载荷中，是纯本机解码，**不受这个开关影响**；
+ * 反重力 IDE 写在本机的 `userStatus` 也照读。
+ *
+ * 关掉它，点刷新图标会得到一句「设置里关掉了」，界面只剩本机那些数。
+ * 边界与免责措辞在 `qb-app::usecase::antigravity_quota` 的模块头与 DISCLAIMER §6。
+ */
+antigravity_hub_quota: boolean, 
 /**
  * 门禁被动关上之后，出口 IP 回到白名单时要不要自动重新放行。
  *
@@ -52,8 +84,7 @@ country_allowlist: Array<string>,
  * 会话内门禁（装进 Claude Code 的 hook）要不要开。
  *
  * **默认 false** —— 它会在门禁判不过时拦下每一次请求，是个会让
- * 「本来能用的东西突然不能用」的开关，跟 `codex_under_gate` 同一档，
- * 必须由使用者自己打开。
+ * 「本来能用的东西突然不能用」的开关，必须由使用者自己打开。
  *
  * 这个字段存的是**意图**，不是现状：每个槽位的 `settings.json` 里
  * 装没装才是现状。切换账户后 `usecase::hook_ops::follow_active_slot`
@@ -98,4 +129,21 @@ align_locale_on_start: boolean,
  *
  * 要用的人自己在设置里打开，界面上把「要语言包、要注销」写在开关旁边。
  */
-align_display_language_on_start: boolean, };
+align_display_language_on_start: boolean, 
+/**
+ * 启动面板时问一次 GitHub 有没有新版（0.25.3，使用者要的「打开软件时弹窗收到更新通知」）。
+ *
+ * **默认 true** —— 这个功能本来就是为「装了老版本、不会自己去 GitHub 看」的人做的，
+ * 默认关就等于没做。它只问本项目自己发布页上的一个小文件（`install::self_update`），
+ * 不带任何账户信息；**只提醒，不自动装** —— 装要使用者在弹窗里点「一键更新」。
+ * 关掉之后启动时一个请求都不发，设置页的「检查更新」照样能手动点。
+ */
+update_check_on_start: boolean, 
+/**
+ * 使用者在更新弹窗里点过「跳过这个版本」的那一版。启动检查遇到**正好这一版**就不弹，
+ * 更新的版本照弹。设置页仍然显示它、仍然能从那里更新。
+ *
+ * 只经 `update_skip` 改：`settings_save` 原样保留旧值 —— 设置页拿着一份打开页面时读的
+ * 旧设置去存别的开关，不该顺手把刚点的「跳过」冲掉。
+ */
+update_skipped_version: string | null, };

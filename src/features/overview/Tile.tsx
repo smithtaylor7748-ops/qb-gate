@@ -19,6 +19,23 @@ export interface TileProps {
   task: TaskState;
   disabled?: boolean;
   onClick: () => void;
+  /**
+   * 给 `test:ui` 用的稳定选择器。
+   *
+   * 磁贴的可访问名是 `name + note` 拼起来的，而 `note` 会随运行状态、
+   * 任务进度、失败原因变 —— 用名字精确匹配的断言必然时红时绿。
+   */
+  testId?: string;
+  /** 额外的 class（例如让「一键关闭」那格横跨两列）。 */
+  className?: string;
+  /**
+   * 压在磁贴右上角的小按钮（例如酒馆那格的「桥接设置」）。
+   *
+   * ⛔ **不能直接放进磁贴里** —— 磁贴本身就是一个 `<button>`，`button` 套 `button`
+   * 是非法 HTML，浏览器解析时会把内层那个拆到外面去，点了谁都说不准。
+   * 所以给磁贴包一层定位容器，角标是它的**兄弟节点**，绝对定位压在右上角。
+   */
+  corner?: ReactNode;
 }
 
 /**
@@ -33,15 +50,30 @@ export default function Tile({
   task,
   disabled,
   onClick,
+  testId,
+  className,
+  corner,
 }: TileProps) {
   const failed = !!task.error;
-  const cls = ["tile", failed ? "tile--danger" : tone ? `tile--${tone}` : ""]
+  const cls = [
+    "tile",
+    failed ? "tile--danger" : tone ? `tile--${tone}` : "",
+    // 有角标时外层那个容器才是网格子项，`className`（`launchcol-wide` 之类）
+    // 跟着它走 —— 留在磁贴身上，跨列就不生效了。
+    corner ? "" : (className ?? ""),
+  ]
     .filter(Boolean)
     .join(" ");
   const pct = task.total > 0 ? (task.step / task.total) * 100 : undefined;
 
-  return (
-    <button type="button" className={cls} disabled={disabled} onClick={onClick}>
+  const tile = (
+    <button
+      type="button"
+      className={cls}
+      disabled={disabled}
+      onClick={onClick}
+      data-testid={testId}
+    >
       <span className="tile-icon" aria-hidden="true">
         {icon}
       </span>
@@ -70,5 +102,13 @@ export default function Tile({
         />
       )}
     </button>
+  );
+
+  if (!corner) return tile;
+  return (
+    <div className={["tile-wrap", className ?? ""].filter(Boolean).join(" ")}>
+      {tile}
+      <span className="tile-corner">{corner}</span>
+    </div>
   );
 }

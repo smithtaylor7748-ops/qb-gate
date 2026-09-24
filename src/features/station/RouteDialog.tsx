@@ -60,6 +60,9 @@ const CLIENT_NAME: Record<Client, string> = {
   "claude-code": "Claude Code",
   "claude-desktop": "Claude 桌面端",
   codex: "Codex",
+  // 反重力没有中转路径（后端入口拒绝），线路对话框永远不会拿到它；键只是让 Record 完整。
+  antigravity: "反重力",
+  "antigravity-ide": "反重力 IDE",
 };
 
 /** 这个软件该看哪一侧的预设。 */

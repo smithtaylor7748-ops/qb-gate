@@ -27,6 +27,7 @@
  */
 
 import type { Slot } from "../../lib/api";
+import { slotName } from "../../lib/slotName";
 import { Pill, fmtDaysLeft } from "../../ui";
 import SlotUsageBars from "./SlotUsage";
 
@@ -61,13 +62,21 @@ export default function SlotRow({
   slot: s,
   onOpen,
   actions,
+  onRefresh,
+  refreshing,
 }: {
   slot: Slot;
   /** 点标签打开详情。不给就是纯展示。 */
   onOpen?: (label: string) => void;
   /** 右侧动作区。各个页面自己决定放什么。 */
   actions?: React.ReactNode;
+  /** 额度条右边的刷新图标（2026-09-23）。不给就不画。Claude 这一侧只重读本机，不联网。 */
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }) {
+  // 「邮箱 - 命名」（0.27.0）。邮箱比命名长得多，而这一格是 nowrap + 省略号，
+  // 所以 title 上挂完整的那一串 —— 省略号吃掉的部分要有地方看得到。
+  const shown = slotName(s.email, s.label);
   return (
     <div className={`slotrow${s.active ? " slotrow--active" : ""}`}>
       <div className="slotrow-main">
@@ -75,13 +84,15 @@ export default function SlotRow({
           <button
             type="button"
             className="slotrow-label slotrow-open"
-            title={`查看 ${s.label} 的详情`}
+            title={`查看 ${shown} 的详情`}
             onClick={() => onOpen(s.label)}
           >
-            {s.label}
+            {shown}
           </button>
         ) : (
-          <span className="slotrow-label">{s.label}</span>
+          <span className="slotrow-label" title={shown}>
+            {shown}
+          </span>
         )}
         <span className="slotrow-plan" title={s.billing ?? undefined}>
           {s.plan ?? "套餐未知"}
@@ -91,9 +102,16 @@ export default function SlotRow({
           {actions}
         </span>
       </div>
-      {/* 额度。两源都没有就整条不画 —— 给一个「剩 100%」比不给更糟，
-          那是替一个根本没读到的数字打包票。 */}
-      {s.usage && <SlotUsageBars usage={s.usage} />}
+      {/* 额度。两源都没有就不画条 —— 给一个「剩 100%」比不给更糟，
+          那是替一个根本没读到的数字打包票。有刷新图标的那一处（总览）
+          画一句「还没有额度读数」，让图标有地方待。 */}
+      {(s.usage || (onRefresh && s.logged_in)) && (
+        <SlotUsageBars
+          usage={s.usage ?? null}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+        />
+      )}
     </div>
   );
 }

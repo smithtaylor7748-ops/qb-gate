@@ -34,6 +34,7 @@ import {
   BAND_LABEL,
   BAND_TONE,
   computeScore,
+  isLegacyDnsReport,
   type ScoreItem,
 } from "../../lib/score";
 import { Button, Card, Pill, fmtMeasured } from "../../ui";
@@ -133,9 +134,12 @@ export default function ScoreBand({
         // 这一项的结果会留到下次开面板，所以**必须**带上测的时刻 ——
         // 不然一份昨天的读数看起来跟刚测的一样，而你中间可能换过网。
         const when = fmtMeasured(measuredAt("dns"));
+        // 旧规则测的、或者没收到回显的：不报分数，只报为什么（`it.detail`）。
+        if (isLegacyDnsReport(d) || d.score === null)
+          return [it.detail, when ?? ""];
         const head =
-          d.ethernet_safe === true
-            ? "以太网无泄露"
+          d.findings.length === 0
+            ? "没有发现泄露"
             : `${d.findings.length} 项问题`;
         return [`${d.score} / 100`, when ? `${head} · ${when}` : head];
       }
@@ -319,10 +323,20 @@ export default function ScoreBand({
           <span className="notice">/ 100</span>
         </div>
         {(score.total !== null || score.measured > 0) && (
-          <Pill tone={score.missing ? "warn" : BAND_TONE[score.band]}>
-            {score.missing
-              ? `已测 ${score.measured}/5 项`
-              : BAND_LABEL[score.band]}
+          <Pill
+            tone={
+              score.critical.length > 0
+                ? "danger"
+                : score.missing
+                  ? "warn"
+                  : BAND_TONE[score.band]
+            }
+          >
+            {score.critical.length > 0
+              ? `关键项未达标：${score.critical.join("、")}`
+              : score.missing
+                ? `已测 ${score.measured}/5 项`
+                : BAND_LABEL[score.band]}
           </Pill>
         )}
 

@@ -31,6 +31,9 @@ import {
   useSession,
 } from "../lib/store";
 import { SIDES, SIDE_KEY, type Side } from "../lib/side";
+import { slotName } from "../lib/slotName";
+import { codexApi } from "../lib/codexAccounts";
+import { antigravityApi } from "../lib/antigravity";
 import { useSummaries } from "./sidebar";
 import {
   useAction,
@@ -44,12 +47,15 @@ import { Button, Modal, ToastProvider } from "../ui";
 import AccountDialogs from "../pages/accounts/AccountDialogs";
 import Accounts from "./Accounts";
 import SecuritySheet from "./security/SecuritySheet";
+import UpdateDialog from "./UpdateDialog";
 
 // 首屏只需要仪表盘（「/」）和两个全局小窗，其余六页各拆一个 chunk。
 // 不是点进去才下：模块一加载就排一个空闲回调把它们全部预取进来 ——
 // 首屏不用解析它们，点进去时也不用再等。
 const PAGES = {
   onboarding: () => import("./Onboarding"),
+  // 0.32.0：用量明细。**不进 NAV** —— 只从三张用量卡的页脚按钮进来。
+  usage: () => import("./Usage"),
   relays: () => import("./RelayCenter"),
   extensions: () => import("./ExtensionCenter"),
   software: () => import("./Software"),
@@ -57,6 +63,7 @@ const PAGES = {
   settings: () => import("./SettingsCenter"),
 };
 const Onboarding = lazy(PAGES.onboarding);
+const Usage = lazy(PAGES.usage);
 const RelayCenter = lazy(PAGES.relays);
 const ExtensionCenter = lazy(PAGES.extensions);
 const Software = lazy(PAGES.software);
@@ -181,6 +188,38 @@ function Layout() {
   const workspace = useWorkspace();
   const catalog = useCatalog();
   const accounts = useResource("accounts", R.accounts);
+  // 快速跳转里的 GPT / 反重力账户：**只在搜索框打开时读一次**，不挂全局轮询 ——
+  // 侧栏常驻，给它挂两个 15 秒的轮询只为了一个偶尔才开的搜索框不划算。
+  const [otherSlots, setOtherSlots] = useState<
+    { key: string; label: string; side: Side }[]
+  >([]);
+  useEffect(() => {
+    if (!searchOpen) return;
+    let cancelled = false;
+    void Promise.allSettled([
+      codexApi.accounts(),
+      antigravityApi.status(),
+    ]).then(([gpt, ag]) => {
+      if (cancelled) return;
+      setOtherSlots([
+        ...(gpt.status === "fulfilled" ? gpt.value.slots : []).map((s) => ({
+          key: "gpt:" + s.id,
+          label: slotName(s.email, s.label),
+          side: "gpt" as const,
+        })),
+        ...(ag.status === "fulfilled" ? ag.value.accounts.slots : []).map(
+          (s) => ({
+            key: "antigravity:" + s.id,
+            label: slotName(s.email, s.label),
+            side: "antigravity" as const,
+          }),
+        ),
+      ]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [searchOpen]);
   useWorkspaceEvents();
   useEffect(() => {
     if (DEMO_ENABLED) return;
@@ -220,24 +259,56 @@ function Layout() {
   const summaries = useSummaries();
   // 侧栏里那两个子项的高亮跟着它走；`Home` 读的是同一个键。
   const [side] = useSession<Side>(SIDE_KEY, "claude");
-  const results = [
+  // 「官方账户」这一块包括它的用量明细页 `/usage`（只从三张用量卡进、不进 NAV）。
+  // 原来只认 `/`，一进用量明细侧栏就一项都不亮，人不知道自己在哪。
+  const inAccounts =
+    location.pathname === "/" || location.pathname === "/usage";
+  // ⛔ 每一条要有自己的 `key`。原来用 `path` 当 key，而「官方账户」那一项和每个 Claude 槽位
+  // 的 path 都是 `/` —— React 拿重复的 key 对不上号，过滤之后列表里会留着不匹配的旧项、
+  // 还会把同一个账户画两遍（2026-09-23 实测：搜「demo-alt」列出了五个别的槽位）。
+  // 账户那几条带 `side`：点了要先切到它那一边，不然在 GPT 页搜一个 Claude 槽位点进去，
+  // 落地的还是 GPT 页。
+  const results: {
+    key: string;
+    label: string;
+    detail: string;
+    path: string;
+    side?: Side;
+  }[] = [
     ...(catalog.data ?? []).map((m) => ({
+      key: "ext:" + m.id,
       label: m.name,
       detail: "扩展 · " + m.description,
       path: "/extensions/" + m.id,
     })),
-    ...NAV.map((n) => ({ label: n.name, detail: n.hint, path: n.path })),
+    ...NAV.map((n) => ({
+      key: "nav:" + n.path,
+      label: n.name,
+      detail: n.hint,
+      path: n.path,
+    })),
     ...(accounts.data?.slots ?? []).map((a) => ({
-      label: a.label,
-      detail: "官方账户",
+      key: "claude:" + a.label,
+      label: slotName(a.email, a.label),
+      detail: "官方账户 · Claude",
       path: "/",
+      side: "claude" as const,
+    })),
+    ...otherSlots.map((s) => ({
+      key: s.key,
+      label: s.label,
+      detail: s.side === "gpt" ? "官方账户 · GPT" : "官方账户 · 反重力",
+      path: "/",
+      side: s.side,
     })),
     ...(workspace.data?.providers ?? []).map((p) => ({
+      key: "provider:" + p.id,
       label: p.name,
       detail: "中转服务商",
       path: RELAY_BASE + "/" + p.id,
     })),
     ...(workspace.data?.environments ?? []).map((e) => ({
+      key: "env:" + e.id,
       label: e.name,
       detail: "中转使用环境",
       path: RELAY_BASE + "/" + e.provider_id + "?environment=" + e.id,
@@ -288,45 +359,57 @@ function Layout() {
                   {path === "/" ? (
                     <div
                       className={
-                        "qb-account-nav" +
-                        (location.pathname === "/" ? " active" : "")
+                        "qb-account-nav" + (inAccounts ? " active" : "")
                       }
                     >
                       <NavLink to="/" end title={name}>
                         <Icon size={19} />
                         <span>
                           {name}
-                          <small className="qb-nav-readout">
+                          {/* Claude 那一边的读数是激活槽位的凭证剩余天数，要带语气色
+                              （「未登录」「凭证已过期」是红的）—— 原来这里漏了色，
+                              别的菜单项都有。 */}
+                          <small
+                            className={
+                              "qb-nav-readout" +
+                              (side === "claude" && readout?.[1]
+                                ? " " + readout[1]
+                                : "")
+                            }
+                          >
                             {side === "gpt"
                               ? "桌面端账户"
-                              : (readout?.[0] ?? hint)}
+                              : side === "antigravity"
+                                ? "Hub / IDE"
+                                : (readout?.[0] ?? hint)}
                           </small>
                         </span>
                       </NavLink>
                       <div
                         className="qb-account-switch"
+                        role="group"
                         aria-label="官方账户平台"
                       >
-                        {SIDES.map((s) => (
-                          <button
-                            key={s.id}
-                            type="button"
-                            className={
-                              "qb-nav-sub" +
-                              (side === s.id && location.pathname === "/"
-                                ? " on"
-                                : "")
-                            }
-                            aria-pressed={side === s.id}
-                            title={s.hint}
-                            onClick={() => {
-                              setSession<Side>(SIDE_KEY, s.id);
-                              if (location.pathname !== "/") navigate("/");
-                            }}
-                          >
-                            {s.label}
-                          </button>
-                        ))}
+                        {SIDES.map((s) => {
+                          // 「按下」与高亮说同一件事：不在账户页时三个都不亮，
+                          // 读屏也别报「已按下」。
+                          const on = side === s.id && inAccounts;
+                          return (
+                            <button
+                              key={s.id}
+                              type="button"
+                              className={"qb-nav-sub" + (on ? " on" : "")}
+                              aria-pressed={on}
+                              title={s.hint}
+                              onClick={() => {
+                                setSession<Side>(SIDE_KEY, s.id);
+                                if (location.pathname !== "/") navigate("/");
+                              }}
+                            >
+                              {s.label}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   ) : (
@@ -382,6 +465,7 @@ function Layout() {
                     <Routes>
                       <Route path="/" element={<Accounts />} />
                       <Route path="/onboarding" element={<Onboarding />} />
+                      <Route path="/usage" element={<Usage />} />
                       <Route path="/relays/:id?" element={<RelayCenter />} />
                       <Route
                         path="/extensions/:id?"
@@ -414,6 +498,9 @@ function Layout() {
       <AccountDialogs />
       {/* 安全小窗全局只挂一份 —— 总览四格、门禁读数、GPT 那侧都喊同一个。 */}
       <SecuritySheet />
+      {/* 「发现新版本」同理只挂一份：启动检查与设置页的「检查更新」都喊它（0.25.3）。
+          挂在 RecoveryGuard 外面 —— 卡在「需要完成数据恢复」时也许正需要新版。 */}
+      <UpdateDialog />
       <Modal
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
@@ -435,8 +522,9 @@ function Layout() {
         <div className="qb-search-results">
           {results.map((r) => (
             <button
-              key={r.path}
+              key={r.key}
               onClick={() => {
+                if (r.side) setSession<Side>(SIDE_KEY, r.side);
                 navigate(r.path);
                 setSearchOpen(false);
               }}

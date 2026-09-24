@@ -31,8 +31,9 @@ use crate::install::inventory::{Install, Kind};
 
 /// 要卸哪一个。
 ///
-/// 比 `managed::App` 多两个：桌面端（官方安装器装的，面板接管不了它的目录）
-/// 与 Chrome（浏览器，只在使用者点名时才处理）。
+/// 比 `managed::App` 多的几个：Claude 桌面端（官方安装器装的，面板接管不了它的目录）、
+/// Chrome（浏览器，只在使用者点名时才处理）、Codex 桌面端（Store 包，0.28.0）、
+/// 反重力与 Gemini CLI（0.28.0 —— 软件页能装能检测却不能卸，是同一类不对称）。
 // `Deserialize` 是必须的：它要当 IPC 命令的参数从界面传进来。
 // 只有 `Serialize` 的话 `#[tauri::command]` 展开时就编译不过。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -43,6 +44,13 @@ pub enum Target {
     Codex,
     ClaudeDesktop,
     Chrome,
+    /// Codex 桌面端（Microsoft Store 包）。跟 `Codex`（CLI）分开：两者共用账户槽位里的
+    /// `home`（登录身份），卸掉一个不能顺手把另一个的身份也删了。
+    CodexDesktop,
+    /// 反重力 Hub + IDE 一起（同一个 Google 账户，只卸一个没有意义）。
+    Antigravity,
+    /// 官方 Gemini CLI（npm 包）与它的账户槽位。
+    GeminiCli,
 }
 
 impl Target {
@@ -52,6 +60,9 @@ impl Target {
             Target::Codex => "Codex",
             Target::ClaudeDesktop => "Claude 桌面端",
             Target::Chrome => "Google Chrome",
+            Target::CodexDesktop => "Codex 桌面端",
+            Target::Antigravity => "反重力",
+            Target::GeminiCli => "Gemini CLI",
         }
     }
 
@@ -59,11 +70,14 @@ impl Target {
     ///
     /// 跟 `winget::InstallTarget::expected_signer` 是同一套口径：拿 Anthropic
     /// 去验 Codex 等于验了个寂寞。
+    ///
+    /// 反重力的 IDE 壳可能是第三方签的（本机就是汉化壳），所以它的规划里**只删整个目录**
+    /// （`DeleteDir` 不逐个核 exe 签名），这个关键词只在真有 `DeleteFile` 时才用得上。
     pub fn signer(self) -> &'static str {
         match self {
             Target::ClaudeCode | Target::ClaudeDesktop => "anthropic",
-            Target::Codex => "openai",
-            Target::Chrome => "google",
+            Target::Codex | Target::CodexDesktop => "openai",
+            Target::Chrome | Target::Antigravity | Target::GeminiCli => "google",
         }
     }
 }
@@ -119,6 +133,8 @@ pub enum Action {
     CredentialDelete,
     /// 删计划任务 / 启动项 / 执行别名。
     StartupRemove,
+    /// 卸载一个 Store 包（`Remove-AppxPackage`，按包族名认）。
+    AppxRemove,
 }
 
 /// 盘点出来的一项。
@@ -194,6 +210,14 @@ pub struct Facts {
     pub account_slots: Vec<PathBuf>,
     /// 浏览器用户资料目录。
     pub browser_data: Vec<PathBuf>,
+    /// Codex 桌面端的 Store 包在不在（`Get-AppxPackage` 查到的）。
+    pub codex_desktop_package: bool,
+    /// 反重力两个产品的安装目录（此刻存在的）。整目录删，不逐个核 exe。
+    pub antigravity_dirs: Vec<PathBuf>,
+    /// Gemini CLI 是不是 npm 全局装的。
+    pub gemini_npm: bool,
+    /// 面板托管目录下那份 Gemini CLI（`<根>\gemini-cli`）。
+    pub gemini_managed: Option<PathBuf>,
 }
 
 /// 大小写与斜杠都不敏感地判断 `p` 是不是在 `root` 里面。
@@ -212,9 +236,75 @@ pub fn plan(target: Target, f: &Facts) -> Vec<Item> {
         Target::Codex => plan_codex(f, &mut out),
         Target::ClaudeDesktop => plan_desktop(f, &mut out),
         Target::Chrome => plan_chrome(f, &mut out),
+        Target::CodexDesktop => plan_codex_desktop(f, &mut out),
+        Target::Antigravity => plan_antigravity(f, &mut out),
+        Target::GeminiCli => plan_gemini(f, &mut out),
     }
     plan_shared(target, f, &mut out);
     out
+}
+
+/// Codex 桌面端：Store 包走 `Remove-AppxPackage`（不是删文件 —— `WindowsApps` 下的东西
+/// 只有部署服务能动）。它的数据（`Packages\OpenAI.Codex_…`、每个槽位的 `desktop\`）
+/// 由调用方塞进 `config_dirs`，走共用那段。**账户槽位的 `home` 不在内**：CLI 也在用它。
+fn plan_codex_desktop(f: &Facts, out: &mut Vec<Item>) {
+    if f.codex_desktop_package {
+        out.push(Item::new(
+            Target::CodexDesktop,
+            Category::Program,
+            Action::AppxRemove,
+            crate::install::codex_desktop::PACKAGE_FAMILY,
+            "Microsoft Store 包（Get-AppxPackage 按包族名查到）",
+        ));
+    }
+}
+
+/// 反重力：两个安装目录整目录删。**不逐个 exe 核签名** —— IDE 的壳可能是第三方汉化工具签的，
+/// 按「不是 Google 签的不删」会把它永远留在那里。归属依据是位置表（`install::antigravity`），
+/// 不是名字。数据目录由调用方塞进 `config_dirs`。
+fn plan_antigravity(f: &Facts, out: &mut Vec<Item>) {
+    for d in &f.antigravity_dirs {
+        out.push(Item::new(
+            Target::Antigravity,
+            Category::Program,
+            Action::DeleteDir,
+            d.display().to_string(),
+            "反重力的安装目录（位置表 install::antigravity 里的那两处之一）",
+        ));
+    }
+}
+
+/// Gemini CLI：npm 全局包用 npm 卸；面板托管那份整目录删；槽位由调用方塞进 `account_slots`。
+/// **不整份删 `~\.gemini`** —— 反重力的数据也在那底下。
+fn plan_gemini(f: &Facts, out: &mut Vec<Item>) {
+    let t = Target::GeminiCli;
+    if f.gemini_npm {
+        out.push(Item::new(
+            t,
+            Category::Program,
+            Action::NpmUninstall,
+            "@google/gemini-cli",
+            "npm 全局包（连 gemini.cmd 一起）",
+        ));
+    }
+    if let Some(d) = &f.gemini_managed {
+        out.push(Item::new(
+            t,
+            Category::Program,
+            Action::DeleteDir,
+            d.display().to_string(),
+            "面板托管目录下那份（npm 装进 <根>\\gemini-cli）",
+        ));
+    }
+    for p in &f.account_slots {
+        out.push(Item::new(
+            t,
+            Category::AccountSlot,
+            Action::DeleteDir,
+            p.display().to_string(),
+            "面板管理的 Gemini 账户槽位（GEMINI_CLI_HOME，酒馆的 Gemini 桥接用的是同一份）",
+        ));
+    }
 }
 
 fn plan_claude_code(f: &Facts, out: &mut Vec<Item>) {
@@ -575,6 +665,84 @@ mod tests {
         );
     }
 
+    /// 0.28.0 的三个目标要用的事实（跟 Claude 那份合在一起，方便「每一项都有依据」那条测试）。
+    fn new_facts() -> Facts {
+        Facts {
+            codex_desktop_package: true,
+            antigravity_dirs: vec![
+                PathBuf::from(r"C:\Users\me\AppData\Local\Programs\antigravity"),
+                PathBuf::from(r"C:\Users\me\AppData\Local\Programs\Antigravity IDE"),
+            ],
+            gemini_npm: true,
+            gemini_managed: Some(PathBuf::from(r"C:\M\gemini-cli")),
+            ..claude_facts()
+        }
+    }
+
+    /// Codex 桌面端是 Store 包：走 Remove-AppxPackage，按包族名认，**不**逐个删 WindowsApps 下的文件。
+    #[test]
+    fn the_codex_desktop_is_removed_as_a_store_package() {
+        let plan = plan(Target::CodexDesktop, &new_facts());
+        let appx: Vec<_> = plan
+            .iter()
+            .filter(|i| i.action == Action::AppxRemove)
+            .collect();
+        assert_eq!(appx.len(), 1);
+        assert_eq!(appx[0].subject, "OpenAI.Codex_2p2nqsd0c76g0");
+        assert!(
+            !plan
+                .iter()
+                .any(|i| i.subject.to_lowercase().contains("windowsapps")),
+            "{plan:?}"
+        );
+        // 没查到包就一项都不出 —— 不编一个「要卸的 Store 包」。
+        let none = super::plan(
+            Target::CodexDesktop,
+            &Facts {
+                codex_desktop_package: false,
+                ..Facts::default()
+            },
+        );
+        assert!(none.iter().all(|i| i.action != Action::AppxRemove));
+    }
+
+    /// 反重力整目录删（IDE 壳可能是第三方签的），两个目录都在清单里，一个 DeleteFile 都没有。
+    #[test]
+    fn antigravity_is_removed_by_directory_not_by_signed_exe() {
+        let plan = plan(Target::Antigravity, &new_facts());
+        let dirs: Vec<&str> = plan
+            .iter()
+            .filter(|i| i.action == Action::DeleteDir && i.category == Category::Program)
+            .map(|i| i.subject.as_str())
+            .collect();
+        assert_eq!(dirs.len(), 2, "{plan:?}");
+        assert!(dirs.iter().any(|d| d.ends_with("Antigravity IDE")));
+        // 程序那一类里一个「删单个 exe」都没有 —— 那才会按签名主体逐个核。
+        assert!(plan
+            .iter()
+            .filter(|i| i.category == Category::Program)
+            .all(|i| i.action != Action::DeleteFile));
+    }
+
+    /// Gemini CLI：npm 卸 + 托管目录删 + 槽位删；`~\.gemini` 整份不许出现（反重力也在用它）。
+    #[test]
+    fn gemini_cli_takes_npm_managed_and_slots_but_never_the_shared_gemini_dir() {
+        let plan = plan(Target::GeminiCli, &new_facts());
+        assert!(plan
+            .iter()
+            .any(|i| i.action == Action::NpmUninstall && i.subject == "@google/gemini-cli"));
+        assert!(plan
+            .iter()
+            .any(|i| i.action == Action::DeleteDir && i.subject.ends_with("gemini-cli")));
+        assert!(plan.iter().any(|i| i.category == Category::AccountSlot));
+        assert!(
+            !plan
+                .iter()
+                .any(|i| i.subject.to_lowercase().ends_with(r"\.gemini")),
+            "{plan:?}"
+        );
+    }
+
     /// 每一项都必须说得出归属依据 —— 界面要逐条显示「凭什么删它」。
     #[test]
     fn every_item_states_why_it_belongs_to_this_software() {
@@ -583,8 +751,11 @@ mod tests {
             Target::Codex,
             Target::ClaudeDesktop,
             Target::Chrome,
+            Target::CodexDesktop,
+            Target::Antigravity,
+            Target::GeminiCli,
         ] {
-            for i in plan(target, &claude_facts()) {
+            for i in plan(target, &new_facts()) {
                 assert!(!i.why.trim().is_empty(), "{i:?} 没有归属依据");
                 assert!(!i.subject.trim().is_empty(), "{i:?} 没有对象");
             }

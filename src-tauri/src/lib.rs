@@ -156,6 +156,9 @@ pub fn run() {
             commands::gate::allowlist_add_current,
             commands::gate::country_presets,
             commands::probe::checkup_scan,
+            commands::probe::browser_probe_start,
+            commands::probe::browser_probe_wait,
+            commands::probe::browser_probe_last,
             commands::install::managed_history,
             commands::install::managed_rollback,
             commands::gate::hook_status,
@@ -216,11 +219,16 @@ pub fn run() {
             commands::codex_commands::codex_launch,
             commands::codex_commands::codex_archive,
             commands::codex_commands::codex_usage,
+            commands::codex_commands::codex_usage_summary,
+            commands::codex_commands::codex_rate_limits,
+            commands::codex_commands::codex_desktop_install,
+            commands::codex_commands::codex_desktop_latest,
             commands::accounts::accounts_list,
             commands::accounts::accounts_create,
             commands::accounts::accounts_delete,
             commands::accounts::accounts_tokens,
             commands::accounts::accounts_token_summary,
+            commands::accounts::accounts_usage_overview,
             commands::accounts::account_probe,
             commands::accounts::accounts_switch,
             commands::install::managed_status,
@@ -267,12 +275,48 @@ pub fn run() {
             commands::install::upgrade_plan,
             commands::install::upgrade_execute,
             commands::install::update_status,
+            // 应用自己的更新（0.25.3）。`update_install` 会让面板退出 —— 只能从更新弹窗点出来。
+            commands::install::update_check,
+            commands::install::update_skip,
+            commands::install::update_install,
             commands::gate::killswitch_preview,
             commands::gate::killswitch_execute,
             commands::plugins::plugin_list,
             commands::plugins::plugin_catalog_status,
             commands::plugins::plugin_start,
             commands::plugins::plugin_stop,
+            commands::plugins::tavern_gpt_status,
+            commands::plugins::tavern_gpt_token,
+            commands::plugins::tavern_gpt_quota,
+            commands::plugins::codex_quota,
+            commands::plugins::tavern_gemini_status,
+            commands::plugins::tavern_gemini_token,
+            commands::plugins::tavern_gemini_quota,
+            commands::plugins::tavern_bridge_roleplay_test,
+            commands::plugins::antigravity_ui_status,
+            commands::plugins::antigravity_ui_start,
+            commands::plugins::antigravity_ui_stop,
+            commands::plugins::antigravity_ui_config_save,
+            commands::plugins::antigravity_ui_rules,
+            commands::plugins::antigravity_ui_rules_save,
+            commands::plugins::antigravity_ui_rules_reset,
+            commands::antigravity::antigravity_status,
+            commands::antigravity::antigravity_running,
+            commands::antigravity::antigravity_launch,
+            commands::antigravity::antigravity_close,
+            commands::antigravity::antigravity_install,
+            commands::antigravity::antigravity_latest,
+            commands::antigravity::antigravity_auto_update_set,
+            commands::antigravity::antigravity_ide_create,
+            commands::antigravity::antigravity_ide_select,
+            commands::antigravity::antigravity_ide_archive,
+            commands::antigravity::antigravity_account_attach,
+            commands::antigravity::antigravity_account_rename,
+            commands::antigravity::antigravity_usage,
+            commands::antigravity::antigravity_hub_quota,
+            commands::antigravity::antigravity_account_quota,
+            commands::antigravity::gemini_login,
+            commands::antigravity::gemini_cli_install,
             commands::plugins::codex_egress_status,
             commands::plugins::codex_egress_config,
             commands::plugins::codex_egress_config_save,
@@ -281,6 +325,11 @@ pub fn run() {
             commands::plugins::codex_egress_stop,
             commands::plugins::tavern_config,
             commands::plugins::tavern_config_save,
+            commands::plugins::tavern_bridge_health,
+            commands::plugins::tavern_bridge_settings,
+            commands::plugins::tavern_bridge_settings_save,
+            commands::plugins::tavern_bridge_telemetry,
+            commands::plugins::tavern_bridge_telemetry_clear,
             commands::plugins::tavern_locate,
             commands::plugins::tavern_assets,
             commands::plugins::tavern_backup,
@@ -317,6 +366,9 @@ pub fn run() {
                     Err(e) => audit::write(&format!("官方价目更新失败，沿用内置快照：{e}")),
                 }
             });
+            // 上一次一键更新留下的安装包（0.25.3）。面板刚被安装包重新打开时它可能还在收尾、
+            // 删不掉，那就等下一次启动。
+            tauri::async_runtime::spawn_blocking(update::clean_leftovers);
             if !startup::initialize(app.handle()).ready {
                 if let Err(e) = tray::init(app.handle()) {
                     audit::write(&format!("托盘建立失败：{e}"));
@@ -411,6 +463,11 @@ pub fn run() {
                             "面板重启：恢复上次识别接管的槽位配置失败，请到账户页「识别」弹窗手动关闭：{e}"
                         )),
                     }
+                    // 0.30.0：反重力 IDE 有激活槽位时，它的调试端口文件在槽位目录里 ——
+                    // 启动时先告诉汉化引擎该去哪读，不然面板重启后「附加」找的还是默认那份的文件。
+                    if let Err(e) = usecase::antigravity_ops::sync_ide_profile() {
+                        audit::write(&format!("读反重力 IDE 槽位索引失败（汉化引擎会按默认资料目录找端口）：{e}"));
+                    }
                     // 0.24.0–0.24.6 的旧做法留下的「官方 turn-state 环境」记录与目录
                     // （连同复制进去的那份 OAuth 快照）：一次性清掉（best effort）。
                     // 先查记录在不在再动手 —— `Repository::remove` 删不到也回 Ok，
@@ -491,11 +548,17 @@ pub fn run() {
             //
             // 已经在跑的进程不受影响（Windows 不会因为加了 Deny ACE 就杀掉
             // 已加载的映像），挡住的是**下一次启动**。
-            if matches!(event, tauri::RunEvent::Exit) && readiness::status().ready {
-                match gate::lock_all() {
-                    Ok(n) => audit::write(&format!("面板退出，已重新上锁 {n} 个可执行文件")),
-                    Err(e) => audit::write(&format!("面板退出时重锁失败：{e}")),
+            if matches!(event, tauri::RunEvent::Exit) {
+                if readiness::status().ready {
+                    match gate::lock_all() {
+                        Ok(n) => audit::write(&format!("面板退出，已重新上锁 {n} 个可执行文件")),
+                        Err(e) => audit::write(&format!("面板退出时重锁失败：{e}")),
+                    }
                 }
+                // 一键更新（0.25.3）：核过的安装包在**重锁之后**才启动。反过来的话，
+                // 安装包（被动模式）会把还没退完的面板直接结束，上面这段重锁就跑不到了。
+                // 顺序有测试钉着（`update::tests`）。
+                update::launch_pending();
             }
         });
 }

@@ -1,5 +1,638 @@
 # Changelog
 
+## 0.25.3 — 2026-09-24
+
+> 版本号是使用者定的（问他时在「0.25.3 / 0.33.0」里选了 0.25.3）。这一版同时是 v0.24.8 之后**第一次推上 GitHub**，
+> 也是第一个带「一键更新」的版本 —— 装着 v0.24.8 及更早版本的人要手动装这一次，之后的新版在面板里提醒。
+
+### 2026-09-24：打开面板弹窗提醒新版本 · 一键更新
+
+使用者：「我 GitHub 上上传了新版本，已经安装老版本的用户打开软件时（弹窗）收到更新通知，还有一键更新功能」。
+问他时定了三件：更新功能跟这次推 GitHub 放在同一版里发（下载这一版的人以后才收得到提醒）；版本号 0.25.3；
+**验真用同一个 Release 里的 `SHA256SUMS.txt`**（没选 Tauri updater 的签名 —— 那要他保管一把私钥、填进仓库 Secrets，丢了就断更）。
+
+- **启动时问一次**（设置「启动时检查更新」，默认开）：只取 GitHub 上本项目最新 Release 的 `update.json`
+  （`releases/latest/download/update.json`，走下载服务器，**不走 `api.github.com`** —— 未登录一个出口 IP 一小时 60 次，
+  共用 VPN 出口的人会永远查不到）。没有定时器；设置关掉就一个请求都不发。
+- **弹窗**：「发现新版本 x」+ 这一版的更新说明 + 「在 GitHub 上查看」；按钮「一键更新」「以后再说」「跳过这个版本」。
+  安装的代价常驻在按钮上方：面板会退出，它启动的 Claude 桌面端、对话、酒馆会一起关。只提醒，**不自动装**。
+- **一键更新**：取那个标签下的 `SHA256SUMS.txt` → 下载固定名安装包（边下边算哈希，进度条在弹窗里）→ 对不上就删掉、不装 →
+  面板正常退出 → 退出处理**先重锁、再**启动安装包 `/P /UPDATE /R`（被动模式、覆盖安装不动快捷方式、装完自己重开面板）。
+  顺序反过来的话，Tauri 安装包在 `/P` 模式下会把还没退完的面板直接结束，重锁就跑不到了 —— 有测试读源码钉着这个顺序。
+  下载地址全部按常量拼，`update.json` 里没有一个字段会被当成地址。启动前再核一次哈希；从别人的 Job 里起的面板先试着脱离 Job。
+- **只认比当前大的三段数字版本**（`0.25.10` > `0.25.9`，带预发布后缀的不认）。⚠ 所以**以后每一版的号都必须比已经发出去的大**。
+- 设置页「常规」新增「软件更新」：启动时检查的开关、当前版本、上次查到什么与几点查的、「检查更新」「查看并更新」。
+- 发版流程：新增 `.github/release-notes.md`（更新说明的唯一来源，中英两段）与 `scripts/update-manifest.mjs`；
+  `release.yml` 生成 `update.json` 一起上传，Release 正文也从同一份说明来（原来那段正文还指着 0.22 起就删了的
+  `docs/MIGRATION-0.12.zh-CN.md`，一起换掉）。`release:check` 核说明里的版本号跟 `package.json` 一致。
+- 演示模式：启动那一次永远「没有新版」（不然全局弹窗盖住 `test:ui` 那 151 个组合），设置页点「检查更新」才「查到」
+  编出来的 0.99.0；「一键更新」在演示里只报错。`test:ui` 新增一段流程走一遍弹窗。
+- 新诊断例子 `cargo run -p qb-install --example self-update-check -- --as <版本> [--download]`：跟面板同一段代码问
+  GitHub、可选下载并核对哈希，停在「交给安装包」之前。发版之后先跑它。
+
+### 2026-09-24：GitHub 介绍页重写，中英文可选
+
+使用者：「GitHub 介绍页也更新一下且要有中英文可以选择。功能与 GitHub 上的旧版相比，新增的功能大白话说。
+注意是整篇文档去修改而不是在后面增加描述」。
+
+- `README.md`（中文）整篇重写、新增 `README.en.md`（英文），两边顶上互相切换。按侧栏顺序把现在的功能从头讲一遍，
+  **比 v0.24.8 新增或大改的就地标 🆕**，没有在末尾追加「更新了什么」；新增「怎么更新」一节、合规边界单列一节放在免责声明前。
+- 顺手更正旧 README 的过期说法：看门狗「每 15–20 秒」→ 每 5 秒（09-17 就改了）；「Codex 默认不归门禁」→ 默认归。
+- 截图换新：`scripts/screenshots.mjs` 去掉早就被重定向回首页的 `accounts`（拍出来跟 overview 一样，`accounts.png` 删了），
+  新增用量明细 `usage.png` 与订阅页 `subscription.png`；README 用 Claude / 反重力 / GPT 三个账户页 + 用量明细 + 软件 + 体检六张。
+- `release:check` 同时核两份 README 的附加条款指向与署名（英文那份核英文署名原文）。
+
+### 2026-09-24：推 GitHub 之前查出来的两件事
+
+- **Codex 桌面端直装要用的 Microsoft 根证书一直没进过仓库。** `.gitignore` 的 `*.pem`（本意是挡私钥）把
+  `codex_store/microsoft-root-2011.pem` 也挡了，而 `codex_store.rs` 用 `include_bytes!` 把它编进去 —— 本机有这个文件所以
+  一切正常，**干净克隆（包括 CI）连编译都过不了**。加了一条只放行它的例外（它是公开的根证书，不是私钥）。
+- **单测夹具里有真实的账户标识。** `accounts/tokens.rs` 归属测试的 `ME` / `ORG` / `OTHER` 是本机真实的 Claude 账户与组织
+  uuid，桌面端资料目录名、一处用量测试的槽位名、0.25.2 那一节的实机核对也带着本机的名字。都只在未推送的改动里，
+  换成编造的值与 `demo`；那几个常量上方写了「一律编造」。
+- `THIRD_PARTY_NOTICES.txt` / `docs/dependencies.json` 按锁文件重新生成（上一次还是 v0.24.8；之后新增 6 个依赖，
+  全是 MIT / Apache-2.0）。
+
+检查：Rust **1288** / 0（0.25.2 是 1268；新增 `self_update` 14 条外加 1 条类型导出、`update` 5 条替掉原来那 1 条、设置 1 条）、clippy、fmt、deny；
+前端 build / test（**137**）/ types / format / test:ui（**151 + 16**）/ release:check。
+
+## 0.25.2 — 2026-09-24
+
+> 版本号是使用者定的（出包时问他，选了 0.25.2，接着 0.25.1 往下编）。装在 0.25.1 上是升级；
+> 跟 0.25.1 一样，装着 0.26–0.32 的机器上安装器会把它当成降级。
+
+### 2026-09-24：DNS 泄露的评分合理化 —— 只看连着的网卡，按查询走哪张网卡判，不适用的不计分
+
+使用者：「合理化分数评分机制，只连 wifi 就不需要其他的评分了吧」（接着上一段 KNOWN-ISSUES 里那条
+「只连 Wi-Fi 的机器 DNS 这一项最高 50 分」）。
+
+- **原来的 100 分 = 以太网安全 50 + 无国内 DNS 30 + 证据完整 20**，三处不合理：
+  按网卡**名字**找「以太网」（只连 Wi-Fi、系统不是中英文的，那 50 分永远拿不到）；读网卡 DNS 时**不看网卡连没连**
+  （断开的 WLAN 上挂着的路由器地址照样扣分）、**按地址是不是内网判**（隧道软件把有线网卡的 DNS 改成隧道网段里的
+  172.x，查询其实进了隧道，也被当成「指向内网」）；「证据完整」给的是有没有数据，不是安不安全。
+  实机：这台机器按旧规则是 **50 / 100、2 项问题，两条都是误报**（有线网卡的 `172.18.0.2` 走 `xray_tun`；
+  WLAN 断开着）。
+- **现在两项，各自适用才计分**：真实解析（bash.ws 回显）里没有国内解析器 **70 分**；开着 TUN 时，**连着的**
+  物理网卡（有线、Wi-Fi 都算）上配的 DNS 都走隧道 **30 分**。「走不走隧道」用 `Find-NetRoute` 问这条查询从哪张网卡
+  出去，不看名字、不看地址；TUN 是不是开着，问的是发往一个 RFC 5737 文档地址的路由。没开 TUN、查不出路由、
+  没有连着的物理网卡配 DNS → 这一项不适用、不计分，只按回显算。**只连 Wi-Fi 不再被要求有以太网**。
+- 没收到回显时分数是「—」（`score: null`），不是 0 —— 判不了有没有泄露。
+- 界面：「以太网状态」改成「网卡 DNS」（走隧道 / 绕过隧道 / 不适用），下面写着这一项看了哪几张网卡、断开的哪几张不看；
+  解析器列表里网卡那几行标「走隧道」「已断开 · 不看」；总览那一格写「没有发现泄露」而不是「以太网无泄露」。
+  「建议优先选择以太网连接」那句删了。
+- **存盘的旧报告**（DNS 结果会留到下次开面板）按旧规则算的分不进总分，格子上写「评分规则改过，请重测一次」。
+- 读网卡的那段 PowerShell 抽成 `adapter_script()`，单测钉住它跟解析器对得上的那几个片段；实机原样跑过一次，输出与上面一致。
+
+检查：Rust **1268** / 0（`dns.rs` 的单测 9 → 15）、clippy、fmt、deny；前端 build / test（**133**）/ types / format /
+test:ui（**151 + 15**）/ release:check。
+
+### 2026-09-24：订阅页的等效倍率按 1:7 折成元
+
+使用者圈着价目表的「等效倍率」那一列：「更改订阅栏目里的这个按人民币折算。（1：7）」「还要标注 1:7，以及这个是
+按贵的折算的，一般来说 6.8 左右」；接着发来计算器的截图问「为什么我通过计算器计算出来是 0.1」。
+
+- **根因：同一页两把尺子。** 中转站的倍率按站内额度算 —— 常见的充值口径是 1 元 = 1 美元额度，1× 就是「每 $1
+  官方牌价的用量付 1 元」；官方那边却是美元直接除美元（Claude Pro $20 ÷ $1,400 = 0.014×），官方各档被算便宜了 7 倍。
+  使用者在计算器里填 140（= $20 × 7）、汇率 1，得到的 0.1× 才是中转站的口径。
+- **现在：等效倍率 = 网页月价按 1 美元 = 7 元折成元 ÷ 一个月的 API 牌价等值。** 列名写「等效倍率（1:7）」，
+  表下写明 7 是往贵了取的、实际汇率一般在 6.8 左右（按实际汇率算倍率再低约 3%）。
+
+  | 套餐 | 原来（美元 ÷ 美元） | 按 1:7 |
+  |---|---|---|
+  | Claude Pro | 0.014× | 0.1× |
+  | Claude Max 5x | 0.01× | 0.07× |
+  | Claude Max 20x | 0.013× | 0.088× |
+  | ChatGPT Plus | 0.038× | 0.269× |
+  | ChatGPT Pro 5x | 0.042× | 0.292× |
+  | ChatGPT Pro 20x | 0.02× | 0.14× |
+
+- 价目表、「放在同一把尺子上」、首页那两格、计算器走同一个函数（`planMultiplier`）：同一档在页面上只有一个数。
+- 计算器：金额按元填，「汇率」那一格去掉 —— 倍率本来就是「每 $1 付几元」，留着汇率只会让同一笔钱算出两个数
+  （旧版汇率填 7 就会把 140 元折回 $20，又得到 0.014×）。官方那一行写成「$20 × 7 ÷ $1,400 = 0.1×」。输入框认「元」「¥」。
+- **跟着改掉的说法**（按 1:7 它们不成立了）：首页标题「比任何中转站都便宜」→「跟最便宜的中转一个价，还没有那些坑」；
+  表下「仍远低于任何中转站」、刻度条下「比最便宜的逆向中转还低」删掉，写实际位置 —— 官方各档 0.07×～0.292×，
+  跟逆向中转（0.05×～0.3×）一个价位（逆向中转卖的本来就是别人的订阅），官转（0.8×～1.5×）是它的 2.7～21 倍。
+  官转那条「你付的是牌价的 0.8～1.5 倍，还是比订阅贵几十倍」改成「站内标价是牌价的 0.8～1.5 倍；按常见的
+  1 元 = 1 美元额度充值，仍比自己订阅贵好几倍」（腾讯云那篇原文只说「倍率 1 = 同价」，没说充值比例）。
+- 颜色只按价钱：≤ 0.3× 绿「和自己订阅官方一个价位」、0.3～0.8× 黄「比自己订阅官方贵」、≥ 0.8× 红（超过 7× 写
+  「比官方 API 牌价还贵」）。原来 0.05～0.3× 是黄的「逆向流量中转的价位」—— 按 1:7 官方各档正好落在这一段。
+- 倍率按四舍五入显示：$200 × 7 ÷ $16,000 = 0.0875 在二进制里略小一点，直接 `toFixed(3)` 会显示成 0.087×。
+- 「页面上不提特定货币」那条口径的例外写进了 `data.ts` 文件头与测试注释：页面上只写「元」，被测试盯着的那几个词照旧不出现。
+- 0.25.1 那一节表格里的 0.014× 等是当时的口径，历史不改。
+
+检查：前端 build / test（**131**）/ types / format / test:ui（**151 + 15**）/ release:check。这一段只动前端。
+
+### 2026-09-24：用量明细改成 cc-switch 口径，按天 / 7 天 / 30 天看美元 · 环境监测接入 CheckClaude 三组
+
+使用者先发来账户页用量卡的截图（「1 条回复」，输入、输出、缓存全是 0）：「这个用量似乎显示不准确，
+请你看看开源项目 Switch 或其他的开源项目，优化一下显示」；接着发来 `/usage` 的截图：「ccswitch 里显示的数据
+本面板也要有，还有这个趋势图不好。要看见每天，7 天，30 天花了多少刀的额度」。另一半：「根据开源项目
+CheckClaude 看看能不能优化一下环境监测」。Claude 额度仍只读本机（使用者选的：不接 `/api/oauth/usage`）；
+环境监测使用者选了三组，三路出口这轮不做。
+
+**用量 · 数据**
+
+- 截图里那「1 条回复」是一条 `<synthetic>` 报错（`isApiErrorMessage`，四类 token 全 0）。四类全 0 的回复
+  不再算回复、不入账，单独报「另有 N 条报错没计入」（按天记，跟着时间档筛）。
+- 缓存写分 5 分钟 / 1 小时两档记（`usage.cache_creation.ephemeral_1h_input_tokens`）。实机 Claude Code 的缓存写
+  **全是 1 小时档**（官方价 = 输入 ×2），而价目表原来只存 5 分钟档（×1.25）—— 按它算这一块少 37.5%。
+  价目表把官方表里读了就丢的那一列 1h 价留下来（`FetchedPrice.cache_write_1h_per_mtok`，库里旧行没有这个字段照样能读，
+  按官方倍数推并标「推」）。
+- **美元：按官方 API 价折算**（同样的 token 走 API 要付多少），四类各乘各的价。订阅不按这个收费 —— 界面写在数字旁边。
+  「今天 / 近 7 天 / 近 30 天」三档一次给齐（`TokenSummary.spend`，不随选中的档位变）；按天、按模型、今天按小时、
+  最近 200 条请求各带美元；认不出价的模型单独列（模型名、条数、token 数），不拿别的模型的价去凑。
+  「缓存省下」保留，降到说明里。
+- 去重改成同一个键**留最完整的一份**（有用量 > 带 `stop_reason` > 输出大 > 时刻早，原来是留先见到的那份）；
+  多扫一层 `subagents\workflows\wf_*\*.jsonl`（两条都参照 cc-switch，MIT）。
+- 新「按账户」：默认目录只扫一遍，分给所有槽位，外加「归不到槽位」「面板以外的账户」两行 ——
+  切过账户的那天，量分在两个账户上，一眼看得出去了哪。
+- GPT（Codex）一侧也有按天、按模型与美元：差分记到样本时刻的本地日、记到会话里最近一条 `turn_context` 的模型上；
+  单次输入超过 272K（长上下文那一档）的请求计数，有的话美元写「≥」（下限）。
+- 实机核对（只读，数字不含对话内容）：本机一个槽位 09-24 那 249 条，面板算 $43.65，与独立重算逐项一致（按 5 分钟价会是 $40.08）。
+  新 example：`cargo run -p qb-app --example usage-summary -- --label main --days 7`，只打印合计与美元。
+
+**用量 · 界面**
+
+- `/usage` 按 cc-switch 的信息量重排：「花了多少」三格 → 时间档（今天 / 7 天 / 30 天 / 全部，每分钟自己重读，
+  重读时旧图降透明度、不闪）→ 概览（等价费用、真实消耗 Tokens、回复数；新增输入、输出、缓存写入（1 小时档）、缓存命中）
+  → 趋势 → 按天明细表（合计行）→ 费用构成 → 按模型 → 按账户 → 最近请求（分页）→ 配额（本机 5 小时 / 7 天）
+  → 统计说明 + 「按什么价算」。原来指向一个已经不存在的「统计说明」的那句删了。
+- 趋势图换成新组件 `ui/BarChart`（手写 SVG，没加依赖）：有 y 轴刻度与日期、只直接标最高与今天两根、悬停与方向键
+  看每一根（数值在前）、**没记录的日子不画柱**（不写 $0）、按容器真实宽度画；「今天」按小时画；美元 / Token 可切。
+- 修了趋势图在东八区**整张错一天、今天那格掉出去**：日期原来用 `toISOString()` 迭代，本地零点换成 UTC 就是前一天
+  （作者机器在 UTC−4，看不出来）。换成本地日历的 `lib/dates.ts`，vitest 在 Asia/Shanghai 和美东夏令时结束那天都钉着。
+  演示数据里反重力那段也有同一个写法，一起改了。
+- 账户页用量卡：档位改成 今天 / 7 天 / 30 天；第一格是等价费用（副标给另一个窗口的美元）；报错不算回复；
+  什么都没计价时不再写「按本次抓到的官方价算」；页脚写「美元按官方 API 价折算，非账单」。
+- 图表颜色 `--chart-1` / `--chart-1-hover` / `--chart-grid` 加进 tokens.css 三个主题块。深色没直接用 `--accent`
+  （#e18a65 亮度 0.717 超出深色图表的亮度带），用同色相的 #d27a55（dataviz 的校验脚本：亮度带、彩度、对比度都过）。
+  「费用构成」原来拿 ok / warn 这些状态色区分类别，改成单一色相。
+
+**环境监测（参照 zzusec/CheckClaude，MIT © 2026 zzusec；判法与代码自己写）**
+
+- 新「Anthropic 服务可达」：**不带任何凭据** POST `api.anthropic.com/v1/messages` —— 回 401 = 地区放行，回 403 = 地区拦截；
+  另看 `claude.ai` / `www.anthropic.com` 的 robots.txt 打不打得开（带 `cf-mitigated` 的 403 是 Cloudflare 验证页，不算拦截）。
+  系统代理开着时两路都问，不一样才分开报。
+- 新「claude.ai 的解析」：系统解析器解出来的地址落在 fake-ip / Anthropic / Cloudflare / 内网（被污染）/ 别的（可疑）哪一段。
+- 「系统代理」改成「代理形态」：读 PAC（`AutoConfigURL`）与「自动检测设置」，再看默认路由是不是被虚拟网卡接走（TUN），
+  按网卡的 `HardwareInterface` 认、不按名字认。修了 **PAC 开着时面板说「系统代理没开，出口由路由/TUN 决定」**。
+- 「IPv6」改看**真实出口**：只有 AAAA 记录的回显服务连不连得上、v6 出口在哪个国家、跟 IPv4 出口比；
+  原来「网卡上开着 IPv6 就警告」，而很多宽带根本不给 v6。
+- 「用默认浏览器测」：原来「中文环境」那十项是在面板内置的 WebView2 里测的。后端在 127.0.0.1 上开一个一次性小服务
+  （`qb-app::browser_probe`：端口系统挑、随机令牌、校验 Host、只收一份 ≤64 KB 的 JSON、120 秒超时、结果只放内存），
+  用默认浏览器打开 `probe.html`，跑同一份 `signals.ts`；分数在面板按同一张权重表算，标明是哪个浏览器、几点测的。
+  出口一致性里「浏览器语言」「WebRTC」两行一小时内改用实测（请求头里真正发出去的 Accept-Language、真正收到的
+  WebRTC 候选地址对出口，任何浏览器都算）。另报两条不计分的：请求头语言对页面语言、UA-CH 平台。
+- 评分：**关键项**（API 回 403、claude.ai 解析被污染、IPv6 出口在别的国家、实测 WebRTC 泄露）任一失败，档位封顶
+  「偏差」，评分卡上点名；权重表不动（总分照实）。
+- DNS 泄露里「TUN 网卡上的内网 DNS 不报」原来按网卡名里有没有 `tun` 认（本机 `xray_tun` 的名字），换成网卡性质。
+- 新 example：`cargo run -p qb-sysenv --example checkup`（真机跑一遍体检，只打印判定）。实机：代理形态 TUN、
+  API 回 401、claude.ai → 160.79.104.10、没有 IPv6 出口，四项全过。
+- 不做（理由在 DESIGN-NOTES）：三路出口（这轮没选）、24 小时出口稳定性、虚拟机检测、四家情报 + ASN、一键改 DNS / 关 PAC。
+
+检查：Rust **1266** / 0、clippy、fmt、deny；前端 build / test（**128**）/ types / format / test:ui（**151 + 15**）/ release:check。
+
+## 0.25.1 — 2026-09-24
+
+> **版本号是使用者定的**（2026-09-24：先说「发布版本 0.24.10，这个是我要求的」，随即改成
+> 「不不不，0.25.1 吧」）。它在 0.32.0 之后发布、数字却更小：09-22 那一轮在 0.32.0 已经归档之后
+> 把版本号提成了 0.24.9，本机 09-23 06:42 编过一份 0.24.9 并装上了，这一版接着往下编。
+> 09-22 那一轮原来单独写在「## 0.24.9 — 2026-09-22」标题下，并进了这一版（见下面 09-22 那一节）。
+> 原来这里写的「下次提到 0.33.0」作废。
+
+### 2026-09-24：订阅页的额度换成 linux.do 帖子的中间值
+
+使用者：「订阅引导里面的各个订阅账户的额度似乎有误，你根据这个帖子（linux.do/t/topic/2831355）进行修改，
+额度取这个帖子里的中间值」。原来那一列是 SemiAnalysis 2026-06 的「一个月上限」（Max 20x ≈ $8,000、
+ChatGPT Pro 20x ≈ $14,000 …），整组换成帖子里网友估算的**周额度中间值**：
+
+| 套餐 | 帖子里（每周） | 中间值 | 等效倍率 |
+|---|---|---|---|
+| Claude Pro | $200～500 | $350 | 0.014× |
+| Claude Max 5x | 约 $2,500（只有一个数） | $2,500 | 0.01× |
+| Claude Max 20x | $3,000～5,000 | $4,000 | 0.013× |
+| ChatGPT Plus | $100～160（5 小时 $20～30） | $130 | 0.038× |
+| ChatGPT Pro 5x | $500～700 | $600 | 0.042× |
+| ChatGPT Pro 20x | $2,000～3,000 | $2,500 | 0.02× |
+
+- 表格那一列改成「周额度（网友估算中间值）」，下面标出帖子里的原区间；等效倍率 = 网页月价 ÷（周额度 × 4），
+  一个月按 4 个周限算，页面上写明。ChatGPT Go 帖子里没有，照旧「没有数据」。
+- 帖子自己写的三句前提跟数字放在一起（不放悬停）：都是网友估算；Claude 那几档是 8 月官方临时 1.5 倍额度时测的、
+  之后降到 1.25 倍；被风控的账号额度会大幅缩水。
+- 首页那两格（Max 20x / Pro 20x 的等效倍率）原来写死了 $8,000 / $14,000，改成从同一张表算 ——
+  表里的数一改首页就跟着变，不会再各说各的。
+- 新增单测钉住口径本身：每一档的周额度必须等于帖子区间的中间值。来源列表里 SemiAnalysis 那两条换成这个帖子，
+  `docs/subscription-guide/SOURCES.md` 同步改了。
+
+### 2026-09-23：GPT / Gemini 登录态（对照 cockpit-tools）· 起 GPT 槽位不再关掉别处的 Codex
+
+使用者：「GPT 和 Gemini 的登录态你对着那个开源项目修一下，因为 GPT 有时候突然弹出第二个使用页面」。
+读了 cockpit-tools 的 Codex 账户与多开那几处（CC BY-NC-SA，只记行为事实、一行没抄，见 ATTRIBUTION），
+对照出三处：
+
+- **起 / 切 GPT 槽位之前会把所有 Codex 桌面端都关掉 —— 连别处起的也关。** 0.25.0 起走的是按官方包
+  exe 路径的全关，理由是「单实例」；可 Electron 的单实例锁按 `--user-data-dir` 算，面板给每个槽位的
+  是它自己那份，开始菜单 / `codex://` 链接 / 别的多开工具起的默认实例根本挡不住它。全关的代价是真的：
+  别处那份被收掉，起它的那个程序再把它拉起来 —— 看到的就是突然又弹出一个 Codex 窗口。现在只关
+  **面板自己起的**（资料目录在面板目录下的）：探测只列 Electron 主进程，每个带上它的资料目录与
+  「是不是面板的」；确认框、磁贴副标题只数面板的那几个（「别处开着的 N 个不会被关」）。
+  使用者点「一键关闭」仍然全关，确认框里写着「所有」。
+- **「访问令牌到点了」被说成「登录失效了」。** GPT 与 Gemini CLI 两条联网额度都拿本机那张令牌直接问，
+  过期了服务端回 401，界面就说「登录令牌已失效，请在对应官方客户端重新登录」—— 其实登得好好的，
+  官方客户端下次跑起来会自己换新（Gemini CLI 的访问令牌只有一小时，几乎每次刷新都撞上）。现在：
+  - **Gemini CLI**：过期了在内存里换一张再问（跟反重力同一套，抽成了 `usecase::google_oauth`），
+    客户端标识从本机装的 `@google/gemini-cli` 包里现读、仓库里不写；**不写回 `oauth_creds.json`** ——
+    Google 的刷新令牌换新之后不作废，CLI 手里那份照样能用；
+  - **GPT**：**不换** —— OpenAI 的刷新令牌每换一次就轮换，面板一换，桌面端手里那份就作废、被登出、
+    弹出登录页（cockpit-tools 也写着「官方客户端在用时不替它换」）。问之前先看令牌的 `exp`，
+    到点了就如实说「开一下这个槽位的桌面端，它会自己换新」，不发那个注定 401 的请求。
+- **服务端真的不认了，账户行上却还是「已登录」。** 列槽位只看令牌在不在。现在点刷新时问出来的
+  「不认了」（Gemini：`invalid_grant`；GPT：令牌没到点却 401）记进 `usecase::login_health`：
+  那一行（或反重力行上 IDE / CLI 那一半）改说「登录已失效」、标红、露出「登录」。按凭据文件的
+  修改时刻 + 长度记、不读内容，官方客户端一重新登录（文件变了）就自动作废。
+
+顺手：`OAuthToken` 从 `antigravity::token` 提到叶子模块 `qb_accounts::oauth` —— Gemini 那一半要用它，
+留在原处会跟 `antigravity::account → gemini` 成环，`module_cycles_only_ever_shrink` 当场抓住。
+
+检查：Rust **1204 / 0**、clippy、fmt、deny；前端 build / test(**110**) / types / format / test:ui（151 + 15）/
+release:check。**真机没点过**：联网那两条要使用者本人的账户，见 KNOWN-ISSUES。**按规矩没有出安装包，版本号没动。**
+
+### 2026-09-23：官方账户菜单栏五处修复
+
+使用者让查侧栏「官方账户」那一块（Claude / GPT / 反重力三个子项，连同快速跳转里的账户）有没有 bug。
+在演示界面里逐项点过，五处：
+
+- **快速跳转收窄过滤之后留着不匹配的旧项。** 结果列表拿 `path` 当 React 的 key，而「官方账户」
+  那一项和每个 Claude 槽位的 path 都是 `/` —— 演示里先搜「demo」再搜「demo-alt」，列出来的是
+  五个别的槽位，控制台一路报「two children with the same key」。现在每条有自己的 key
+  （`ext:` / `nav:` / `claude:` / `gpt:` / `antigravity:` / `provider:` / `env:` 前缀）。
+- **搜到的账户点进去落错边，而且只搜得到 Claude 的。** 在 GPT 页搜一个 Claude 槽位点进去，
+  落地的还是 GPT 页；GPT 与反重力的账户根本不在结果里。现在账户那几条带着它属于哪一边，
+  点了先切过去再跳；GPT / 反重力账户在搜索框打开时读一次（侧栏常驻，不为它挂轮询）。
+  点账户只是「带你去它那一页」，**不替你切换激活槽位**。
+- **Claude 那一边的读数没有语气色。** 侧栏「官方账户」底下那行小字（激活槽位的凭证剩余天数）
+  在「未登录」「凭证已过期」时该是红的 —— 别的菜单项都带色，唯独这一项漏了。
+- **不在账户页时，读屏仍报当前那一边「已按下」。** 视觉上三个子项都不亮，`aria-pressed` 却还是
+  `true`。现在「按下」与高亮用同一个条件；三个按钮外面补了 `role="group"`。
+- **用量明细 `/usage` 和侧栏各记各的。** 进了用量明细侧栏一项都不亮；在那一页换到反重力，
+  点「回账户页」回到的还是进来之前那一边；地址里的 `side` 写错（比如 `codex`）会落进
+  「不是 Claude 也不是 GPT」那个分支、显示成反重力页。现在 `/usage` 算官方账户底下的一页
+  （侧栏亮着），它显示哪一边就把哪一边写回去；不认识的 `side` 一律当 Claude（`Usage.tsx`、`Home.tsx` 两处）。
+
+`test:ui` 跟着补了断言（不新增流程，并进原来的「全局搜索」与「反重力用量明细」两段）：
+不在账户页时没有一个子项是「按下」、搜 GPT 账户点进去落在 GPT、逐字打「demo-alt」只剩一条、
+用量明细里侧栏亮着且跟着页内切换走、「回账户页」回到换过去的那一边。另外把 React 的
+「两条 key 一样」也算页面错误 —— 那一圈原来只收抛出来的异常，这句 `console.error`
+在 151 个组合里一次都没被看见过。变异核对过（把 key 改回 `path` 再跑）：控制台守卫收到 11 条；
+「只剩一条」那条用 `fill` 整串填时**照样绿**，改成逐字打才红（应剩 1 条、实际 21 条）—— 所以测试里是逐字打的。
+
+检查：前端 build / test(**110**) / types / format / test:ui（151 + 15）/ release:check。这一段只动前端，
+Rust 没有改动。**按规矩没有出安装包，版本号没动。**
+
+### 2026-09-23：额度只手动刷新 · 反重力联网四格与 AI 积分 · 槽位行刷新图标
+
+使用者一轮提了四件事：GPT 额度是不是联网拿的（是就改手动）、三个账户页删无用的介绍字、
+反重力「Gemini 余额不准」要参考 cockpit-tools 把联网能拿到的都做出来、槽位行去掉「打开」换成刷新图标。
+过程中拍板三件：删掉「不做后台轮询」那条规矩、联网额度只手动刷新、令牌过期时面板在内存里换新。
+
+- **联网额度只手动刷新（使用者定的）。** 查实 09-22 那一版比文档说的查得多：GPT 页挂载时对**所有**
+  槽位各问一次 `wham/usage`、之后**每 5 分钟**再问一轮（窗口缩到托盘也照问）；酒馆桥接弹窗一打开就
+  同时问 GPT 与 Gemini（连 Claude 页打开设置也问）；反重力用量卡挂载时问 Gemini CLI 与 Hub。
+  现在这几条命令都带 `refresh`：`false` 只读「最近一次」问到的（后端绝不联网，没问过就是 `null`），
+  只有点刷新才传 `true`，一次只问那一个账户。「不做后台轮询」那条规矩使用者删了，
+  现在的节奏作为设计写在 `CLAUDE.md`「联网额度」。
+- **三个账户页的槽位行：去掉「打开」，额度条右边加刷新图标**（使用者圈的那块空白）。GPT 没登录的
+  槽位留着「登录」；反重力行首那颗整颗删（IDE 徽标旁本来就有「登录」）；Claude 行上本来就没有。
+  刷新图标：GPT 联网问那一个槽位；反重力联网问那一个账户；**Claude 只重读本机**（Claude 额度只读本机这条没变）。
+- **删掉的介绍字**：GPT 槽位行的「已登录 · 本地凭据」（没登录 / 登录文件损坏 / API 模式照旧显示）、
+  Codex 启动卡页脚（当前槽位 · 版本号 · 门禁那句；没检测到桌面端时只留安装链接）、GPT 用量卡副标题
+  「所选槽位历史 · 未检测到运行 / 当前启动账户」、反重力启动卡页脚（Hub 日志登录那句 · 自动更新已关 ·
+  门禁那句）、Claude 启动卡标题右侧「门禁不过，一个进程都不起」。磁贴下那行代价说明保留（规矩要求常驻）。
+- **反重力账户的联网额度：Claude / Gemini × 5 小时 / 每周四格 + 档位 + AI 积分。** 「不准」的根因：
+  账户行读的是 IDE 写在本机的 `userStatus`，每个模型只有一个比例、只有 IDE 开着时才更新 ——
+  「测试」那个槽位停在 09-21；全是 100% 时 `lowestQuota` 平局取第一个族，于是永远是「Gemini 3.8 Flash」。
+  新模块 `usecase::antigravity_quota`：`loadCodeAssist`（档位、AI 积分、project）→
+  `retrieveUserQuotaSummary`（四格，按 `bucketId` 认）→ 免费档（Google 回 403）再 `fetchAvailableModels`
+  （按模型）。**不发 `onboardUser`**（cockpit 会发，它改账户状态）。接口事实读 cockpit-tools 的源码核对，
+  **实现一行没抄**（CC BY-NC-SA）。Hub 那一格换成同一套 —— 0.32.0 的 `antigravity_hub.rs` 只问
+  `fetchAvailableModels`、而且那个解析器从没见过真实回复，删了。
+- **令牌过期时在内存里换新（使用者拍板，推翻 0.32.0「不跑 OAuth、不持有 client_id/secret、不刷新令牌」）。**
+  读官方客户端存在本机的那一份（IDE 槽位 `state.vscdb` 的 `oauthToken`：base64 protobuf，
+  `{1: 访问令牌, 2: "Bearer", 3: 刷新令牌, 4: 过期时刻}`，2026-09-23 只打形状核过；Hub 凭据管理器那一条），
+  过期就用刷新令牌到 `oauth2.googleapis.com` 换一张，**只放内存、不写回**。换新要带的客户端标识
+  **仓库里不出现**：那一刻从本机装的反重力（IDE 的 `main.js`，读不出再扫语言服务器）里现读、用完即丢。
+- 反重力账户行没点过刷新时照旧显示 IDE 本机那份，并补上 `CLAUDE.md` 一直要求、界面却漏了的
+  「IDE 写入 hh:mm」。用量卡「剩余配额」优先显示当前账户联网问到的四格里最紧的那一格。
+- **修复：** `invalidate("antigravityStatus")` 写错了资源名（实际叫 `"antigravity"`）—— 装完 Gemini CLI /
+  反重力之后账户页一直要等下一次 15 秒轮询才变（`AntigravityBand.tsx`、`Environment.tsx` 共三处）。
+- **修复：** clippy 两条（`tavern_quota.rs` 的多余生命周期是 09-22 带进来的，那一轮没跑 clippy）。
+  `export-types.rs` 补上 09-22 漏掉的五个额度类型的导出。
+- 演示数据照「只手动刷新」走（没问过就是 `null`），补了 `codex_quota` 与 `antigravity_account_quota`；
+  `test:ui` 新增两段：点 GPT 行刷新之后**只有那一行**出现「在线」；点反重力行刷新之后出现四格与积分，
+  四档视口再过一遍固定高度断言。
+
+检查：Rust **1190 / 0**、clippy、fmt、deny；前端 build / test(**110**) / types / format /
+test:ui（151 + 15）/ release:check。**按规矩没有出安装包，版本号没动。**
+
+### 2026-09-23：酒馆 Claude 桥接补上 Opus 5.5
+
+- **酒馆 Claude 桥接的模型下拉补上 Claude Opus 5.5（`claude-opus-5-5`）。** 面板里那份快照
+  （`plugins::tavern_bridge_api::MODELS`）12 → 13 个，排在 Fable 5 与 Opus 5 之间，顺序照抄 `bridge.py`。
+  桥那边（使用者自己那份 `bridge.py`，面板不分发）同一天把它加进了 `ALLOWED_MODELS` 与它自己的设置页，
+  并加了一条测试钉住「设置页下拉 = 白名单」—— 那两份在同一个文件里各写一遍，只改一处就是
+  「选得到、存不进」或「允许了、选不到」。
+  依据：本机 Claude Code 2.1.280 的模型表里有这个 ID，`opus` 别名现在就指向它。
+  ⚠ **还没在酒馆里真发过一句**（要花使用者自己的订阅额度）；Pro 能不能用这个模型由 Anthropic 决定，
+  用不了时桥会把 Claude Code 的原话报回来。
+
+### 2026-09-22：GPT / Gemini 内部额度与桥接面板（原来单独写在「## 0.24.9 — 2026-09-22」标题下）
+
+- GPT 额度卡现在可在账户页打开或手动刷新时查询 `backend-api/wham/usage`，展示 5 小时 / 7 天剩余百分比与重置时间。
+  （⚠ 09-23 改掉了：「打开时查」与每 5 分钟的轮询都删了，只剩点刷新图标，见上一节。）
+- Gemini CLI 额度卡查询 Code Assist `loadCodeAssist` / `retrieveUserQuota`，按模型展示剩余比例与重置时间。
+- 酒馆桥接弹窗增加 GPT/Gemini 额度卡、刷新入口、可编辑角色扮演剧本和真实桥接测试；Claude 不执行角色扮演测试。
+- 额度查询只读当前激活槽位，令牌不落盘、不进入 UI 返回值，不做自动换号或路由决策。
+
+### 2026-09-22：文档（只动文档，没有代码改动）
+
+- `CLAUDE.md` 新增「版本号只在「出包」那一刻提」，并把收工清单的顺序从「先提版本号、再问出不出包」改成「先问、后提」—— 原来的顺序会让不出包的那几轮也把版本号提掉。
+- `docs/ANTIVIRUS.zh-CN.md` 新增第 5 节「哪些办法对**别人**起作用」（Defender 删文件与 SmartScreen 拦运行是两道关、可行办法排序、看着有用其实没用的五项、国内三家杀软与 VirusTotal 先摸底）；申诉一节改成「发布前提交」并补上可直接照填的字段表；补记 2026-09-22 那次隔离及其连带的降级事故。
+- `docs/KNOWN-ISSUES.zh-CN.md` 更正代码签名一节：EV 证书自 2024 年起不再给即时 SmartScreen 信誉；Azure Trusted Signing 已改名 Azure Artifact Signing；新增 Certum 两档（开源档卡商业分发条款，普通档无优势）与签名的三条代价；新增 `perMachine` 安装这条免费未验候选。
+
+## 0.32.0 — 2026-09-21
+
+使用者一次提了六件事。查下来，三件是「界面长错了地方」，三件要新写东西 ——
+其中最值得记的是：**GPT 的额度 Codex 早就写在本机了，面板只是没读**。
+
+- **反重力账户槽位合并成一条（使用者定的）。** 0.30.0–0.31.0 是两套互不相干的槽位、
+  界面上两个页签：IDE 走 `--user-data-dir`，Gemini CLI 走 `GEMINI_CLI_HOME`。同一个
+  Google 账户要建两次、登两次，而只用 IDE 的人永远看着一句「Gemini CLI · 0 个槽位」——
+  它读起来像个故障，其实只是「你还没建」。现在一条 = 一个账户，底下两半，各有一枚徽标、
+  各有一个登录按钮，一个 `active` 管两半（`qb-accounts::antigravity::account`）。
+  升级迁移**只换索引、不搬一个文件、不猜配对** —— 老的两份清单各自升成「只填了一半」的行，
+  认得出是同一个账户就点「并入…」。原来挂在 `gemini_switch` 上那道「桥接在跑时不许切」的
+  守卫搬进了 `antigravity_ide_select`：切一次动两半，留在原处就等于没有。
+
+- **GPT 有额度条了，而且零网络。** Codex 每发完一轮就往会话记录里追加一条 `token_count`，
+  那条事件里除了 token 数还挂着 `rate_limits`（五小时 / 七天各带 `used_percent` 与
+  `resets_at`）。`codex/usage.rs` 从来只读前半截，把后半截整个丢掉；全仓库 grep
+  `rate_limits` 零命中。新读取器 `qb-accounts::codex::ratelimit` 拿它画 5 小时 / 7 天两根条，
+  跟 Claude 读 `plan-usage-history.json` 同一条口径。两个坑钉在测试里：**要取最新一条
+  `rate_limits` 非空的记录**（走中转或 API Key 的会话整块是 `null`，取最新一条永远读出空），
+  以及**一条都没有就是「还没有带额度信息的会话记录」，不是 0%**。
+
+- **反重力软件匹配不到账户 —— 不是 bug，是两个产品两套令牌库。** 实机逐个核过：Hub 在本机
+  **一个字的身份都没写**（`app_storage.json` 16 个键、`antigravity_state.pbtxt`、Local Storage、
+  语言服务器日志里都没有），只有 Windows 凭据管理器里一条 `gemini:antigravity`。所以 IDE 里
+  登的账户进不了 Hub。现在 Hub 那一格显示得出账户了：**邮箱是从那条凭据里的 `id_token`
+  载荷本机 base64 解出来的，零网络**；档位与配额 Hub 确实没写在本机，联网问一次
+  （见下一条）。Hub 与 IDE 在界面上是**两行**，绝不合并成一个数 —— 你完全可以 Hub 登 A、
+  IDE 登 B。
+
+- **⛔ 新增一处联网，而且只有这一处（使用者拍板推翻了自己定的规矩）。** 反重力 Hub 的档位与
+  各模型配额用 **Hub 自己已经存在的那份访问令牌**，向 Hub 自己会去的那个 Google 端点发
+  **一次只读请求**，结果缓存 5 分钟、**没有定时器**、设置里可关
+  （`settings.antigravity_hub_quota`，默认开）。面板**不跑 OAuth、不持有 client_id/secret、
+  不刷新令牌** —— 这正是跟 `cockpit-tools` / `Antigravity-Tools-Lite` 的分界（它们自己当客户端；
+  本项目只转发你自己的令牌，**一行代码没抄**）。Claude / GPT / 反重力 IDE 三处照旧零网络。
+  ⚠ Hub 的访问令牌只有一小时有效期、只有 Hub 自己会换新的：过期时界面说的是
+  「起一次反重力 Hub 让它换一份新的」，不是「查询失败」。
+
+- **酒馆桥接设置从内联 JSX 拆成组件，四处共用。** 0.31.0 它写在 `AntigravityBand.tsx` 里、
+  靠那个文件的局部 state 驱动 —— 于是**只有反重力页开得了它**，而 Claude / GPT 两页的酒馆
+  磁贴上没有入口，可那两条桥的端口与模型恰恰也在这里改。现在是
+  `src/features/tavern/BridgeSettings.tsx`，三个账户页的酒馆磁贴 + 插件详情页都能开。
+  插件页里那三处重复的端口 / 模型输入框删了 —— 同一个字段两处各放一份，迟早出现一个
+  没保存、另一个显示旧值的局面。
+
+- **Claude 桥的设置页与监控页搬进面板（使用者定的）。** 那七个旋钮（附加提示词、贴尾提示词、
+  调用模式、模型、思考深度、缓存 TTL、提示词模式）和那张调用日志表原来是 `bridge.py`
+  自己起的两个网页，要从酒馆的扩展抽屉里用 iframe 嵌进去看；用 GPT / Gemini 聊天时那个
+  iframe 还指着没人听的 5001。现在面板直接调它的 HTTP 接口
+  （`plugins::tavern_bridge_api`，一律 `.no_proxy()`）。**能力探测，不假设**：`bridge.py` 是
+  使用者自己那份、面板不分发，连不上 / 404 / 字段缺一律如实说，而且错误文案要能照着做
+  （连不上 = 去起酒馆，404 = 升级 bridge.py，401 = 密钥对不上）。
+
+- **用量明细搬到可滚动的 `/usage`。** 三个账户页是固定高度、不滚动的（`test:ui` 钉着
+  680×640 起四档不许裁切），趋势图、按模型分布、覆盖率说明在那张弹窗里摆不下。
+  新页面按 side 分三档，内容全部来自已有的本机读取器，一个新数据源都没有。
+  `TokenSummary` 因此多了 `daily`（按天合计）—— **只列真有记录的那几天**，中间缺的由画图
+  那一侧留成断口，不补 0。三张用量卡的四格也换了：原来「输入 / 输出 / 缓存命中率 / 剩余配额」
+  里前两格是同一个量的两半，现在四格说四件事。
+
+- **修复：`gemini_bridge_port` 从 0.26.0 起就不在端口互异校验里。** 它能被存成 `0`、也能跟
+  另外三个撞号，而症状只是「Gemini 桥接起不来」，没有任何地方说得清为什么。校验抽成纯函数
+  `sillytavern::validate` 并加了测试（`save_config` 要读盘，判定留在里面等于没有测试）。
+
+- **修复：反重力 IDE 槽位行把状态库读取错误整个吞掉。** `ide.rs` 写的是 `.ok().flatten()`：
+  库正忙（SQLITE_BUSY 超过 250 ms）或损坏时，槽位行安安静静显示成「没有邮箱」，而同一页的
+  身份卡那边有 `identity_error` —— 同一台机器上两处对同一件事给两种说法，而「读不出来」
+  那一种根本没人看得见。
+
+- 三条额度条现在共用 `src/ui/Gauge.tsx`（从 `SlotUsage.tsx` 抽出来，连同那 44 行记着三个
+  被否掉设计的文件头）。新增「没测到」那一档：画斜纹空槽，**不画 0**。
+  中转站那条请求量曲线抽成 `src/ui/Sparkline.tsx`，用量页复用它。
+
+- 新增三个诊断例子（都只打印形状 / 位置，不打印值）：
+  `cargo run -p qb-accounts --example codex-ratelimits`、
+  `cargo run -p qb-accounts --example antigravity-hub-cred`、
+  `cargo run -p qb-app --example antigravity-hub-quota`。
+
+检查：Rust **1154 / 0**（0.31.0 是 1110）、clippy、fmt、deny；
+前端 build / test(105) / types / format / test:ui（**151 + 15**）/ release:check。
+
+## 0.31.0 — 2026-09-21
+
+Gemini CLI 装不上、酒馆的 GPT / Gemini 起不来 —— 使用者连着两天报的两件事，**根因是两条**，
+两条都不是「功能没做」，而是判据写错：一条把包的入口目录猜死了，一条把等待上限设得比真实启动还短。
+
+- **修复：Gemini CLI 装完了照样报「装不上」。** `detect::gemini_cli_candidates` 把入口写死成
+  `<前缀>\node_modules\@google\gemini-cli\dist\index.js`，而官方包的入口一直是
+  `bundle\gemini.js`（它 `package.json` 的 `"bin": {"gemini": "bundle/gemini.js"}`）。
+  0.29.0 修好 npm 那条命令之后，**包每次都真的装上了**，回读检测每次都落空，于是每次都报
+  「npm 报告成功，而检测仍然找不到入口文件」（审计日志 2026-09-21 02:32 / 18:16 两条）。
+  顺带：软件页一直显示未安装，酒馆的 Gemini 桥接从 0.26.0 起**一次都没起来过**。
+  现在入口**问包自己**（读 `package.json` 的 `bin`），`bundle\gemini.js` / `dist\index.js` 只作兜底；
+  包目录也不再只认 `%APPDATA%\npm` —— `NPM_CONFIG_PREFIX`、`%ProgramFiles%\nodejs`（nvm-windows / MSI）
+  一并查，找不到时把找过的路径列进报错。本机实测：0.60.0，`installed = true`。
+  新诊断例子 `cargo run -p qb-install --example gemini-resolve`。
+- **修复：酒馆等不到就绪，然后把正在启动的酒馆杀掉。** SillyTavern 自带的 `Start.bat`
+  **每次都先跑一遍 `npm install` 校验依赖**再 `node server.js`，本机实测（依赖全热）
+  从起进程到 `GET /` 回 200 用 **47.2 秒**，冷启动更久；而就绪窗口是 60 秒，超时就走回滚
+  把这次起的酒馆收掉。审计日志 2026-09-21 02:43:49 起、02:44:57 收 —— 68 秒，正好是
+  「等满 60 秒 + 回滚」。结果是每点一次「起 GPT 酒馆」，就把上一次正要起来的酒馆掐掉一次。
+  现在：窗口 180 秒；等待期间每 4 秒把「已等多久 / 最长多久」刷到界面上；**等超了不杀** ——
+  进程还活着就留着，如实说「它可能还在装依赖，起来之后再点一次就会直接复用」。
+- **修复：`tavern_healthy` 少了 `.no_proxy()`。** reqwest 默认读环境里的 `HTTP_PROXY`，
+  于是设了代理的机器上，这条对 `127.0.0.1` 的健康检查会被送去代理 —— 酒馆明明起来了，
+  面板永远等不到。本机 `ProxyEnable=0` 才没撞上，别人的机器不一定。
+- **修复：日志刷得越勤，界面上能看见的信息越少。** `Reporter::log` 发出来的 `phase` 是空串，
+  前端照抄过去就把当前段的标题抹成「启动中…」。空串现在等于「没有新标题」，保留旧的。
+- **酒馆插件页按后端列「还缺什么」**：路径 → CLI → 槽位 → 登录，顺序就是该先做哪一件，
+  每一条都写明去哪个页面做；缺东西时启动按钮才灰（已经在跑时「打开页面」不受影响）。
+  判定抽成纯函数 `lib/tavernReady.ts`，有单测。
+- **三条桥的设置收进面板**（使用者定的）：反重力页启动卡里酒馆那格**右上角**多了一颗小按钮，
+  打开「酒馆桥接设置」弹窗 —— 每条桥一块，状态 / 槽位 / 还缺什么 / 端口 / 模型 / 酒馆里填的地址
+  （带「复制地址」）都在同一块里，不用再翻到插件详情页。`Tile` 新增 `corner`：磁贴本身是
+  `<button>`，角标不能嵌在里面（`button` 套 `button` 是非法 HTML），所以包一层定位容器当兄弟节点。
+  路径 / 资产盘点 / 备份恢复仍留在插件详情页。
+- **酒馆那边的扩展也跟着改**（`claude-tavern-bridge`，使用者本机那份，不随面板分发）：
+  它原来把 Claude 桥接的 5001 写死在三个地方，于是用 GPT / Gemini 聊天时，
+  它嵌的管理页是一片空白、点「独立打开」直接 `ERR_CONNECTION_REFUSED` ——
+  聊天用的那条桥好好的，坏的只是那块面板。现在三条桥各探一次活（`fetch` 的 `no-cors`
+  只问连不连得上，不需要对方配 CORS），管理页**只在 Claude 那条真的在听时才加载**，
+  其余情况写明「这个管理页只属于 Claude 桥接，另外两条在面板里配」。
+- 检查：Rust 1110 / fmt / deny；前端 build / test 105 / types / format / test:ui（115 + 15）/ release:check。
+  clippy 余下 11 条**都在这一轮没碰过的文件里**（`qb-platform` / `qb-station` / `qb-iplock` /
+  `qb-accounts` / `chrome.rs` / `ipv6_ops.rs`，多为测试代码），是 clippy 版本更新后新出的，没有一并动。
+
+## 0.30.0 — 2026-09-21
+
+反重力账户页补全。能力对照的是 `anglee0323/Antigravity-Tools-Lite`（CC BY-NC-SA 4.0，
+`lbjlaq/Antigravity-Manager` 的分支）—— **一行没抄**，它的五个能力这里全有，但做法没有一样的
+（它自己持有 OAuth 令牌、往 IDE 的库里写令牌并改机器 id、调 Google 内部接口查配额；这里全不做）。
+
+- **反重力 IDE 有槽位了**（Hub 仍单一身份）。一个槽位一个 `--user-data-dir`（VS Code 的公开开关），
+  登录在 IDE 自己的窗口里做，面板只问它状态库里令牌那一行的长度。0.26.0「没有多槽位」的依据
+  （令牌在 Windows 凭据管理器）**只对 Hub 成立**：IDE 的令牌在它的 `state.vscdb` 里，Hub 的目录下
+  根本没有这个库。探针在本机走通（临时目录起 IDE → 要求重新登录 → 登第二个账户 → 两份资料各持
+  各的邮箱与档位、同时跑互不影响）。新建 / 切换 / 登录（= 用它起 IDE）/ 移除，同 Codex 页；
+  新槽位只复制默认资料的 `settings.json` / `keybindings.json`；使用者原来那份默认资料不动。
+  面板起的 IDE 的调试端口文件跟着槽位目录走，汉化引擎由编排层告知去哪读。
+  新 IPC `antigravity_ide_create` / `antigravity_ide_select` / `antigravity_ide_archive`。
+- **账户状态与各模型剩余配额** —— 读 IDE 自己写在 `state.vscdb` 里的 `userStatus`
+  （邮箱、档位、每个模型的剩余比例与重置时间），**零网络请求、不调 `cloudcode-pa`**，
+  跟 Claude 页读 `plan-usage-history.json` 同一条口径。它只有 IDE 上次同步时那么新，界面写
+  「IDE 写入 hh:mm」；Hub 不写这份状态。卡片上显示剩余最低的那一族（同族三个推理档合并），
+  弹窗里是全表。只显示，不据此做任何决定。
+- **本机用量卡**：读 `~\.gemini\antigravity*\conversations\*.db` 里的生成记录（protobuf，
+  自写的线格式读取器，字段号按 12,410 条实测记录数出来），装进 Claude 那套 `token_summary`
+  —— 输入 / 输出 / 缓存命中率 / 缓存省下 / 按模型明细，今天 / 7 天 / 30 天 / 全部。
+  旧 `.pb` 归档不计入只报数；备份目录里同名对话只计一次；不分账户。
+  新 IPC `antigravity_usage`；诊断例子 `cargo run -p qb-accounts --example antigravity-usage`。
+- **Gemini 官方价**进内置快照（按 2026-09-21 的官方定价页；3.6–3.8 Flash 是到 2026-12-31 的促销价），
+  `price_key` 剥 `-thinking` 后缀。
+- **版式**：汉化 / 自动审批 / 高危拦截收进启动卡标题栏一颗按钮打开的弹窗（照 GPT 页「识别」的先例），
+  右下换成用量卡；左卡脚注上一对页签切「IDE 槽位 / Gemini CLI 槽位」。三个官方账户子页从此长一个样。
+- 检查：Rust 1106 / clippy / fmt / deny；前端 build / test 97 / types / format / test:ui（115 + 15）/ release:check。
+
+## 0.29.0 — 2026-09-20
+
+- **修复：Gemini CLI 一直装不上 —— 弹出一个命令窗口，npm 从来没跑起来过。** 根因是
+  `sessions::launch_detached_console(cmd.exe, ["/k", "npm install …"])` 这条路会给**每一个**
+  参数套引号（`quote_argument` 无条件加），于是 `cmd.exe` 收到的是加了引号的 `"/k"`，
+  认不出那是开关，把后面整串当命令名去找，报 `is not recognized`，而 `/k` 又让那个窗口
+  留在原地。同机复现过：`"/c" "npm --version && …"` → exit 1；`/c "npm --version && …"` → exit 0。
+  **面板这边一直返回成功**，界面还提示「已打开 npm 安装窗口」并立刻重新检测（那时 npm 一动都没动）。
+  现在走仓库里已有且正确的那条路（`winget::run_streaming("cmd", ["/c","npm","install","-g",…])`）：
+  开关裸着、每个参数一个 argv、隐藏窗口、**等它装完**、输出流进软件页的进度条；
+  装之前先查 node/npm 在不在（没有就明说要装 Node.js，不让人对着空窗口猜），
+  装之后回读检测核对，不看退出码。新任务 `install-gemini-cli`。
+  顺带补一道护栏：`NativeProcess::create` 现在**拒绝**把 `cmd.exe` / `powershell.exe` / `pwsh.exe`
+  当成启动目标（带参数时），报错里指出该用哪个替代 —— 这个坑对任何 shell 开关都成立。
+- **反重力一键安装**（原来软件页那张卡只有一个官网链接：能检测、能起、能上锁、能卸载，唯独装不了）。
+  **A 路** winget 官方包（`Google.Antigravity` / `Google.AntigravityIDE`）；没成走 **B 路**：
+  读官方下载页 `antigravity.google/download` 解析出当前版本与地址 → 域限定
+  `storage.googleapis.com` / `edgedl.me.gvt1.com` / `dl.google.com` → 下载 →
+  **核 Authenticode 主体含 Google（读不出 = 没验成 = 不装）** → 按安装器类型静默安装
+  （Hub 是 NSIS 走 `/S`，IDE 是 Inno 走 `/VERYSILENT … /mergetasks=!runcode`）。
+  装之前先关掉正在跑的那份（Electron 单实例，开着装不上而且多半不报错），
+  装完**重新上锁**（新 exe 继承干净 ACL，门禁那条 Deny 跟着旧文件没了）并回读检测核对。
+  面板**仍然不分发、不托管、不镜像** Google 的安装包 —— 装的就是使用者自己去官网点下载
+  得到的同一个文件。官网不公布哈希，所以完整性靠「只从 Google 的域下」+「必须验出 Google 签名」
+  两道，算出来的 SHA-256 只记进日志、不作判据。新 IPC `antigravity_install` / `antigravity_latest`，
+  进度任务 `install-antigravity`，另有只读诊断例子
+  `cargo run -p qb-install --example antigravity-resolve [-- dump]`。
+  ⚠ 抓页面要自己解 gzip：那个站点**不管发什么 `Accept-Encoding` 都压着发**（连显式 `identity` 也是），
+  而面板的 reqwest 没开解压特性 —— 第一版代码因此拿到一串替换字符，却报成「页面可能改版了」。
+- **Windows 安全中心把面板当病毒隔离**（本机 2026-09 三次 `Trojan:Win32/Bearfoos.A!ml` / `B!ml`，
+  装好的 exe 与 0.24.7 的安装包都被隔离过）。`!ml` = 机器学习启发式，不是特征码命中。
+  根因是「未签名 + 零信誉 + 行为像木马」，而第三项是产品本身删不掉。**这一版没有做代码签名**，
+  只减少了那些「正规程序都会声明、恶意程序常常懒得写」的差异：
+  补全 PE 版本资源（原来 `InternalName` / `OriginalFilename` / `LegalCopyright` **全是空的**）；
+  新增应用清单（原来**没有 `requestedExecutionLevel`**，现在 `asInvoker` + `supportedOS` +
+  PerMonitorV2 DPI + UTF-8 代码页）；IPv6 那处提权去掉 `-EncodedCommand`
+  （`-Verb RunAs` + `-WindowStyle Hidden` + base64 三件凑齐是权重最高的组合之一）；
+  开机搬桌面旧启动脚本改成**一台机器只做一次**（原来每次启动都枚举一遍使用者的桌面）；
+  `strip = true` → `"debuginfo"`。新文档 [docs/ANTIVIRUS.zh-CN.md](docs/ANTIVIRUS.zh-CN.md)
+  写清检出名、为什么是误报、怎么从隔离区恢复、怎么向微软提交误报申诉。
+  ⛔ **故意不做**：面板里不加「一键给自己加 Defender 排除项」的按钮 ——
+  程序给自己开杀软白名单本身就是恶意软件行为。
+  ⚠ 这几项只能降低概率，**不保证下一版不再被报**。真正的答案是代码签名，见 KNOWN-ISSUES。
+- **软件页修了一批自相矛盾与逻辑冲突：**
+  - **Pill 与版本行不再打架。** 四张卡（Codex 桌面端 / Claude 桌面端 / Gemini CLI / 反重力）
+    都可能同时显示「已装」和「未安装」，或者 Pill 写「未安装」而版本行写着一个真版本号。
+    现在三档（未安装 / 版本号 / **已装 · 版本读不出**）统一走 `lib/software.ts` 一份渲染函数，
+    Pill 与版本行同源。第四档「报告还没回来」也不再折成「未安装」。
+  - **后端也修了一处真错：** `detect::codex_desktop` 的 `installed` 与 `version` 来自探测脚本里
+    两个互不相干的分支，包在册但找不到 exe 时会报 `installed:false` 配一个真版本号，
+    路径行还断言「`Get-AppxPackage` 里没有 OpenAI.Codex」—— 那句是假的。现在包在册就是装了，
+    并给出下一步（强制重装修注册）。抽成纯函数 `codex_desktop_software`，四条单测钉着。
+  - **切换升级渠道查的还是旧渠道。** `setChannel` 排的是下一次渲染，而资源定义在渲染里注册 ——
+    同一个事件里 `refresh()` 用的是旧渠道那份定义：选 stable、查回来 latest 的计划、当成 stable 显示。
+    `store.refresh(key, def?)` 现在接受显式定义；换渠道时先把旧结论扔掉再按新渠道查。
+  - **装 Codex CLI / Claude 桌面端的进度条画在「Claude Code」卡里**（三张卡共用 `install` 任务名）。
+    现在记住这一次是谁按的，进度画回按钮旁边；六处进度块合成一个 `TaskBlock` 组件。
+  - **安装跑着的时候还能点「更改目录」/「回滚」/「彻底清除」**，而它们都要拿同一把
+    `operations::exclusive()` —— 排在后面无限等，症状是按钮一直转、没有报错、什么都不发生
+    （坑 7.51 的形状）。三个子组件现在共用页面那一份 busy；扫描类按钮（重新扫描、检查、
+    升级渠道下拉、Chrome 扫描）也一并纳入。
+    另外新增一条横幅：有命令等了超过 12 秒就把「我在等后端」说出口。
+    ⛔ **没有加超时取消** —— `invoke` 取消不了，超时只会让 busy 提前清空、按钮亮回来，
+    反而制造出两个互斥操作同时在跑。
+  - **三个弹窗三套生命周期**（卸载只在成功时关、Chrome 在 finally 里关、Codex 桌面端只在成功时关）：
+    失败时那个框留在屏幕上压着错误提示。现在一律成功失败都关。
+  - `winget_available` 还没读到时不再先判死（`!undefined` 是真，于是在**还不知道**的时候
+    就断言「本机没有 winget」并把按钮灰掉）。
+  - 文案去重：「卸载提示词」两套措辞合一（Chrome 那一列原来是 `UninstallCol` 的手抄副本）、
+    「纳入 IP 门禁」三处合成一个函数（两张 Codex 卡写的是**同一个设置键**，原来各抄一份 27 行）、
+    「还没读到」「已装 · 版本读不出」抽成常量。
+  - `events.rs` 那条 `task_names_match_the_frontend_union` **自己漏了三个名字**
+    （`egress-install` 两边都有却两个数组都没抄；`launch-antigravity` / `launch-antigravity-ide`
+    只有前端有）。手抄一份来核对另一份，抄漏的那一项天然不会被发现 —— 现在直接读
+    `src/lib/tasks.ts`，两个方向都查。
+  - 新增前端单测 `src/lib/software.test.ts`（这一页此前**零单测**）。
+
+## 0.28.0 — 2026-09-20
+
+- **Codex 桌面端不开 Store 也能装**（融入 chrichuang218/codex-windows-cn 与 Wangnov/codex-app-mirror 两个 MIT 项目的做法，使用者定的）。面板对这个 Store 包早就能检测、按槽位启动、上锁、挂看门狗，唯独装不了 —— 找不到时只会说「请自行到 Store 装」。现在软件页新增「Codex 桌面端（Microsoft Store）」卡：**A 路** `winget install --source msstore`（Store 自己的部署通道，系统管注册，不提权）；没成走 **B 路** 直连微软：DisplayCatalog 取类别 → FE3 `GetCookie` / `SyncUpdates` / `GetExtendedUpdateInfo2` 取签名过的 CDN 地址 → 下载官方 `.msix`（约 800 MB，进度按清单大小画）→ 核对清单 SHA-256 与 OpenAI 签名 → `Add-AppxPackage`（包里带打包服务要管理员时改走一次 UAC，拒绝就不装，包留在托管目录）。装完回读 `Get-AppxPackage` 核对，不看退出码。两条路装出来的都是**正规注册的 Store 包**（包身份、`codex://`、自动更新照旧）；**不采用**两个来源的「解压未打包运行」与「多版本 junction」。有「检查 Store 版本」（只查元数据）、「强制重装」（同版本重装，修复注册失效 / os error 5）、自带 `.msix` 三个口子。三份 SOAP 信封与匿名票据来自 codex-windows-cn（MIT，见 ATTRIBUTION）；解析器自写、全纯函数带单测；下载域限定 `delivery.mp.microsoft.com`；FE3 的证书链到微软自己的根（不在 Mozilla 清单里），内置那一张根证书只给这个客户端用，指纹有测试钉着。实机核过：DisplayCatalog → FE3 三步都通，读到 Store 最新版 26.915.4065.0、清单 SHA-256 与 825 MB 大小、`tlu.dl.delivery.mp.microsoft.com` 的地址；**没有真的下载安装**（见 KNOWN-ISSUES）。新 IPC `codex_desktop_install(local, force)` / `codex_desktop_latest`，进度任务 `install-codex-desktop`；账户页 GPT 卡没检测到桌面端时给「去软件页安装」。
+- **修复：软件页「安装 / 重新下载安装」Claude Code / Codex CLI 与托管那份的「升级」一点下去永远转圈。** `install_run` / `upgrade_execute` 拿着 `operations::exclusive()` 再调 `managed_install`，而它开头又拿一次 —— tokio 的 Mutex 不可重入，就在自己手里的锁上永远等着：没有报错、没有一段进度。0.22.6 到 0.27.0 都是这样，待办里托管安装一直标着「未验证」。去掉里面那次；`architecture.rs` 新增 `helpers_called_under_the_exclusive_lock_never_take_it_again` 读源码钉住。
+- **修复：Codex CLI 卡「卸载提示词」给的是 Claude 的提示词。** 原来只分 Chrome / 其它，其它一律是通篇 Claude 路径的那份。新增 Codex 专属提示词（Store 包、npm / winget / 手动解压三种 CLI 落点、`~\.codex`、凭据管理器、`OPENAI_API_KEY` 别的工具也在用所以默认不删）。
+- **卸载提示词做成弹窗。** 原来内联在整页最底部的一张卡 —— 点顶上 Claude Code 卡的按钮，内容出现在六张卡之后，看不见它弹出来了。两份提示词都补上「面板够不到的两块」：WSL 发行版与本机其它 Windows 用户账户（卡上那句「兜面板够不到的地方」原来是句空话，提示词里根本没提）。
+- **修复：Codex CLI 卡「版本」列跟右上角 Pill 自相矛盾。** Pill 读检测结果（含 npm / winget），版本列只读托管那份的记录：npm 装的 Codex 一张卡上同时写着「已装 0.x」和「未安装」。现在同源，非面板装的那份注明路径。
+- **修复：卸载 Claude 桌面端会把终端里的 Claude Code 会话一起关掉。** `purge_execute(ClaudeDesktop)` 原来跟 Claude Code 一样 `killswitch::execute()` 全收，界面上却写着「开着的桌面端会先被关掉」。改成 `execute_desktop()`（只收 `Role::Desktop`：桌面端本身 + 它 Code 页拉起的会话）。
+- **反重力 / Gemini CLI 卡补上「完全卸载」**（原来能装能检测不能卸）。反重力：先关掉 Hub + IDE，删两个安装目录（整目录删，不逐个核 exe 签名 —— IDE 壳可能是第三方汉化工具签的）、`~\.gemini\antigravity*`、`%APPDATA%\Antigravity*`、凭据管理器里名字含 antigravity 的条目（名字不含它的认不出，界面如实说）。Gemini CLI：npm 卸 `@google/gemini-cli`、删托管目录那份、删所有 Gemini 账户槽位；**不整份删 `~\.gemini`**（反重力的数据也在那底下）。Codex 桌面端也有：`Remove-AppxPackage` + `Packages\OpenAI.Codex_…` + 每个 GPT 槽位的 `desktop\`；槽位的 `home`（登录身份）不动，CLI 也在用它。`PurgeTarget` 新增三个值、`PurgeAction` 新增 `appx_remove`。
+- Chrome 卡「清空并重装 / 安装」按钮的显隐改看进页面就取到的 `install.winget_available`（原来只看要按「扫描」才有的 `traces`，扫描之前哪怕有 winget 也只给手动链接）；确认框的「装没装」改走三源兜底链，读不到时按最重的后果说。
+- 新增只读诊断例子 `cargo run -p qb-install --example codex-store-resolve [-- locate | dump]`：真的去问一遍 Store，看直装那条链认不认得出最新版（不下载、不安装）。清单页面改版时先跑它再改解析器。
+- 顺带：本机 `target\debug\incremental` 已涨到 37 GB、盘只剩 1.5 GB，编译报 os error 112；清掉了那个增量缓存（可再生，不是工程文件）。
+
+## 0.27.0 — 2026-09-20
+
+- **修复：反重力的汉化从来没生效过。** 实机定位（读运行中 Hub 的页面状态：`__ea_engine_running` 是 `false`、字典 0 条，而页面上的 `File` / `Settings` / `New Conversation` 每一条都在字典里）：自动附加等的是 `DevToolsActivePort` 的**修改时间发生变化**，而 Chromium 在进程刚起来的几百毫秒里就把文件写完了 —— 采样基准时拿到的已经是新值，条件永远不成立，日志里连着两次都是「30 秒没等到调试端口文件」，而那个文件早就写好了。现在改成**探活**（每秒问一次 `/json/list` 列不列得出页面），窗口放到 60 秒，失败原因落到界面上而不是只写审计日志。
+- **汉化引擎现在也管反重力 IDE。** IDE 是 VS Code 分支、默认不开调试端口，面板起它时补 `--remote-debugging-port=0`（随机端口、只绑回环，不写死号码以免在别人机器上撞占用）。引擎同时看 Hub 与 IDE 两个源，一个掉线不停另一个。⚠ 只有**面板起的** IDE 才有端口；装了第三方汉化壳时那层壳可能不把参数传给里层，界面上会如实说这一句。
+- **「注入成功」改成回读核实。** 0.26.0 只数「`Runtime.evaluate` 发出去了几次」，而回执被整个丢掉 —— 脚本在页面里抛异常也照样显示「已注入 N 个页面」。现在注入后紧跟一条**面板自己的**只读表达式，读回 `window.__ea_engine_running` 与字典条数；`exceptionDetails` 记进引擎日志。界面显示的是核实过的页面数。EasyAntigravity 那份 `inject.js` 一个字未改。
+- **GPT 与反重力的启动区改成 Claude 页那套磁贴**（使用者要三个官方账户子页长一个样）：反重力是 Hub / IDE / 酒馆 / 一键关闭反重力 2×2；GPT 是启动桌面端 / 酒馆 / 一键关闭三格，关闭那格横跨两列。「识别」入口保持在标题栏不动。磁贴带图标、常驻副标题、启动进度线与失败留痕。
+- **启动确认框只在真的有东西在跑的时候弹。** 点启动先问一次「现在有几个进程在跑」（走的是启动链自己那套证据：反重力按安装目录、GPT 按官方包 exe 路径），没有就直接起。⛔ 查不出来一律当作可能在跑照弹，不把「不知道」降级成「没有」。代价没有因此藏起来 —— 「开着的会先关掉」常驻在磁贴副标题里。新增只读 IPC `antigravity_running`。
+- **账户槽位改成显示「邮箱 - 命名」**，所有显示槽位名的地方一起改（槽位行、用量卡标题、详情页、切换 / 删除确认框、提示、引导页、托盘菜单）。读不到邮箱就只显示命名。⛔ `label` 仍然是标识：槽位目录名、托盘菜单项 id、启动日志里那句「账户槽位 main」一个字未动（日志行解析按那个格式来）。
+
+## 0.26.0 — 2026-09-20
+
+- **反重力（Google Antigravity）接进面板**（使用者要的：融入 EasyAntigravity、做官方账户、进软件页、被 IP 锁保护、接酒馆）。先读了 Hub v2.15.0 的 `app.asar` 与语言服务器二进制再定边界：**没有中转路径**（端点写死、只认 Google 登录，中转侧每个入口显式拒绝）、**没有多槽位**（令牌在 Windows 凭据管理器）。
+- 新增 `Client::Antigravity`（Hub）与 `Client::AntigravityIde`：起 / 关走 Claude 页同一条门禁链（验 IP → 先关正在跑的单实例 → 托管会话 → 租约 → 看门狗桌面档）。位置表 `install::antigravity`（主程序、语言服务器、第三方汉化壳留下的 `*.original.exe`），**Hub + IDE 默认都归门禁**（`antigravity_outside_gate`，反义存法同 GPT），一键关闭 / 看门狗按安装目录认（`Evidence::AntigravityInstall`）。
+- 侧栏「官方账户」下新增子项「反重力」：启动 / 关闭 Hub 与 IDE、登录态信号（只读语言服务器日志）、汉化引擎开关与计数、酒馆入口、酒馆用的 Gemini CLI 槽位。软件页新增「反重力」卡（Hub / IDE 检测、门禁开关、官网链接；不分发 Google 的安装包）与「Gemini CLI」卡（npm 装）。
+- **汉化 / 自动审批 / 高危拦截**（插件 `antigravity-ui`）：EasyAntigravity（MIT）的页面脚本、字典、规则逐字带入，面板自己的 CDP 客户端读 Hub 的 `DevToolsActivePort` 注入，三个事件 + 2 s 心跳重注入，控制台回收放行 / 拦截日志。规则可编辑、可恢复出厂；从面板起 Hub 后自动附加。**不做它的「免 TUN 代理」**（来源许可不明的 `version.dll`，使用者定的）。
+- **酒馆内置第三条桥：Gemini**（`127.0.0.1:5003`）—— 每个请求起一次**官方 Gemini CLI** 的无交互模式（stdin + `--output-format json`，`GEMINI_CLI_HOME` 指向槽位，凭据零接触，不设 API Key）。接的是 Gemini CLI 不是反重力本体；额度是否共享未核实。
+- IPC：`antigravity_status/launch/close/auto_update_set`、`gemini_accounts/create/switch/archive/login/cli_install`、`antigravity_ui_status/start/stop/config_save/rules/rules_save/rules_reset`、`tavern_gemini_status/token`、`plugin_start("gemini")`。新依赖 `tokio-tungstenite`（MIT，无 TLS）。
+- 真机端到端未验（要使用者本人的 Google 账户），见 KNOWN-ISSUES。
+
+## 0.25.0 — 2026-09-20
+
+- **修复：账户页的用量卡永远是 0。** Claude Code 2.1.271（2026-09-15）起转写里不再写 `bridge-session` 行，而 0.21.0–0.24.8 把默认目录 `~\.claude\projects` 里的转写归给槽位**只认**那一行的 `ownerAccountUuid`，于是桌面端 Code 页跑的会话全被算成「未归属」。现在三级判定：① 桌面端资料目录里的会话记录 `claude-code-sessions\<账户>\<组织>\local_*.json`（`cliSessionId` 对上转写文件名，账户 uuid 是桌面端自己写在路径里的）；② 桌面端「无文件夹」会话的项目目录名里嵌着的账户 uuid；③ 旧转写的 `bridge-session` 行。三级都归不出的仍单独报「未归属」，不摊给任何账户。子代理转写 `<会话>\subagents\*.jsonl` 也计入（归父会话）。GPT 槽位用量为 0 且一份会话文件都没有时页脚写明「云端任务不写本机文件」。
+- **侧栏「官方账户」下的子项「Codex」改名「GPT」**（只改这一处；页面里的「Codex 桌面端」仍是软件名）。
+- **GPT（Codex）默认归 IP 门禁管**（使用者定的：「默认定死被 IP 锁接管」）。账户页「启动 Codex 桌面端」改走 Claude 页同一条链（验出口 IP → 托管会话 → 租约 → 看门狗 Desktop 档），「一键关闭」按会话停并交回租约；`codex.exe` 一并上执行锁（npm 包里真正干活的原生 exe 也进了清单 —— 那正是「挡得住 codex 命令、挡不住内部脚本」那条缺口）。设置反过来存成 `codex_outside_gate`（默认 false），旧文件里的 `codex_under_gate: false` 升级后被忽略；开关从「执行锁」弹窗搬进评分栏「IP 锁」弹窗，移出后 GPT 桌面端才是独立启动。
+- **酒馆插件内置 GPT 桥接**（并进现有的酒馆插件，一份酒馆两条桥）：面板在 `127.0.0.1:5002` 起一个 OpenAI 兼容端点，酒馆每发一条消息就起一次未经修改的官方 Codex CLI 的 `codex exec --json`（`CODEX_HOME` 指向当前激活的 GPT 槽位，`auth.json` 零接触，`model_provider` 强制官方，只读沙箱，默认 `--ephemeral`，子进程挂进 KILL_ON_JOB_CLOSE 的 Job）。GPT 页启动卡加「酒馆」按钮；扩展中心酒馆插件加「GPT 桥接」区块（端口 / 模型 / 推理强度 / 记入槽位用量、复制密钥、酒馆那边怎么配）。IPC：`plugin_start(backend)`、`tavern_gpt_status`、`tavern_gpt_token`。没有增量流式、不传图、不给工具；OpenAI 对这种用法没有公开明确条款，DISCLAIMER §8 写明由使用者自行判断。
+- 门禁判不过时 `stop_managed` 连同 GPT 桥接一起收；`settings_save` 在 GPT 桌面端跑着时拒绝改门禁范围。
+
 ## 0.24.8 — 2026-09-19
 
 - **许可：AGPL-3.0-only 之上依 AGPL 第 7 节附加三条条款**（新文件 `LICENSE-ADDITIONAL-TERMS.md`，中英文，英文为准）：(b) 传播原版或改版时必须在 README 和界面「关于」页保留署名「基于 QB Gate，版权所有 (C) 2026 smithtaylor7748-ops。源码：https://github.com/smithtaylor7748-ops/qb-gate」；(c) 改版必须显著标明、不得暗示由原作者发布或背书；(e) 不授予「QB Gate」名称与图标，改版须改名。这三类是 AGPL §7 明确允许的附加条款，接收者不能删；之外的任何限制都没有加，项目仍是开源项目。README 授权声明、设置页「关于」、各 crate 与入口文件头、安装包 `licenses/`、Release 附件都指向这份文件，`release:check` 逐处断言。
@@ -121,7 +754,6 @@
 - 启动后依据托管会话切换为“一键关闭”，手动退出后恢复“启动”。只关闭本页托管会话。
 - 旧版未保存的 Key 无法恢复，已有空凭证线路需重新填写一次。
 
-
 ## 0.22.2 — 2026-09-16
 
 - 本机 IP 自测只请求一次，出口地址、IPPure 系数和住宅 / 家庭 IP 判断来自同一份读数，避免重复请求失败或两次出口变化造成结果矛盾。
@@ -146,7 +778,6 @@
 - Codex token 用量读取本地 rollout，按会话累计差值去重；缓存和推理为输入/输出的子集，不重复相加，无法核算的记录单列。
 - 全面体检覆盖五项并包含本机补充检查；单项失败继续后续检测，增加检测证据及一键修复后复检。
 - 浏览器策略修复保存原值、支持撤销，并尊重整机策略优先级；DNS 回显缺失与国家信息未知不再误报通过。
-
 
 > **0.14.0 through 0.18.2 are missing from this file.** The changelog was left
 > behind for five releases. Nothing is reconstructed here from memory — what those
@@ -287,6 +918,7 @@
   ⚠ 启动**试过**搬到槽位下面通栏：右下角那片空地是没了，代价是想启动得先滚一屏 ——
   使用者当场退回来。最常点的按钮不该跑到首屏之外，这条比留白好看重要。
   空地改用别的办法收：三块贴变四块、2×2 填满右栏。
+
 - **账户页下面加了一张用量小结**：今天 / 7 天 / 全部三档，四个数 ——
   总 token、输入输出、缓存命中率、缓存省下多少钱。
   命中率的分母里**没有输出**（输出是生成的，没有「命中」一说）。
@@ -317,7 +949,7 @@ page end to end.
   Every helper process the panel starts carries `CREATE_NO_WINDOW`, so it has no
   console; with no console `[Console]::OutputEncoding` falls back to the system
   code page, and any character that page cannot encode is replaced with a
-  literal `?` *inside PowerShell*. The characters are gone before Rust sees a
+  literal `?` _inside PowerShell_. The characters are gone before Rust sees a
   byte, so no amount of decoding brings them back. Measured on zh-CN: the
   adapter `以太网` arrived as `???` and `蓝牙网络连接` as `??????`, which is
   what the outbound-lock dialog was showing. This was never cosmetic — the
@@ -344,7 +976,7 @@ page end to end.
   instances: after an upgrade the version column still read "upgradeable →",
   and after wiping and reinstalling Chrome the privacy audit still listed the
   high-risk permissions of extensions that had just been deleted. A manual
-  resource holds a *measurement*; after a destructive operation the honest state
+  resource holds a _measurement_; after a destructive operation the honest state
   is "not measured yet", so `invalidate` now drops it (and its persisted copy).
   Where an immediate re-measure is wanted instead — the rule table and the
   privacy audit the user is looking at while pressing the button — the page
@@ -394,7 +1026,7 @@ the design problem sitting behind the second one.
   settings page was +257px). Fixed with `position: relative` on the scroll
   container, which closes the whole class rather than that one instance. The UI
   regression suite now asserts the document itself cannot scroll — it previously
-  only checked `.qb-main` for *horizontal* overflow, which is why this shipped.
+  only checked `.qb-main` for _horizontal_ overflow, which is why this shipped.
 - **The Chrome card claimed "not installed" on machines that had Chrome.** It
   read `chrome_installed` only from `claude_traces` / `browser_audit`, both of
   which are `auto: false` and therefore `undefined` until the user presses Scan.
@@ -443,7 +1075,7 @@ audit. The software page was rewritten around them.
   incapable of holding a key, token or cookie value — only names and locations.
   PATH and shell files are rewritten once per file, all-or-nothing, so a failure
   cannot leave half a profile behind. Execution ends with a re-scan: `Report.left`
-  is what is *still there*, not what the commands claimed. That proves "these
+  is what is _still there_, not what the commands claimed. That proves "these
   locations are now empty", not "this machine is clean" — WSL and other user
   accounts are out of reach and stay with the prompt in the card.
 - **Startup alignment** (timezone, region format, display language) moved out of
@@ -465,7 +1097,7 @@ audit. The software page was rewritten around them.
   TUN" rule would do nothing while looking like it did something. System proxy
   modification runs only on an explicit click and records the original **to disk**
   before touching anything: memory would lose it when the panel closes, and the
-  promise is a rollback *in the panel*. Repeated changes keep the earliest backup,
+  promise is a rollback _in the panel_. Repeated changes keep the earliest backup,
   so "restore" means before the panel first intervened. Neither feature has a
   timer or a startup hook. Firewall rules outlive the panel and must be revoked
   before uninstalling QB Gate.
@@ -505,7 +1137,7 @@ The Rust side is a Cargo workspace. Layering is now the compiler's job, not a co
   and wry, so the `0xc0000139` crash documented in `events.rs` is gone.
 - Circular dependencies went from 15 pairs to none. An 11-module strongly
   connected component (`domain → workspace → repository → profile → snapshot →
-  gate → repository`) only became visible during the split; pairwise detection had
+gate → repository`) only became visible during the split; pairwise detection had
   been green the whole time. Nine ratchet tests in `src-tauri/tests/architecture.rs`
   hold the line, each with a counter-example fixture, because a broken checker and
   a clean codebase look identical.
@@ -573,7 +1205,6 @@ Text no longer escapes its box.
   `overflow: hidden`, so text that escaped inside one changed nothing it could
   see.
 
-
 ## 0.12.0
 
 - Rebuilt navigation around the workspace, official accounts, relay environments, extensions, environment/gate, and settings while preserving the warm visual identity.
@@ -584,7 +1215,6 @@ Text no longer escapes its box.
 - Reworked snapshots and complete-unit version rollback, including Codex helpers and installation records.
 - Replaced the Tavern-first shop with a catalog for application integrations, MCP, Skills and templates, with explicit imports and per-environment installation.
 - Added diagnostic protocol checks and redacted request export, dependency notices, source checks, CI validation, and migration documentation.
-
 
 ### Fixed before release (source review)
 

@@ -53,7 +53,8 @@ export const TARGET_KIND_HINT: Record<string, string> = {
   EditorExtension: "VS Code / Cursor 等编辑器里 Claude Code 扩展自带的那份",
   DesktopStub: "桌面端的 Squirrel 存根，开始菜单的快捷方式指向它",
   StaleCopy: "升级留下的旧副本，没有执行锁，是能绕过门禁的入口",
-  CodexCli: "Codex CLI。只有在设置里打开「Codex 也归门禁管」之后才会出现在这里",
+  CodexCli:
+    "Codex CLI。默认归门禁管；在「IP 锁」弹窗里把 GPT 移出门禁后就不再出现在这里",
 };
 
 /** Claude Code 副本的来源。与 Rust `install::inventory::Kind` 一一对应。 */
@@ -92,6 +93,7 @@ export const KILL_ROLE_LABEL: Record<KillRole, string> = {
   desktop: "桌面端",
   code: "Claude Code",
   bridge: "酒馆桥接",
+  antigravity: "反重力",
 };
 
 export const CHECK_LABEL: Record<Check, string> = {
@@ -109,6 +111,7 @@ export const EVIDENCE_LABEL: Record<Evidence, string> = {
   AnthropicSigned: "Anthropic 签名",
   BridgeAndDataDir: "桥接 + 数据目录",
   NpmPackage: "node + claude-code 包",
+  AntigravityInstall: "反重力安装目录",
 };
 
 export const UPGRADE_ACTION_LABEL: Record<UpgradeAction, string> = {
@@ -151,6 +154,9 @@ export const PURGE_TARGET_LABEL: Record<PurgeTarget, string> = {
   codex: "Codex CLI",
   "claude-desktop": "Claude 桌面端",
   chrome: "Google Chrome",
+  "codex-desktop": "Codex 桌面端",
+  antigravity: "反重力",
+  "gemini-cli": "Gemini CLI",
 };
 
 /** 完全卸载的分类。确认框按这个分段列，一段一段给使用者看。 */
@@ -185,6 +191,7 @@ export const PURGE_ACTION_LABEL: Record<PurgeAction, string> = {
   shell_line_remove: "删 Shell 配置行",
   credential_delete: "删凭据管理器条目",
   startup_remove: "删启动项",
+  appx_remove: "卸载 Store 包",
 };
 
 export const LAUNCH_TARGET_LABEL: Record<string, string> = {

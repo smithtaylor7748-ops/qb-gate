@@ -439,10 +439,11 @@ mod tests {
     }
 
     #[test]
-    fn codex_follows_the_setting_and_defaults_to_outside_the_gate() {
-        // Codex 归不归门禁管由设置决定，默认在门禁之外 ——
-        // 默认开着的话，装一次 Codex 就会把 Claude 的门无谓地开一遍。
-        assert!(!crate::settings::Settings::default().codex_under_gate);
+    fn codex_follows_the_setting_and_defaults_to_inside_the_gate() {
+        // Codex 归不归门禁管由设置决定。0.25.0 起默认在门禁**之内**（使用者定的，
+        // 见 `settings::Settings::codex_outside_gate`）：装一次 Codex 也要走
+        // 解锁 / 重锁那一遍，跟 Claude 一样。
+        assert!(!crate::settings::Settings::default().codex_outside_gate);
         assert_eq!(
             InstallTarget::Codex.under_qb_gate(),
             crate::settings::codex_under_gate()

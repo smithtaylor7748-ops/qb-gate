@@ -106,6 +106,8 @@ impl ModelPrice {
             output: self.output,
             cache_read: self.cache_read,
             cache_write: self.cache_write,
+            // 内置表只记 5 分钟档;1 小时档一律按官方倍数推,标成 `Derived`。
+            cache_write_1h: UnitPrice::derived(self.input.per_mtok * CACHE_WRITE_1H_RATIO),
             currency: self.currency.to_string(),
             source_url: self.source_url.to_string(),
             verified_at: self.verified_at.to_string(),
@@ -131,6 +133,37 @@ pub enum PriceStatus {
 
 const ANTHROPIC_PRICING: &str = "https://platform.claude.com/docs/en/pricing";
 const ANTHROPIC_SOURCE: &str = "Anthropic 官方定价页";
+const GOOGLE_PRICING: &str = "https://ai.google.dev/gemini-api/docs/pricing";
+const GOOGLE_SOURCE: &str = "Google Gemini API 官方定价页";
+
+/// Gemini：输入 / 输出 / 缓存读三项官方都明码标出;缓存写按标准倍数推。
+///
+/// Gemini **没有按 token 的缓存写价**（显式缓存按小时计存储费,隐式缓存免费）,
+/// 这一项只为结构完整 —— 反重力的用量记录里缓存写恒为 0,永远乘不到它。
+const fn gemini(input: f64, output: f64, cache_read: f64, verified_at: &'static str) -> ModelPrice {
+    ModelPrice {
+        input: UnitPrice {
+            per_mtok: input,
+            basis: PriceBasis::Published,
+        },
+        output: UnitPrice {
+            per_mtok: output,
+            basis: PriceBasis::Published,
+        },
+        cache_read: UnitPrice {
+            per_mtok: cache_read,
+            basis: PriceBasis::Published,
+        },
+        cache_write: UnitPrice {
+            per_mtok: input * CACHE_WRITE_RATIO,
+            basis: PriceBasis::Derived,
+        },
+        currency: "USD",
+        source: GOOGLE_SOURCE,
+        source_url: GOOGLE_PRICING,
+        verified_at,
+    }
+}
 
 /// 由输入价按标准倍数补出缓存两项。
 const fn claude(input: f64, output: f64, verified_at: &'static str) -> ModelPrice {
@@ -256,28 +289,56 @@ pub const TABLE: &[(&str, ModelPrice)] = &[
             verified_at: "2026-08-28",
         },
     ),
+    // ---- Google（0.30.0,给反重力用量卡算「缓存省下」）
+    //
+    // 2026-09-21 对着官方定价页（页面标注更新于 2026-09-16）抄的付费档标准价。
+    // 3.6 / 3.7 / 3.8 Flash 三个是**促销价**（页面原文「$0.75 through December 31, 2026.
+    // $1.50 starting January 1, 2027」），2027-01-01 起翻倍 —— `verified_at` 到期前要重核。
+    // 反重力记录里的模型 id 是 `gemini-3.7-flash` 这种不带 `-preview` 的形式,
+    // 3.1 Pro 官方页只列了 `gemini-3.1-pro-preview`,两个 id 都收、同一份价。
+    ("gemini-3.8-flash", gemini(0.75, 3.75, 0.075, "2026-09-21")),
+    ("gemini-3.7-flash", gemini(0.75, 3.75, 0.075, "2026-09-21")),
+    ("gemini-3.6-flash", gemini(0.75, 3.75, 0.075, "2026-09-21")),
+    ("gemini-3.5-flash", gemini(1.5, 9.0, 0.15, "2026-09-21")),
+    (
+        "gemini-3.5-flash-lite",
+        gemini(0.3, 2.5, 0.03, "2026-09-21"),
+    ),
+    (
+        "gemini-3.1-pro-preview",
+        gemini(2.0, 12.0, 0.2, "2026-09-21"),
+    ),
+    ("gemini-3.1-pro", gemini(2.0, 12.0, 0.2, "2026-09-21")),
+    ("gemini-2.5-pro", gemini(1.25, 10.0, 0.125, "2026-09-21")),
+    ("gemini-2.5-flash", gemini(0.3, 2.5, 0.03, "2026-09-21")),
 ];
 
 /// 查一个模型的官方价。
 ///
 /// 名字先精确匹配,再去掉常见的日期后缀再试一次 —— 中转站经常把模型名写成
-/// `claude-opus-5-20260401` 这种带快照日期的形式。
+/// `claude-opus-5-20260401` 这种带快照日期的形式。反重力把开了思考的 Claude 记成
+/// `claude-opus-4-6-thinking`（同一个模型、同一份价）,`-thinking` 也剥掉再试。
 pub fn lookup(model: &str) -> Option<&'static ModelPrice> {
     let name = model.trim();
     if let Some((_, p)) = TABLE.iter().find(|(k, _)| *k == name) {
         return Some(p);
     }
-    // 去掉末尾的 `-YYYYMMDD` 或 `@YYYYMMDD` 再试。
-    let base = name
-        .rsplit_once('@')
+    let base = price_key(name);
+    TABLE.iter().find(|(k, _)| *k == base).map(|(_, p)| p)
+}
+
+/// 去掉末尾的 `-YYYYMMDD` / `@YYYYMMDD` / `-thinking`,得到查价用的名字。**纯函数。**
+pub fn price_key(name: &str) -> &str {
+    let name = name.trim();
+    let name = name.strip_suffix("-thinking").unwrap_or(name);
+    name.rsplit_once('@')
         .map(|(a, _)| a)
         .or_else(|| {
             name.rsplit_once('-')
                 .filter(|(_, tail)| tail.len() == 8 && tail.chars().all(|c| c.is_ascii_digit()))
                 .map(|(a, _)| a)
         })
-        .unwrap_or(name);
-    TABLE.iter().find(|(k, _)| *k == base).map(|(_, p)| p)
+        .unwrap_or(name)
 }
 
 /// 这份价还能不能用来比。
@@ -518,7 +579,14 @@ pub struct FetchedPrice {
     pub output_per_mtok: f64,
     /// 抓不到就留空,由 [`Catalog`] 按标准倍数补并标成 `Derived`。
     pub cache_read_per_mtok: Option<f64>,
+    /// 5 分钟档缓存写。
     pub cache_write_per_mtok: Option<f64>,
+    /// 1 小时档缓存写(只有 Anthropic 的表有)。
+    ///
+    /// `serde(default)`:0.25.1 之前抓回来存进库里的那些行没有这个字段,
+    /// 读出来就是 `None`,由 [`Catalog`] 按 [`CACHE_WRITE_1H_RATIO`] 推。
+    #[serde(default)]
+    pub cache_write_1h_per_mtok: Option<f64>,
     /// 长上下文那一档的价。
     ///
     /// ⛔ **这是「计费翻倍」的另一种。** OpenAI 对超长上下文单独定价:
@@ -569,10 +637,11 @@ impl Catalog {
     /// 查一个模型:先看抓回来的,没有再退回内置快照。
     pub fn resolve(&self, model: &str) -> Option<ResolvedPrice> {
         let name = model.trim();
+        let key = price_key(name);
         if let Some(f) = self
             .fetched
             .iter()
-            .find(|f| f.model.eq_ignore_ascii_case(name))
+            .find(|f| f.model.eq_ignore_ascii_case(name) || f.model.eq_ignore_ascii_case(key))
         {
             let read = f
                 .cache_read_per_mtok
@@ -582,11 +651,16 @@ impl Catalog {
                 .cache_write_per_mtok
                 .map(UnitPrice::published)
                 .unwrap_or_else(|| UnitPrice::derived(f.input_per_mtok * CACHE_WRITE_RATIO));
+            let write_1h = f
+                .cache_write_1h_per_mtok
+                .map(UnitPrice::published)
+                .unwrap_or_else(|| UnitPrice::derived(f.input_per_mtok * CACHE_WRITE_1H_RATIO));
             return Some(ResolvedPrice {
                 input: UnitPrice::published(f.input_per_mtok),
                 output: UnitPrice::published(f.output_per_mtok),
                 cache_read: read,
                 cache_write: write,
+                cache_write_1h: write_1h,
                 currency: f.currency.clone(),
                 source_url: f.source_url.clone(),
                 verified_at: f.fetched_at.clone(),
@@ -604,7 +678,11 @@ pub struct ResolvedPrice {
     pub input: UnitPrice,
     pub output: UnitPrice,
     pub cache_read: UnitPrice,
+    /// 5 分钟档缓存写。中转站那套四类判定([`PriceCategory::CacheWrite`])用的就是它。
     pub cache_write: UnitPrice,
+    /// 1 小时档缓存写。官方标了就是 `Published`,没标按 [`CACHE_WRITE_1H_RATIO`] 推。
+    /// 只给用量折算用 —— 中转站的四类判定不认这一档。
+    pub cache_write_1h: UnitPrice,
     pub currency: String,
     pub source_url: String,
     pub verified_at: String,
@@ -924,20 +1002,20 @@ pub fn parse_pricing_markdown(
         }) else {
             continue;
         };
-        if out.iter().any(|f: &FetchedPrice| f.model == parsed.0) {
+        if out.iter().any(|f: &FetchedPrice| f.model == parsed.model) {
             continue;
         }
-        let (model, input, read, write, output, long) = parsed;
-        if !plausible(input) || !plausible(output) {
+        if !plausible(parsed.input) || !plausible(parsed.output) {
             continue;
         }
         out.push(FetchedPrice {
-            model,
-            input_per_mtok: input,
-            output_per_mtok: output,
-            cache_read_per_mtok: read.filter(|v| plausible(*v)),
-            cache_write_per_mtok: write.filter(|v| plausible(*v)),
-            long_context: long,
+            model: parsed.model,
+            input_per_mtok: parsed.input,
+            output_per_mtok: parsed.output,
+            cache_read_per_mtok: parsed.cache_read.filter(|v| plausible(*v)),
+            cache_write_per_mtok: parsed.cache_write.filter(|v| plausible(*v)),
+            cache_write_1h_per_mtok: parsed.cache_write_1h.filter(|v| plausible(*v)),
+            long_context: parsed.long,
             currency: "USD".into(),
             source_url: source_url.to_string(),
             fetched_at: today.to_string(),
@@ -953,16 +1031,23 @@ fn plausible(v: f64) -> bool {
     v.is_finite() && v > 0.0 && v <= MAX_PLAUSIBLE_PER_MTOK
 }
 
-type Row = (
-    String,
-    f64,
-    Option<f64>,
-    Option<f64>,
-    f64,
-    Option<LongContext>,
-);
+/// 价目表里解析出来的一行。
+struct Row {
+    model: String,
+    input: f64,
+    cache_read: Option<f64>,
+    /// 5 分钟档缓存写(OpenAI 那张表里就是它唯一的缓存写)。
+    cache_write: Option<f64>,
+    /// 1 小时档缓存写。只有 Anthropic 那张表有这一列。
+    cache_write_1h: Option<f64>,
+    output: f64,
+    long: Option<LongContext>,
+}
 
 /// `模型 | 基础输入 | 5m 缓存写 | 1h 缓存写 | 缓存读 | 输出`
+///
+/// 1h 那一列 0.25.1 之前是读了就丢的。可 Claude Code 的缓存写实测**全是 1 小时档**
+/// (`tokens.rs` 文件头),按 5 分钟档的价算用量要少算 37.5% —— 所以留下来。
 fn anthropic_row(cells: &[&str]) -> Option<Row> {
     let model = display_name_to_id(cells.first()?)?;
     let money: Vec<f64> = cells.iter().skip(1).filter_map(|c| dollars(c)).collect();
@@ -970,14 +1055,15 @@ fn anthropic_row(cells: &[&str]) -> Option<Row> {
     if money.len() < 5 {
         return None;
     }
-    Some((
+    Some(Row {
         model,
-        money[0],       // 基础输入
-        Some(money[3]), // 缓存读(第四个,不是第二个)
-        Some(money[1]), // 5m 缓存写
-        money[4],       // 输出
-        None,
-    ))
+        input: money[0],
+        cache_read: Some(money[3]), // 第四个,不是第二个
+        cache_write: Some(money[1]),
+        cache_write_1h: Some(money[2]),
+        output: money[4],
+        long: None,
+    })
 }
 
 /// `模型 | 短上下文 输入/缓存读/缓存写/输出 | 长上下文 输入/缓存读/缓存写/输出`
@@ -1002,14 +1088,15 @@ fn openai_row(cells: &[&str]) -> Option<Row> {
         }),
         _ => None,
     };
-    Some((
-        name.to_string(),
-        cols[0]?,
-        cols.get(1).copied().flatten(),
-        cols.get(2).copied().flatten(),
-        cols.get(3).copied().flatten()?,
+    Some(Row {
+        model: name.to_string(),
+        input: cols[0]?,
+        cache_read: cols.get(1).copied().flatten(),
+        cache_write: cols.get(2).copied().flatten(),
+        cache_write_1h: None,
+        output: cols.get(3).copied().flatten()?,
         long,
-    ))
+    })
 }
 
 /// `Claude Opus 4.6` → `claude-opus-4-6`。
@@ -1266,6 +1353,46 @@ pub fn parse_station_pricing(body: &str) -> Vec<StationModel> {
 
 #[cfg(test)]
 mod tests {
+    /// 反重力记录里的模型名要查得到价（0.30.0）：Gemini 直接命中；开了思考的 Claude 带
+    /// `-thinking` 后缀，剥掉之后命中同一个模型；抓回来的价也按剥掉后缀的名字匹配。
+    #[test]
+    fn antigravity_model_names_resolve_to_a_price_with_and_without_the_thinking_suffix() {
+        let g = lookup("gemini-3.7-flash").expect("Gemini 3.7 Flash 在快照里");
+        assert_eq!(g.input.per_mtok, 0.75);
+        assert_eq!(
+            g.cache_read.basis,
+            PriceBasis::Published,
+            "缓存读是官方明码，不是推的"
+        );
+        assert_eq!(price_key("claude-opus-4-6-thinking"), "claude-opus-4-6");
+        assert_eq!(price_key("claude-opus-5-20260401"), "claude-opus-5");
+        assert_eq!(price_key("gemini-3.1-pro"), "gemini-3.1-pro");
+        assert!(lookup("claude-opus-4-6-thinking").is_some());
+        assert!(
+            lookup("gemini-3.1-pro").is_some(),
+            "反重力写的是不带 -preview 的 id"
+        );
+        assert!(
+            lookup("gemini-9.9-nothing").is_none(),
+            "认不出的仍然是 None，不凑"
+        );
+        let live = Catalog::new(vec![FetchedPrice {
+            model: "claude-opus-4-6".into(),
+            input_per_mtok: 9.0,
+            output_per_mtok: 25.0,
+            cache_read_per_mtok: Some(1.0),
+            cache_write_per_mtok: None,
+            cache_write_1h_per_mtok: None,
+            long_context: None,
+            currency: "USD".into(),
+            source_url: "https://example.invalid".into(),
+            fetched_at: "2026-09-21".into(),
+        }]);
+        let r = live.resolve("claude-opus-4-6-thinking").unwrap();
+        assert!(r.live, "抓回来的价要按剥掉 -thinking 的名字命中");
+        assert_eq!(r.input.per_mtok, 9.0);
+    }
+
     /// 官方价必须**真的参与**结论。
     ///
     /// 回归的是一条静默失效:老写法把站点公布的倍率乘上官方价凑出
@@ -1334,6 +1461,7 @@ mod tests {
             output: UnitPrice::published(per_mtok),
             cache_read: UnitPrice::published(per_mtok),
             cache_write: UnitPrice::published(per_mtok),
+            cache_write_1h: UnitPrice::published(per_mtok),
             currency: "USD".into(),
             source_url: String::new(),
             verified_at: "2026-01-01".into(),
@@ -1417,6 +1545,29 @@ mod tests {
         assert_eq!(opus.output_per_mtok, 25.0, "输出读成缓存写了");
         assert_eq!(opus.cache_read_per_mtok, Some(0.50));
         assert_eq!(opus.cache_write_per_mtok, Some(6.25));
+        assert_eq!(
+            opus.cache_write_1h_per_mtok,
+            Some(10.0),
+            "1h 那一列不许再读了就丢 —— Claude Code 的缓存写全是这一档"
+        );
+    }
+
+    /// 0.25.1 之前存进库里的那些行没有 1h 字段：照样读得出，1h 档按官方 2 倍推并标成推的。
+    #[test]
+    fn an_old_stored_row_without_the_one_hour_price_still_resolves() {
+        let old = r#"{"model":"claude-opus-5-5","input_per_mtok":4.0,"output_per_mtok":20.0,
+            "cache_read_per_mtok":0.2,"cache_write_per_mtok":5.0,"long_context":null,
+            "currency":"USD","source_url":"u","fetched_at":"2026-09-24"}"#;
+        let f: FetchedPrice = serde_json::from_str(old).expect("旧行必须还能读");
+        assert_eq!(f.cache_write_1h_per_mtok, None);
+        let r = Catalog::new(vec![f]).resolve("claude-opus-5-5").unwrap();
+        assert_eq!(r.cache_write_1h.per_mtok, 8.0);
+        assert_eq!(r.cache_write_1h.basis, PriceBasis::Derived);
+        assert_eq!(r.cache_write.per_mtok, 5.0, "5 分钟档照旧");
+        // 内置快照那一条也有 1h 档（推的）。
+        let snap = lookup("claude-opus-5").unwrap().as_resolved();
+        assert_eq!(snap.cache_write_1h.per_mtok, 10.0);
+        assert_eq!(snap.cache_write_1h.basis, PriceBasis::Derived);
     }
 
     #[test]
@@ -1734,6 +1885,7 @@ mod tests {
             output_per_mtok: 30.0,
             cache_read_per_mtok: None,
             cache_write_per_mtok: None,
+            cache_write_1h_per_mtok: None,
             long_context: None,
             currency: "USD".into(),
             source_url: "https://example.test/pricing".into(),

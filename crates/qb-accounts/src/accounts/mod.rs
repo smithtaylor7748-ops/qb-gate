@@ -111,6 +111,34 @@ pub struct Slot {
     pub usage: Option<usage::SlotUsage>,
 }
 
+/// 界面上怎么称呼一个槽位：**「邮箱 - 命名」**，读不到邮箱就只剩命名（0.27.0，使用者定的）。
+///
+/// # 为什么是显示层的事
+///
+/// `label` 仍然是**标识**：槽位目录名（`claude-profile-<label>`）、托盘菜单项的 id、
+/// 审计日志与启动日志里那一句「账户槽位 main」，全都还用它，一个字不许改
+/// （`src/lib/logline.ts` 就是按那个格式把槽位名解析出来的）。这里只管**显示**。
+///
+/// # 邮箱可能没有
+///
+/// 没登录、`.claude.json` 还没写、或者官方客户端换了格式，`email` 都会是 `None`；
+/// 拿到空字符串也算没有。那时候退回只显示命名 —— 显示成「 - NEW1」这种东西比不改还糟。
+///
+/// 前端有一份同语义的 `src/lib/slotName.ts`，两边改要一起改。
+pub fn display_name(email: Option<&str>, label: &str) -> String {
+    match email.map(str::trim).filter(|e| !e.is_empty()) {
+        Some(e) => format!("{e} - {label}"),
+        None => label.to_string(),
+    }
+}
+
+impl Slot {
+    /// 见 [`display_name`]。
+    pub fn display_name(&self) -> String {
+        display_name(self.email.as_deref(), &self.label)
+    }
+}
+
 /// 这个槽位登录的是哪个账户（`oauthAccount.accountUuid`）。
 ///
 /// 数 token 时拿它跟默认目录里转写的 `ownerAccountUuid` 对账 ——
@@ -196,6 +224,40 @@ impl AccountRoots {
     /// 所以数 token 时绕不开它 —— 详见 `tokens.rs` 文件头。
     pub fn default_config_dir(&self) -> Option<PathBuf> {
         dirs::home_dir().map(|h| h.join(".claude"))
+    }
+
+    /// 桌面端**所有**资料目录：`%APPDATA%\Claude`（联结点或真目录）加上每一个
+    /// `%APPDATA%\Claude-<标签>`（含改名留底的 `Claude-backup-*`，它们里面同样有会话记录）。
+    ///
+    /// 数 token 时拿它们建 `tokens::OwnerIndex`：桌面端 Code 页的每个会话都在
+    /// **它自己的资料目录**里留了 `claude-code-sessions\<账户>\…\local_*.json`，
+    /// 那是 Claude Code 2.1.271 起转写里不再带归属标记之后唯一确定的归属依据
+    /// （见 `tokens.rs` 文件头）。联结点和它指向的真目录是同一处，按
+    /// `canonicalize` 去重 —— 否则当前槽位的记录会被扫两遍。
+    pub fn desktop_profile_dirs(&self) -> Vec<PathBuf> {
+        let Some(appdata) = self.appdata.as_ref() else {
+            return Vec::new();
+        };
+        let mut out: Vec<PathBuf> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut push = |p: PathBuf| {
+            if !p.is_dir() {
+                return;
+            }
+            let key = std::fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
+            if seen.insert(key) {
+                out.push(p);
+            }
+        };
+        push(appdata.join("Claude"));
+        if let Ok(rd) = std::fs::read_dir(appdata) {
+            for e in rd.flatten() {
+                if e.file_name().to_string_lossy().starts_with("Claude-") {
+                    push(e.path());
+                }
+            }
+        }
+        out
     }
 
     /// 这个槽位的桌面端用量历史可能在哪几份文件里。
@@ -1081,6 +1143,23 @@ pub fn sync_bridge(r: &AccountRoots) -> SyncReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 槽位显示名：有邮箱就「邮箱 - 命名」，没有就只剩命名。
+    ///
+    /// **空字符串也算没有** —— 官方客户端写过空值、或者槽位还没登录时会拿到它，
+    /// 显示成「 - NEW1」比不改还糟。
+    #[test]
+    fn a_slot_shows_its_email_first_and_falls_back_to_the_nickname() {
+        assert_eq!(
+            display_name(Some("someone@example.com"), "NEW1"),
+            "someone@example.com - NEW1"
+        );
+        assert_eq!(display_name(None, "NEW1"), "NEW1");
+        assert_eq!(display_name(Some(""), "NEW1"), "NEW1");
+        assert_eq!(display_name(Some("   "), "NEW1"), "NEW1");
+        // 命名本身是空的（理论上建不出来）也不许拼出一个只有分隔符的名字。
+        assert_eq!(display_name(None, ""), "");
+    }
 
     /// 一台临时的假机器：面板根、桥接根、%APPDATA%。结束时整棵删掉。
     struct Machine {
