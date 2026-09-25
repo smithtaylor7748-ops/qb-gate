@@ -630,6 +630,36 @@ export const api = {
     call<void>("antigravity_ui_rules_save", { rules }),
   antigravityUiRulesReset: () =>
     call<DangerRules>("antigravity_ui_rules_reset"),
+
+  // Claude 桌面端中文界面（插件 claude-desktop-zh-cn，2026-09-25）：
+  // 运行时取上游 javaht/claude-desktop-zh-cn 的 Release，只调用它的安全模式。
+  /** 现状。**不联网**（只读 Claude 安装目录、各份资料的界面语言、插件自己的记录）。 */
+  claudeZhStatus: () =>
+    call<import("./generated/ClaudeZhStatus").ClaudeZhStatus>(
+      "claude_zh_status",
+    ),
+  /**
+   * 问一次上游最新版。**会联网**（`github.com/<上游>/releases/latest` 的跳转，不走 api.github.com）。
+   * 使用者选的节奏：只在打开汉化弹窗 / 插件页、或点「检查更新」时调，没有定时器。
+   */
+  claudeZhCheck: () =>
+    call<import("./generated/ClaudeZhStatus").ClaudeZhStatus>(
+      "claude_zh_check",
+    ),
+  /**
+   * 一键汉化。`upgrade` = 先换成上游最新版。**会关掉 Claude 桌面端**（含 Code 页里的会话），
+   * 界面事前说明。进度走 `claude-zh` 任务。
+   */
+  claudeZhApply: (upgrade: boolean) =>
+    call<import("./generated/ClaudeZhOutcome").ClaudeZhOutcome>(
+      "claude_zh_apply",
+      { upgrade },
+    ),
+  /** 恢复英文：跑上游自己的卸载，再把各份资料的界面语言写回汉化之前的值。 */
+  claudeZhRestore: () =>
+    call<import("./generated/ClaudeZhOutcome").ClaudeZhOutcome>(
+      "claude_zh_restore",
+    ),
   // ⚠ `geminiCliInstall` 原来在这里也有一份、跟 `lib/antigravity.ts` 里那份一模一样。
   // 0.29.0 它变成了一个长任务（要带进度、要返回结果），两份定义必然漂开，
   // 所以只留 `antigravityApi.geminiCliInstall` 那一份。

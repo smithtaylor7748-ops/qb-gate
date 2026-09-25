@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn cache_parses_both_windows() {
         let text = r#"{"cachedUsageUtilization":{"fetchedAtMs":1788359225310,
-            "accountUuid":"b418b186",
+            "accountUuid":"00000000",
             "utilization":{
               "five_hour":{"utilization":25,"resets_at":"2026-09-02T18:49:59.597651+00:00"},
               "seven_day":{"utilization":13,"resets_at":"2026-09-06T17:59:59.597673+00:00"}}}}"#;

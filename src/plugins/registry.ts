@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import TavernPanel from "./TavernPanel";
 import AntigravityPanel from "./AntigravityPanel";
+import ClaudeZhPanel from "./ClaudeZhPanel";
 
 /**
  * 插件清单。
@@ -44,6 +45,18 @@ export const PLUGINS: PluginMeta[] = [
     upstream: {
       label: "EasyAntigravity",
       url: "https://github.com/DSDS-CMHL/EasyAntigravity",
+      license: "MIT",
+    },
+  },
+  {
+    id: "claude-desktop-zh-cn",
+    name: "Claude 桌面端 · 中文界面",
+    blurb:
+      "运行时取上游 claude-desktop-zh-cn 的 Release（打开时查新版，点了才下载），只调用它 Windows 脚本的安全模式：放翻译文件、改前端界面文字、设界面语言。不碰 app.asar / Claude.exe，改前改后核哈希与签名，动了就自动还原。",
+    panel: ClaudeZhPanel,
+    upstream: {
+      label: "claude-desktop-zh-cn",
+      url: "https://github.com/javaht/claude-desktop-zh-cn",
       license: "MIT",
     },
   },

@@ -160,5 +160,23 @@
     "dependencies": [
       "反重力 Hub（官网安装，位置表自动认出）"
     ]
+  },
+  {
+    "id": "claude-desktop-zh-cn",
+    "name": "Claude 桌面端 · 中文界面",
+    "description": "Claude 桌面端没有中文界面。这里接入社区项目 claude-desktop-zh-cn：运行时从它的 GitHub Release 取（打开时查新版，点了才下载），只调用它的安全模式——放翻译文件、改前端界面文字、设界面语言。不碰 app.asar 与 Claude.exe，改前改后核哈希与签名，动了就自动还原。非官方修改，Claude 一更新就要重新应用。",
+    "kind": "application",
+    "source": "https://github.com/javaht/claude-desktop-zh-cn",
+    "version": "follow-upstream",
+    "license": "MIT (external project, fetched from its GitHub Releases at runtime; only its safe mode is invoked)",
+    "clients": [
+      "claude-desktop"
+    ],
+    "install_method": "builtin",
+    "configuration": "{}",
+    "dependencies": [
+      "Claude 桌面端（官网安装包，位置表自动认出）",
+      "Windows PowerShell 5.1（系统自带）"
+    ]
   }
 ]

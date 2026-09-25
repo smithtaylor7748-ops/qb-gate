@@ -39,6 +39,8 @@ pub const TASK_INSTALL_ANTIGRAVITY: &str = "install-antigravity";
 pub const TASK_INSTALL_GEMINI_CLI: &str = "install-gemini-cli";
 /// QB Gate 自己的一键更新（0.25.3）：取哈希清单 → 下载 → 核对 → 退出并交给安装包。
 pub const TASK_SELF_UPDATE: &str = "self-update";
+/// Claude 桌面端中文界面（2026-09-25）：一键汉化 / 恢复英文共用一条进度。
+pub const TASK_CLAUDE_ZH: &str = "claude-zh";
 
 /// 上面全部任务名。**加常量就要加进这里**，否则核对测试抓不到。
 pub const ALL_TASKS: &[&str] = &[
@@ -59,6 +61,7 @@ pub const ALL_TASKS: &[&str] = &[
     TASK_INSTALL_ANTIGRAVITY,
     TASK_INSTALL_GEMINI_CLI,
     TASK_SELF_UPDATE,
+    TASK_CLAUDE_ZH,
 ];
 
 #[derive(Debug, Clone, Serialize)]

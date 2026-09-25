@@ -56,8 +56,27 @@ export const codexApi = {
       "codex_quota",
       { id, refresh },
     ),
+  /**
+   * GPT 界面语言（2026-09-25）：每份 `config.toml` 的 `[desktop] localeOverride`、GPT 自己写下的
+   * 界面语言、开着的实例。只读本机，不联网。
+   */
+  localeStatus: () =>
+    call<import("./generated/CodexLocaleStatus").CodexLocaleStatus>(
+      "codex_locale_status",
+    ),
+  /**
+   * 设为中文（`true`）/ 恢复默认。只写 GPT 自己的设置项；面板起的 GPT 开着会先关、
+   * 改完按当前槽位重开（界面事前说明）。
+   */
+  localeSet: (enabled: boolean) =>
+    call<import("./generated/CodexLocaleOutcome").CodexLocaleOutcome>(
+      "codex_locale_set",
+      { enabled },
+    ),
 };
 export const CODEX_R = {
   accounts: res(codexApi.accounts, { pollMs: 15_000 }),
   desktop: res(codexApi.desktop, { pollMs: 30_000 }),
+  /** 不轮询：它要跑一遍进程查询；打开页面、点完「汉化」、工作区有变动时刷新。 */
+  locale: res(codexApi.localeStatus),
 };

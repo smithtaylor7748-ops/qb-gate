@@ -98,6 +98,8 @@ export default function RouteDialog({
   const [name, setName] = useState("");
   const [note, setNote] = useState("");
   const [website, setWebsite] = useState("");
+  /** 充值比例：1 美元站内额度付几元。站点级，空 = 按 1 算。 */
+  const [topup, setTopup] = useState("");
   const [tint, setTint] = useState(0);
   // ---- 接入
   const [group, setGroup] = useState("");
@@ -152,6 +154,7 @@ export default function RouteDialog({
       setName(p?.name ?? editing.station_id);
       setNote(p?.note ?? "");
       setWebsite(p?.website ?? "");
+      setTopup(p?.topup_per_usd == null ? "" : String(p.topup_per_usd));
       setBaseUrl(p?.base_url ?? "");
       setGroup(editing.group);
       setRate(editing.nominal_rate == null ? "" : String(editing.nominal_rate));
@@ -163,6 +166,7 @@ export default function RouteDialog({
       setName("");
       setNote("");
       setWebsite("");
+      setTopup("");
       setBaseUrl("");
       setGroup("");
       setRate("");
@@ -173,6 +177,15 @@ export default function RouteDialog({
     }
     // Reset only when opening another route, never on a workspace refresh.
   }, [open, editing]);
+
+  // 新建时填了一个已有的站点名 = 复用那个站点：把它的充值比例带出来 ——
+  // 否则保存时这一格的空白会把站点上已经填好的比例冲掉（它是整站共用的）。
+  const existingId = existing?.id;
+  const existingTopup = existing?.topup_per_usd ?? null;
+  useEffect(() => {
+    if (!open || editing || !existingId) return;
+    setTopup(existingTopup == null ? "" : String(existingTopup));
+  }, [open, editing, existingId, existingTopup]);
 
   const applyPreset = (p: Preset) => {
     setName(p.name);
@@ -213,6 +226,16 @@ export default function RouteDialog({
         // 倍率会参与排序和底线筛选 —— 一个坏数字比没有数字危险。
         throw new Error("倍率兜底要是个大于 0 的数，留空表示交给检验去量");
       }
+      const topupPerUsd = topup.trim() === "" ? null : Number(topup);
+      if (
+        topupPerUsd != null &&
+        (!Number.isFinite(topupPerUsd) || topupPerUsd <= 0)
+      ) {
+        // 跨站比便宜要乘它 —— 同样是坏数字比没有数字危险。
+        throw new Error(
+          "充值比例要是个大于 0 的数（1 美元额度付几元），留空按 1 元 = 1 美元额度算",
+        );
+      }
       if (!name.trim()) throw new Error("站点名不能留空");
       if (!baseUrl.trim()) throw new Error("API 端点不能留空");
 
@@ -227,6 +250,7 @@ export default function RouteDialog({
             tags: existing?.tags ?? [],
             favorite: existing?.favorite ?? false,
             revision: existing?.revision ?? 0,
+            topup_per_usd: topupPerUsd,
           },
           key,
           credentials.find((c) => c.id === credentialId),
@@ -249,7 +273,8 @@ export default function RouteDialog({
           openai_responses: fromTri(responses),
         },
         // 计费价目由检验时从站点的 /api/pricing 拉，不在这里手填 ——
-        // 手填一个 completion_ratio 会让「计费翻倍」这个显示变成猜的。
+        // 手填一个 completion_ratio 会让「输出加价」这个显示变成猜的。
+        output_markup: editing?.output_markup ?? null,
         rates: editing?.rates ?? {
           model_ratio: null,
           completion_ratio: null,
@@ -382,6 +407,29 @@ export default function RouteDialog({
             placeholder="https://…（充值、查余额的那个页面）"
             onChange={(e) => setWebsite(e.target.value)}
           />
+        </Field>
+
+        <Field
+          label="充值比例（1 美元额度 = ? 元）"
+          hint="整个站点共用。大多数站是 1 元买 1 美元额度，留空就按 1 算；按真实汇率卖的站填 7 左右。跨站比便宜时倍率要先乘上它 —— 7 元一美元、标 ×0.1 的站，比 1 元一美元、标 ×0.5 的还贵。查套路的账单核对不受影响。"
+        >
+          <div className="qb-st-inline">
+            <input
+              value={topup}
+              inputMode="decimal"
+              placeholder="1"
+              onChange={(e) => setTopup(e.target.value)}
+            />
+            {probe?.topup_hint != null && (
+              <button
+                className="qb-st-iconbtn"
+                title="站点在 /api/status 公布的在线充值价（New API 后台的「充值价格」）。默认值是 7.3，很多站没改过、实际靠兑换码按 1 元卖 —— 只作参考"
+                onClick={() => setTopup(String(probe.topup_hint))}
+              >
+                站点写 {probe.topup_hint}
+              </button>
+            )}
+          </div>
         </Field>
 
         {/* ------------------------------------------------ 接入 */}

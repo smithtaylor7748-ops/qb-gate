@@ -22,6 +22,7 @@ import { invalidate, useResource, useSession } from "../../lib/store";
 import { slotName } from "../../lib/slotName";
 import { endTask, resetTask, useTask, type TaskState } from "../../lib/tasks";
 import StationTurnState from "../station/StationTurnState";
+import GptZh, { gptZhOn } from "../zh/GptZh";
 import BridgeSettings, { BridgeSettingsCorner } from "../tavern/BridgeSettings";
 import CodexQuotaBars, { type CodexQuotaState } from "./CodexQuotaBars";
 import Tile from "./Tile";
@@ -374,6 +375,10 @@ export default function GptBand() {
     const timer = window.setInterval(() => void refreshTs(), 5000);
     return () => window.clearInterval(timer);
   }, [refreshTs]);
+  // 一键中文（2026-09-25）：写 GPT 自己的设置项 `[desktop] localeOverride`。
+  // 按钮文字如实显示现状（全部份都是 zh-CN 才叫「开」），弹窗里逐个列出要改的文件。
+  const locale = useResource("codexLocale", CODEX_R.locale);
+  const [zhOpen, setZhOpen] = useState(false);
   // Codex 打包应用更新后需管理员重新注册，否则启动一律「拒绝访问 (os error 5)」。
   // 命中这类报错时给一个一键修复（会弹 UAC）。
   const needsReg = /os error 5|拒绝访问|RegisterByFamilyName/i.test(error);
@@ -564,6 +569,17 @@ export default function GptBand() {
                 >
                   {ts.takeover !== null ? "识别：开" : "识别"}
                 </Button>
+                {/* 一键中文的入口，同样放在标题栏（这一页固定高度，卡片里不许再加一行）。 */}
+                <Button
+                  size="sm"
+                  variant={gptZhOn(locale.data) ? "primary" : "default"}
+                  className="turnstate-entry"
+                  data-testid="gpt-zh-entry"
+                  aria-label={`GPT 界面语言：${gptZhOn(locale.data) ? "已设为中文" : "未设为中文"}`}
+                  onClick={() => setZhOpen(true)}
+                >
+                  {gptZhOn(locale.data) ? "汉化：开" : "汉化"}
+                </Button>
                 <Pill tone={desktop.data?.executable ? "ok" : "default"}>
                   {oursRunning
                     ? "运行中"
@@ -670,6 +686,16 @@ export default function GptBand() {
         title="Codex 识别（turn-state）· 开关、配置与状态"
       >
         <StationTurnState />
+      </Modal>
+      <Modal
+        open={zhOpen}
+        onClose={() => {
+          setZhOpen(false);
+          invalidate("codexLocale");
+        }}
+        title="GPT 界面语言 · 一键设为中文"
+      >
+        <GptZh onDone={() => invalidate("codexLocale")} />
       </Modal>
       <Modal
         open={adding}

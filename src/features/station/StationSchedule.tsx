@@ -266,7 +266,7 @@ export default function StationSchedule({
             <Floor
               label="倍率不超过 ×"
               suffix=""
-              note="按实测倍率比，没检验过的按标称"
+              note="按实测倍率比，没检验过的按标称；充值比例不是 1 元 = 1 美元额度的站，先乘上它（每 $1 牌价付几元）"
               value={prefs.floors.max_rate}
               fallback={0.5}
               step={0.01}
@@ -302,10 +302,14 @@ export default function StationSchedule({
                   view?.basis === "cost-per-token"
                     ? "。「便宜」用的是 24h 实扣 ÷ 实际 token（算进了缓存命中）"
                     : view?.basis === "blended-ratio"
-                      ? "。「便宜」按这条线实际的输入输出比加权 —— 开了计费翻倍的站，输出多就会被算贵"
+                      ? "。「便宜」按这条线实际的输入输出比，把四类的「站点单价 ÷ 官方单价」加权 —— 把输出另外加了价的站，输出多就会被算贵"
                       : view?.basis === "real-rate"
                         ? "。「便宜」用的是真实倍率 —— 连 token 结构都拿不到，整池退回这个粗口径"
                         : ""
+                }${
+                  view?.basis && view.basis !== "unavailable"
+                    ? "；不同站点先按各自的充值比例（1 美元额度付几元）折成同一种钱再比"
+                    : ""
                 }`
               : "还没有可排的线路"}
           </p>

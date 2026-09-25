@@ -30,6 +30,7 @@ import {
 } from "../lib/workspace";
 import CodexEgressPanel from "../plugins/CodexEgressPanel";
 import AntigravityPanel from "../plugins/AntigravityPanel";
+import ClaudeZhPanel from "../plugins/ClaudeZhPanel";
 import TavernPanel from "../plugins/TavernPanel";
 
 const KIND_ICON = {
@@ -39,7 +40,12 @@ const KIND_ICON = {
   template: FileCode2,
 };
 /** 目录里默认露出来的。其余的装过才显示，见下面 `list` 的注释。 */
-const SURFACED = new Set(["sillytavern", "codex-egress", "antigravity-ui"]);
+const SURFACED = new Set([
+  "sillytavern",
+  "codex-egress",
+  "antigravity-ui",
+  "claude-desktop-zh-cn",
+]);
 
 export default function ExtensionCenter() {
   const { id } = useParams();
@@ -387,22 +393,28 @@ function ExtensionDetail({ manifest: m }: { manifest: ExtensionManifest }) {
           </h2>
           {m.kind === "application" ? (
             <>
-              <Button
-                disabled={!!action.pending}
-                onClick={() =>
-                  void action.run(
-                    "connect",
-                    workspaceApi.connectApplication,
-                    "已有应用已接入扩展中心",
-                  )
-                }
-              >
-                接入已配置的本地安装
-              </Button>
+              {/* 「接入已配置的本地安装」接的是酒馆（`extensions::connect_application` 只认
+                  SillyTavern）。别的插件页上放着它，点下去接进来的也是酒馆 —— 只在酒馆页显示。 */}
+              {m.id === "sillytavern" && (
+                <Button
+                  disabled={!!action.pending}
+                  onClick={() =>
+                    void action.run(
+                      "connect",
+                      workspaceApi.connectApplication,
+                      "已有应用已接入扩展中心",
+                    )
+                  }
+                >
+                  接入已配置的本地安装
+                </Button>
+              )}
               {m.id === "codex-egress" ? (
                 <CodexEgressPanel />
               ) : m.id === "antigravity-ui" ? (
                 <AntigravityPanel />
+              ) : m.id === "claude-desktop-zh-cn" ? (
+                <ClaudeZhPanel />
               ) : (
                 <TavernPanel />
               )}

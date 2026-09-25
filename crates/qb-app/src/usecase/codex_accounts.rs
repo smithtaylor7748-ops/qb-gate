@@ -44,6 +44,21 @@ pub fn list() -> Result<codex::CodexAccounts> {
     Ok(accounts)
 }
 
+/// 新建槽位。使用者在「汉化」弹窗里选过「设为中文」的话，新槽位的 `config.toml` 预写上
+/// `[desktop] localeOverride`（2026-09-25，`codex_locale::seed`）。
+///
+/// 预写失败不拦建槽位 —— 槽位建好了、只是少一行语言设置，进审计、界面照常；
+/// 反过来因为一行界面语言让人建不了账户槽位，才是本末倒置。
+pub fn create(label: &str) -> Result<String> {
+    let root = codex::root();
+    let id = codex::create(&root, label)?;
+    let home = codex::directory(&root, &id)?.join("home");
+    if let Err(e) = super::codex_locale::seed(&home) {
+        crate::audit::write(&format!("新 GPT 槽位没能预写中文界面设置：{e}"));
+    }
+    Ok(id)
+}
+
 /// 切换 = 先把面板起的关干净，再换指向。不启动任何东西（跟 Claude 一样，「后面启动什么自己点」）。
 pub async fn switch(id: &str, gate: &GateState) -> Result<()> {
     let root = codex::root();

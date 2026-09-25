@@ -192,6 +192,25 @@ pub fn is_desktop_runtime_copy(p: &Path) -> bool {
     norm(p).contains("\\anthropicclaude\\app-")
 }
 
+/// Squirrel 装的桌面端**现在用的那一版**：`<local>\AnthropicClaude\app-<最大版本>`，返回（版本号, 目录）。
+///
+/// **按数字比**（[`version_key`]）：按字符串比 `1.9.0` 会排在 `1.49585.0` 前面。Squirrel 更新会
+/// 并排留下几个旧的 `app-*`（本机实测三个），存根起的是最大那个。没有 `AnthropicClaude`
+/// （没装、或者是 MSIX 装的）→ `None`。
+///
+/// 软件页的版本号、Claude 汉化插件要改的目录都从这里拿 —— 位置表只有一张。
+pub fn desktop_app_dir(local: &Path) -> Option<(String, PathBuf)> {
+    std::fs::read_dir(local.join("AnthropicClaude"))
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            Some((name.strip_prefix("app-")?.to_string(), e.path()))
+        })
+        .max_by_key(|(v, _)| version_key(v))
+}
+
 /// 这个目录是不是一个 Electron 应用（桌面端就是）。
 ///
 /// 它里面的 `claude.exe` 是桌面端的主程序，不是 CLI —— 当成 CLI 去锁，
@@ -761,6 +780,25 @@ mod tests {
 
     fn kinds(v: &[Install]) -> Vec<Kind> {
         v.iter().map(|i| i.kind).collect()
+    }
+
+    /// Squirrel 并排留着几个 `app-*`：取数字最大的那个，同名文件不算，没装就是 `None`。
+    #[test]
+    fn the_desktop_app_dir_is_the_numerically_largest_app_folder() {
+        let t = Tree::new("desktop-app");
+        let local = t.base.join("local");
+        assert_eq!(desktop_app_dir(&local), None);
+        for v in ["app-1.9.0", "app-1.49585.0", "app-2.9939.2", "app-2.7032.0"] {
+            std::fs::create_dir_all(local.join("AnthropicClaude").join(v)).unwrap();
+        }
+        t.file(r"local\AnthropicClaude\app-9.9.9");
+        t.file(r"local\AnthropicClaude\claude.exe");
+        let (version, dir) = desktop_app_dir(&local).unwrap();
+        assert_eq!(version, "2.9939.2");
+        assert!(same_path(
+            &dir,
+            &local.join("AnthropicClaude").join("app-2.9939.2")
+        ));
     }
 
     #[test]

@@ -110,6 +110,17 @@ describe("Subscription page", () => {
     expect(screen.getByText("0.4×")).toBeTruthy();
     expect(screen.getByText("4.6 倍")).toBeTruthy();
 
+    // 那条线路标 ×0.2：额度按分组倍率扣，实际倍率 0.4 × 0.2 = 0.08×
+    // （「中转站百科」帖：「输入 5 元，给你倍率 0.1，实际就是 5 × 0.1 = 0.5 元」）。
+    // 少乘这一项会把中转算贵五倍。
+    fireEvent.change(
+      screen.getByLabelText("那条线路的倍率（×，选填，默认 1）"),
+      { target: { value: "0.2" } },
+    );
+    expect(screen.getByText("0.08×")).toBeTruthy();
+    expect(screen.getByText(/那条线路 ×0\.2/)).toBeTruthy();
+    expect(screen.getByText("0.9 倍")).toBeTruthy();
+
     // 换套餐会把分母换成那档的：ChatGPT Pro 20x 周 $2,500 × 4 = $10,000。
     fireEvent.change(screen.getByLabelText("按哪档官方套餐折算"), {
       target: { value: "chatgpt-pro-20" },

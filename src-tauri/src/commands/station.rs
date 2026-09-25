@@ -459,6 +459,11 @@ pub struct ProbeResult {
     pub models: Vec<qb_station::station::pricing::StationModel>,
     /// 价目那一步的问题，一句话。`None` = 拉到了。
     pub pricing_problem: Option<String>,
+    /// New API 在 `/api/status` 公布的在线充值价（1 美元额度付几元）。
+    ///
+    /// ⛔ **只当参考**，界面写在「充值比例」旁边、不自动填 —— 这一格默认 7.3，
+    /// 很多站没改过、实际靠兑换码按 1 元卖。见 `station_ops::published_topup_price`。
+    pub topup_hint: Option<f64>,
 }
 
 #[tauri::command]
@@ -486,12 +491,16 @@ pub async fn station_probe(
                 route_id: String::new(),
                 base_url: base.clone(),
                 key: key.clone(),
+                // 带上分组：`/api/pricing` 顶层的分组倍率按它取。
+                group: group.clone(),
                 ..Default::default()
             },
             &client,
         )
         .await
     };
+    // 不要 Key：`/api/status` 是公开的。
+    let topup_hint = station_ops::published_topup_price(&base, &client).await;
     let models: Vec<_> = all.into_iter().filter(|m| m.in_group(&group)).collect();
     let pricing_problem = if key.trim().is_empty() {
         Some("还没填 Key —— 价目表要带着 Key 才拉得到".to_string())
@@ -504,6 +513,7 @@ pub async fn station_probe(
         protocols,
         models,
         pricing_problem,
+        topup_hint,
     })
 }
 
@@ -883,9 +893,14 @@ pub async fn station_run_audit(
         routes[idx].latest_mult = Some(m);
     }
     // 顺手学到的价目也回流。**这一步不是可选的**:排序要拿它算加权倍率,
-    // 而公布绝对单价的站点(sub2api 系)还要靠 rates_model 才查得到官方价。
+    // 两种后端都要靠 rates_model 才查得到官方价(New API 的倍率换成单价也还要除官方单价)。
     // 没学到就原样留着上一次那份 —— 拉取失败不等于「这家站点不公布价」。
     if let Some(r) = outcome.rates {
+        // 「输出加价」要跟官方的输出 ÷ 输入比,不是看 completion_ratio 大不大于 1
+        // (Claude 官方本来就是 5)。官方价里没有这个模型就是不知道。
+        routes[idx].output_markup = catalog
+            .resolve(&outcome.model)
+            .and_then(|o| r.output_markup(&o));
         routes[idx].rates = r;
         routes[idx].rates_model = Some(outcome.model);
     }
@@ -1131,6 +1146,7 @@ pub async fn station_decide(
         &prefs,
         incumbent.as_deref(),
         &catalog,
+        &station_ops::topup_ratios(&db),
     );
     Ok(DecisionView { ranking, basis })
 }
@@ -1294,6 +1310,8 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
     let all: Vec<Route> = db.list("station_routes").unwrap_or_default();
     let now = chrono::Utc::now().timestamp_millis();
     let catalog = qb_station::station::pricing::Catalog::new(stored_prices());
+    // 每家站 1 美元额度付几元 —— 跨站比便宜之前先折成同一种钱。每一跳重读,改完下一跳就生效。
+    let topup = station_ops::topup_ratios(&db);
     let mut out = Vec::new();
     let http = station_billing::http_client();
 
@@ -1336,6 +1354,7 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
             &sched.prefs,
             incumbent.as_deref(),
             &catalog,
+            &topup,
         );
         match station_ops::next_upstream(&ranking, incumbent.as_deref()) {
             Some(next) => {
@@ -1390,6 +1409,7 @@ mod tests {
             last_audit_ms: None,
             protocols,
             rates: Default::default(),
+            output_markup: None,
             rates_model: None,
         }
     }

@@ -11,6 +11,7 @@ import {
   officialMultiplier,
   parseAmount,
   planMultiplier,
+  relayMultiplier,
   timesMoreExpensive,
 } from "./multiplier";
 import { PLANS, WEEKS_PER_MONTH, monthlyValue } from "./data";
@@ -74,6 +75,9 @@ describe("effectiveMultiplier", () => {
     expect(effectiveMultiplier(40, 8000)).toBeCloseTo(0.005, 6);
     expect(effectiveMultiplier(200, 8000)).toBeCloseTo(0.025, 6);
     expect(effectiveMultiplier(200, 14000)).toBeCloseTo(0.0142857, 6);
+    // 使用者转来的 linux.do 帖（2772890）：Pro 20x 花 1200 元，周限 $2,400，
+    // 中转站 1 元 = 1 美元额度 → 1200 ÷ (2400 × 4) = 0.125。元除美元，不是美元除美元。
+    expect(effectiveMultiplier(1200, 2400 * 4)).toBeCloseTo(0.125, 9);
   });
 
   it("never yields NaN or Infinity", () => {
@@ -120,6 +124,24 @@ describe("official plans at 1:7", () => {
       expect(m!, plan.id).toBeLessThanOrEqual(0.3);
       expect(multiplierTone(m!), plan.id).toBe("ok");
     }
+  });
+});
+
+describe("relayMultiplier", () => {
+  // linux.do「中转站百科」帖（2504277）：「输入 5 元，给你倍率 0.1，那么实际就是 5 * 0.1 = 0.5 元」——
+  // 站内额度按分组倍率扣。充 100 元得 $100、分组 ×0.2，实际倍率是 0.2，不是 1。
+  it("multiplies the top-up ratio by the group multiplier", () => {
+    expect(relayMultiplier(100, 100, 0.2)).toBeCloseTo(0.2, 9);
+    // 不给分组 = 按牌价扣额度（包月会员那种）。
+    expect(relayMultiplier(100, 100)).toBeCloseTo(1, 9);
+    // 7 元买 1 美元额度、标 ×0.1：每 $1 牌价 0.7 元 —— 帖子说的「倍率陷阱」。
+    expect(relayMultiplier(700, 100, 0.1)).toBeCloseTo(0.7, 9);
+  });
+
+  it("never yields NaN or Infinity", () => {
+    expect(relayMultiplier(100, 0, 0.2)).toBeNull();
+    expect(relayMultiplier(100, 100, 0)).toBeNull();
+    expect(relayMultiplier(100, 100, Number.NaN)).toBeNull();
   });
 });
 

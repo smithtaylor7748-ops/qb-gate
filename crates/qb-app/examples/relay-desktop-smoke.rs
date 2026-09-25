@@ -68,6 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tags: vec![],
         favorite: false,
         revision: 1,
+        topup_per_usd: None,
     };
     db.put("providers", "site", &provider)?;
     let credential = Credential {

@@ -19,6 +19,7 @@ pub fn plugin_list() -> Vec<plugins::PluginStatus> {
         ),
         plugins::codex_egress::status(),
         plugins::antigravity_ui::plugin_status(),
+        plugins::claude_zh::plugin_status(),
     ]
 }
 
@@ -66,6 +67,84 @@ pub async fn antigravity_ui_rules_reset() -> Result<plugins::antigravity_ui::Dan
     let rules = plugins::antigravity_ui::parse_rules(plugins::antigravity_ui::DEFAULT_RULES);
     plugins::antigravity_ui::save_rules(&rules)?;
     Ok(rules)
+}
+
+// ------------------------------------------------------------ Claude 桌面端中文界面（2026-09-25）
+
+/// 插件自己一把锁：一键汉化与恢复英文不许同时跑（下载那段不拿全局独占锁，见 `claude_zh_apply`）。
+fn claude_zh_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(Default::default)
+}
+
+/// 现状：Claude 装法与版本、中文文件在不在、各份资料的界面语言、上游副本。**不联网**。
+#[tauri::command]
+pub async fn claude_zh_status() -> plugins::claude_zh::ClaudeZhStatus {
+    qb_app::usecase::claude_zh_ops::status().await
+}
+
+/// 问一次上游最新版（**会联网**：`github.com/<上游>/releases/latest` 的跳转，不走 api.github.com）。
+/// 使用者选的节奏：只在打开汉化弹窗 / 插件页、或点「检查更新」时调，没有定时器。
+#[tauri::command]
+pub async fn claude_zh_check() -> Result<plugins::claude_zh::ClaudeZhStatus> {
+    qb_app::usecase::claude_zh_ops::check().await
+}
+
+/// 一键汉化（`upgrade` = 先换成上游最新版）。
+///
+/// 下载上游那一段**不拿**全局独占锁 —— 看门狗每 5 秒要拿同一把锁巡检，握着它下载一两分钟
+/// 等于让门禁停摆；关桌面端、跑上游脚本、核验那一段才拿。
+#[tauri::command]
+pub async fn claude_zh_apply(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    upgrade: bool,
+) -> Result<qb_app::usecase::claude_zh_ops::ClaudeZhOutcome> {
+    use qb_app::usecase::claude_zh_ops as ops;
+    let _plugin = claude_zh_lock().lock().await;
+    let rep = Reporter::new(app.clone(), events::TASK_CLAUDE_ZH, ops::TOTAL);
+    let result = async {
+        let package = ops::prepare(upgrade, &rep).await?;
+        let _guard = operations::exclusive().await?;
+        ops::apply(package, &state.gate, &rep).await
+    }
+    .await;
+    finish_claude_zh(&app, &rep, &result, "已汉化，核验通过");
+    result
+}
+
+/// 恢复英文：跑上游自己的卸载，再把各份资料的界面语言写回汉化之前的值。
+#[tauri::command]
+pub async fn claude_zh_restore(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<qb_app::usecase::claude_zh_ops::ClaudeZhOutcome> {
+    use qb_app::usecase::claude_zh_ops as ops;
+    let _plugin = claude_zh_lock().lock().await;
+    let rep = Reporter::new(app.clone(), events::TASK_CLAUDE_ZH, ops::TOTAL);
+    let result = async {
+        // 卸载也要用上游的脚本：本机那份副本没了就先取回来（不换版本）。
+        let package = ops::prepare(false, &rep).await?;
+        let _guard = operations::exclusive().await?;
+        ops::restore(package, &state.gate, &rep).await
+    }
+    .await;
+    finish_claude_zh(&app, &rep, &result, "已恢复英文，核验通过");
+    result
+}
+
+fn finish_claude_zh(
+    app: &tauri::AppHandle,
+    rep: &Reporter,
+    result: &Result<qb_app::usecase::claude_zh_ops::ClaudeZhOutcome>,
+    done: &str,
+) {
+    match result {
+        Ok(o) if o.ok => rep.done(done),
+        Ok(o) => rep.fail(o.lines.last().map(String::as_str).unwrap_or("核验没全过")),
+        Err(e) => rep.fail(&e.to_string()),
+    }
+    operations::changed(&events::ui(app), "session", "claude");
 }
 
 // ------------------------------------------------------------ Codex 出站与换出口插件

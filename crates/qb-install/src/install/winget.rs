@@ -301,7 +301,6 @@ pub struct InstallResult {
 pub const TOTAL: u32 = 6;
 
 /// 跑一个命令并把 stdout / stderr 逐行发给界面。
-#[cfg(windows)]
 pub async fn run_streaming(
     program: &str,
     args: &[String],
@@ -309,40 +308,77 @@ pub async fn run_streaming(
     step: u32,
     log: &mut Vec<String>,
 ) -> Result<bool> {
+    run_streaming_env(program, args, &[], rep, step, log).await
+}
+
+/// 同 [`run_streaming`]，另给子进程加几个环境变量（2026-09-25：Claude 汉化插件要用
+/// `CLAUDE_ZH_SKIP_UPDATE_CHECK=1` 关掉上游脚本自己问 `api.github.com` 的那一下）。
+///
+/// 两条管道**同时**读。原来先读完 stdout 再读 stderr：子进程往 stderr 写满管道缓冲就卡住，
+/// 而这边还在等它的 stdout 结束 —— 两边互等。按字节读、有损解码：PowerShell 在设好输出编码
+/// 之前报的错走系统代码页，按行读 UTF-8 的话那一行一出错，后面的输出就一句都收不到了。
+#[cfg(windows)]
+pub async fn run_streaming_env(
+    program: &str,
+    args: &[String],
+    env: &[(&str, &str)],
+    rep: &dyn ProgressSink,
+    step: u32,
+    log: &mut Vec<String>,
+) -> Result<bool> {
     use std::process::Stdio;
     use tokio::io::{AsyncBufReadExt, BufReader};
 
-    let mut child = crate::process::hidden_tokio(tokio::process::Command::new(program))
+    let mut command = crate::process::hidden_tokio(tokio::process::Command::new(program));
+    command
         .args(args)
+        .envs(env.iter().copied())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
         .spawn()
         .map_err(|e| GateError::Other(format!("启动 {program} 失败：{e}")))?;
 
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-
-    if let Some(out) = stdout {
-        let mut lines = BufReader::new(out).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            // winget 的进度条靠回车刷新，收进来是一行里塞满 \r —— 只留最后一段。
-            let line = line.rsplit('\r').next().unwrap_or(&line).trim().to_string();
-            if line.is_empty() {
-                continue;
-            }
+    let mut out = child.stdout.take().map(BufReader::new);
+    let mut err = child.stderr.take().map(BufReader::new);
+    let (mut out_buf, mut err_buf) = (Vec::new(), Vec::new());
+    let mut emit = |bytes: &[u8]| {
+        let text = String::from_utf8_lossy(bytes);
+        // winget 的进度条靠回车刷新，收进来是一行里塞满 \r —— 只留最后一段。
+        let line = text.rsplit('\r').next().unwrap_or(&text).trim().to_string();
+        if !line.is_empty() {
             rep.log(step, &line);
             log.push(line);
         }
-    }
-    if let Some(err) = stderr {
-        let mut lines = BufReader::new(err).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            let line = line.trim().to_string();
-            if line.is_empty() {
-                continue;
+    };
+    // `read_until` 在 select! 里被别的分支抢先时，已读到的字节留在缓冲里、下次接着读（tokio 文档
+    // 写明的取消语义），所以两个缓冲跨轮保留，只在读到整行之后清空。
+    while out.is_some() || err.is_some() {
+        tokio::select! {
+            r = async { out.as_mut().unwrap().read_until(b'\n', &mut out_buf).await }, if out.is_some() => {
+                match r {
+                    Ok(0) | Err(_) => {
+                        emit(&out_buf);
+                        out = None;
+                    }
+                    Ok(_) => {
+                        emit(&out_buf);
+                        out_buf.clear();
+                    }
+                }
             }
-            rep.log(step, &line);
-            log.push(line);
+            r = async { err.as_mut().unwrap().read_until(b'\n', &mut err_buf).await }, if err.is_some() => {
+                match r {
+                    Ok(0) | Err(_) => {
+                        emit(&err_buf);
+                        err = None;
+                    }
+                    Ok(_) => {
+                        emit(&err_buf);
+                        err_buf.clear();
+                    }
+                }
+            }
         }
     }
 
@@ -354,9 +390,10 @@ pub async fn run_streaming(
 }
 
 #[cfg(not(windows))]
-pub async fn run_streaming(
+pub async fn run_streaming_env(
     _program: &str,
     _args: &[String],
+    _env: &[(&str, &str)],
     _rep: &dyn ProgressSink,
     _step: u32,
     _log: &mut Vec<String>,

@@ -8,6 +8,7 @@ pub mod self_update;
 pub mod upgrade;
 pub mod versions;
 pub mod winget;
+pub mod zipread;
 
 pub mod antigravity;
 pub mod antigravity_setup;

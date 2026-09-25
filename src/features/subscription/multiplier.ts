@@ -42,6 +42,26 @@ export function effectiveMultiplier(
   return spendYuan / monthlyValueUsd;
 }
 
+/**
+ * 中转站实际的倍率：付的钱（元）÷ 站内额度（美元）× 那条线路的分组倍率。
+ *
+ * 站内额度是按分组倍率扣的：分组 ×0.2 时，每 $1 牌价的用量只扣 $0.2 额度
+ * （linux.do「中转站百科」帖：「输入 5 元，给你倍率 0.1，那么实际就是 5 × 0.1 = 0.5 元」）。
+ * 所以充 100 元得 $100 额度、分组 ×0.2，实际倍率是 0.2 而不是 1 —— 少乘这一项，
+ * 会把这家算贵五倍。前一项就是这家站的充值比例（1 美元额度付几元）。
+ * `groupRatio` 不给就是 1（包月会员那种按牌价扣额度的）。
+ */
+export function relayMultiplier(
+  spendYuan: number,
+  quotaUsd: number,
+  groupRatio = 1,
+): number | null {
+  const perUsd = effectiveMultiplier(spendYuan, quotaUsd);
+  if (perUsd === null || !Number.isFinite(groupRatio) || groupRatio <= 0)
+    return null;
+  return perUsd * groupRatio;
+}
+
 /** 官方订阅的等效倍率：美元月价按 1:7 折成元，再除以一个月能用到的 API 等值。 */
 export function officialMultiplier(
   priceUsd: number,

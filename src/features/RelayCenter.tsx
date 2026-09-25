@@ -45,6 +45,7 @@ const blankProvider: Provider = {
   tags: [],
   favorite: false,
   revision: 0,
+  topup_per_usd: null,
 };
 /**
  * 预设里那些**不属于服务商、属于使用环境**的字段。

@@ -85,14 +85,9 @@ pub async fn claude_desktop() -> Software {
     let dir = local().join("AnthropicClaude");
     let stub = dir.join("claude.exe");
     if stub.exists() {
-        // 版本从 app-<版本> 目录名读，比启动一次进程便宜得多。
-        // **按数字比**：按字符串比 `1.9.0` 会排在 `1.49585.0` 前面。
-        let version = std::fs::read_dir(&dir).ok().and_then(|rd| {
-            rd.filter_map(|e| e.ok())
-                .filter_map(|e| e.file_name().into_string().ok())
-                .filter_map(|n| n.strip_prefix("app-").map(String::from))
-                .max_by_key(|v| super::inventory::version_key(v))
-        });
+        // 版本从 app-<版本> 目录名读，比启动一次进程便宜得多（位置表那一个函数，
+        // Claude 汉化插件要改的目录也从它拿）。
+        let version = super::inventory::desktop_app_dir(&local()).map(|(v, _)| v);
         return Software {
             id: "claude-desktop",
             name: "Claude 桌面端",

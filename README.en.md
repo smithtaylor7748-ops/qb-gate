@@ -8,20 +8,20 @@ If your work makes you change IP addresses often, you have probably noticed this
 
 - For Windows 10 / 11 x64. The interface is in Chinese.
 - The installer is not code-signed yet, so Windows may show a SmartScreen warning. You can check the download against `SHA256SUMS.txt` on the [Releases](https://github.com/smithtaylor7748-ops/qb-gate/releases/latest) page.
-- 🆕 Starting with 0.25.3, the panel checks GitHub for a newer version when it opens, shows a pop-up if there is one, and can install it with one click (see "How updates work" below). **If you have v0.24.8 or older, download and install this version by hand once**: older versions don't have the update check.
+- Starting with 0.25.3, the panel checks GitHub for a newer version when it opens, shows a pop-up if there is one, and can install it with one click (see "How updates work" below). **If you have v0.24.8 or older, download and install this version by hand once**: older versions don't have the update check.
 
 > ⚠ **Windows Security may quarantine it as a virus** (for example `Trojan:Win32/Bearfoos.A!ml`). This is a **false positive**: the `!ml` suffix means a machine-learning model guessed, not that an actual virus was found. What this panel does (locking other programs, closing processes based on your IP, downloading official installers and running them) looks a lot like malware behaviour, and it is unsigned with a new file every release, so it gets flagged. **How to restore it, add an exclusion and report the false positive to Microsoft** is in [docs/ANTIVIRUS.zh-CN.md](docs/ANTIVIRUS.zh-CN.md) (Chinese). Check the SHA-256 before restoring.
 
 |                                                             |                                                           |
 | ----------------------------------------------------------- | --------------------------------------------------------- |
 | ![Claude accounts](docs/screenshots/overview.png)            | ![Antigravity accounts](docs/screenshots/antigravity-light.png) |
-| **Official accounts · Claude**: score, login slots, launch and usage | 🆕 **Official accounts · Antigravity**: Hub / IDE, slots and online quota |
+| **Official accounts · Claude**: score, login slots, launch and usage | **Official accounts · Antigravity**: Hub / IDE, slots and online quota |
 | ![GPT accounts](docs/screenshots/codex-accounts-light.png)   | ![Usage details](docs/screenshots/usage.png)              |
-| **Official accounts · GPT**: Codex desktop accounts and quota | 🆕 **Usage details**: what today / 7 days / 30 days are worth in USD |
+| **Official accounts · GPT**: Codex desktop accounts and quota | **Usage details**: what today / 7 days / 30 days are worth in USD |
 | ![Software](docs/screenshots/software.png)                   | ![Environment check](docs/screenshots/checkup-repair-light.png) |
 | **Software**: install, upgrade, roll back and fully uninstall | **Environment check**: five scores, fix things in place |
 
-The screenshots show made-up demo data, not the state of any real machine. Items marked 🆕 are new or reworked since the previous public release, v0.24.8.
+The screenshots show made-up demo data, not the state of any real machine. Items marked 🆕 are new or reworked since the previous public release, v0.25.3.
 
 ## What it does for you
 
@@ -29,7 +29,7 @@ The screenshots show made-up demo data, not the state of any real machine. Items
 
 - Add the exit IPs you approve to an allowlist (you can add country rules too). If your exit is not on the list, the AI apps under the gate can't start.
 - While they run, a watchdog checks your exit every 5 seconds. If the IP changes, fails the rules or can't be checked, it locks up right away and closes the sessions the panel started. There is no grace period.
-- Which apps are under the gate: Claude (Claude Code and the desktop app) always; 🆕 GPT (Codex) and Antigravity (Hub and IDE) by default too, and you can take them out under "IP lock".
+- Which apps are under the gate: Claude (Claude Code and the desktop app) always; GPT (Codex) and Antigravity (Hub and IDE) by default too, and you can take them out under "IP lock".
 - The in-session gate (checks the exit again before every request) is off by default; turn it on if you want it.
 - Closing the panel window only hides it in the tray, so the gate keeps working. Quitting from the tray locks everything again.
 
@@ -39,53 +39,57 @@ All three pages share one layout: the overall score on top, login slots on the l
 
 - **Login slots**: keep several of your own logins for the same app, shown as "email - name". Only you can switch them, by clicking, and only one is active at a time.
 - **Launch and close all**: the exit IP is checked before anything starts. "Close all" only closes processes that really belong to these apps; it never kills by process name.
-- **Quota**: Claude's 5-hour / 7-day quota is read from local files only. 🆕 GPT and Antigravity quotas also come from local records, and the official service is asked only when you click that row's refresh icon (one account at a time, no timers). The numbers are only displayed and never switch accounts automatically.
-- 🆕 **Usage details**: what today, the last 7 days and the last 30 days would cost at official API prices in USD. This is **not a bill**, and subscriptions are not charged this way. There is also a daily bar chart and breakdowns by model, by account and by recent request. Fixed: usage cards stuck at 0, errors counted as replies, cache writes under-priced, and dates off by one day in UTC+8.
-- 🆕 **GPT (Codex desktop)**: renamed to "GPT" in the sidebar. Starting or switching an account only closes the Codex window the panel opened itself and leaves others alone, so no more "a second window suddenly pops up". When a login token expires, it tells you plainly that opening the desktop app will renew it, instead of claiming you are logged out.
-- 🆕 **Antigravity (Google Antigravity)**: a new page. Start and close Hub and IDE from here; keep several IDE login slots (one Google account each, and you log in inside the IDE's own window); see account tier, AI credits and the 5-hour / weekly quota for both the Claude and Gemini groups; and see how many tokens you used locally. Antigravity itself cannot go through relay stations.
+- **Quota**: Claude's 5-hour / 7-day quota is read from local files only. GPT and Antigravity quotas also come from local records, and the official service is asked only when you click that row's refresh icon (one account at a time, no timers). The numbers are only displayed and never switch accounts automatically.
+- **Usage details**: what today, the last 7 days and the last 30 days would cost at official API prices in USD. This is **not a bill**, and subscriptions are not charged this way. There is also a daily bar chart and breakdowns by model, by account and by recent request.
+- **GPT (Codex desktop)**: starting or switching an account only closes the Codex window the panel opened itself and leaves others alone, so a second window never "suddenly pops up". When a login token expires, it tells you plainly that opening the desktop app will renew it, instead of claiming you are logged out.
+- **Antigravity (Google Antigravity)**: start and close Hub and IDE from here; keep several IDE login slots (one Google account each, and you log in inside the IDE's own window); see account tier, AI credits and the 5-hour / weekly quota for both the Claude and Gemini groups; and see how many tokens you used locally. Antigravity itself cannot go through relay stations.
+- 🆕 **One-click Chinese UI**: the Chinese button on the Codex desktop card of the GPT page switches GPT to its Chinese interface by writing its own language setting (the same value you get by choosing Chinese in its settings); none of its program files are touched. If it stays in English, OpenAI has not enabled Chinese for your account yet, and the panel says so. The button on the Claude page's launch card installs the Chinese-interface plugin described under "Extensions".
 
 ### Environment check
 
 - One click checks and scores five things: IP purity, DNS leaks, Chinese-environment signals, IP lock and exit consistency. Click any tile to see the details and fix it in place. "Disable IPv6 on this machine" in IP purity is on by default.
-- 🆕 More accurate now:
-  - tests whether Anthropic's service is reachable from your machine without sending any account credentials, so regional blocking shows up directly;
-  - checks whether claude.ai resolves to a poisoned address;
-  - recognizes PAC and TUN proxies, so it no longer says "system proxy is off" by mistake;
-  - finds which country your IPv6 traffic really leaves from, instead of just checking whether IPv6 is on;
-  - runs the Chinese-environment check in your usual default browser (it used to test the panel's built-in browser);
-  - DNS leak scoring only looks at connected network adapters, so Wi-Fi-only machines are no longer penalized;
+- It also checks:
+  - whether Anthropic's service is reachable from your machine, without sending any account credentials, so regional blocking shows up directly;
+  - whether claude.ai resolves to a poisoned address;
+  - PAC and TUN proxies, so it doesn't say "system proxy is off" by mistake;
+  - which country your IPv6 traffic really leaves from, instead of just whether IPv6 is on;
+  - Chinese-environment signals in your usual default browser;
+  - DNS leaks on connected network adapters only, so Wi-Fi-only machines are not penalized;
   - if any key check fails (for example the API is blocked, or IPv6 leaves from another country), the overall grade is capped at "deviation".
 
 ### Software: install, upgrade, uninstall
 
-- **Managed install**: Claude Code and Codex CLI are downloaded from their official sources, checked against SHA-256 and digital signatures, and locked right after install. 🆕 The "Install / Upgrade" button used to spin forever; that is fixed.
+- **Managed install**: Claude Code and Codex CLI are downloaded from their official sources, checked against SHA-256 and digital signatures, and locked right after install.
 - **Upgrade and roll back**: choose latest or stable; the last 3 versions are kept so you can go back at any time.
-- 🆕 **Install the Codex desktop app without opening the Microsoft Store**: downloaded straight from Microsoft, with the hash and OpenAI's signature checked before installing.
-- 🆕 **One-click install for Antigravity and Gemini CLI**: Antigravity's official installer is fetched from Google's own servers and its signature is checked first (the panel never redistributes or modifies it); Gemini CLI installs correctly now.
-- **Full uninstall**: first lists everywhere the app lives on your computer; nothing happens until you type the confirmation word. 🆕 Codex desktop, Antigravity and Gemini CLI can be fully uninstalled too. There is also an uninstall prompt you can hand to another AI.
+- **Install the Codex desktop app without opening the Microsoft Store**: downloaded straight from Microsoft, with the hash and OpenAI's signature checked before installing.
+- **One-click install for Antigravity and Gemini CLI**: Antigravity's official installer is fetched from Google's own servers and its signature is checked first (the panel never redistributes or modifies it); Gemini CLI comes from its official npm package.
+- **Full uninstall**: first lists everywhere the app lives on your computer; nothing happens until you type the confirmation word. Codex desktop, Antigravity and Gemini CLI can be fully uninstalled too. There is also an uninstall prompt you can hand to another AI.
 - **Google Chrome**: privacy audit (read-only), system proxy changes and a browser outbound lock (only when you click, and undoable), plus a full reinstall (deletes all browser data).
 
 ### Extensions
 
-- 🆕 **Three SillyTavern bridges**: Claude (your own bridge.py), GPT (drives the official Codex CLI) and Gemini (drives the official Gemini CLI). Ports and models are set in the panel (the small button in the corner of the SillyTavern tile); the Claude bridge's settings and call log moved into the panel; and it lists what is still missing. A slow SillyTavern start (it reinstalls its dependencies every time) is no longer killed by mistake.
-- 🆕 **Antigravity · localization and approvals**: Chinese interface, auto-approval and high-risk command blocking (with editable rules). It only injects a script into the interface and changes none of Antigravity's files.
+- **Three SillyTavern bridges**: Claude (your own bridge.py), GPT (drives the official Codex CLI) and Gemini (drives the official Gemini CLI). Ports and models are set in the panel (the small button in the corner of the SillyTavern tile); the Claude bridge's settings and call log live in the panel; and it lists what is still missing. A slow SillyTavern start (it reinstalls its dependencies every time) is waited for, not killed.
+- **Antigravity · localization and approvals**: Chinese interface, auto-approval and high-risk command blocking (with editable rules). It only injects a script into the interface and changes none of Antigravity's files.
+- 🆕 **Claude Desktop · Chinese UI**: uses the open-source project [javaht/claude-desktop-zh-cn](https://github.com/javaht/claude-desktop-zh-cn) (MIT) in its safe mode only. The panel checks the hashes and code signatures of Claude's program files before and after, and rolls back automatically if they changed; new upstream releases are shown when you open this window. This is an unofficial modification, and applying or reverting it closes the Claude desktop app (including sessions on its Code page); read the [disclaimer](DISCLAIMER.md) before using it.
 - **MCP, Skills and configuration templates**: import, preview the differences, then install into the environment you choose; connection tests only run when you start them.
 
 ### Subscription guide
 
-- Explains which Claude and ChatGPT plans are worth it and what to watch out for. 🆕 Plan quotas now use the median community estimates from a linux.do thread, and the "effective multiplier" is converted at 1 USD = 7 CNY so it compares on the same scale as relay stations.
+- Explains which Claude and ChatGPT plans are worth it and what to watch out for. Plan quotas use the median community estimates from a linux.do thread, and the "effective multiplier" is converted at 1 USD = 7 CNY so it compares on the same scale as relay stations.
+- 🆕 The multiplier calculator takes the relay route's multiplier into account: credit is deducted at that multiplier, and leaving it out made relays look several times more expensive.
 
 ### Relay stations
 
 - Smart scheduling (beta): already visible in the interface, but not usable yet.
+- 🆕 Multipliers now follow the method in the linux.do "relay station encyclopedia" post: the ratios New API stations publish are really unit prices (1 = $2 per million tokens), so they are converted to unit prices before being compared with official prices; the "×5 doubled billing" badge that every honestly priced route carried was a false alarm and is replaced by "output markup"; group ratios published by the station are read; and each station can record its top-up ratio (how many yuan buy $1 of credit) so different stations are compared in the same money.
 
 ### Settings
 
 - **General**: theme; re-open the gate automatically when the network recovers; turn off Claude Code's non-essential telemetry; align the system time zone and regional format with your exit IP at startup (on by default) and the display language (off by default).
-- 🆕 **Software update**: check for a new version at startup (on by default, can be turned off) and a manual "Check for updates" button.
+- **Software update**: check for a new version at startup (on by default, can be turned off) and a manual "Check for updates" button.
 - **Backup and restore**, **Help and sources**, **Advanced maintenance** (move the managed-install folder, restore the system time zone).
 
-## 🆕 How updates work
+## How updates work
 
 - **On 0.25.3 or newer**: when a new version is on GitHub, the panel shows a pop-up with what changed. Click 「一键更新」 (Update now) and the panel downloads the installer, checks it against `SHA256SUMS.txt` from the same release, then quits, installs and reopens by itself.
 - **The panel quits during the update**: the Claude desktop app, conversations and SillyTavern it started are closed too, so save your work first. If now is not a good time, choose 「以后再说」 (Later) or 「跳过这个版本」 (Skip this version); you can also turn off the startup check in Settings.
@@ -107,7 +111,7 @@ Read the full [disclaimer (DISCLAIMER.md)](DISCLAIMER.md) before use; it has an 
 - No proxy, VPN or censorship-circumvention features. You are responsible for whether your network access is legal.
 - Use it only with accounts you legitimately own, and follow local law and each provider's terms.
 - Some features change system settings (IPv6, time zone and regional format, firewall rules, system proxy and so on) or permanently delete data. Read the prompts before you confirm.
-- Every place the panel goes online is listed in section 7 of the disclaimer. 🆕 That includes the startup update check, which only reads a small file from this project's GitHub releases, sends no account information, and can be turned off in Settings.
+- Every place the panel goes online is listed in section 7 of the disclaimer. That includes the startup update check, which only reads a small file from this project's GitHub releases, sends no account information, and can be turned off in Settings.
 
 ## QQ group
 

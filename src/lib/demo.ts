@@ -13,6 +13,9 @@ import type { AntigravityStatus } from "./generated/AntigravityStatus";
 import type { AntigravityAccount } from "./generated/AntigravityAccount";
 import type { AntigravityIdentity } from "./generated/AntigravityIdentity";
 import type { AntigravityUsage } from "./generated/AntigravityUsage";
+import type { ClaudeZhOutcome } from "./generated/ClaudeZhOutcome";
+import type { ClaudeZhStatus } from "./generated/ClaudeZhStatus";
+import type { CodexLocaleStatus } from "./generated/CodexLocaleStatus";
 /**
  * 演示数据 —— 只给截图和界面预览用。
  *
@@ -733,6 +736,8 @@ const settings: Settings = {
   // 0.25.3：启动时检查更新，照 Rust 的默认值开着；没有跳过的版本。
   update_check_on_start: true,
   update_skipped_version: null,
+  // 2026-09-25：GPT 界面语言的选择，照 Rust 的默认值关着（只经「汉化」弹窗改）。
+  gpt_ui_zh: false,
 };
 
 const managed: ManagedStatus = {
@@ -936,7 +941,92 @@ const plugins: PluginStatus[] = [
       { label: "高危规则", ok: true, detail: "9 条启用 / 共 9 条" },
     ],
   },
+  {
+    id: "claude-desktop-zh-cn",
+    name: "Claude 桌面端 · 中文界面",
+    state: "ready",
+    detail:
+      "还没汉化。点「一键汉化」：下载上游、关掉 Claude 桌面端、跑上游的安全模式、核验。",
+    checks: [
+      {
+        label: "Claude 桌面端",
+        ok: true,
+        detail: "2.9939.2（Squirrel 装法，位置表 install::inventory）",
+      },
+      {
+        label: "上游副本",
+        ok: false,
+        detail: "还没下载。点「一键汉化」会先从上游 Release 取",
+      },
+    ],
+  },
 ];
+
+/**
+ * Claude 桌面端中文界面的演示（2026-09-25）。点「一键汉化」翻真、「恢复英文」翻假；
+ * 「检查更新」之前不知道上游最新版 —— 真实面板也是打开弹窗才问一次。
+ */
+let claudeZhOn = false;
+let claudeZhLatest: string | null = null;
+const claudeZhStatus = (): ClaudeZhStatus => ({
+  install: "squirrel",
+  claude_version: "2.9939.2",
+  app_dir: `${HOME}\\AppData\\Local\\AnthropicClaude\\app-2.9939.2`,
+  state: claudeZhOn ? "on" : "off",
+  detail: claudeZhOn
+    ? "已汉化：这一版 Claude（2.9939.2）上的中文文件在，当前资料的界面语言是 zh-CN。"
+    : "还没汉化。点「一键汉化」：下载上游、关掉 Claude 桌面端、跑上游的安全模式、核验。",
+  files_present: claudeZhOn,
+  profiles: [
+    {
+      dir: `${HOME}\\AppData\\Roaming\\Claude-个人`,
+      locale: claudeZhOn ? "zh-CN" : "en-US",
+    },
+    {
+      dir: `${HOME}\\AppData\\Roaming\\Claude-工作`,
+      locale: claudeZhOn ? "zh-CN" : "en-US",
+    },
+  ],
+  package_tag: claudeZhOn ? "1.4.8" : null,
+  package_commit: claudeZhOn ? "4bb466d9fedcdd87fc5338f243bd53e28daf211d" : null,
+  latest_tag: claudeZhLatest,
+  latest_checked_at: claudeZhLatest ? "2026-09-25 12:00" : null,
+  // 演示里本机那一版就是上游最新版，没有「有新版」。
+  update_available: false,
+  blocked: [],
+  applied_tag: claudeZhOn ? "1.4.8" : null,
+  applied_claude: claudeZhOn ? "2.9939.2" : null,
+  applied_at: claudeZhOn ? "2026-09-25 12:01" : null,
+  desktop_running: 1,
+  upstream: "https://github.com/javaht/claude-desktop-zh-cn",
+});
+const claudeZhApply = (): ClaudeZhOutcome => {
+  claudeZhOn = true;
+  claudeZhLatest ??= "1.4.8";
+  return {
+    ok: true,
+    restored: false,
+    tag: "1.4.8",
+    lines: [
+      "app.asar 与 claude.exe 没被动过（哈希一致，签名状态仍是 Valid）。",
+      "这一版 Claude（2.9939.2）上的中文文件在。",
+      `${HOME}\\AppData\\Roaming\\Claude-工作：界面语言设为 zh-CN`,
+      "当前账户资料的界面语言是 zh-CN。",
+    ],
+  };
+};
+const claudeZhRestore = (): ClaudeZhOutcome => {
+  claudeZhOn = false;
+  return {
+    ok: true,
+    restored: false,
+    tag: "1.4.8",
+    lines: [
+      "这一版 Claude（2.9939.2）上的中文文件已删掉。",
+      `${HOME}\\AppData\\Roaming\\Claude-工作：界面语言写回 en-US`,
+    ],
+  };
+};
 /** 演示里的出站插件运行态：启动翻真、停止翻假，状态随之变。 */
 let egressRunning = false;
 let egressExe: string | null = null;
@@ -1577,13 +1667,15 @@ const stationRoutes = [
     latest_mult: 1.0, // 检验过、属实
     last_audit_ms: 1757820000000n,
     protocols: { anthropic: true, openai_chat: null, openai_responses: null },
-    // 开了计费翻倍：输出按输入的 5 倍计费
+    // example 是 New API 系：倍率是单价（1 = $2 / 百万），照官方价抄的 Opus 5 是 2.5。
+    // 折扣在分组上（×0.2）。⛔ 补全倍率官方本来就是 5 —— 这家填了 6，输出另外多收两成，
+    // 线路上挂「输出加价 ×1.20」；隔壁桌面端那条照官方填 5，什么都不挂 —— 有对照才看得出意义。
     rates: {
-      model_ratio: 0.2,
-      completion_ratio: 5,
+      model_ratio: 2.5,
+      completion_ratio: 6,
       cache_ratio: 0.1,
       create_cache_ratio: 1.25,
-      group_ratio: null,
+      group_ratio: 0.2,
       peak_rate: null,
       per_request_price: null,
       input_price: null,
@@ -1591,6 +1683,7 @@ const stationRoutes = [
       cache_write_price: null,
       output_price: null,
     },
+    output_markup: 1.2,
     rates_model: "claude-opus-5",
   },
   {
@@ -1603,13 +1696,13 @@ const stationRoutes = [
     latest_mult: null, // 从没检验过 —— 界面写「标称 · 未核实」
     last_audit_ms: null,
     protocols: { anthropic: true, openai_chat: null, openai_responses: null },
-    // 不翻倍
+    // 高倍组：单价照官方（2.5 / 补全 5），分组 ×2.5。
     rates: {
       model_ratio: 2.5,
-      completion_ratio: 1,
+      completion_ratio: 5,
       cache_ratio: 0.1,
       create_cache_ratio: 1.25,
-      group_ratio: null,
+      group_ratio: 2.5,
       peak_rate: null,
       per_request_price: null,
       input_price: null,
@@ -1617,7 +1710,8 @@ const stationRoutes = [
       cache_write_price: null,
       output_price: null,
     },
-    // 从没检验过 —— 这组价是手上一次留下的，模型名也就无从谈起。
+    // 从没检验过 —— 这组价是手上一次留下的，模型名也就无从谈起，输出加没加价也就不知道。
+    output_markup: null,
     rates_model: null,
   },
   {
@@ -1648,6 +1742,8 @@ const stationRoutes = [
       cache_write_price: 6.25,
       output_price: 25,
     },
+    // 输出 ÷ 输入跟官方一样是 5 —— 没另外加价。
+    output_markup: 1,
     rates_model: "claude-opus-5",
   },
   {
@@ -1663,11 +1759,11 @@ const stationRoutes = [
     last_audit_ms: 1757860000000n,
     protocols: { anthropic: true, openai_chat: null, openai_responses: null },
     rates: {
-      model_ratio: 0.35,
-      completion_ratio: 1,
+      model_ratio: 2.5,
+      completion_ratio: 5,
       cache_ratio: 0.1,
       create_cache_ratio: 1.25,
-      group_ratio: null,
+      group_ratio: 0.35,
       peak_rate: null,
       per_request_price: null,
       input_price: null,
@@ -1675,6 +1771,8 @@ const stationRoutes = [
       cache_write_price: null,
       output_price: null,
     },
+    // 补全倍率照官方填 5 —— 不挂「输出加价」。0.25.3 及以前这里会挂「翻倍 ×5」。
+    output_markup: 1,
     rates_model: "claude-opus-5",
   },
   {
@@ -1703,6 +1801,7 @@ const stationRoutes = [
       cache_write_price: 6.25,
       output_price: 25,
     },
+    output_markup: null,
     rates_model: null,
   },
   {
@@ -1730,6 +1829,8 @@ const stationRoutes = [
       cache_write_price: 1.5625,
       output_price: 10,
     },
+    // gpt-5 不在官方价目快照里 —— 输出加没加价无从比，不是「没加价」。
+    output_markup: null,
     rates_model: "gpt-5",
   },
 ];
@@ -2214,20 +2315,20 @@ function clientConfigOf(client: string) {
 const STATION_NO_TABLE = "这个站点没公布价目表（/api/pricing），模型名要自己填";
 
 /**
- * 一个站点公布的模型表。
+ * 一个站点公布的模型表（New API 系，分组 ×0.2 从 `/api/pricing` 顶层读到的）。
  *
- * ⛔ **一个开翻倍、一个不开** —— 界面上那句「计费翻倍 ×5」只有在有对照时
- * 才看得出意义：×0.15 翻 5 倍比 ×0.4 不翻倍更贵（输出占比高的活儿上）。
+ * ⛔ New API 的倍率是单价（1 = $2 / 百万）：照官方价抄的 Opus 5 是 2.5、补全 5，
+ * Sonnet 5 是 1、补全 5 —— 界面上写成每百万的单价（乘过分组），不写「×2.5 · 翻倍 ×5」。
  */
 const stationModels = [
   {
     model: "claude-opus-5",
     rates: {
-      model_ratio: 0.15,
+      model_ratio: 2.5,
       completion_ratio: 5,
       cache_ratio: 0.1,
       create_cache_ratio: 1.25,
-      group_ratio: null,
+      group_ratio: 0.2,
       peak_rate: null,
       per_request_price: null,
       input_price: null,
@@ -2240,11 +2341,11 @@ const stationModels = [
   {
     model: "claude-sonnet-5",
     rates: {
-      model_ratio: 0.4,
-      completion_ratio: 1,
+      model_ratio: 1,
+      completion_ratio: 5,
       cache_ratio: 0.1,
       create_cache_ratio: 1.25,
-      group_ratio: null,
+      group_ratio: 0.2,
       peak_rate: null,
       per_request_price: null,
       input_price: null,
@@ -2433,6 +2534,8 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     protocols: { anthropic: true, openai_chat: false, openai_responses: null },
     models: stationModels,
     pricing_problem: null,
+    // New API 后台「充值价格」的默认值 —— 很多站没改过，所以只当参考，不自动填。
+    topup_hint: 7.3,
   }),
   // 这份配置**整个软件共用**，不是一条线路一份 —— 换上游不重启客户端。
   // 演示里给一份只开了「禁用自动升级」的：那一项默认就该是开的，
@@ -2765,6 +2868,13 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     detail: "演示模式：桥接角色扮演测试通过",
     tested_at: new Date().toISOString(),
   }),
+  claude_zh_status: () => claudeZhStatus(),
+  claude_zh_check: () => {
+    claudeZhLatest = "1.4.8";
+    return claudeZhStatus();
+  },
+  claude_zh_apply: () => claudeZhApply(),
+  claude_zh_restore: () => claudeZhRestore(),
   antigravity_ui_status: () => antigravityUiStatus(),
   antigravity_ui_start: () => {
     antigravityUiRunning = true;
@@ -3108,6 +3218,36 @@ let codexLaunched: string | null = codexSlots[0].id;
 // 一份**不是面板起的** Codex（开始菜单 / `codex://` 链接 / 别的多开工具，默认资料）。
 // 起槽位、切槽位都不动它（2026-09-23）；只有使用者点「一键关闭」才一起关。
 let codexForeign = true;
+/** GPT 界面语言的演示：`codex_locale_set` 翻它；默认那份只在别处起的那份没开着时才跟着变。 */
+let codexZh = false;
+let codexZhDefault = false;
+function codexLocaleStatus(): CodexLocaleStatus {
+  return {
+    enabled: codexZh,
+    homes: [
+      ...codexSlots.map((s) => ({
+        label: `槽位「${s.label}」`,
+        config: `${HOME}\\AppData\\Local\\ClaudeIpGate\\codex-accounts\\${s.id}\\home\\config.toml`,
+        current: codexZh ? "zh-CN" : null,
+        error: null,
+        adopted: codexZh ? "zh-CN" : "en-US",
+        is_default: false,
+      })),
+      {
+        label: `默认（${HOME}\\.codex，开始菜单起的 GPT 用它）`,
+        config: `${HOME}\\.codex\\config.toml`,
+        current: codexZhDefault ? "zh-CN" : null,
+        error: null,
+        adopted: "en-US",
+        is_default: true,
+      },
+    ],
+    ours_running: codexLaunched ? 1 : 0,
+    foreign_running: codexForeign ? 1 : 0,
+    processes_error: null,
+    egress_running: egressRunning,
+  };
+}
 function codexDemo(cmd: string, args: Record<string, unknown>) {
   if (cmd === "codex_accounts")
     return {
@@ -3236,6 +3376,28 @@ function codexDemo(cmd: string, args: Record<string, unknown>) {
   if (cmd === "codex_desktop_install")
     return "演示：Codex 桌面端 26.9.1 已装好（winget · Store 源）。";
   if (cmd === "codex_desktop_latest") return "26.9.1";
+  // 一键中文（2026-09-25）：只在演示里翻状态，不碰任何文件。别处起的那份开着时默认那份跳过。
+  if (cmd === "codex_locale_status") return codexLocaleStatus();
+  if (cmd === "codex_locale_set") {
+    const on = !!args.enabled;
+    const wasOurs = !!codexLaunched;
+    codexZh = on;
+    if (!codexForeign) codexZhDefault = on;
+    const lines = [
+      ...codexSlots.map(
+        (s) =>
+          `槽位「${s.label}」：${on ? "已设为中文。" : "已撤掉中文，回到 GPT 自己的默认。"}`,
+      ),
+      codexForeign
+        ? `默认（${HOME}\\.codex，开始菜单起的 GPT 用它）：别处起的 GPT 正开着，这一份这次没改（它开着会把改动写回去）。关掉它再点一次。`
+        : `默认（${HOME}\\.codex，开始菜单起的 GPT 用它）：${on ? "已设为中文。" : "已撤掉中文，回到 GPT 自己的默认。"}`,
+    ];
+    return {
+      changed: codexSlots.length + (codexForeign ? 0 : 1),
+      lines,
+      reopened: wasOurs ? "已按当前槽位重新打开 GPT 桌面端。" : null,
+    };
+  }
   // Codex 出站与换出口插件（外部程序）。演示里只翻状态位，不起任何进程。
   if (cmd === "codex_egress_status") {
     const base = plugins.find((p) => p.id === "codex-egress")!;

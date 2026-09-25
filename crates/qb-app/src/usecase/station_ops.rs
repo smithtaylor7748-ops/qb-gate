@@ -182,6 +182,23 @@ pub async fn refresh_health(
     out
 }
 
+/// New API 在 `/api/status` 里公布的在线充值价:买 1 美元站内额度付几元
+/// (它后台「充值价格」那一格,New API 自己的定价页拿它当 `priceRate`)。
+///
+/// ⛔ **只当参考,不自动采用。** 这一格默认 7.3,很多站根本没改 —— 它们靠兑换码
+/// 在别处按 1 元卖;照这个数折算会把那些站冤枉贵七倍。所以界面上只把它写在
+/// 「充值比例」旁边,填多少由使用者定。sub2api 没有这一项,返回 `None`。
+pub async fn published_topup_price(base_url: &str, client: &reqwest::Client) -> Option<f64> {
+    let base = base_url.trim_end_matches('/').trim_end_matches("/v1");
+    let v = super::station_billing::json(client.get(format!("{base}/api/status")), "站点状态")
+        .await
+        .ok()?;
+    let data = v.get("data").unwrap_or(&v);
+    // 只认 New API 的状态页 —— 带着 quota_per_unit 才是它。
+    data.get("quota_per_unit")?;
+    qb_station::station::billing::number(data.get("price")?).filter(|n| n.is_finite() && *n > 0.0)
+}
+
 /// 三种协议各探一次要打哪条路径。
 ///
 /// ⛔ **一次一种,探三次。** 合成一次(比如只打 `/v1/models`)省不下什么,
@@ -270,33 +287,66 @@ pub fn next_upstream(ranking: &Ranking, current: Option<&str>) -> Option<String>
     (Some(winner) != current).then(|| winner.to_string())
 }
 
+/// 每家站点的充值比例(1 美元站内额度付几元),按站点 id。
+///
+/// 没填的站不在表里 —— [`decide`] 对它按 1 元 = 1 美元额度算
+/// ([`DEFAULT_TOPUP_PER_USD`](crate::domain::DEFAULT_TOPUP_PER_USD))。
+pub fn topup_ratios(db: &Repository) -> HashMap<String, f64> {
+    db.list::<Provider>("providers")
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| p.topup_per_usd.is_some())
+        .map(|p| {
+            let v = p.topup_per_usd();
+            (p.id, v)
+        })
+        .collect()
+}
+
 /// 把线路 + 健康度拼成排序用的候选,再排一次。
 ///
 /// `demotion` / `tripped` 由调用方从各自的熔断器里取 —— 熔断器的状态
 /// 归本机路由管,这里不复制一份(两份必然漂移)。
+///
+/// # ⛔ 跨站比较先折成同一种钱
+///
+/// 账单、倍率都是按站内额度记的,而站内 1 美元额度要付几元每家站不一样
+/// (`topup`,见 [`topup_ratios`])。「便宜」的三种口径和「倍率不高于」那条底线
+/// 都先乘上各自站点的充值比例,折成「每 $1 官方牌价付几元」再比 ——
+/// 否则 7 元一美元、标 ×0.1 的站会压过 1 元一美元、标 ×0.5 的站,而它其实更贵。
 pub fn decide(
     routes: &[Route],
     health: &HashMap<String, RouteHealth>,
     breaker_state: &HashMap<String, (f64, bool)>,
     prefs: &Prefs,
     incumbent: Option<&str>,
-    // 官方价目。公布绝对单价的站点要靠它才换得出倍率,见下面那段。
+    // 官方价目。四类倍率都要拿站点单价除它,见下面那段。
     catalog: &pricing::Catalog,
+    // 每家站的充值比例。不在表里的按 1 算。
+    topup: &HashMap<String, f64>,
 ) -> (Ranking, CheapBasis) {
+    let topup_of = |r: &Route| {
+        topup
+            .get(&r.station_id)
+            .copied()
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .unwrap_or(crate::domain::DEFAULT_TOPUP_PER_USD)
+    };
     // 「便宜」整池统一口径：所有线都拿得出 24h 实扣单价才用它,
     // 差一条就整池退回真实倍率。混着比出来的比值没有意义。
     let inputs: Vec<CheapInput> = routes
         .iter()
         .map(|r| {
+            let t = topup_of(r);
             let day = health.get(&r.id).map(|h| &h.windows.day);
-            // 加权等效倍率:拿这条线实际的 token 结构去加权它公布的四类价。
-            // 这是「一家翻倍一家不翻倍怎么比」的答案。
+            // 加权等效倍率:拿这条线实际的 token 结构去加权它四类的
+            // 「站点单价 ÷ 官方单价」。这是「一家把输出另外加了价、一家照官方填,
+            // 怎么比」的答案。
             //
-            // 官方价按「这组价是哪个模型的」去查。公布绝对单价的站点
-            // (sub2api 系)非有它不可 —— 一个绝对单价换不成倍率,除非
-            // 知道官方单价。查不到就退回只认倍率的那条路:那种站点因此
-            // 算不出加权倍率,整池退回更粗的口径。**那是对的** ——
-            // 拿一个算不出来的数去比,比退回粗口径糟得多。
+            // 官方价按「这组价是哪个模型的」去查,**两种后端都非有它不可** ——
+            // New API 的倍率换成单价之后也要除官方单价才是倍数。查不到就算不出
+            // 加权倍率,整池退回更粗的口径。**那是对的** —— 拿一个算不出来的数
+            // 去比,比退回粗口径糟得多。
             let official = r
                 .rates_model
                 .as_deref()
@@ -305,15 +355,15 @@ pub fn decide(
                 .and_then(|m| catalog.resolve(m));
             let blended = day
                 .and_then(|d| d.mix.shares())
-                .and_then(|mix| match &official {
-                    Some(o) => r.rates.blended_ratio_against(mix, o),
-                    None => r.rates.blended_ratio(mix),
-                });
+                .zip(official.as_ref())
+                .and_then(|(mix, o)| r.rates.blended_ratio(mix, o));
             CheapInput {
                 route_id: r.id.clone(),
-                cost_per_token: day.and_then(|d| cost_per_token(d.cost, d.tokens)),
-                blended_ratio: blended,
-                real_rate: r.rate_for_ranking(),
+                cost_per_token: day
+                    .and_then(|d| cost_per_token(d.cost, d.tokens))
+                    .map(|v| v * t),
+                blended_ratio: blended.map(|v| v * t),
+                real_rate: r.rate_for_ranking().map(|v| v * t),
             }
         })
         .collect();
@@ -328,6 +378,9 @@ pub fn decide(
             Candidate {
                 route_id: r.id.clone(),
                 rate: cheap[i],
+                // 底线「倍率不高于」比真实倍率(没有就退回加权倍率),都已折过充值比例。
+                // ⛔ 不拿 `cheap[i]`:整池走实扣单价时那是 1e-6 量级,底线等于没设。
+                real_rate: inputs[i].real_rate.or(inputs[i].blended_ratio),
                 experience_ms: day.and_then(|d| d.experience_ms),
                 ttft_p95_ms: day.and_then(|d| d.ttft_p95_ms),
                 success_rate: day.and_then(|d| d.success_rate),
@@ -490,7 +543,8 @@ pub async fn fetch_models(
     .await;
     let problem = match pricing {
         Ok(value) => {
-            let models = pricing::parse_station_pricing(&value.to_string());
+            // 分组倍率在响应顶层,按这条线路的分组取 —— 大多数站的折扣就在这个数上。
+            let models = pricing::parse_station_pricing_in_group(&value.to_string(), &source.group);
             if !models.is_empty() {
                 return (models, None);
             }
@@ -690,6 +744,7 @@ mod tests {
             tags: vec![],
             favorite: false,
             revision: 1,
+            topup_per_usd: None,
         };
         db.put("providers", "site", &provider).unwrap();
         let mut route = route("site", 1.0);
@@ -748,6 +803,7 @@ mod tests {
             },
             None,
             &pricing::Catalog::new(Vec::new()),
+            &HashMap::new(),
         );
         assert_eq!(basis, CheapBasis::CostPerToken);
         assert_eq!(
@@ -755,6 +811,118 @@ mod tests {
             Some(routes[0].id.as_str()),
             "按标称倍率会选错那一条"
         );
+    }
+
+    /// 帖子里的「倍率陷阱」:7 元买 1 美元额度、标 ×0.1 的站,折成每 $1 牌价是 0.7 元,
+    /// 比 1 元买 1 美元额度、标 ×0.5 的站(0.5 元)贵。不折算就会选错。
+    #[test]
+    fn a_low_multiplier_sold_at_seven_yuan_per_dollar_loses_to_a_higher_one_at_one() {
+        let routes = [route("七比一", 0.1), route("一比一", 0.5)];
+        let prefs = Prefs {
+            axes: vec![Axis::Cheap],
+            ..Default::default()
+        };
+        let catalog = pricing::Catalog::new(Vec::new());
+        // 不知道充值比例时(都按 1 算)标 ×0.1 那家赢 —— 这正是陷阱。
+        let (naive, _) = decide(
+            &routes,
+            &HashMap::new(),
+            &HashMap::new(),
+            &prefs,
+            None,
+            &catalog,
+            &HashMap::new(),
+        );
+        assert_eq!(naive.winner.as_deref(), Some(routes[0].id.as_str()));
+
+        let topup = HashMap::from([(routes[0].station_id.clone(), 7.0)]);
+        let (ranking, basis) = decide(
+            &routes,
+            &HashMap::new(),
+            &HashMap::new(),
+            &prefs,
+            None,
+            &catalog,
+            &topup,
+        );
+        assert_eq!(basis, CheapBasis::RealRate);
+        assert_eq!(ranking.winner.as_deref(), Some(routes[1].id.as_str()));
+
+        // 底线「倍率不高于 0.6」也按折过的比:0.7 过线,0.5 没过。
+        let strict = Prefs {
+            floors: qb_station::schedule::Floors {
+                max_rate: Some(0.6),
+                ..Default::default()
+            },
+            ..prefs
+        };
+        let (floored, _) = decide(
+            &routes,
+            &HashMap::new(),
+            &HashMap::new(),
+            &strict,
+            None,
+            &catalog,
+            &topup,
+        );
+        let seven = floored
+            .rows
+            .iter()
+            .find(|r| r.route_id == routes[0].id)
+            .unwrap();
+        assert!(!seven.eligible, "折成 0.7 元的那家该被底线挡住");
+        assert!((seven.failed_floors[0].actual - 0.7).abs() < 1e-12);
+    }
+
+    /// New API 的线路按单价 ÷ 官方单价加权,分组折扣要算进去。
+    ///
+    /// 0.25.3 及以前:加权直接拿原始倍率(Opus 5 照官方价是 2.5 / 12.5)算,而且分组倍率
+    /// 从来没读到 —— 两条同样照官方价抄、分组 ×0.2 和 ×0.8 的线,加权出来一模一样。
+    #[test]
+    fn new_api_routes_are_blended_against_the_official_price_with_their_group_discount() {
+        let official = pricing::lookup("claude-opus-5").unwrap();
+        let rates = |group: f64| pricing::StationRates {
+            model_ratio: Some(2.5),
+            completion_ratio: Some(5.0),
+            cache_ratio: Some(0.1),
+            create_cache_ratio: Some(1.25),
+            group_ratio: Some(group),
+            ..Default::default()
+        };
+        let mut cheap = route("二折组", 0.2);
+        cheap.rates = rates(0.2);
+        cheap.rates_model = Some("claude-opus-5".into());
+        let mut dear = route("八折组", 0.8);
+        dear.rates = rates(0.8);
+        dear.rates_model = Some("claude-opus-5".into());
+        let routes = [dear, cheap];
+        let mut h = HashMap::new();
+        // 两条都拉到了 token 结构,但有一条拉不到实扣 —— 整池退到加权倍率。
+        h.insert(routes[0].id.clone(), health_with(1.0, 1000, 500, 4, 0));
+        let mut no_cost = health_with(1.0, 1000, 500, 4, 0);
+        no_cost.windows.day.cost = None;
+        h.insert(routes[1].id.clone(), no_cost);
+        let (ranking, basis) = decide(
+            &routes,
+            &h,
+            &HashMap::new(),
+            &Prefs {
+                axes: vec![Axis::Cheap],
+                ..Default::default()
+            },
+            None,
+            &pricing::Catalog::new(Vec::new()),
+            &HashMap::new(),
+        );
+        assert_eq!(basis, CheapBasis::BlendedRatio);
+        assert_eq!(ranking.winner.as_deref(), Some(routes[1].id.as_str()));
+        // 加权值就是分组倍率本身(照官方价抄的站四类同折),不是 2.5 那一档的数。
+        let mix = h[&routes[1].id].windows.day.mix.shares().unwrap();
+        let b = routes[1]
+            .rates
+            .blended_ratio(mix, &official.as_resolved())
+            .unwrap();
+        assert!((b - 0.2).abs() < 1e-12, "b={b}");
     }
 
     #[test]
@@ -780,6 +948,7 @@ mod tests {
             },
             None,
             &pricing::Catalog::new(Vec::new()),
+            &HashMap::new(),
         );
         assert_eq!(basis, CheapBasis::RealRate);
         assert_eq!(ranking.winner.as_deref(), Some(routes[1].id.as_str()));
@@ -814,6 +983,7 @@ mod tests {
             },
             None,
             &pricing::Catalog::new(Vec::new()),
+            &HashMap::new(),
         );
         assert_eq!(ranking.winner.as_deref(), Some(routes[1].id.as_str()));
         let a = ranking

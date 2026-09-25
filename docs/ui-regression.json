@@ -43,6 +43,12 @@
       "passed": true
     },
     {
+      "route": "extensions/claude-desktop-zh-cn",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "usage?side=claude",
       "width": 1180,
       "theme": "light",
@@ -109,6 +115,12 @@
       "passed": true
     },
     {
+      "route": "extensions/claude-desktop-zh-cn",
+      "width": 944,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "usage?side=claude",
       "width": 944,
       "theme": "light",
@@ -175,6 +187,12 @@
       "passed": true
     },
     {
+      "route": "extensions/claude-desktop-zh-cn",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "usage?side=claude",
       "width": 786,
       "theme": "light",
@@ -241,6 +259,12 @@
       "passed": true
     },
     {
+      "route": "extensions/claude-desktop-zh-cn",
+      "width": 680,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "usage?side=claude",
       "width": 680,
       "theme": "light",
@@ -307,6 +331,12 @@
       "passed": true
     },
     {
+      "route": "extensions/claude-desktop-zh-cn",
+      "width": 1180,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "usage?side=claude",
       "width": 1180,
       "theme": "dark",
@@ -373,6 +403,12 @@
       "passed": true
     },
     {
+      "route": "extensions/claude-desktop-zh-cn",
+      "width": 944,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "usage?side=claude",
       "width": 944,
       "theme": "dark",
@@ -439,6 +475,12 @@
       "passed": true
     },
     {
+      "route": "extensions/claude-desktop-zh-cn",
+      "width": 786,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "usage?side=claude",
       "width": 786,
       "theme": "dark",
@@ -505,6 +547,12 @@
       "passed": true
     },
     {
+      "route": "extensions/claude-desktop-zh-cn",
+      "width": 680,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "usage?side=claude",
       "width": 680,
       "theme": "dark",
@@ -578,6 +626,13 @@
       "passed": true
     },
     {
+      "route": "extensions/claude-desktop-zh-cn",
+      "width": 944,
+      "theme": "light",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
       "route": "usage?side=claude",
       "width": 944,
       "theme": "light",
@@ -655,6 +710,13 @@
       "passed": true
     },
     {
+      "route": "extensions/claude-desktop-zh-cn",
+      "width": 944,
+      "theme": "dark",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
       "route": "usage?side=claude",
       "width": 944,
       "theme": "dark",
@@ -732,6 +794,13 @@
       "passed": true
     },
     {
+      "route": "extensions/claude-desktop-zh-cn",
+      "width": 786,
+      "theme": "light",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
       "route": "usage?side=claude",
       "width": 786,
       "theme": "light",
@@ -803,6 +872,13 @@
     },
     {
       "route": "extensions/antigravity-ui",
+      "width": 786,
+      "theme": "dark",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "extensions/claude-desktop-zh-cn",
       "width": 786,
       "theme": "dark",
       "scale": 1.5,
@@ -967,7 +1043,8 @@
     "software page: antigravity one-click install confirmation",
     "software page: gemini cli install reports a verified result",
     "software page: every pill agrees with its version row",
-    "update dialog: manual check, notes, cost sentence, demo install refusal, reopen from settings"
+    "update dialog: manual check, notes, cost sentence, demo install refusal, reopen from settings",
+    "one-click Chinese: Claude upstream check on open, confirmed apply with verification, entry label, restore; GPT own setting with skipped default home"
   ],
   "pageErrors": []
 }

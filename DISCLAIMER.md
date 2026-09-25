@@ -351,6 +351,8 @@ Codex 账户槽位的配置（没有槽位才是默认 `~/.codex`；退出时恢
 | **启动 / 关闭反重力**（v0.26.0）                                 | 起之前先**关掉正在跑的同一个程序**（它是单实例），归门禁时先验出口 IP；之后由面板托管（面板退出它一起退出）。「关闭」会结束 Hub / IDE 及其语言服务器                                                                                                                                                        | 未保存内容丢失。登录资料在它自己那里（Hub：Windows 凭据管理器；IDE：它自己的用户数据目录），面板不碰                                                                                                                                                                                                           |
 | **反重力 IDE 的登录槽位**（v0.30.0）                             | 「新建」在本程序数据目录下建一个空的 IDE 用户数据目录（只复制你默认资料里的 `User\settings.json` 与 `keybindings.json`），「启动」用 VS Code 的公开开关 `--user-data-dir` 把 IDE 指到它；你在 IDE 自己的窗口里登录。「切换」只改本程序记的激活槽位。**Hub 没有槽位**（它的令牌在 Windows 凭据管理器）       | 可逆：移除只把目录挪进归档。新槽位是一份全新的 IDE（设置以外的状态从头来）；平时面板只问它状态库里令牌那一行的长度；只有你点这个账户的额度刷新图标时才读令牌、过期了在内存里换新（不写回、不复制，见下面「反重力账户与 Hub 的联网额度」）                                                                                                                                                                       |
 | **反重力的汉化与审批引擎**（v0.26.0，内置）                      | 在你点「附加」（或从面板起 Hub 后按设置自动）之后，连上反重力 Hub **自己开着**的 Chrome DevTools 调试端口，往它的页面里注入一段脚本：按字典替换界面文字；**自动点掉审批卡**（按你选的选项档：仅本次 / 对话内 / 项目内 / 全局）；命中高危规则的命令不点并记日志。脚本、字典、规则取自 EasyAntigravity（MIT） | 可停止；页面里的脚本随下次刷新消失，不改反重力任何文件。**自动审批等于替你放行智能体要执行的命令**——它只拦你规则里写了的那些，规则默认九条，其余一律放行；请自行评估后再开                                                                                                                                     |
+| **Claude 桌面端中文界面**（2026-09-25，插件 claude-desktop-zh-cn） | 在你点「一键汉化」并确认后：先验出口 IP，再**关掉 Claude 桌面端（包括它 Code 页里正在跑的会话）**；从社区项目 `javaht/claude-desktop-zh-cn`（MIT）的 GitHub Release 取那一版的源码归档，只解出 Windows 安全模式用得到的脚本与翻译（放在本程序数据目录下，它仓库里的 Frida 实验脚本一个字节都不落盘），用系统自带的 Windows PowerShell 运行它的 `install zh-CN -PatchMode safe`：往 Claude 安装目录（`%LOCALAPPDATA%\AnthropicClaude\app-<版本>\resources`）放三份翻译文件、**改前端 JS（`ion-dist\assets\v1\*.js`）里的语言列表与硬编码英文**（改前它自己备份到同目录的 `.zh-cn-backups`）、把 `%APPDATA%\Claude\config.json` 与 `%APPDATA%\Claude-3p\config.json` 里的 `locale` 设成 zh-CN（后者不存在时它会建）；上游脚本最后会自己重启一次 Claude，面板随即把它关掉。之后面板把其余 Claude 账户资料（`%APPDATA%\Claude-<名字>\config.json`）的 `locale` 也设成 zh-CN —— 只改这一个值的字节，里面的登录令牌缓存一个字节不碰。改前改后面板自己比对 `app.asar` 与 `claude.exe` 的 SHA-256 和签名状态 | 可逆：「恢复英文」跑上游自己的卸载（从它的备份还原前端文件、删掉翻译），面板再把各份资料的 `locale` 写回汉化之前的值。**这是非官方修改**：Anthropic 不提供中文界面，也不支持这样改；Claude 一自动更新就会换一个新目录，汉化随之没了、要重新应用；在线的 claude.ai 页面（对话等）仍是英文。面板**永远不调用**上游另外两种模式（改 `app.asar` 并重写 `Claude.exe` 的完整性哈希；用 Frida 在内存里绕过 Claude「带调试开关就拒绝启动」的保护）—— 那是绕过保护措施，Anthropic 消费者条款明文不许；比对发现 `app.asar` / `claude.exe` 被动过，面板立刻还原并停用那一版上游。只支持官网安装包装的 Claude（MSIX 版要管理员接管 WindowsApps 的权限，面板不做） |
+| **GPT 的中文界面**（2026-09-25）                                 | 在你点「设为中文」后，在每个 GPT 槽位与默认那一份（`CODEX_HOME`，没设就是 `~\.codex`）的 `config.toml` 里写一行 `[desktop] localeOverride = "zh-CN"` —— 跟你在 GPT「设置 → General → Language」里选中文写下的是同一行；面板起的 GPT 开着时先关掉它（正在跑的任务会停）、改完按当前槽位重开；以后新建的槽位预写这一行。别处起的 GPT 开着时默认那一份这次不改 | 可逆：「恢复默认」只删面板写的 zh-CN，你在 GPT 里自己选的别的语言不动。不碰程序文件、不碰 `auth.json`、不动 `config.toml` 里别的任何一项。OpenAI 按账户 / 机器放开中文界面（远端开关），没放开时设了照样是英文 —— 面板不碰那个开关。中转环境的 GPT 不跟着改 |
 | **关闭反重力 Hub 的自动检查更新**（v0.26.0，可选）               | 在你点击后，往它的 `%APPDATA%\Antigravity\app_storage.json` 并入一个键 `autoCheckForUpdates`                                                                                                                                                                                                                | 可逆（再点一次）。重启 Hub 生效                                                                                                                                                                                                                                                                                |
 | **GPT 的内部额度**（2026-09-23 起只手动）                        | 在你点 GPT 账户行右侧的刷新图标时，用**那一个** Codex 槽位的官方 access token 请求 `https://chatgpt.com/backend-api/wham/usage`，取回 5 小时 / 7 天窗口、剩余百分比与重置时间。打开页面不查，没有定时器。访问令牌已经到点时**不发请求、也不替官方客户端换新**（OpenAI 的刷新令牌每换一次就轮换，面板换了会让桌面端手里那份作废、被登出），只提示你打开一次桌面端让它自己换新；服务端拒绝了这份登录（401）时，那一行改显示「登录已失效」 | 只读；令牌只在内存请求作用域存在；不自动换号、不参与路由，读不出来不显示 0 |
 | **Gemini CLI 的内部额度**（2026-09-23 起只手动）                 | 在你点反重力用量卡上 Gemini CLI 那一格的「刷新」时，用当前账户 CLI 那一半的令牌请求 Code Assist `loadCodeAssist` / `retrieveUserQuota`，取回逐模型剩余比例与重置时间。**访问令牌过期时（它只有一小时），用同一份里的刷新令牌向 `oauth2.googleapis.com` 换一张新的**（2026-09-23 起），换新要带的客户端标识从你本机装的 Gemini CLI 包里读出来（面板自己不内置）；Google 说刷新令牌作废了时，账户行上 CLI 那一半改显示「登录已失效」 | 只读，令牌不落盘；换来的访问令牌**只放内存**，不写回 `oauth_creds.json`（Google 的刷新令牌换新之后不作废，CLI 手里那份照样能用）；接口改版或 401/403 时显示原因，不伪造额度。这同样是在用 Gemini CLI 客户端的身份跟 Google 说话，是否符合你与 Google 之间的条款由你自行判断 |
@@ -413,6 +415,8 @@ Gemini CLI 是 `node` 跑的脚本，同样锁不住；反重力自动更新装�
 | 反重力用量卡上 Gemini CLI 那一格的「刷新」                 | `cloudcode-pa.googleapis.com`（携带 CLI 那一半的访问令牌）；访问令牌过期时先到 `oauth2.googleapis.com` 换新 |
 | 反重力账户行的额度刷新图标、用量卡上 Hub 那一格的「刷新」  | `daily-cloudcode-pa.googleapis.com`（按 GCP 条款管的账户是 `cloudcode-pa.googleapis.com`）；访问令牌过期时先到 `oauth2.googleapis.com` 换新 |
 | 设置页的「检查更新」（0.25.3 起）                          | 同上表的 `update.json`                                                   |
+| Claude 桌面端中文界面：打开「汉化」弹窗或它的插件页、点「检查更新」（2026-09-25 起） | `github.com` 上 `javaht/claude-desktop-zh-cn` 的 `releases/latest`（只读它跳到哪个标签；**不走 `api.github.com`**，不带任何账户信息） |
+| Claude 桌面端中文界面：「一键汉化」「更新并重新应用」「恢复英文」（本机没有上游副本时） | 那一版的源码归档（`github.com` 跳到 `codeload.github.com`），不带任何账户信息。上游脚本自己问 GitHub 有没有新版的那一下被面板关掉了（`CLAUDE_ZH_SKIP_UPDATE_CHECK=1`） |
 | 更新弹窗里的「一键更新」（0.25.3 起）                      | `github.com` 上本项目那一版 Release 的 `SHA256SUMS.txt` 与安装包。**核对 SHA-256 一致才安装**；安装时面板会退出，它启动的桌面端、对话、酒馆一起关闭 |
 
 其他外部网址（IPQualityScore、ippure.com、Scamalytics、IPRoyal、各厂商控制台、官方文档、
@@ -529,6 +533,14 @@ Gemini CLI 是 `node` 跑的脚本，同样锁不住；反重力自动更新装�
   且属于修改官方程序。本项目不做这件事，需要的人请自行使用 EasyAntigravity 并自负其风险。
   引擎通过反重力 Hub 自己开着的 Chrome DevTools 调试端口工作 —— 那是它的设计，不是本项目打开的；
   同一台机器上任何程序都能连上那个端口，这一点与本项目无关但你应当知道。
+- **Claude 桌面端中文界面**（2026-09-25）用的是社区项目 `javaht/claude-desktop-zh-cn`（MIT）：
+  **本项目不内置、不分发它的任何文件**，在你点击后从它的 GitHub Release 取、只调用它 Windows 脚本的
+  安全模式；每一版下载后都重核它的许可证仍是 MIT，不是就不用。**它不是 Anthropic 的产品，也未经
+  Anthropic 审阅**；安全模式改的是 Claude 安装目录里的前端界面文字，Anthropic 的条款没有条目明文禁止，
+  但它是非官方修改、不受支持。上游另外两种模式（重写 `Claude.exe` 完整性哈希、Frida 内存补丁）
+  属于绕过保护措施，本项目永远不调用，改前改后的哈希与签名比对就是为了守住这一条。
+  **是否汉化、是否符合你与 Anthropic 之间的条款，由你自行判断并承担后果**（见第 4、11 节）。
+  GPT 的中文界面不涉及第三方：写的是 GPT 自己的设置项。
 - **MCP 服务与 Skills 是第三方代码。** 扩展中心的收录不是安全认证；安装、运行之前
   请自行检查来源与内容，它们做了什么由其作者负责。
 - 外部链接指向的官方文档、第三方博客、视频、品牌名称与商家页面

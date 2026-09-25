@@ -3,13 +3,15 @@
 //! # 它是干什么用的
 //!
 //! 站点标称「×0.20」,那是相对**官方价**的倍数。要验证这个标称是不是真的,
-//! 就得拿站点的单价跟官方单价比:
+//! 就得拿站点**实际收的单价**跟官方单价比:
 //!
 //! ```text
-//! 真实倍率 = 站点单价 × 站点标称倍率 ÷ 官方单价
+//! 这一类的倍率 = 站点这一类的单价(已乘分组倍率) ÷ 官方这一类的单价
 //! ```
 //!
-//! 所以官方价目表是「查套路」的分母,没有它就只能听站点自己说。
+//! 站点单价从哪来,两种后端不一样(见 [`StationRates`]):sub2api 系直接公布单价;
+//! New API 系公布的是**以 $2 / 百万 token 为 1 的倍率**,先换成单价
+//! ([`NEW_API_USD_PER_MTOK`])。所以官方价目表是「查套路」的分母,没有它就只能听站点自己说。
 //!
 //! # ⛔ 四类各算各的,不是一个数
 //!
@@ -33,6 +35,28 @@ use ts_rs::TS;
 /// 半年。定价变动不频繁,但也绝不是永不变 —— 拿一年前的价算出来的「真实倍率」
 /// 会把调价冤枉成造假。
 pub const STALE_AFTER_DAYS: i64 = 180;
+
+/// New API 的倍率为 1 时,每百万 token 多少美元(站内额度)。
+///
+/// # ⛔ New API 的 `model_ratio` 不是「相对官方几折」
+///
+/// 它是**单价**,单位是 $0.002 / 1K token。New API 源码
+/// `setting/ratio_setting/model_ratio.go` 原文 `1 === $0.002 / 1K tokens`,
+/// 默认表里 `"gpt-4o": 1.25, // $2.5 / 1M tokens`、`"claude-3-opus-20240229": 7.5,
+/// // $15 / 1M tokens`;它自己的定价页(`web/src/features/pricing/lib/price.ts`)
+/// 算单价也是 `model_ratio * 2 * 分组倍率`。
+///
+/// 所以照官方价原样抄进后台的 Claude Opus 5($5 / $25)在 New API 里是
+/// `model_ratio 2.5`、`completion_ratio 5` —— 把 2.5 读成「官方的 2.5 倍」、
+/// 把 5 读成「输出翻 5 倍」,正是 0.25.3 及以前的错法。站点的折扣在两个地方:
+/// 分组倍率(`group_ratio`),或者直接压低 `model_ratio`(「倍率算在单价里」)。
+/// 两种都只有先换成单价、再除以官方单价才读得出来。
+///
+/// ⚠ 严格说这个数是 `1_000_000 ÷ quota_per_unit`(`quota_per_unit` 在
+/// `/api/status` 里公布,默认 500000)。New API 自己的定价页也写死 2 —— 改过
+/// `quota_per_unit` 的站点,它自己页面上的单价跟账单就对不上;账单核对不受影响,
+/// 那边是 `quota ÷ quota_per_unit`,见 `station_billing::usage`。
+pub const NEW_API_USD_PER_MTOK: f64 = 2.0;
 
 /// 缓存写的标准倍数(相对输入价)。
 pub const CACHE_WRITE_RATIO: f64 = 1.25;
@@ -444,16 +468,17 @@ impl PriceCategory {
 /// [`PriceBasis`] 在那条路径上是纯装饰,改它们不会让任何判定变化。
 /// 这是「看起来通过了、实际什么都没测」的那一类失效 —— 比没有这项检查更危险。
 ///
-/// # 现在它只报「站点自己说了什么」,两套口径各占一列
+/// # 现在它只报「站点自己说了什么」,换成同一个单位
 ///
-/// | 站点后端   | 填哪一格        | 那一格是什么          |
-/// |------------|-----------------|-----------------------|
-/// | New API 系 | `station_ratio` | 相对它自己配额基准的倍率 |
-/// | sub2api 系 | `station_price` | 绝对单价,美元／百万 token |
+/// | 站点后端   | 它公布什么                        | `station_price` 怎么来 |
+/// |------------|-----------------------------------|------------------------|
+/// | New API 系 | 倍率(1 = $2 / 百万 token)         | 倍率 × [`NEW_API_USD_PER_MTOK`] |
+/// | sub2api 系 | 绝对单价,美元／百万 token          | 原样 |
 ///
-/// ⛔ **两格不互相换算。** 换算要除以官方价 —— 而那正是上面那条静默失效的
-/// 入口。哪一格有效由 [`basis_kind`](Self::basis_kind) 说明,界面据此决定
-/// 显示哪一列;真要比的话自己除,那时至少是明着除的。
+/// 两种都乘上站点公布的分组倍率(知道的话)—— 跟它们自己定价页上显示的单价是同一个数。
+/// ⛔ **官方价不参与 `station_price`**:New API 那个 2 是它源码里写死的单位,不是
+/// 官方价。上面那条失效的根子是「拿官方价凑站点单价」,官方价因此被约掉;这里官方价
+/// 只在界面上当分母出现一次,改官方价结论就跟着变。
 ///
 /// 「它到底收了几倍」由 [`measured_multiplier`] 回答 —— 那一个的分子是
 /// 站点账单上真金白银的实扣,分母是同一批 token 按官方单价算出来的成本,
@@ -462,14 +487,16 @@ impl PriceCategory {
 #[ts(export)]
 pub struct CategoryVerdict {
     pub category: PriceCategory,
-    /// 站点公布的这一类倍率(`model_ratio` × 子倍率 × 分组倍率 × 峰时倍率)。
+    /// New API 的原始倍率乘积(`model_ratio` × 子倍率 × 分组倍率 × 峰时倍率),
+    /// 只为对照站点后台里填的那几个数。
     ///
-    /// 公布绝对单价的站点(sub2api 系)这一格是 `None`,价在下面那一格。
+    /// ⛔ **不是相对官方的倍数** —— New API 的倍率 1 = $2 / 百万 token,
+    /// 要看单价用 `station_price`。公布绝对单价的站点(sub2api 系)这一格是 `None`。
+    /// 0.25.3 及以前存下来的检验历史里,这一格没乘分组倍率,也没有 `station_price`。
     pub station_ratio: Option<f64>,
-    /// 站点公布的这一类**绝对单价**(每百万 token,已乘分组与峰时)。
+    /// 站点这一类的**单价**(美元／百万 token,站内额度,已乘分组与峰时)。
     ///
-    /// 公布倍率的站点(New API 系)这一格是 `None` —— ⛔ **不拿倍率乘官方价
-    /// 凑一个出来**,那正是上面那段说的失效。
+    /// sub2api 系原样取它公布的单价;New API 系是倍率 × [`NEW_API_USD_PER_MTOK`]。
     pub station_price: Option<f64>,
     /// 这家站点按哪套口径公布价格。界面据此决定显示哪一列。
     pub basis_kind: RateBasis,
@@ -486,15 +513,15 @@ pub const PRICE_TOLERANCE: f64 = 0.01;
 
 /// 把站点公布的四类价与官方单价并排列出来。**只做展示,不下判定。**
 ///
-/// 两套口径各占一列:倍率那一套填 `station_ratio`,绝对单价那一套填
-/// `station_price`,另一格留空。⛔ **不互相换算** —— 换算要除以官方价,
-/// 而那正是当年「官方价被约掉」那条静默失效的入口。界面要比的话自己除,
-/// 那时至少是明着除的。
+/// 两种后端都换成单价填进 `station_price`(New API 按它自己的单位换,
+/// 见 [`NEW_API_USD_PER_MTOK`]);New API 的原始倍率另外留在 `station_ratio`
+/// 供对照。⛔ **官方价不参与站点单价** —— 界面要比的话拿单价除官方单价,
+/// 那时官方价只出现在分母上一次。
 ///
 /// 取不到的那一类给 `None` —— **不要填 0**,0 会显示成「这一类免费」。
 pub fn verdicts(rates: &StationRates, official: Option<&ResolvedPrice>) -> Vec<CategoryVerdict> {
     let kind = rates.basis();
-    let ratios = rates.category_ratios();
+    let ratios = rates.newapi_ratios();
     let prices = rates.category_prices();
     let clean = |v: Option<f64>| v.filter(|x: &f64| x.is_finite() && *x >= 0.0);
     PriceCategory::ALL
@@ -716,31 +743,38 @@ impl ResolvedPrice {
 
 /// 站点怎么计费。
 ///
-/// ⛔ **不是一个倍率。** New API 的每个模型给的是一组比例,输出那一项还要
-/// 再乘一次 `completion_ratio` —— 这就是「计费翻倍」:
+/// ⛔ **不是一个倍率。** New API 的每个模型给的是一组比例,四类单价这样算
+/// (跟 New API 自己定价页的算法一样,见 [`NEW_API_USD_PER_MTOK`]):
 ///
 /// ```text
-/// 输入   = model_ratio
-/// 输出   = model_ratio × completion_ratio      ← 常见 3~5 倍
-/// 缓存读 = model_ratio × cache_ratio
-/// 缓存写 = model_ratio × create_cache_ratio
+/// 输入   = model_ratio                        × $2/百万
+/// 输出   = model_ratio × completion_ratio     × $2/百万
+/// 缓存读 = model_ratio × cache_ratio          × $2/百万
+/// 缓存写 = model_ratio × create_cache_ratio   × $2/百万
 /// 再乘   × 分组倍率 ×(峰时浮动)
 /// ```
 ///
-/// 只拿 `model_ratio` 当「这站的倍率」去比价,会把输出那几倍整个漏掉 ——
-/// 而真实用量里输出往往才是花钱的大头。
+/// `completion_ratio` 是「输出价 ÷ 输入价」—— Claude 官方本来就是 5
+/// (Opus 5:$25 ÷ $5),照官方价抄的站就填 5。⛔ **它大于 1 不是「计费翻倍」**;
+/// 输出有没有另外加价,要拿它跟官方的输出 ÷ 输入比,见 [`output_markup`](Self::output_markup)。
+/// 相对官方的倍率只能先换成单价再除官方单价,见 [`category_ratios_against`](Self::category_ratios_against)。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct StationRates {
-    /// 输入倍率(New API 的 `model_ratio`)。
+    /// New API 的 `model_ratio`:输入单价,**单位是 $2 / 百万 token**(见 [`NEW_API_USD_PER_MTOK`])。
+    /// ⛔ 不是「官方的几倍」—— 照官方价抄的 Opus 5 是 2.5。
     pub model_ratio: Option<f64>,
-    /// 输出相对输入的倍数(`completion_ratio`)。**这是「翻倍」那一项。**
+    /// 输出价 ÷ 输入价(`completion_ratio`)。照官方价抄的 Claude 是 5,不是「翻倍」。
     pub completion_ratio: Option<f64>,
-    /// 缓存读相对输入的倍数(`cache_ratio`)。
+    /// 缓存读价 ÷ 输入价(`cache_ratio`)。
     pub cache_ratio: Option<f64>,
-    /// 缓存写相对输入的倍数(`create_cache_ratio`)。
+    /// 缓存写价 ÷ 输入价(`create_cache_ratio`)。
     pub create_cache_ratio: Option<f64>,
-    /// 分组倍率。整条线路再乘一次。
+    /// 分组倍率。整条线路再乘一次 —— 大多数站的折扣就在这里(帖子里说的「倍率分组」)。
+    ///
+    /// New API 在 `/api/pricing` 顶层的 `group_ratio` 里按分组名公布
+    /// ([`parse_station_pricing_in_group`]);sub2api 在 `/api/v1/groups/rates`。
+    /// `None` = 不知道,**不是「不打折」** —— 加权比价那一步因此算不出来,见 [`blended_ratio`](Self::blended_ratio)。
     pub group_ratio: Option<f64>,
     /// 峰时浮动倍率。
     ///
@@ -755,18 +789,17 @@ pub struct StationRates {
     //
     // ⛔ 跟上面那些倍率是**互斥的两套**,不是互补的:
     //
-    // | 站点后端   | 它公布什么                       | 折扣在哪 |
-    // |------------|----------------------------------|----------|
-    // | New API 系 | 相对倍率(相对它自己的配额基准) | 倍率本身 |
-    // | sub2api 系 | 绝对单价(美元／百万 token)     | 分组倍率 |
+    // | 站点后端   | 它公布什么                          | 折扣在哪 |
+    // |------------|-------------------------------------|----------|
+    // | New API 系 | 倍率(1 = $2 / 百万 token 的单价)  | 分组倍率,或直接压低倍率(折扣算在单价里) |
+    // | sub2api 系 | 绝对单价(美元／百万 token)        | 分组倍率 |
     //
     // 使用者原话:「newapi 是可以这样算,但 sub2api 不是,
-    // sub2api 的单价就是官方单价。」—— 那一套的「便宜」全在分组上,
-    // 拿 `model_ratio` 那条路去读它只会读出一片空白。
+    // sub2api 的单价就是官方单价。」「New API 的倍率算在了单价内,所以单价便宜。」
+    // —— 两套最后都换成单价([`StationRates::category_prices`])再跟官方比。
     //
-    // 两套混着填会让 [`StationRates::category_ratios`] 与
-    // [`StationRates::category_prices`] 各算各的、结果对不上。
-    // 哪一套有效由 [`StationRates::basis`] 从「谁填了」推出来,
+    // 两套混着填时以绝对单价为准,见 [`StationRates::basis`]。
+    // 哪一套有效从「谁填了」推出来,
     // **不另设一个 kind 字段** —— 字段和内容对不上时,字段会骗人。
     /// 普通输入每百万 token 多少钱。
     #[serde(default)]
@@ -792,7 +825,7 @@ pub struct StationRates {
 pub enum RateBasis {
     /// 按次计费。四类 token 口径整个不适用。
     PerRequest,
-    /// 相对倍率(New API 系)。
+    /// 倍率(New API 系):以 $2 / 百万 token 为 1 的单价,**不是相对官方的倍数**。
     Ratios,
     /// 绝对单价,每百万 token(sub2api 系)。
     AbsolutePrices,
@@ -828,22 +861,27 @@ impl StationRates {
 
     /// 分组倍率 × 峰时上界。
     ///
-    /// 两者取不到时按 1 处理 —— 它们是「再乘一次」的修正项,缺席的自然含义
-    /// 就是不修正;这跟 `model_ratio` 缺席(根本不知道基准)不是一回事。
+    /// 两者取不到时按 1 处理 —— 这里只管「站点页面上那个单价是多少」,
+    /// 跟站点自己的定价页一样:不知道分组就显示不打折的价。
+    /// ⛔ **比价不能这么将就**:折扣大多就在分组上,不知道分组倍率就不知道价,
+    /// 所以 [`blended_ratio`](Self::blended_ratio) 要求它必须已知。
     fn scale(&self) -> f64 {
         let one = |v: Option<f64>| v.filter(|x| x.is_finite() && *x > 0.0).unwrap_or(1.0);
         one(self.group_ratio) * one(self.peak_rate)
     }
 
-    /// 四类各自的实际倍率(已经乘上分组倍率与峰时上界)。
+    /// New API 的原始倍率乘积(已乘分组倍率与峰时上界),四类各一个。
+    ///
+    /// ⛔ **这不是「相对官方的倍率」**,是以 $2 / 百万 token 为 1 的**单价**:
+    /// 照官方价抄的 Opus 5 在这里是 `[2.5, 0.25, 3.125, 12.5]`,而它相对官方的
+    /// 倍率是四个 1。0.25.3 及以前这个函数叫 `category_ratios`,被当成
+    /// 「相对官方的倍率」拿去显示和比价 —— 结果是照官方价收费的站被显示成
+    /// 「输入 2.5 倍、输出 12.5 倍」,分组折扣也整个没算进去。
     ///
     /// 顺序与 [`PriceCategory::ALL`] 一致。任何一项算不出来就是 `None` ——
-    /// **不拿 1.0 顶替**,那等于断言「这一类不加价」。
-    ///
-    /// ⛔ **只管倍率那一套。** 公布绝对单价的站点(sub2api 系)在这里全 `None`:
-    /// 一个绝对单价换不成倍率,除非知道官方价。两套都要的话用
-    /// [`category_ratios_against`](Self::category_ratios_against)。
-    pub fn category_ratios(&self) -> [Option<f64>; 4] {
+    /// **不拿 1.0 顶替**,那等于断言「这一类跟输入同价」。
+    /// 公布绝对单价的站点(sub2api 系)在这里全 `None`。
+    pub fn newapi_ratios(&self) -> [Option<f64>; 4] {
         if self.basis() != RateBasis::Ratios {
             return [None; 4];
         }
@@ -862,40 +900,46 @@ impl StationRates {
         ]
     }
 
-    /// 四类各自的**绝对单价**(每百万 token,已乘分组倍率与峰时上界)。
+    /// 四类各自的**单价**(美元／百万 token,站内额度,已乘分组倍率与峰时上界)。
     ///
-    /// 只有 [`RateBasis::AbsolutePrices`] 的站点给得出来;别的一律 `None` ——
-    /// ⛔ **不拿倍率乘一个猜的基准去凑**,那正是 0.16.0 之前那个
-    /// 「官方价被约掉」的失效的来源。
+    /// | 站点口径 | 怎么来 |
+    /// |---|---|
+    /// | 绝对单价(sub2api 系) | 它公布的单价 |
+    /// | 倍率(New API 系) | [`newapi_ratios`](Self::newapi_ratios) × [`NEW_API_USD_PER_MTOK`] |
+    /// | 按次 / 不知道 | 全 `None` |
+    ///
+    /// ⛔ **官方价不是这里的输入。** 0.16.0 之前那个「官方价被约掉」的失效,
+    /// 是拿站点倍率乘**官方价**凑出站点单价;New API 那个 2 是它源码里写死的单位,
+    /// 跟官方价无关 —— 这个函数的签名里压根没有官方价。
     pub fn category_prices(&self) -> [Option<f64>; 4] {
-        if self.basis() != RateBasis::AbsolutePrices {
-            return [None; 4];
+        match self.basis() {
+            RateBasis::Ratios => self
+                .newapi_ratios()
+                .map(|r| r.map(|v| v * NEW_API_USD_PER_MTOK)),
+            RateBasis::AbsolutePrices => {
+                let scale = self.scale();
+                let of =
+                    |v: Option<f64>| v.filter(|x| x.is_finite() && *x >= 0.0).map(|x| x * scale);
+                [
+                    of(self.input_price),
+                    of(self.cache_read_price),
+                    of(self.cache_write_price),
+                    of(self.output_price),
+                ]
+            }
+            RateBasis::PerRequest | RateBasis::Unknown => [None; 4],
         }
-        let scale = self.scale();
-        let of = |v: Option<f64>| v.filter(|x| x.is_finite() && *x >= 0.0).map(|x| x * scale);
-        [
-            of(self.input_price),
-            of(self.cache_read_price),
-            of(self.cache_write_price),
-            of(self.output_price),
-        ]
     }
 
-    /// 四类各自相对**官方价**的倍率。**两套口径在这里合流。**
+    /// 四类各自相对**官方价**的倍率:站点单价 ÷ 官方单价。**两套口径在这里合流。**
     ///
-    /// | 站点口径 | 怎么算 | 官方价参与了吗 |
-    /// |---|---|---|
-    /// | 绝对单价 | 站点单价 ÷ 官方单价 | 参与了 |
-    /// | 相对倍率 | 就是 [`category_ratios`](Self::category_ratios) | 用不上 |
-    /// | 按次 / 不知道 | 全 `None` | —— |
+    /// 照官方价原样抄进后台、分组 ×0.2 的站,四类都是 0.2 —— 不管它是 New API
+    /// (倍率 2.5 / 补全 5)还是 sub2api(单价 $5 / $25),也不管折扣是放在分组上
+    /// 还是直接压进了单价里。
     ///
-    /// ⚠ 这个函数只能用来**显示与粗比**。它对绝对单价那一套是真结论,
-    /// 对倍率那一套只是把站点自己说的搬了一遍 —— 两者不可比。
-    /// 「这家到底收了几倍」只有 [`measured_multiplier`] 答得了。
+    /// ⚠ 这是**站点公布的价**,不是它实际收的。「这家到底收了几倍」只有
+    /// [`measured_multiplier`] 答得了。
     pub fn category_ratios_against(&self, official: &ResolvedPrice) -> [Option<f64>; 4] {
-        if self.basis() != RateBasis::AbsolutePrices {
-            return self.category_ratios();
-        }
         let prices = self.category_prices();
         let mut out = [None; 4];
         for (i, &c) in PriceCategory::ALL.iter().enumerate() {
@@ -1148,44 +1192,51 @@ fn dollars(cell: &str) -> Option<f64> {
 }
 
 impl StationRates {
-    /// 这家站开没开「计费翻倍」。
+    /// 输出比官方的结构多收几倍:`(站点输出单价 ÷ 站点输入单价) ÷ (官方输出 ÷ 官方输入)`。
     ///
-    /// `completion_ratio > 1` 就是开了 —— 输出按输入的若干倍计费。
-    /// **界面要显示这一项**:两家站一个翻倍一个不翻倍时,
-    /// 光看「倍率 ×0.15 对 ×0.4」会得出完全相反的结论。
+    /// # ⛔ 不是 `completion_ratio > 1`
     ///
-    /// `None` = 站点没公布这一项,不知道。
-    pub fn folds_completion(&self) -> Option<bool> {
-        let r = self.completion_ratio?;
-        r.is_finite().then_some(r > 1.0)
+    /// New API 的 `completion_ratio` 就是「输出价 ÷ 输入价」,官方自己就不是 1:
+    /// Claude Opus 5 是 $25 ÷ $5 = 5,GPT-5.6 Sol 是 $20 ÷ $4 = 5。0.25.3 及以前
+    /// 拿「大于 1」当「计费翻倍」,于是每一家照官方价收费的站都挂着「翻倍 ×5」。
+    /// 真正的问题是:输出**在官方那个比例之外**又加了价 —— 标一个低倍率,
+    /// 再把补全倍率调高,纯看倍率的人会选错站。
+    ///
+    /// 1.0 = 跟官方同一个结构;> 1 = 输出另外加了价;< 1 = 输出反而更便宜。
+    /// 分组倍率在分子分母里约掉,不影响这个数。`None` = 站点没公布输入或输出,
+    /// 或者官方价没有 —— **不知道,不是「没加价」**。
+    pub fn output_markup(&self, official: &ResolvedPrice) -> Option<f64> {
+        let [input, _, _, output] = self.category_prices();
+        let (i, o) = (input?, output?);
+        let (oi, oo) = (official.input.per_mtok, official.output.per_mtok);
+        let ok = |v: f64| v.is_finite() && v > 0.0;
+        (ok(i) && ok(o) && ok(oi) && ok(oo)).then(|| (o / i) / (oo / oi))
     }
 
-    /// 按 token 结构加权出一个**可比**的等效倍率。
+    /// 按 token 结构加权出一个**可比**的等效倍率(相对官方价)。
     ///
     /// # 为什么非这样不可
     ///
-    /// A 站 `model_ratio 0.15` + `completion_ratio 5`(输出 ×0.75);
-    /// B 站 `model_ratio 0.4` 不翻倍(输出 ×0.4)。
+    /// 官方 Claude Opus 5 是 $5 / $25。A 站分组 ×0.15,但把补全倍率从官方的 5
+    /// 调成 10(输出 ×0.30);B 站分组 ×0.25,补全照官方填 5(四类都 ×0.25)。
     /// 谁便宜**取决于你的输入输出比**:
     ///
-    /// - 纯读代码(输出占一成)：A ≈ 0.21,B = 0.4 → A 便宜;
-    /// - 长篇生成(输出占七成)：A ≈ 0.57,B = 0.4 → B 便宜。
+    /// - 纯读代码(输出占一成):A = 0.165,B = 0.25 → A 便宜;
+    /// - 长篇生成(输出占七成):A = 0.255,B = 0.25 → B 便宜。
     ///
-    /// 只比 `model_ratio` 会永远选 A,只比输出倍率会永远选 B,两个都是错的。
+    /// 只比分组倍率会永远选 A —— 而长篇生成时 A 更贵。
+    ///
+    /// # ⛔ 分组倍率必须已知
+    ///
+    /// 折扣大多就在分组上(sub2api 全部、New API 大多数)。不知道分组倍率的站,
+    /// 这里按不打折算出来的是它的牌价,跟别家的折后价放在一起比,等于说它贵了
+    /// 五倍十倍 —— 所以返回 `None`,排序那边整池退回更粗的口径。
+    /// 拿一个算不出来的数去比,比退回粗口径糟得多。
     ///
     /// `mix` 是四类占比(见 `health::window::TokenMix`)。
     /// 任何一类倍率缺席就返回 `None` —— **不拿 1.0 补**。
-    pub fn blended_ratio(&self, mix: [f64; 4]) -> Option<f64> {
-        self.blend(mix, self.category_ratios())
-    }
-
-    /// 同 [`blended_ratio`](Self::blended_ratio),但**两套口径都算得出来**。
-    ///
-    /// 公布绝对单价的站点(sub2api 系)要有官方价才换得出倍率 —— 见
-    /// [`category_ratios_against`](Self::category_ratios_against)。
-    /// 连官方价都没有时它返回 `None`,排序那边会因此整池退回更粗的口径。
-    /// 那是对的:拿一个算不出来的数去比,比退回粗口径糟得多。
-    pub fn blended_ratio_against(&self, mix: [f64; 4], official: &ResolvedPrice) -> Option<f64> {
+    pub fn blended_ratio(&self, mix: [f64; 4], official: &ResolvedPrice) -> Option<f64> {
+        self.group_ratio.filter(|g| g.is_finite() && *g > 0.0)?;
         self.blend(mix, self.category_ratios_against(official))
     }
 
@@ -1263,18 +1314,67 @@ pub fn pick_audit_model(
         .map(|m| m.model.clone())
 }
 
+/// New API 的默认分组名。线路上分组留空(「默认分组」)时按它去查分组倍率。
+pub const NEW_API_DEFAULT_GROUP: &str = "default";
+
+/// 同 [`parse_station_pricing`],再把**这条线路那个分组**的倍率填进每个模型的
+/// `rates.group_ratio`。
+///
+/// New API 把分组倍率放在 `/api/pricing` 响应的**顶层** `group_ratio` 里
+/// (分组名 → 倍率;登录后是按你这个账号调整过的那一份),不在每个模型那一行 ——
+/// 只读 `data` 的话永远拿不到它。0.25.3 及以前就是这样,KNOWN-ISSUES 还因此写着
+/// 「`/api/pricing` 不返回分组倍率」,而大多数站的折扣正在这个数上。
+///
+/// 查不到就留 `None`:分组名对不上、`auto` 分组(倍率跟着实际路由走,不是一个数)、
+/// 站点没公布。**不拿 1 顶。** 模型行里已经带着分组倍率的不覆盖。
+pub fn parse_station_pricing_in_group(body: &str, group: &str) -> Vec<StationModel> {
+    let mut models = parse_station_pricing(body);
+    let ratio = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|root| group_ratio_in(&root, group));
+    if ratio.is_some() {
+        for m in &mut models {
+            if m.rates.group_ratio.is_none() {
+                m.rates.group_ratio = ratio;
+            }
+        }
+    }
+    models
+}
+
+/// `/api/pricing` 顶层 `group_ratio` 里这个分组的倍率。空分组名按 [`NEW_API_DEFAULT_GROUP`] 查。
+fn group_ratio_in(root: &serde_json::Value, group: &str) -> Option<f64> {
+    let map = root.get("group_ratio").and_then(|v| v.as_object())?;
+    let group = group.trim();
+    if group.eq_ignore_ascii_case("auto") {
+        return None;
+    }
+    let key = if group.is_empty() {
+        NEW_API_DEFAULT_GROUP
+    } else {
+        group
+    };
+    let n = match map.get(key)? {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }?;
+    (n.is_finite() && n > 0.0).then_some(n)
+}
+
 /// 解析站点自己的 `/api/pricing`,拿到每个模型的计费倍率。
 ///
 /// **纯函数。** 字段名照 New API 的 `/api/pricing`:
 ///
 /// | 字段 | 含义 |
 /// |---|---|
-/// | `model_ratio` | 输入倍率 |
-/// | `completion_ratio` | 输出 = `model_ratio` × 它 |
-/// | `cache_ratio` / `create_cache_ratio` | 缓存读 / 写 |
+/// | `model_ratio` | 输入单价,1 = $2 / 百万 token([`NEW_API_USD_PER_MTOK`]) |
+/// | `completion_ratio` | 输出价 ÷ 输入价(Claude 官方就是 5) |
+/// | `cache_ratio` / `create_cache_ratio` | 缓存读 / 写价 ÷ 输入价 |
 /// | `model_price` + `billing_mode` | 按次计费时 token 倍率不适用 |
 ///
-/// 认不出来的字段一律 `None`,**绝不填 1.0** —— 1.0 是「这一类不加价」的断言。
+/// 分组倍率在响应顶层,不在这里读 —— 要它用 [`parse_station_pricing_in_group`]。
+/// 认不出来的字段一律 `None`,**绝不填 1.0** —— 1.0 是「这一类跟输入同价」的断言。
 pub fn parse_station_pricing(body: &str) -> Vec<StationModel> {
     let Ok(root) = serde_json::from_str::<serde_json::Value>(body) else {
         return Vec::new();
@@ -1690,10 +1790,28 @@ mod tests {
         assert!(!c.resolve("claude-opus-4-8").unwrap().live);
     }
 
+    /// 照官方价原样抄进 New API 后台的 Opus 5。分组 ×1,知道。
+    fn opus5_copy() -> StationRates {
+        StationRates {
+            model_ratio: Some(2.5),
+            completion_ratio: Some(5.0),
+            cache_ratio: Some(0.1),
+            create_cache_ratio: Some(1.25),
+            group_ratio: Some(1.0),
+            ..Default::default()
+        }
+    }
+
     #[test]
-    fn a_station_pricing_payload_parses_into_four_ratios() {
+    fn a_new_api_payload_becomes_unit_prices_at_two_dollars_per_ratio_point() {
+        // New API 的倍率是单价:1 = $2 / 百万 token。照官方价抄的 Sonnet 4.6
+        // ($3 / $15)在它后台里是 model_ratio 1.5、completion_ratio 5。
+        assert_eq!(
+            NEW_API_USD_PER_MTOK, 2.0,
+            "New API 源码:1 === $0.002 / 1K tokens"
+        );
         let body = r#"{"data":[
-            {"model_name":"claude-sonnet-4.5","model_ratio":0.2,"completion_ratio":5,
+            {"model_name":"claude-sonnet-4-6","model_ratio":1.5,"completion_ratio":5,
              "cache_ratio":0.1,"create_cache_ratio":1.25},
             {"model_name":"按次计费的","model_ratio":0.2,"completion_ratio":5,"model_price":0.02}
         ]}"#;
@@ -1701,21 +1819,29 @@ mod tests {
         assert_eq!(got.len(), 2);
         let r = &got
             .iter()
-            .find(|m| m.model == "claude-sonnet-4.5")
+            .find(|m| m.model == "claude-sonnet-4-6")
             .unwrap()
             .rates;
-        let [input, _, _, output] = r.category_ratios();
-        assert_eq!(input, Some(0.2));
-        assert_eq!(output, Some(1.0), "输出没乘 completion_ratio");
+        let [input, cache_read, cache_write, output] = r.category_prices();
+        assert_eq!(input, Some(3.0));
+        assert_eq!(output, Some(15.0), "输出没乘 completion_ratio");
+        assert!((cache_read.unwrap() - 0.3).abs() < 1e-12);
+        assert!((cache_write.unwrap() - 3.75).abs() < 1e-12);
+        // 对着官方价:四类都是 1 倍 —— 照官方价收费,不是「输入 1.5 倍、输出翻 5 倍」。
+        let official = lookup("claude-sonnet-4-6").unwrap().as_resolved();
+        for (i, x) in r.category_ratios_against(&official).iter().enumerate() {
+            assert!((x.unwrap() - 1.0).abs() < 1e-12, "第 {i} 类 = {x:?}");
+        }
 
         let per = &got.iter().find(|m| m.model == "按次计费的").unwrap().rates;
         assert!(per.per_request());
-        assert_eq!(per.category_ratios(), [None; 4]);
+        assert_eq!(per.category_prices(), [None; 4]);
+        assert_eq!(per.newapi_ratios(), [None; 4]);
     }
 
     #[test]
     fn a_missing_completion_ratio_stays_unknown() {
-        // ⛔ 填 1.0 等于断言「输出不加价」—— 而输出往往才是大头。
+        // ⛔ 填 1.0 等于断言「输出跟输入同价」—— 而输出往往才是大头。
         let body = r#"[{"model_name":"x","model_ratio":0.5}]"#;
         let r = parse_station_pricing(body)
             .into_iter()
@@ -1723,7 +1849,83 @@ mod tests {
             .unwrap()
             .rates;
         assert_eq!(r.completion_ratio, None);
-        assert_eq!(r.category_ratios()[3], None);
+        assert_eq!(r.newapi_ratios()[3], None);
+        assert_eq!(r.category_prices()[3], None);
+    }
+
+    /// New API 把分组倍率放在响应顶层,不在模型那一行 —— 0.25.3 及以前只读 `data`,
+    /// 永远拿不到它,KNOWN-ISSUES 还写着「`/api/pricing` 不返回分组倍率」。
+    #[test]
+    fn the_group_ratio_comes_from_the_top_level_of_api_pricing() {
+        let body = r#"{"success":true,
+            "data":[{"model_name":"claude-opus-5","model_ratio":2.5,"completion_ratio":5,
+                     "enable_groups":["default","vip"]}],
+            "group_ratio":{"default":1,"vip":0.2,"auto":1}}"#;
+        let ratio = |g: &str| parse_station_pricing_in_group(body, g)[0].rates.group_ratio;
+        assert_eq!(ratio("vip"), Some(0.2));
+        assert_eq!(ratio(""), Some(1.0), "留空 = New API 的默认分组 default");
+        assert_eq!(ratio("没有这个组"), None, "对不上就是不知道,不拿 1 顶");
+        assert_eq!(ratio("auto"), None, "auto 的倍率跟着实际路由走,不是一个数");
+        // 不带分组的入口照旧不填 —— 它不知道是哪条线路。
+        assert_eq!(parse_station_pricing(body)[0].rates.group_ratio, None);
+    }
+
+    /// 使用者的话:「New API 的倍率算在了单价内,所以单价便宜。」
+    ///
+    /// 同样是 Opus 5 卖两折,有的站把折扣放在分组上(model_ratio 照官方 2.5、分组 ×0.2),
+    /// 有的站直接把 model_ratio 压到 0.5(分组 ×1)。两种都得先换成单价($1 / 百万)
+    /// 再除官方单价($5),读出来都是 0.2 —— 而 model_ratio 一个是 2.5、一个是 0.5,
+    /// 哪个都不是 0.2。
+    #[test]
+    fn a_discount_baked_into_the_unit_price_reads_the_same_as_one_in_the_group() {
+        let official = lookup("claude-opus-5").unwrap().as_resolved();
+        let in_group = StationRates {
+            group_ratio: Some(0.2),
+            ..opus5_copy()
+        };
+        let in_price = StationRates {
+            model_ratio: Some(0.5),
+            ..opus5_copy()
+        };
+        for r in [in_group, in_price] {
+            assert_eq!(r.category_prices()[0], Some(1.0), "单价应是 $1 / 百万");
+            for (i, x) in r.category_ratios_against(&official).iter().enumerate() {
+                assert!((x.unwrap() - 0.2).abs() < 1e-12, "第 {i} 类 = {x:?}");
+            }
+            let blended = r.blended_ratio([0.2, 0.5, 0.1, 0.2], &official).unwrap();
+            assert!((blended - 0.2).abs() < 1e-12, "blended={blended}");
+        }
+    }
+
+    /// ⛔ 0.25.3 及以前:`completion_ratio > 1` 就挂「翻倍 ×5」—— 每一家照官方价收费的
+    /// Claude 线路都中招,因为官方 Opus 5 自己就是输出 = 输入 × 5。
+    #[test]
+    fn an_honest_completion_ratio_of_five_is_not_an_output_markup() {
+        let official = lookup("claude-opus-5").unwrap().as_resolved();
+        let honest = StationRates {
+            group_ratio: Some(0.2),
+            ..opus5_copy()
+        };
+        assert!((honest.output_markup(&official).unwrap() - 1.0).abs() < 1e-12);
+        let marked_up = StationRates {
+            completion_ratio: Some(6.0),
+            ..honest
+        };
+        assert!((marked_up.output_markup(&official).unwrap() - 1.2).abs() < 1e-12);
+        // sub2api 那套一样:输出 $30 对输入 $5,官方是 $25 对 $5 → 多收两成。分组约掉。
+        let sub2 = StationRates {
+            input_price: Some(5.0),
+            output_price: Some(30.0),
+            group_ratio: Some(0.3),
+            ..Default::default()
+        };
+        assert!((sub2.output_markup(&official).unwrap() - 1.2).abs() < 1e-12);
+        // 没公布输出就是不知道,不是「没加价」。
+        let unknown = StationRates {
+            completion_ratio: None,
+            ..honest
+        };
+        assert_eq!(unknown.output_markup(&official), None);
     }
 
     #[test]
@@ -1735,51 +1937,52 @@ mod tests {
 
     #[test]
     fn which_station_is_cheaper_depends_on_the_token_mix() {
-        // 这条是「计费翻倍」那个问题的答案。
-        // A：输入便宜但输出翻 5 倍；B：输入贵但不翻倍。
+        // 官方 Opus 5:$5 / $25。A 分组 ×0.15,但把补全倍率从官方的 5 调成 10
+        // (输出 ×0.30);B 分组 ×0.25,补全照官方填 5(四类都 ×0.25)。
+        let official = lookup("claude-opus-5").unwrap().as_resolved();
         let a = StationRates {
-            model_ratio: Some(0.15),
-            completion_ratio: Some(5.0),
-            cache_ratio: Some(0.1),
-            create_cache_ratio: Some(1.25),
-            ..Default::default()
+            completion_ratio: Some(10.0),
+            group_ratio: Some(0.15),
+            ..opus5_copy()
         };
         let b = StationRates {
-            model_ratio: Some(0.4),
-            completion_ratio: Some(1.0),
-            cache_ratio: Some(0.1),
-            create_cache_ratio: Some(1.25),
-            ..Default::default()
+            group_ratio: Some(0.25),
+            ..opus5_copy()
         };
-        assert_eq!(a.folds_completion(), Some(true));
-        assert_eq!(b.folds_completion(), Some(false));
+        assert!((a.output_markup(&official).unwrap() - 2.0).abs() < 1e-12);
+        assert!((b.output_markup(&official).unwrap() - 1.0).abs() < 1e-12);
 
-        // 纯读代码：输出只占一成 → A 便宜
+        // 纯读代码：输出只占一成 → A 便宜(0.165 对 0.25)
         let reading = [0.9, 0.0, 0.0, 0.1];
-        assert!(a.blended_ratio(reading).unwrap() < b.blended_ratio(reading).unwrap());
+        assert!(
+            a.blended_ratio(reading, &official).unwrap()
+                < b.blended_ratio(reading, &official).unwrap()
+        );
 
-        // 长篇生成：输出占七成 → B 便宜
+        // 长篇生成：输出占七成 → B 便宜(0.25 对 0.255)
         let writing = [0.3, 0.0, 0.0, 0.7];
         assert!(
-            b.blended_ratio(writing).unwrap() < a.blended_ratio(writing).unwrap(),
-            "输出占七成时翻倍那条应该更贵"
+            b.blended_ratio(writing, &official).unwrap()
+                < a.blended_ratio(writing, &official).unwrap(),
+            "输出占七成时输出加价那条应该更贵"
         );
     }
 
     #[test]
     fn a_cache_heavy_line_is_not_cheap_on_a_fresh_conversation() {
         // 靠缓存读撑起来的便宜，在新对话第一轮上不成立 —— 那段上下文还没缓存过。
+        // 这家的缓存读比官方的结构还便宜一半(cache_ratio 0.05,官方是 0.1)。
+        let official = lookup("claude-opus-5").unwrap().as_resolved();
         let r = StationRates {
-            model_ratio: Some(1.0),
-            completion_ratio: Some(1.0),
-            cache_ratio: Some(0.1),
-            create_cache_ratio: Some(1.25),
-            ..Default::default()
+            cache_ratio: Some(0.05),
+            group_ratio: Some(0.2),
+            ..opus5_copy()
         };
         let habitual = [0.1, 0.8, 0.0, 0.1]; // 平时八成走缓存读
         let fresh = [0.9, 0.0, 0.0, 0.1]; // 新对话：那八成变成未缓存输入
         assert!(
-            r.blended_ratio(fresh).unwrap() > r.blended_ratio(habitual).unwrap(),
+            r.blended_ratio(fresh, &official).unwrap()
+                > r.blended_ratio(habitual, &official).unwrap(),
             "新对话没比平时贵 —— 缓存读被当成一直有效了"
         );
     }
@@ -1787,18 +1990,21 @@ mod tests {
     #[test]
     fn a_category_that_carries_no_tokens_may_be_missing() {
         // 乘 0 本来就不影响结果，不该因为它缺席就整个算不出来。
+        let official = resolved(2.0);
         let r = StationRates {
             model_ratio: Some(0.2),
             completion_ratio: Some(2.0),
             cache_ratio: None,
             create_cache_ratio: None,
+            group_ratio: Some(1.0),
             ..Default::default()
         };
+        // 输入 $0.4 对官方 $2 → 0.2;输出 $0.8 → 0.4;一半一半 → 0.3。
         // 0.1 + 0.2 在二进制里不等于 0.3 —— 这里测的是加权，不是浮点表示。
-        let got = r.blended_ratio([0.5, 0.0, 0.0, 0.5]).unwrap();
+        let got = r.blended_ratio([0.5, 0.0, 0.0, 0.5], &official).unwrap();
         assert!((got - 0.3).abs() < 1e-12, "got={got}");
         // 但真的占量时就不能瞎补
-        assert_eq!(r.blended_ratio([0.4, 0.2, 0.0, 0.4]), None);
+        assert_eq!(r.blended_ratio([0.4, 0.2, 0.0, 0.4], &official), None);
     }
 
     #[test]
@@ -1919,21 +2125,22 @@ mod tests {
     }
 
     #[test]
-    fn output_is_the_input_ratio_times_the_completion_ratio() {
-        // ⛔ 「计费翻倍」就是这一项。只拿 model_ratio 当「这站的倍率」,
-        // 输出那几倍整个漏掉,而输出往往才是花钱的大头。
-        let r = StationRates {
-            model_ratio: Some(0.2),
-            completion_ratio: Some(5.0),
-            cache_ratio: Some(0.1),
-            create_cache_ratio: Some(1.25),
-            ..Default::default()
-        };
-        let [input, cache_read, cache_write, output] = r.category_ratios();
-        assert_eq!(input, Some(0.2));
-        assert_eq!(output, Some(1.0), "输出没乘 completion_ratio");
-        assert!((cache_read.unwrap() - 0.02).abs() < 1e-12);
-        assert!((cache_write.unwrap() - 0.25).abs() < 1e-12);
+    fn a_new_api_copy_of_the_official_price_is_one_times_in_every_category() {
+        // ⛔ 钉的是 0.25.3 及以前那个误读:照官方价抄进 New API 后台的 Opus 5 是
+        // model_ratio 2.5 / completion 5 / cache 0.1 / create 1.25 —— 原来被显示成
+        // 「输入 2.5 倍、输出 12.5 倍」,还挂着「翻倍 ×5」;实际四类都跟官方同价。
+        let r = opus5_copy();
+        let [input, cache_read, cache_write, output] = r.category_prices();
+        assert_eq!(input, Some(5.0));
+        assert_eq!(output, Some(25.0), "输出没乘 completion_ratio");
+        assert!((cache_read.unwrap() - 0.5).abs() < 1e-12);
+        assert!((cache_write.unwrap() - 6.25).abs() < 1e-12);
+        let official = lookup("claude-opus-5").unwrap().as_resolved();
+        for (i, x) in r.category_ratios_against(&official).iter().enumerate() {
+            assert!((x.unwrap() - 1.0).abs() < 1e-12, "第 {i} 类 = {x:?}");
+        }
+        // 原始倍率乘积还留着供对照 —— 它是单价(1 = $2 / 百万),不是倍数。
+        assert_eq!(r.newapi_ratios()[3], Some(12.5));
     }
 
     #[test]
@@ -1947,23 +2154,27 @@ mod tests {
             peak_rate: Some(1.5),
             ..Default::default()
         };
-        let [input, _, _, output] = r.category_ratios();
+        let [input, _, _, output] = r.newapi_ratios();
         assert!((input.unwrap() - 2.1).abs() < 1e-12);
         assert!((output.unwrap() - 4.2).abs() < 1e-12);
+        let [input, _, _, output] = r.category_prices();
+        assert!((input.unwrap() - 4.2).abs() < 1e-12, "倍率 1 = $2 / 百万");
+        assert!((output.unwrap() - 8.4).abs() < 1e-12);
     }
 
     #[test]
     fn a_missing_sub_ratio_is_unknown_rather_than_one() {
-        // 拿 1.0 顶替等于断言「这一类不加价」。
+        // 拿 1.0 顶替等于断言「这一类跟输入同价」。
         let r = StationRates {
             model_ratio: Some(0.5),
             ..Default::default()
         };
-        let [input, cache_read, cache_write, output] = r.category_ratios();
+        let [input, cache_read, cache_write, output] = r.newapi_ratios();
         assert_eq!(input, Some(0.5));
         assert_eq!(output, None);
         assert_eq!(cache_read, None);
         assert_eq!(cache_write, None);
+        assert_eq!(r.category_prices(), [Some(1.0), None, None, None]);
     }
 
     #[test]
@@ -1976,7 +2187,8 @@ mod tests {
             ..Default::default()
         };
         assert!(r.per_request());
-        assert_eq!(r.category_ratios(), [None; 4]);
+        assert_eq!(r.newapi_ratios(), [None; 4]);
+        assert_eq!(r.category_prices(), [None; 4]);
     }
 
     #[test]
@@ -2046,7 +2258,7 @@ mod tests {
 
     #[test]
     fn the_category_table_keeps_the_four_ratios_apart_instead_of_averaging_them() {
-        // 分四类的理由：「输入便宜、输出翻三倍」这种结构，
+        // 分四类的理由：「输入便宜、输出另算」这种结构，
         // 只报一个总倍率会被平均掉 —— 而真实用量里输出往往才是大头。
         let official = lookup("claude-opus-5").unwrap().as_resolved(); // 5 / 25
         let rates = StationRates {
@@ -2057,9 +2269,16 @@ mod tests {
             ..Default::default()
         };
         let v = verdicts(&rates, Some(&official));
-        let by = |c: PriceCategory| v.iter().find(|x| x.category == c).unwrap().station_ratio;
-        assert_eq!(by(PriceCategory::Input), Some(1.0));
-        assert_eq!(by(PriceCategory::Output), Some(3.0), "输出翻倍没显示出来");
+        let price = |c: PriceCategory| v.iter().find(|x| x.category == c).unwrap().station_price;
+        assert_eq!(price(PriceCategory::Input), Some(2.0), "倍率 1 = $2 / 百万");
+        assert_eq!(
+            price(PriceCategory::Output),
+            Some(6.0),
+            "输出那一类没单独列出来"
+        );
+        // 原始倍率照样带出来供对照。
+        let ratio = |c: PriceCategory| v.iter().find(|x| x.category == c).unwrap().station_ratio;
+        assert_eq!(ratio(PriceCategory::Output), Some(3.0));
         // 官方价照原样带出来，供界面显示「本来多少钱」。
         let out = v
             .iter()
@@ -2104,7 +2323,8 @@ mod tests {
             basis,
         } = v[0];
         assert_eq!(station_ratio, Some(0.2));
-        assert_eq!(station_price, None, "倍率口径的站点不许凭空长出绝对单价");
+        // New API 的倍率按它自己的单位(1 = $2 / 百万)换成单价 —— 官方价没参与。
+        assert_eq!(station_price, Some(0.4));
         assert_eq!(basis_kind, RateBasis::Ratios);
         assert_eq!(off, Some(5.0));
         assert_eq!(basis, Some(PriceBasis::Published));
@@ -2139,30 +2359,32 @@ mod tests {
         assert_ne!(input, cheapened, "只改官方价结论却没变");
     }
 
-    /// ⛔ 两套口径不许互相顶替。
+    /// ⛔ 站点单价里不许有官方价。
     ///
-    /// 拿倍率乘一个猜的基准凑出「绝对单价」，或者拿绝对单价当倍率用，
-    /// 都会让界面显示一个没人算得出来的数。宁可那一格空着。
+    /// 0.16.0 之前那个失效是拿站点倍率乘**官方价**凑出「站点单价」,再除回官方价 ——
+    /// 官方价被约掉,站点说它便宜表就说它便宜。New API 的倍率换单价用的是它源码里
+    /// 写死的单位($2 / 百万),这里钉住两件事:换出来的单价跟官方价无关;
+    /// 对着官方价的倍率会随官方价变。
     #[test]
-    fn neither_half_of_the_struct_ever_fabricates_the_other() {
+    fn the_official_price_never_goes_into_the_station_price() {
         let newapi = StationRates {
             model_ratio: Some(0.2),
             completion_ratio: Some(5.0),
             ..Default::default()
         };
         assert_eq!(newapi.basis(), RateBasis::Ratios);
-        assert_eq!(newapi.category_prices(), [None; 4], "倍率凑不出绝对单价");
+        assert_eq!(newapi.category_prices(), [Some(0.4), None, None, Some(2.0)]);
+        // 只改官方价:单价不动,倍率跟着变。
+        assert_eq!(newapi.category_ratios_against(&resolved(1.0))[0], Some(0.4));
+        assert_eq!(newapi.category_ratios_against(&resolved(4.0))[0], Some(0.1));
 
+        // 绝对单价那一套不会长出 New API 的原始倍率。
         let sub2 = StationRates {
             input_price: Some(2.5),
             output_price: Some(12.5),
             ..Default::default()
         };
-        assert_eq!(
-            sub2.category_ratios(),
-            [None; 4],
-            "绝对单价在不知道官方价时换不成倍率"
-        );
+        assert_eq!(sub2.newapi_ratios(), [None; 4]);
 
         // 按次计费压过两者 —— 那时候四类 token 口径整个不适用。
         let per = StationRates {
@@ -2172,7 +2394,7 @@ mod tests {
         };
         assert_eq!(per.basis(), RateBasis::PerRequest);
         assert_eq!(per.category_prices(), [None; 4]);
-        assert_eq!(per.category_ratios(), [None; 4]);
+        assert_eq!(per.newapi_ratios(), [None; 4]);
     }
 
     /// sub2api 的折扣在分组上，所以分组倍率要乘进绝对单价里。
@@ -2189,33 +2411,40 @@ mod tests {
         assert_eq!(sub2.category_ratios_against(&official)[0], Some(0.4));
     }
 
-    /// 加权比价那一步也要认得绝对单价那一套，否则整池会退回更粗的口径。
+    /// 加权比价那一步两套口径都认,而且是同一把尺子(相对官方价)。
     #[test]
     fn the_blend_works_for_both_halves_once_the_official_price_is_known() {
         let official = resolved(10.0);
+        let mix = [0.5, 0.0, 0.0, 0.5];
         let sub2 = StationRates {
             input_price: Some(5.0),
             cache_read_price: Some(5.0),
             cache_write_price: Some(5.0),
             output_price: Some(20.0),
+            group_ratio: Some(1.0),
             ..Default::default()
         };
         // 输入五折、输出两倍；一半一半 → 1.25
-        let got = sub2.blended_ratio_against([0.5, 0.0, 0.0, 0.5], &official);
-        assert_eq!(got, Some(1.25));
-        // 没有官方价时那一套算不出来 —— 返回 None，由调用方整池退回粗口径。
-        assert_eq!(sub2.blended_ratio([0.5, 0.0, 0.0, 0.5]), None);
+        assert_eq!(sub2.blended_ratio(mix, &official), Some(1.25));
 
-        // 倍率那一套走 against 也要照旧算得出来。
+        // New API 那一套:倍率 2.5 = $5、补全 4 = $20 —— 同样的单价,同样的结论。
+        // 0.25.3 及以前这里拿原始倍率直接加权:0.5 × 2.5 + 0.5 × 10 = 6.25,当成「官方的 6 倍」。
         let newapi = StationRates {
-            model_ratio: Some(0.2),
-            completion_ratio: Some(2.0),
+            model_ratio: Some(2.5),
+            completion_ratio: Some(4.0),
+            group_ratio: Some(1.0),
             ..Default::default()
         };
-        assert_eq!(
-            newapi.blended_ratio_against([0.5, 0.0, 0.0, 0.5], &official),
-            newapi.blended_ratio([0.5, 0.0, 0.0, 0.5])
-        );
+        assert_eq!(newapi.blended_ratio(mix, &official), Some(1.25));
+
+        // ⛔ 分组倍率不知道就不比:按不打折算出来的是牌价,跟别家的折后价比等于冤枉它。
+        for r in [sub2, newapi] {
+            let unknown = StationRates {
+                group_ratio: None,
+                ..r
+            };
+            assert_eq!(unknown.blended_ratio(mix, &official), None);
+        }
     }
 
     /// sub2api 把价放在 `pricing` 那一层里，而且是绝对单价。
@@ -2244,7 +2473,8 @@ mod tests {
             .unwrap()
             .rates;
         assert_eq!(newapi.basis(), RateBasis::Ratios);
-        assert_eq!(newapi.category_prices(), [None; 4]);
+        // 倍率 0.2 = $0.4 / 百万,补全 5 → 输出 $2 / 百万。
+        assert_eq!(newapi.category_prices(), [Some(0.4), None, None, Some(2.0)]);
     }
 
     /// 一个字段都没填**不是**「免费」，也不是「倍率 1.0」。
@@ -2252,13 +2482,9 @@ mod tests {
     fn an_empty_rate_sheet_reads_as_unknown_rather_than_as_one() {
         let r = StationRates::default();
         assert_eq!(r.basis(), RateBasis::Unknown);
-        assert_eq!(r.category_ratios(), [None; 4]);
+        assert_eq!(r.newapi_ratios(), [None; 4]);
         assert_eq!(r.category_prices(), [None; 4]);
-        assert_eq!(r.blended_ratio([1.0, 0.0, 0.0, 0.0]), None);
-        assert_eq!(
-            r.blended_ratio_against([1.0, 0.0, 0.0, 0.0], &resolved(1.0)),
-            None
-        );
+        assert_eq!(r.blended_ratio([1.0, 0.0, 0.0, 0.0], &resolved(1.0)), None);
     }
 
     #[test]

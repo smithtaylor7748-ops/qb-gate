@@ -24,7 +24,9 @@ pub mod turnstate_ops;
 
 pub mod antigravity_ops;
 pub mod antigravity_quota;
+pub mod claude_zh_ops;
 pub mod codex_accounts;
+pub mod codex_locale;
 pub mod google_oauth;
 pub mod login_health;
 pub mod tavern_quota;

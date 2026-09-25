@@ -56,12 +56,25 @@ last_audit_ms: bigint | null,
  */
 protocols: Protocols, 
 /**
- * 站点公布的计费倍率(`/api/pricing`)。
+ * 站点公布的计费倍率(`/api/pricing`),检验时顺手学到的。
  *
- * **界面要显示「开了计费翻倍」** —— 两家站一个翻倍一个不翻倍时,
- * 光看「×0.15 对 ×0.4」会得出完全相反的结论。
+ * ⛔ New API 的倍率是**单价**(1 = $2 / 百万 token),不是「官方的几倍」;
+ * `completion_ratio` 是输出 ÷ 输入,Claude 官方本来就是 5。见
+ * [`StationRates`](super::pricing::StationRates)。
  */
 rates: StationRates, 
+/**
+ * 输出比官方的结构多收几倍(检验时拿官方价算的,见
+ * [`StationRates::output_markup`](super::pricing::StationRates::output_markup))。
+ *
+ * **界面要显示「输出加价」** —— 两家站一个把补全倍率调高、一个照官方填时,
+ * 光看分组倍率「×0.15 对 ×0.25」会得出完全相反的结论。
+ * `None` = 没算过(0.25.3 及以前的线路、官方价里没有这个模型),**不是「没加价」**。
+ *
+ * 0.25.3 及以前界面上的「翻倍 ×5」读的是 `completion_ratio > 1`,
+ * 照官方价收费的 Claude 线路全都挂着它 —— 那个判断是错的,见 7.91。
+ */
+output_markup: number | null, 
 /**
  * 上面那组价是**哪个模型**的。`None` = 还没检验过,不知道。
  *

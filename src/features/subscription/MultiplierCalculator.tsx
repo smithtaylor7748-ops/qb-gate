@@ -12,6 +12,7 @@ import {
   multiplierTone,
   parseAmount,
   planMultiplier,
+  relayMultiplier,
   timesMoreExpensive,
 } from "./multiplier";
 
@@ -41,13 +42,15 @@ function toneLabel(m: number): string {
  * 花的钱按元填 —— 中转站的倍率本来就是「每 $1 牌价的用量付几元」（2026-09-24 起，
  * 原来那格「汇率」随之去掉）。分母默认取所选官方套餐的周额度中间值 × 4（`monthlyValue`），
  * 可以手改；官方那一档按 1:7 折成元（`planMultiplier`），跟价目表同一个数。
- * 再多给一个可选项：中转站实际给了多少额度 —— 有了它能算出「比官方贵几倍」。
+ * 再多给两个可选项：中转站实际给了多少额度、那条线路的分组倍率 —— 有了它们能算出
+ * 「比官方贵几倍」（`relayMultiplier`：额度按分组倍率扣，少乘这一项会把中转算贵好几倍）。
  */
 export function MultiplierCalculator() {
   const [amount, setAmount] = useState("");
   const [planId, setPlanId] = useState(DEFAULT_PLAN);
   const [value, setValue] = useState(planValue(DEFAULT_PLAN));
   const [quota, setQuota] = useState("");
+  const [group, setGroup] = useState("");
   const selectId = useId();
 
   const plan = PLANS.find((p) => p.id === planId) ?? null;
@@ -60,9 +63,11 @@ export function MultiplierCalculator() {
   const planMonthly = plan ? monthlyValue(plan) : null;
   const officialM = plan ? planMultiplier(plan) : null;
   const quotaUsd = parseAmount(quota);
+  // 分组倍率留空 = 1（按牌价扣额度）。
+  const groupRatio = group.trim() === "" ? 1 : parseAmount(group);
   const relayM =
-    spend !== null && quotaUsd !== null
-      ? effectiveMultiplier(spend, quotaUsd)
+    spend !== null && quotaUsd !== null && groupRatio !== null
+      ? relayMultiplier(spend, quotaUsd, groupRatio)
       : null;
   const times =
     relayM !== null && officialM !== null
@@ -75,6 +80,8 @@ export function MultiplierCalculator() {
     value.trim() !== "" && monthly === null ? "请填一个正数" : undefined;
   const quotaError =
     quota.trim() !== "" && quotaUsd === null ? "请填一个正数" : undefined;
+  const groupError =
+    group.trim() !== "" && groupRatio === null ? "请填一个正数" : undefined;
 
   return (
     <Card
@@ -154,7 +161,7 @@ export function MultiplierCalculator() {
           <Field
             label="中转站给你的额度（美元，选填）"
             error={quotaError}
-            hint="填了就能看出中转站比官方贵几倍"
+            hint="站内余额，比如充 100 元显示 $100。填了就能看出中转站比官方贵几倍"
           >
             {(p) => (
               <input
@@ -164,6 +171,23 @@ export function MultiplierCalculator() {
                 placeholder="例如 100"
                 value={quota}
                 onChange={(e) => setQuota(e.target.value)}
+              />
+            )}
+          </Field>
+
+          <Field
+            label="那条线路的倍率（×，选填，默认 1）"
+            error={groupError}
+            hint="站点标的分组倍率。额度按它扣：倍率 0.2 时，每 $1 牌价的用量只扣 $0.2 额度"
+          >
+            {(p) => (
+              <input
+                {...p}
+                className="input"
+                inputMode="decimal"
+                placeholder="例如 0.2"
+                value={group}
+                onChange={(e) => setGroup(e.target.value)}
               />
             )}
           </Field>
@@ -197,7 +221,8 @@ export function MultiplierCalculator() {
               )}
               {relayM !== null && (
                 <p className="qb-sub-calc-line">
-                  中转站给你 {fmtUsd(quotaUsd!)} 额度 → 实际倍率{" "}
+                  中转站给你 {fmtUsd(quotaUsd!)} 额度
+                  {groupRatio !== 1 && `、那条线路 ×${groupRatio}`} → 实际倍率{" "}
                   <strong>{fmtMultiplier(relayM)}</strong>
                   {times !== null && officialM !== null && (
                     <>

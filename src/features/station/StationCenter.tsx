@@ -47,8 +47,10 @@ import type { Floors } from "../../lib/generated/Floors";
 import type { Provider } from "../../lib/generated/Provider";
 import type { Schedule } from "../../lib/generated/Schedule";
 import {
+  OUTPUT_MARKUP_TOLERANCE,
   rateCell,
   stationApi,
+  topupOf,
   type Prefs,
   type RequestLog,
   type Route,
@@ -723,7 +725,13 @@ function StationBoard({
                 </span>
                 <span style={{ flex: 1 }} />
                 <span className="side">
-                  倍率 <RateCell route={selected} />
+                  倍率{" "}
+                  <RateCell
+                    route={selected}
+                    topup={topupOf(
+                      providers.find((p) => p.id === selected.station_id),
+                    )}
+                  />
                 </span>
               </>
             ) : (
@@ -981,6 +989,15 @@ function StationBoard({
               <div className="qb-st-sitehd">
                 <b>{siteName(s.id)}</b>
                 <small>{siteUrl(s.id) || "（站点已删除，线路成了孤儿）"}</small>
+                {topupOf(providers.find((p) => p.id === s.id)) !== 1 && (
+                  <span
+                    className="qb-st-pill qb-st-pill--unknown"
+                    title="充值比例：这家站买 1 美元站内额度要付几元。跨站比便宜时倍率先乘上它"
+                  >
+                    1 美元额度 = {topupOf(providers.find((p) => p.id === s.id))}{" "}
+                    元
+                  </span>
+                )}
                 {sched && (
                   <span className="qb-st-pill qb-st-pill--ok">调度中</span>
                 )}
@@ -1002,6 +1019,7 @@ function StationBoard({
                   sched={sched}
                   lane={schedRows[r.id]}
                   siteName={siteName}
+                  topup={topupOf(providers.find((p) => p.id === s.id))}
                   onPick={() => {
                     if (sched) {
                       toast.error(
@@ -1161,6 +1179,7 @@ function RouteRow({
   sched,
   lane,
   siteName: _siteName,
+  topup,
   onPick,
   onLaunch,
   onAudit,
@@ -1182,6 +1201,8 @@ function RouteRow({
   /** 调度开着时这条线的名次。`undefined` = 没开，或者它没参与排序。 */
   lane?: { weakest: Axis | null; score: number | null };
   siteName: (id: string) => string;
+  /** 这家站 1 美元额度付几元（充值比例），见 `topupOf`。 */
+  topup: number;
   onPick: () => void;
   onLaunch: () => void;
   onAudit: () => void;
@@ -1193,7 +1214,9 @@ function RouteRow({
     e.stopPropagation();
     fn();
   };
-  const fold = route.rates?.completion_ratio;
+  // ⛔ 不看 completion_ratio 大不大于 1：那是「输出价 ÷ 输入价」，Claude 官方本来就是 5。
+  // 要看的是它比官方的那个比例多出来多少，由检验时拿官方价算好（`output_markup`）。
+  const markup = route.output_markup;
   return (
     <div
       className={`qb-st-row${current ? " on" : ""}`}
@@ -1217,14 +1240,16 @@ function RouteRow({
     >
       <div className="qb-st-rowtop">
         <span className="gname">{route.group || "默认分组"}</span>
-        {fold != null && Number.isFinite(fold) && fold > 1 && (
-          <span
-            className="qb-st-pill qb-st-pill--warn"
-            title="输出按输入的若干倍计费"
-          >
-            翻倍 ×{fold}
-          </span>
-        )}
+        {markup != null &&
+          Number.isFinite(markup) &&
+          markup > 1 + OUTPUT_MARKUP_TOLERANCE && (
+            <span
+              className="qb-st-pill qb-st-pill--warn"
+              title={`按官方的「输出价 ÷ 输入价」算，这家的输出另外多收了 ${Math.round((markup - 1) * 100)}%（官方的输出本来就比输入贵，这里已经扣掉了）`}
+            >
+              输出加价 ×{markup.toFixed(2)}
+            </span>
+          )}
         {!route.credential_id && (
           <span className="qb-st-pill qb-st-pill--unknown">没绑令牌</span>
         )}
@@ -1286,7 +1311,7 @@ function RouteRow({
       {/* ⛔ 用间距分组，竖线只是装饰 —— 靠竖线分格撑布局的话，一换行就断成两截。 */}
       <div className="qb-st-quick">
         <Cell k="倍率">
-          <RateCell route={route} />
+          <RateCell route={route} topup={topup} />
         </Cell>
         <Cell k="成功率">{pct(health?.success_rate)}</Cell>
         <Cell k="缓存命中">{pct(health?.cache_hit_rate)}</Cell>
@@ -1407,14 +1432,34 @@ function AuditPill({ route }: { route: Route }) {
  * 倍率三态。
  *
  * ⛔ 「没检验过」不写成「已核实」，也不写成 0 —— 那是还没有断言。
+ *
+ * 倍率是站内口径（站内标价 ÷ 官方牌价）。这家站的充值比例不是 1 元 = 1 美元额度时，
+ * 后面多写一句折合多少元 —— 调度比便宜用的也是折过的那个数。
  */
-function RateCell({ route }: { route: Route }) {
+function RateCell({ route, topup }: { route: Route; topup: number }) {
   const cell = rateCell(route);
+  const shown =
+    cell.kind === "unverified"
+      ? cell.nominal
+      : cell.kind === "verified"
+        ? cell.rate
+        : cell.real;
+  const folded =
+    topup !== 1 && shown != null ? (
+      <span
+        className="qb-st-dim"
+        title={`这家站 1 美元额度要付 ${topup} 元，倍率要乘上它才能跟别家比`}
+      >
+        {" "}
+        · 折合每 $1 牌价 {(shown * topup).toFixed(2)} 元
+      </span>
+    ) : null;
   if (cell.kind === "unverified")
     return (
       <>
         {cell.nominal == null ? dash : `×${cell.nominal.toFixed(2)}`}{" "}
         <span className="qb-st-dim">标称 · 未核实</span>
+        {folded}
       </>
     );
   if (cell.kind === "verified")
@@ -1422,6 +1467,7 @@ function RateCell({ route }: { route: Route }) {
       <>
         ×{cell.rate.toFixed(2)}{" "}
         <span className="qb-st-pill qb-st-pill--ok">已核实</span>
+        {folded}
       </>
     );
   return (
@@ -1429,6 +1475,7 @@ function RateCell({ route }: { route: Route }) {
       <span className="qb-st-strike">×{cell.nominal.toFixed(2)}</span>{" "}
       <b style={{ color: "var(--danger)" }}>×{cell.real.toFixed(2)}</b>{" "}
       <span className="qb-st-pill qb-st-pill--danger">实测</span>
+      {folded}
     </>
   );
 }

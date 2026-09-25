@@ -3,39 +3,46 @@
 /**
  * 站点怎么计费。
  *
- * ⛔ **不是一个倍率。** New API 的每个模型给的是一组比例,输出那一项还要
- * 再乘一次 `completion_ratio` —— 这就是「计费翻倍」:
+ * ⛔ **不是一个倍率。** New API 的每个模型给的是一组比例,四类单价这样算
+ * (跟 New API 自己定价页的算法一样,见 [`NEW_API_USD_PER_MTOK`]):
  *
  * ```text
- * 输入   = model_ratio
- * 输出   = model_ratio × completion_ratio      ← 常见 3~5 倍
- * 缓存读 = model_ratio × cache_ratio
- * 缓存写 = model_ratio × create_cache_ratio
+ * 输入   = model_ratio                        × $2/百万
+ * 输出   = model_ratio × completion_ratio     × $2/百万
+ * 缓存读 = model_ratio × cache_ratio          × $2/百万
+ * 缓存写 = model_ratio × create_cache_ratio   × $2/百万
  * 再乘   × 分组倍率 ×(峰时浮动)
  * ```
  *
- * 只拿 `model_ratio` 当「这站的倍率」去比价,会把输出那几倍整个漏掉 ——
- * 而真实用量里输出往往才是花钱的大头。
+ * `completion_ratio` 是「输出价 ÷ 输入价」—— Claude 官方本来就是 5
+ * (Opus 5:$25 ÷ $5),照官方价抄的站就填 5。⛔ **它大于 1 不是「计费翻倍」**;
+ * 输出有没有另外加价,要拿它跟官方的输出 ÷ 输入比,见 [`output_markup`](Self::output_markup)。
+ * 相对官方的倍率只能先换成单价再除官方单价,见 [`category_ratios_against`](Self::category_ratios_against)。
  */
 export type StationRates = { 
 /**
- * 输入倍率(New API 的 `model_ratio`)。
+ * New API 的 `model_ratio`:输入单价,**单位是 $2 / 百万 token**(见 [`NEW_API_USD_PER_MTOK`])。
+ * ⛔ 不是「官方的几倍」—— 照官方价抄的 Opus 5 是 2.5。
  */
 model_ratio: number | null, 
 /**
- * 输出相对输入的倍数(`completion_ratio`)。**这是「翻倍」那一项。**
+ * 输出价 ÷ 输入价(`completion_ratio`)。照官方价抄的 Claude 是 5,不是「翻倍」。
  */
 completion_ratio: number | null, 
 /**
- * 缓存读相对输入的倍数(`cache_ratio`)。
+ * 缓存读价 ÷ 输入价(`cache_ratio`)。
  */
 cache_ratio: number | null, 
 /**
- * 缓存写相对输入的倍数(`create_cache_ratio`)。
+ * 缓存写价 ÷ 输入价(`create_cache_ratio`)。
  */
 create_cache_ratio: number | null, 
 /**
- * 分组倍率。整条线路再乘一次。
+ * 分组倍率。整条线路再乘一次 —— 大多数站的折扣就在这里(帖子里说的「倍率分组」)。
+ *
+ * New API 在 `/api/pricing` 顶层的 `group_ratio` 里按分组名公布
+ * ([`parse_station_pricing_in_group`]);sub2api 在 `/api/v1/groups/rates`。
+ * `None` = 不知道,**不是「不打折」** —— 加权比价那一步因此算不出来,见 [`blended_ratio`](Self::blended_ratio)。
  */
 group_ratio: number | null, 
 /**

@@ -458,6 +458,7 @@ COMMIT;"
                             tags: vec!["旧版导入".into()],
                             favorite: false,
                             revision: 1,
+                            topup_per_usd: None,
                         },
                     )?;
                     providers.insert(p.meta.base_url.clone(), id.clone());

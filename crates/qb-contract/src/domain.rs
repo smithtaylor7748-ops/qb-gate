@@ -86,6 +86,28 @@ pub struct Provider {
     pub tags: Vec<String>,
     pub favorite: bool,
     pub revision: u32,
+    /// 充值比例:在这家站买 **1 美元站内额度**要付几元(linux.do「中转站百科」帖说的
+    /// 「1 美金 = 多少平台币」)。`None` = 没填,按最常见的 1 元 = 1 美元额度算
+    /// ([`DEFAULT_TOPUP_PER_USD`])。
+    ///
+    /// 中转站的倍率和账单都按站内额度记。不同站放在一起比便宜,要先乘上各自的
+    /// 充值比例,折成「每 $1 官方牌价付几元」—— 7 元买 1 美元额度、标 ×0.1 的站,
+    /// 实际比 1 元买 1 美元额度、标 ×0.5 的还贵。只用于跨站比较(调度的「便宜」与
+    /// 「倍率不高于」)和线路上那句「折合」;查套路的账单核对仍按站内数值,不换算。
+    #[serde(default)]
+    pub topup_per_usd: Option<f64>,
+}
+
+/// 充值比例没填时按多少算:1 元 = 1 美元站内额度(帖子原话「大部分设置的是 1 美金 = 1 人民币」)。
+pub const DEFAULT_TOPUP_PER_USD: f64 = 1.0;
+
+impl Provider {
+    /// 这家站 1 美元站内额度付几元。没填、填了个不合法的数都按 [`DEFAULT_TOPUP_PER_USD`]。
+    pub fn topup_per_usd(&self) -> f64 {
+        self.topup_per_usd
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .unwrap_or(DEFAULT_TOPUP_PER_USD)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

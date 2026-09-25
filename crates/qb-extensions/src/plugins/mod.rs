@@ -1,9 +1,11 @@
 //! 插件。
 //!
-//! 目前三个插件（酒馆、Codex 出站与换出口、反重力汉化与审批），形状按「日后能从远程
-//! index 拉清单」来设计：每个插件自报 id / 名称 / 检测 / 启停，界面只认这个形状，不认具体插件。
+//! 目前四个插件（酒馆、Codex 出站与换出口、反重力汉化与审批、Claude 桌面端中文界面），
+//! 形状按「日后能从远程 index 拉清单」来设计：每个插件自报 id / 名称 / 检测 / 启停，
+//! 界面只认这个形状，不认具体插件。
 
 pub mod antigravity_ui;
+pub mod claude_zh;
 pub mod codex_egress;
 pub mod sillytavern;
 pub mod tavern_assets;

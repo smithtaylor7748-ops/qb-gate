@@ -11,10 +11,12 @@ import {
 } from "lucide-react";
 import { call } from "../../lib/ipc";
 import {
+  NEW_API_USD_PER_MTOK,
   stationApi,
   type Route,
   type StationModelsView,
 } from "../../lib/station";
+import type { CategoryVerdict } from "../../lib/generated/CategoryVerdict";
 import type { StoredAudit } from "../../lib/generated/StoredAudit";
 import type { StationBillingSettings } from "../../lib/generated/StationBillingSettings";
 import { Button } from "../../ui";
@@ -34,6 +36,20 @@ const category = {
   "cache-write": "缓存写入",
   output: "输出",
 };
+
+/**
+ * 这一类的站点单价（每百万 token，站内美元）。
+ *
+ * 新记录直接用后端给的 `station_price`。0.25.3 及以前存下来的检验历史里，New API
+ * 那种站只有原始倍率 `station_ratio`（1 = $2 / 百万，没乘分组倍率）—— 当时被原样写成
+ * 「2.500×」，读起来像官方的 2.5 倍。这里按 New API 的单位换成单价再显示。
+ */
+function verdictPrice(r: CategoryVerdict): number | null {
+  if (r.station_price != null) return r.station_price;
+  if (r.basis_kind === "ratios" && r.station_ratio != null)
+    return r.station_ratio * NEW_API_USD_PER_MTOK;
+  return null;
+}
 
 export default function StationAudit({
   routes,
@@ -607,23 +623,30 @@ export default function StationAudit({
                   </div>
                   <h4>站点公布的计费结构</h4>
                   <p className="audit-caption">
-                    以下是价目说明；实际收取的倍率以同一请求的账单和 API
-                    用量核对。
+                    以下是价目说明，都换成了每百万 token 的站内美元单价（New API
+                    的倍率按 1 = $2 /
+                    百万换算，已乘站点公布的分组倍率）；实际收取的倍率以同一请求的账单和
+                    API 用量核对。
                   </p>
                   <div className="audit-price-grid">
-                    {round.rates.map((r) => (
-                      <div key={r.category}>
-                        <span>{category[r.category]}</span>
-                        <strong>
-                          {r.station_price != null
-                            ? money(r.station_price) + " / M"
-                            : r.station_ratio != null
-                              ? r.station_ratio.toFixed(3) + "×"
-                              : "未公布"}
-                        </strong>
-                        <small>官方 {money(r.official)} / M</small>
-                      </div>
-                    ))}
+                    {round.rates.map((r) => {
+                      const price = verdictPrice(r);
+                      return (
+                        <div key={r.category}>
+                          <span>{category[r.category]}</span>
+                          <strong>
+                            {price != null ? money(price) + " / M" : "未公布"}
+                          </strong>
+                          <small>
+                            官方 {money(r.official)} / M
+                            {price != null &&
+                              r.official != null &&
+                              r.official > 0 &&
+                              ` · ${(price / r.official).toFixed(3)}×`}
+                          </small>
+                        </div>
+                      );
+                    })}
                   </div>
                   <p className="audit-caption">
                     历史仅保存加密后的结构化证据；不保存临时

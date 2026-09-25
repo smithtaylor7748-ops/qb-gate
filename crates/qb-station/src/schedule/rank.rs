@@ -148,8 +148,9 @@ fn raw(c: &Candidate, axis: Axis) -> Option<f64> {
 
 /// 这条线没过哪几条底线。
 ///
-/// **倍率按真实倍率比,不按站点自己标的** —— `Candidate::rate` 进来时
-/// 已经是 `标称 × mult` 了,见 `station::route`。
+/// **倍率按真实倍率比,不按站点自己标的** —— `Candidate::real_rate` 进来时
+/// 已经是 `标称 × mult`(按充值比例折过)了,见 `station::route`。
+/// ⛔ 不拿 `Candidate::rate` 比:那是「便宜」这一维的值,口径整池在变。
 fn floor_misses(c: &Candidate, f: &Floors) -> Vec<FloorMiss> {
     let mut out = Vec::new();
     if let (Some(limit), Some(actual)) = (f.min_success_rate, c.success_rate) {
@@ -171,7 +172,7 @@ fn floor_misses(c: &Candidate, f: &Floors) -> Vec<FloorMiss> {
             });
         }
     }
-    if let (Some(limit), Some(actual)) = (f.max_rate, c.rate) {
+    if let (Some(limit), Some(actual)) = (f.max_rate, c.real_rate) {
         if actual > limit {
             out.push(FloorMiss {
                 axis: Axis::Cheap,
@@ -539,6 +540,37 @@ mod tests {
         assert_eq!(bad.failed_floors[0].axis, Axis::Stable);
         assert_eq!(bad.failed_floors[0].actual, 0.80);
         assert_eq!(bad.failed_floors[0].limit, 0.95);
+    }
+
+    /// 「倍率不高于」比的是真实倍率,不是「便宜」那一维的值。
+    ///
+    /// 整池走 24h 实扣单价时 `rate` 是 1e-6 量级 —— 0.25.3 及以前底线拿它比,
+    /// 「倍率不高于 0.5」永远过得去,等于没设。
+    #[test]
+    fn the_rate_floor_reads_the_real_rate_even_when_cheap_uses_cost_per_token() {
+        let cs = [
+            Candidate::new("实扣便宜但倍率过线")
+                .rate(1.0e-6)
+                .real_rate(0.8),
+            Candidate::new("合格").rate(2.0e-6).real_rate(0.3),
+        ];
+        let p = Prefs {
+            axes: vec![Axis::Cheap],
+            floors: Floors {
+                max_rate: Some(0.5),
+                ..Default::default()
+            },
+        };
+        let r = rank(&cs, &p, None);
+        assert!(!r.floors_relaxed);
+        assert_eq!(r.winner.as_deref(), Some("合格"));
+        let bad = row(&r, "实扣便宜但倍率过线");
+        assert_eq!(bad.failed_floors.len(), 1);
+        assert_eq!(bad.failed_floors[0].axis, Axis::Cheap);
+        assert_eq!(bad.failed_floors[0].actual, 0.8);
+        // 真实倍率不知道的,底线不判它 —— 不知道不等于不合格。
+        let unknown = [Candidate::new("没倍率").rate(1.0e-6)];
+        assert!(rank(&unknown, &p, None).rows[0].failed_floors.is_empty());
     }
 
     #[test]

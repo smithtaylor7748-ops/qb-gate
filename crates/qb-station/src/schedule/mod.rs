@@ -184,9 +184,19 @@ impl Schedule {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Candidate {
     pub route_id: String,
-    /// **真实倍率**(标称 × mult)。造假的站不拉黑 —— 真实倍率仍然过线的
-    /// 照样留在池子里,只是拿真实值参与比较。
+    /// 「便宜」这一维上的值,越小越便宜。口径由 `cheap_values` **整池**选
+    /// (24h 实扣单价 / 加权倍率 / 真实倍率),都已按各站的充值比例折过。
+    ///
+    /// ⛔ 这个数的量级随口径变(实扣单价是 1e-6 那一档),**不能拿去跟底线比** ——
+    /// 底线比的是下面那个 [`real_rate`](Self::real_rate)。
     pub rate: Option<f64>,
+    /// 底线「倍率不高于」比的那个数:这条线的**真实倍率**(标称 × mult;没有时退回
+    /// 加权倍率),按这家站的充值比例折成「每 $1 官方牌价付几元」。造假的站不拉黑 ——
+    /// 真实倍率仍然过线的照样留在池子里,只是拿真实值参与比较。
+    ///
+    /// 0.25.3 及以前底线直接拿 [`rate`](Self::rate) 比:整池走 24h 实扣单价时那是
+    /// 1e-6 量级,「倍率不高于 0.5」永远过得去,等于没设。
+    pub real_rate: Option<f64>,
     /// 体验分(毫秒,越小越好)。**排序用这个。**
     pub experience_ms: Option<f64>,
     /// 首字 P95。**只给底线筛选用**,不参与排序。
@@ -210,6 +220,7 @@ impl Default for Candidate {
         Self {
             route_id: String::new(),
             rate: None,
+            real_rate: None,
             experience_ms: None,
             ttft_p95_ms: None,
             success_rate: None,
@@ -230,6 +241,12 @@ impl Candidate {
 
     pub fn rate(mut self, v: f64) -> Self {
         self.rate = Some(v);
+        self
+    }
+
+    /// 底线「倍率不高于」比的那个数。
+    pub fn real_rate(mut self, v: f64) -> Self {
+        self.real_rate = Some(v);
         self
     }
 

@@ -200,6 +200,15 @@ fn main() {
         qb_app::usecase::antigravity_ops::AntigravityModelUsage::export_all_to(&root)?;
         qb_gate_lib::plugins::codex_egress::EgressConfig::export_all_to(&root)?;
         qb_gate_lib::plugins::codex_egress::EgressInstall::export_all_to(&root)?;
+        // 2026-09-25：一键汉化 —— Claude 桌面端插件（claude-desktop-zh-cn）与 GPT 的界面语言。
+        qb_gate_lib::plugins::claude_zh::ClaudeZhStatus::export_all_to(&root)?;
+        qb_gate_lib::plugins::claude_zh::ClaudeZhProfile::export_all_to(&root)?;
+        qb_gate_lib::plugins::claude_zh::ClaudeZhInstall::export_all_to(&root)?;
+        qb_gate_lib::plugins::claude_zh::ClaudeZhState::export_all_to(&root)?;
+        qb_app::usecase::claude_zh_ops::ClaudeZhOutcome::export_all_to(&root)?;
+        qb_app::usecase::codex_locale::CodexLocaleStatus::export_all_to(&root)?;
+        qb_app::usecase::codex_locale::CodexLocaleHome::export_all_to(&root)?;
+        qb_app::usecase::codex_locale::CodexLocaleOutcome::export_all_to(&root)?;
         qb_gate_lib::usecase::turnstate_ops::Takeover::export_all_to(&root)?;
         // 0.32.0：Claude 桥自己那两个网页搬进面板之后要的契约。
         qb_gate_lib::plugins::tavern_bridge_api::BridgeHealth::export_all_to(&root)?;

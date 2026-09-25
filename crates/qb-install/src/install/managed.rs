@@ -693,7 +693,7 @@ pub fn split_codex_exes(all: &[PathBuf]) -> Option<(PathBuf, Vec<PathBuf>)> {
     Some((main, helpers))
 }
 
-pub(crate) fn sha256_file(p: &Path) -> Option<String> {
+pub fn sha256_file(p: &Path) -> Option<String> {
     use sha2::{Digest, Sha256};
     let mut f = std::fs::File::open(p).ok()?;
     let mut h = Sha256::new();

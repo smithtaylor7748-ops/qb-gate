@@ -131,11 +131,11 @@ cargo fmt --all -- --check
 cargo deny check
 ```
 
-**这两组就是 CI 跑的那一套**，别只跑前两条就以为绿了 —— `test:ui`（151 个响应式/
-主题组合 + 15 个交互流程）和 `cargo deny`（advisories / bans / licenses / sources）
+**这两组就是 CI 跑的那一套**，别只跑前两条就以为绿了 —— `test:ui`（2026-09-25 是 163 个响应式/
+主题组合 + 17 个交互流程）和 `cargo deny`（advisories / bans / licenses / sources）
 各自抓过别处抓不到的东西。`cargo test --workspace` 的通过数**只许涨不许跌**
 （0.29.0 是 **1081**，0.30.0 是 **1106**，0.31.0 是 **1110**，0.32.0 是 **1154**，
-0.25.1 是 **1204**，0.25.2 是 **1268**，0.25.3 是 **1288**）。
+0.25.1 是 **1204**，0.25.2 是 **1268**，0.25.3 是 **1288**，0.25.4 是 **1334**）。
 
 ⛔ **跑完这十项不要接着出安装包** —— 先问「出包还是有别的需求」，见本文件开头那一节。
 
@@ -727,6 +727,74 @@ HTML 页（`GET /settings` 与 `GET /monitor`），由他本机那份 SillyTaver
 
 ---
 
+## ⛔ 一键汉化：Claude 只接上游安全模式，GPT 只写它自己的设置项（2026-09-25，使用者定的）
+
+使用者：「gpt 虽然有中文，但默认不是，加一个一键汉化按钮自动设置中文」「claude 没有中文，以插件的形式装载
+javaht/claude-desktop-zh-cn，确保这个开源项目后续的更新可以匹配，插件商店可以同步这个开源项目的更新」
+「确保以上两个改动符合两个厂商的使用政策」。问他时定了四件：**Claude 只接上游安全模式 + 事后核验**；
+**打开汉化弹窗或插件页时查上游新版**（没有定时器、启动时不查）；**Claude 自己更新后按钮变「需重新应用」，
+点一下补上**（不改启动流程）；**GPT 改全部槽位 + 默认那一份 + 以后新建的槽位**。
+
+### GPT（`usecase::codex_locale`）
+
+1. **只写 `CODEX_HOME\config.toml` 里 `[desktop]` 表的 `localeOverride`** —— 跟在 GPT「设置 → General →
+   Language」里选中文写下的是同一行（toml_edit 增量改，别的一个字不动；`auth.json` 零接触）。
+   ⛔ 不改 ChatGPT.exe / app.asar、不注入翻译 —— OpenAI 使用条款不许 modify 它的服务。
+2. ⛔ **不碰 `enable_i18n`。** OpenAI 用这个远端开关按账户 / 机器放中文界面（openai/codex#19239）：
+   没放开时设了照样是英文。界面如实说，不提供任何绕过（条款：不得 circumvent restrictions）。
+3. 面板起的 GPT 开着 → 先 `close_ours`（确认框写明任务会停）→ 写 → 命令层按当前槽位重开（那里挂看门狗）；
+   别处起的那份不关（2026-09-23 那条），它开着时默认那一份这次不改、如实说；出站插件在跑时拒绝（它整份接管
+   `config.toml`）。**中转环境不碰**（受环境哈希追踪，改了会被判「外部修改」）。
+4. 「恢复默认」**只删值为 `zh-CN` 的那一行** —— 使用者在 GPT 里自己选的别的语言不是我们的残留。
+5. `settings.gpt_ui_zh` 记的是使用者的选择（新槽位按它预写，`codex_accounts::create`），**只经
+   `codex_locale_set` 改**：`settings_save` 原样保留旧值。
+
+### Claude（插件 `claude-desktop-zh-cn`：`plugins::claude_zh` + `usecase::claude_zh_ops`）
+
+上游 Windows 脚本五个动作、两种补丁模式，面板只碰两个动作、一种模式：
+
+| 上游 | 面板 |
+| --- | --- |
+| `install zh-CN -PatchMode safe`：放三份翻译 JSON、改 `ion-dist\assets\v1\*.js` 的语言白名单与硬编码英文、写 `config.json` 的 `locale`、最后自己重启 Claude | ✅ 一键汉化 |
+| `uninstall`：从它自己的 `.zh-cn-backups` 还原、删翻译、locale 设回 `en-US` | ✅ 恢复英文 |
+| `-PatchMode official`：改 `app.asar` 并**重写 `Claude.exe` 内嵌的完整性哈希**（签名变 `HashMismatch`） | ⛔ 绕过防篡改 = Anthropic 消费者条款 §3「bypassing … protective measures」 |
+| `frida-launch` / `scripts\experimental\`：Frida 在内存里改掉「带调试开关就拒绝启动」的闸门 | ⛔ 同上；这些文件一个字节都不落盘（`zipread` 先列目录、挑好再解） |
+| `disable-updates` / `sync-skills` | ⛔ 跟汉化无关 |
+
+八条要守住的：
+
+1. **参数只由 `claude_zh::script_args` 拼，动作只有 `Action::{Install, Uninstall}`。** 测试
+   `the_arguments_can_never_ask_for_anything_but_safe_mode` 钉着拼不出 official / frida / 关更新 / 同步 skills
+   （改坏它会红，2026-09-25 实测过）。`-ExecutionPolicy RemoteSigned`，不用 `Bypass`（少一个杀软信号）。
+2. **不信上游，只信文件**：每次应用 / 还原前后算 `app.asar`、`claude.exe` 的 SHA-256 并读 Authenticode
+   **状态**（`signature::status_of`；`signer_of` 只给主体，`HashMismatch` 的文件照样报 Anthropic）。
+   变了 → 立刻跑上游 `uninstall`、那一版进黑名单、界面标红。基线读不出来就**不做**。
+3. ⛔ **反重力那套 CDP 注入不许搬到 Claude 上**：Claude 桌面端见到 `--remote-debugging-port` 就拒绝启动
+   （2.9939.2 字符串核过），给它加调试开关或绕过那道检查就是上表第四行。
+4. **门禁先判**（`gate::judge_now`，只判不解锁）：上游脚本最后会用 `app-*\claude.exe` 自己重启 Claude，
+   那份按规矩不能加 Deny；IP 不合格就不做。它起来之后面板等它出现、按证据关掉（`close_desktop_for_relay`）
+   —— 那份不归面板管、没有租约。重开走现有的「Claude 桌面端」磁贴与强制确认框。
+5. **查新版只在打开汉化弹窗 / 插件页、或点「检查更新」时**，只问 `github.com/<上游>/releases/latest` 的跳转，
+   ⛔ **不走 `api.github.com`**（同 self_update）。上游脚本自己问 GitHub 的那一下用
+   `CLAUDE_ZH_SKIP_UPDATE_CHECK=1` 关掉。上游仓库地址是常量，不收使用者输入。
+6. **每一版下载后重核**：`LICENSE` 仍是 MIT 原文、脚本 `param(...)` 里仍有 `safe` / `install` / `uninstall` /
+   `zh-CN`（`script_caps`，能力探测不假设）；不对就不用、留着旧版。下载「只下、只核」在内存里做
+   （`fetch_verified`），核完才落盘（`install_package`，暂存目录整份写完再换名）。
+7. **只做位置表认得的 Squirrel 装法**（`inventory::desktop_app_dir`，`detect::claude_desktop` 也用它）。
+   MSIX 要 UAC 接管 WindowsApps 的 ACL，面板不做、如实说。
+8. **别的账户资料也设 zh-CN**：上游只改 `%APPDATA%\Claude`（联结点指着的当前账户）。面板把其余
+   `Claude-<名字>\config.json` 的 `locale` 也设上 —— `set_top_level_string` **只改那一个值的字节**
+   （里面有 `oauth:tokenCache`，整份解析再序列化会重排键、等于把令牌读出来写回去）。改之前的值按
+   **真实目录**（联结点解开）记在 `state_dir\claude-zh\state.json`，恢复英文时写回。
+
+诊断：`cargo run -p qb-app --example claude-zh -- check`（只查、只下、只核，**不跑上游脚本、不写本机任何东西**）。
+上游改了归档结构、换了许可证、改了脚本参数时先跑它。
+
+⚠ **调试时别在真机上点 Claude 的「一键汉化」/「恢复英文」**：它会关掉 Claude 桌面端，Code 页里跑着的会话
+也在里面 —— 你正在那里面干活的话就是把自己关了（同「启动 桌面端」那条）。
+
+---
+
 ## ⛔ 别把 shell 当启动目标（0.29.0）
 
 `sessions::OwnedProgram::launch_detached_console` / `NativeProcess::create` 会给**每一个**参数
@@ -1150,49 +1218,66 @@ DOMContentLoaded 上(文档 commit 了、`readyState` 停在 `interactive`,
 - 页面上标「1:7」，写明 7 是往贵了取的、实际一般在 6.8 左右 —— ⛔ 别换成实时汇率，也别改回美元除美元；
 - 同一档在页面上**只许一个数**：价目表、刻度条、首页两格、计算器都走 `planMultiplier`；
 - 页面上只写「元」。订阅页「不提特定国家、货币」的其余部分照旧，`Subscription.test.tsx` 的 BANNED 盯着渲染出来的文字；
-- 按 1:7 算，官方各档跟逆向中转是同一个价位 —— 页面上「比任何中转站都便宜」这类话不许再写回去（测试盯着）。
+- 按 1:7 算，官方各档跟逆向中转是同一个价位 —— 页面上「比任何中转站都便宜」这类话不许再写回去（测试盯着）；
+- 计算器里「中转站给你的额度」是站内余额，**按那条线路的分组倍率扣**：实际倍率 = 付的元 ÷ 额度 × 分组倍率
+  （`relayMultiplier`，0.25.4；「中转站百科」帖：「输入 5 元，给你倍率 0.1，实际就是 5 × 0.1 = 0.5 元」）。
+  少乘这一项会把中转算贵好几倍。
 
 ---
 
 ## ⛔ 「倍率」不是一个数
 
-中转站的计费是四类各算各的，而且输出那一类还要再乘一次：
+中转站的计费是四类各算各的。New API 系给的是一组比例，换成单价是这样（跟 New API 自己的定价页同一个算法）：
 
 ```text
-输入   = model_ratio
-输出   = model_ratio × completion_ratio      ← 「计费翻倍」，常见 3~5 倍
-缓存读 = model_ratio × cache_ratio
-缓存写 = model_ratio × create_cache_ratio
+输入   = model_ratio                        × $2/百万
+输出   = model_ratio × completion_ratio     × $2/百万
+缓存读 = model_ratio × cache_ratio          × $2/百万
+缓存写 = model_ratio × create_cache_ratio   × $2/百万
 再乘   × 分组倍率 ×（峰时浮动，取 max 当上界）
 ```
 
-所以**只比 `model_ratio` 会选错站**：A 站 ×0.15 开翻倍、B 站 ×0.4 不翻倍，
-纯读代码 A 便宜、长篇生成 B 便宜。判定在
-`pricing::StationRates::blended_ratio` —— 按这条线**实际的输入输出比**加权。
+⛔ **`model_ratio` 是单价，不是「官方的几倍」**：单位是 $2 / 百万 token（New API 源码 `1 === $0.002 / 1K tokens`，
+`pricing::NEW_API_USD_PER_MTOK`）。照官方价抄的 Opus 5 是 2.5。⛔ **`completion_ratio > 1` 不是「计费翻倍」**：
+它是「输出价 ÷ 输入价」，Claude 官方本来就是 5。0.25.3 及以前两条都读反了 —— 照官方价收费的站在查套路报告里
+是「输入 2.500×、输出 12.500×」，线路上挂着「翻倍 ×5」（7.91）。
 
-### ⛔ 而且「倍率」这个词只对一半的站点成立
+所以任何一类的倍率只有一个算法：**站点单价（已乘分组）÷ 官方单价**（`category_ratios_against`）。
+输出另外加没加价，看站点的输出 ÷ 输入比官方的多出多少（`output_markup`，界面挂「输出加价」）。
+A 站分组 ×0.15 但把补全倍率调成官方的两倍、B 站 ×0.25 照官方填：纯读代码 A 便宜、长篇生成 B 便宜 ——
+判定在 `pricing::StationRates::blended_ratio` —— 按这条线**实际的输入输出比**加权，**分组倍率不知道就不算**
+（折扣大多在分组上，不打折的牌价跟别家的折后价没法比）。
 
-两种后端公布价格的方式根本不同，**混着算必然错**：
+### ⛔ 两种后端公布价格的形状不同，但最后都是单价
 
-| 站点后端   | 它在 API 里给什么 | 长什么样                       | 折扣在哪               |
-| ---------- | ----------------- | ------------------------------ | ---------------------- |
-| New API 系 | 相对倍率          | `model_ratio: 0.2`             | 倍率本身               |
-| sub2api 系 | **绝对单价**      | `input_price: 5`（美元／百万） | 分组倍率 `group_ratio` |
+| 站点后端   | 它在 API 里给什么                     | 长什么样                       | 折扣在哪 |
+| ---------- | ------------------------------------- | ------------------------------ | -------- |
+| New API 系 | 倍率（1 = $2 / 百万 token 的单价）    | `model_ratio: 2.5`             | 分组倍率（`/api/pricing` **顶层** `group_ratio`），或直接压低倍率 |
+| sub2api 系 | **绝对单价**                          | `input_price: 5`（美元／百万） | 分组倍率（`/api/v1/groups/rates`） |
 
-使用者的原话：「newapi 是可以这样算，但 sub2api 不是，
-sub2api 的单价就是官方单价。」—— sub2api 报的 5 / 25 就是官方价本身，
-便宜全在分组上。拿 `model_ratio` 那条路去读它，读出的是一片空白。
+使用者的原话：「newapi 是可以这样算，但 sub2api 不是，sub2api 的单价就是官方单价。」
+「New API 的倍率算在了单价内，所以单价便宜。」—— 站长可以把折扣放在分组上，也可以直接压进 `model_ratio`；
+两种都得先换成单价再除官方单价，读出来才是同一个数。
 
-`StationRates` 因此有**两套互斥的字段**，哪一套有效由 `basis()` 从
+`StationRates` 有**两套互斥的字段**，哪一套有效由 `basis()` 从
 「谁填了」推出来。**不设一个单独的 kind 字段** —— 字段和内容对不上时
 （适配器改了、迁移漏了、手改过配置），字段会骗人而内容不会。
 
-- `category_ratios()` 只管倍率那一套，绝对单价那种站点在这里全 `None`；
-- `category_prices()` 只管绝对单价那一套，倍率那种站点全 `None`；
-- **两套不互相换算。** 换算要除以官方价，而那正是下面那条静默失效的入口。
-  要合流只有一个口子：`category_ratios_against(official)`；
-- 绝对单价那一套换成倍率**必须知道是哪个模型的**（官方价按模型查），
-  所以 `Route` 有 `rates_model`。倍率那一套不需要它 —— 早先没有也看不出症状。
+- `category_prices()` 两套都给单价（New API 乘 `NEW_API_USD_PER_MTOK`）。⛔ **官方价不是它的输入** ——
+  下面那条「官方价被约掉」的失效，就是拿倍率乘**官方价**凑单价；
+- `newapi_ratios()` 是 New API 的原始倍率乘积，只供对照，**不是倍数**（0.25.3 及以前叫 `category_ratios`，名字本身就是误读的入口）；
+- 分组倍率按线路的分组从 `/api/pricing` 顶层读（`parse_station_pricing_in_group`，留空按 `default`，`auto` 不认）；
+- 换成倍率**必须知道是哪个模型的**（官方价按模型查），所以 `Route` 有 `rates_model` —— 两种后端都要。
+
+### ⛔ 跨站比较先折成同一种钱：充值比例（0.25.4，使用者定的）
+
+账单、倍率都按站内额度记，而「1 美元额度付几元」每家站不一样（linux.do「中转站百科」帖说的「倍率陷阱」：
+7 元一美元、标 ×0.1 的站比 1 元一美元、标 ×0.5 的还贵）。每个站点一格 `Provider.topup_per_usd`，留空按 1。
+
+- `station_ops::decide` 把「便宜」的三种口径和「倍率不超过」底线都先乘上各自站点的比例；
+- 底线比 `Candidate::real_rate`，**不比 `Candidate::rate`** —— 后者是「便宜」那一维的值，整池走实扣单价时是 1e-6 量级；
+- ⛔ **查套路不折算**：那一步问的是「收的跟它自己说的对不对得上」，两边都是站内口径（使用者 09-18「不用管货币单位」）；
+- ⛔ New API `/api/status` 的 `price`（后台「充值价格」）**只做参考按钮，不自动采用**：默认值就是 7.3，很多站没改过。
 
 ### ⛔ 这张四类表**不下判定**，一次也不许再长出来
 
@@ -1218,8 +1303,8 @@ real_multiplier = 凑出来的单价 × advertised ÷ official
 
 配套的三条：
 
-- **界面必须显示「计费翻倍」**（`StationCenter.tsx` 的 `FoldPill`）。
-  站点没公布 `completion_ratio` 时什么都不显示 —— **「不知道」不是「没翻倍」**；
+- **界面必须显示「输出加价」**（`StationCenter.tsx` 线路行那枚黄标，读 `Route.output_markup`，检验时拿官方价算好）。
+  没算过时什么都不显示 —— **「不知道」不是「没加价」**；⛔ 别改回 `completion_ratio > 1`（见上面，7.91）；
 - **新对话没有缓存读**（`TokenMix::fresh_conversation`）。靠高缓存命中撑起来的
   便宜线，在新对话第一轮上并不便宜；
 - **有真实账单就用真实账单**。`24h 实扣 ÷ 实际 token` 排在加权倍率前面 ——

@@ -266,6 +266,7 @@ pub fn router_environment(client: Client) -> Result<Environment> {
                 tags: vec!["本机路由".into()],
                 favorite: false,
                 revision: 1,
+                topup_per_usd: None,
             },
         )?;
     }
@@ -582,6 +583,7 @@ pub fn official_migrate(client: Client, id: &str, fingerprint: &str) -> Result<S
         tags: vec!["迁移".into()],
         favorite: false,
         revision: 1,
+        topup_per_usd: None,
     };
     let credential = migration.key.as_deref().map(|key| Credential {
         id: config_io::id(),
@@ -1768,6 +1770,7 @@ mod tests {
             tags: Vec::new(),
             favorite: false,
             revision: 1,
+            topup_per_usd: None,
         }
     }
 
@@ -1960,6 +1963,7 @@ mod tests {
             tags: vec![],
             favorite: false,
             revision: 1,
+            topup_per_usd: None,
         };
         db.put("providers", &provider.id, &provider).unwrap();
         let mut environment = Environment {
@@ -2037,6 +2041,7 @@ mod tests {
             tags: vec![],
             favorite: false,
             revision: 1,
+            topup_per_usd: None,
         };
         db.put("providers", "p", &provider).unwrap();
         for client in [Client::ClaudeCode, Client::ClaudeDesktop, Client::Codex] {

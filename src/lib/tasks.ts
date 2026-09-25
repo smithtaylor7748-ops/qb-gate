@@ -42,7 +42,8 @@ export type TaskName =
   | "install-codex-desktop"
   | "install-antigravity"
   | "install-gemini-cli"
-  | "self-update";
+  | "self-update"
+  | "claude-zh";
 
 export interface TaskState {
   running: boolean;

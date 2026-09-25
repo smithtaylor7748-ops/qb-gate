@@ -34,7 +34,9 @@ const BACKUP_NAME: &str = "config.toml.qb-turnstate-backup";
 
 /// 把 `item` 保证成标准表（不是内联表）。§7.11 的坑：链式索引在空文档上建出来的是内联表，
 /// `as_table_mut()` 对它返回 `None`，于是「删掉另一种」那类逻辑会静默失效。
-fn ensure_table(item: &mut toml_edit::Item) -> &mut toml_edit::Table {
+///
+/// `pub(crate)`：GPT 界面语言（`codex_locale`）改同一个 `config.toml` 的 `[desktop]` 表，用同一个。
+pub(crate) fn ensure_table(item: &mut toml_edit::Item) -> &mut toml_edit::Table {
     if let toml_edit::Item::Value(toml_edit::Value::InlineTable(_)) = item {
         let taken = std::mem::replace(item, toml_edit::table());
         if let toml_edit::Item::Value(toml_edit::Value::InlineTable(inline)) = taken {

@@ -158,6 +158,15 @@ pub struct Settings {
     /// 只经 `update_skip` 改：`settings_save` 原样保留旧值 —— 设置页拿着一份打开页面时读的
     /// 旧设置去存别的开关，不该顺手把刚点的「跳过」冲掉。
     pub update_skipped_version: Option<String>,
+
+    /// 使用者在 GPT 页「汉化」弹窗里点的是「设为中文」（2026-09-25）。
+    ///
+    /// **默认 false** —— 不点就一个文件都不改。它记的是使用者的选择，不是现状：
+    /// 现状是每个 `CODEX_HOME\config.toml` 里 `[desktop] localeOverride` 那一行
+    /// （`qb-app::usecase::codex_locale`）。用处只有一个：以后新建的 GPT 槽位按它预写。
+    ///
+    /// 只经 `codex_locale_set` 改：`settings_save` 原样保留旧值（同 `update_skipped_version`）。
+    pub gpt_ui_zh: bool,
 }
 
 /// `#[serde(default)]` 对 `bool` 给的是 `false`。要默认开的字段用这个 ——
@@ -183,6 +192,7 @@ impl Default for Settings {
             align_display_language_on_start: false,
             update_check_on_start: true,
             update_skipped_version: None,
+            gpt_ui_zh: false,
         }
     }
 }

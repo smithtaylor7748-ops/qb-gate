@@ -446,6 +446,47 @@ GPT **不换**（OpenAI 的刷新令牌会轮换，面板一换桌面端就被�
 turn-state 识别**互斥**（0.24.7 起两者都改同一份 `config.toml`，命令层守卫）。
 对外定位见 [DISCLAIMER.md](DISCLAIMER.md) §5.3 末尾。
 
+### claude-desktop-zh-cn —— Claude 桌面端中文界面，**运行时取、只调用安全模式**（2026-09-25）
+
+- 仓库：https://github.com/javaht/claude-desktop-zh-cn（社区项目，作者 javaht）
+- 许可：**MIT**（仓库根 `LICENSE`，2026-09-25 核过：`Copyright (c) 2025 javaht` + MIT 原文）。
+  没有第三方二进制；仓库里 `scripts/experimental/` 是它的 Frida 实验脚本（见下）。
+- 用在：扩展中心的「Claude 桌面端 · 中文界面」条目与账户页「汉化」按钮
+  （`crates/qb-extensions/src/plugins/claude_zh.rs`、`crates/qb-app/src/usecase/claude_zh_ops.rs`、
+  `src/features/zh/ClaudeZh.tsx`），`install_method: builtin`。
+
+**本项目不内置、不分发它的任何文件，也不抄它的代码。** 使用者点「一键汉化」时，面板从它的 GitHub
+Release（`releases/latest` 跳到的那个标签）取那一版的源码归档，只解出 Windows 安全模式用得到的
+`LICENSE`、`README.md`、`resources/*.json`、`scripts/` 下的 PowerShell（**不含 `scripts/experimental/`**），
+放在本程序数据目录下，然后用 Windows PowerShell **原样运行它自己的脚本**。跟接入 SillyTavern、
+ccodex-sleep-state 同一类：它是独立的第三方程序，本项目只负责取、核、起、验。
+使用者要的是「上游以后的更新都跟得上」—— 上游平均一周一版，Claude 一改前端结构它就跟着改脚本；
+照着抄一份进来，那些修复就永远流不进来。
+
+- **每一版都重核**：`LICENSE` 仍是 MIT 原文（不是就不用、保留旧版）；它脚本的 `param(...)` 里
+  `PatchMode` 仍列着 `safe`、`Action` 仍列着 `install` / `uninstall`（接口变了就不用，不闭眼塞参数）。
+  归档注释里 GitHub 写的提交号记下来，审计里有。
+- **只调用两个动作、一种模式**：`install zh-CN -PatchMode safe`（有 `-SkipAsarPatch` 就一并传）与
+  `uninstall`。参数只由 `claude_zh::script_args` 拼，单测钉着拼不出别的。
+- **没用它的什么、为什么**：
+  - **`-PatchMode official`**：改 `app.asar`，再重写 `Claude.exe` 内嵌的 asar 完整性哈希（签名变
+    `HashMismatch`）—— 绕过防篡改，Anthropic 消费者条款 §3 明文不许（"bypassing any of our systems
+    or protective measures"）；
+  - **`frida-launch` 与 `scripts/experimental/`**：Frida 在内存里改掉 Claude「带调试开关就拒绝启动」
+    的闸门与完整性值 —— 同上，而且是往官方进程里注入；这些文件一个字节都不落盘；
+  - **`disable-updates` / `sync-skills`**：跟汉化无关（关 Claude 自动更新、同步 CC Switch 的 skills）；
+  - 它自己问 `api.github.com` 有没有新版的那一下：面板用 `CLAUDE_ZH_SKIP_UPDATE_CHECK=1` 关掉，
+    查新版由面板在打开弹窗时做（只问 `github.com` 的跳转）。
+- **不信它，只信文件**：每次应用 / 还原前后，面板自己算 `app.asar` 与 `claude.exe` 的 SHA-256、
+  读 Authenticode 状态；变了就立刻跑它的 `uninstall` 还原、把那一版记进黑名单。
+
+反重力那套 CDP 注入（上面 EasyAntigravity 一节）**没有**搬到 Claude 上：Claude 桌面端见到
+`--remote-debugging-port` 就拒绝启动（2.9939.2 字符串核过），绕过它就是上面第二条。
+
+**GPT 的中文界面不涉及任何第三方**：写的是 Codex 桌面端自己的设置项 `[desktop] localeOverride`
+（在它「设置 → General → Language」里选中文写下的同一行；键名与位置是本机旧配置备份与 openai/codex#23815
+里看到的，面板没有读它的程序文件）。
+
 ---
 
 ## 界面依赖

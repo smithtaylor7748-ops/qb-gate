@@ -23,7 +23,8 @@ import { AFTER, R } from "../../lib/resources";
 import { invalidate, useResource, useSession } from "../../lib/store";
 import { endTask, resetTask, useTask } from "../../lib/tasks";
 import { slotName } from "../../lib/slotName";
-import { Button, Card, ConfirmDialog, useToast } from "../../ui";
+import { Button, Card, ConfirmDialog, Modal, useToast } from "../../ui";
+import ClaudeZh, { claudeZhLabel } from "../zh/ClaudeZh";
 
 import {
   needsLogin,
@@ -60,6 +61,10 @@ export default function AccountBand() {
 
   const accounts = useResource("accounts", R.accounts);
   const plugins = useResource("plugins", R.plugins);
+  // 一键汉化（插件 claude-desktop-zh-cn，2026-09-25）。按钮文字如实显示现状，
+  // 弹窗跟扩展中心的插件详情页是同一个组件。
+  const zh = useResource("claudeZh", R.claudeZh);
+  const [zhOpen, setZhOpen] = useState(false);
 
   const codeTask = useTask("launch-claude-code");
   const desktopTask = useTask("launch-claude-desktop");
@@ -308,6 +313,17 @@ export default function AccountBand() {
                   <PlayCircle size={14} aria-hidden="true" />
                   启动
                 </h2>
+                {/* 一键汉化的入口放在标题右侧，不占纵向空间（照反重力页「汉化」的先例）。 */}
+                <Button
+                  size="sm"
+                  variant={zh.data?.state === "on" ? "primary" : "default"}
+                  className="turnstate-entry ml-auto"
+                  data-testid="claude-zh-entry"
+                  aria-label={`Claude 桌面端中文界面：${claudeZhLabel(zh.data).text}`}
+                  onClick={() => setZhOpen(true)}
+                >
+                  {claudeZhLabel(zh.data).entry}
+                </Button>
                 {/* 原来标题右边常驻一句「门禁不过，一个进程都不起」，2026-09-23 使用者删了。
                     代价说明还在磁贴下面那一行（CLAUDE.md 要求代价常驻）。 */}
               </div>
@@ -401,6 +417,16 @@ export default function AccountBand() {
         provider="claude"
         onClose={() => setBridgeOpen(false)}
       />
+      <Modal
+        open={zhOpen}
+        onClose={() => {
+          setZhOpen(false);
+          invalidate("claudeZh");
+        }}
+        title="Claude 桌面端 · 中文界面"
+      >
+        <ClaudeZh />
+      </Modal>
     </>
   );
 }

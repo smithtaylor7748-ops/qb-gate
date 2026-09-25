@@ -19,6 +19,14 @@
 //! 所以口径是**整池一起选的**:所有线都拿得出实扣单价才用它,
 //! 差一条就整池退回倍率。宁可整池用粗一点但可比的口径,
 //! 也不要一个精确但不可比的混合。
+//!
+//! # 跨站比较要先折成同一种钱
+//!
+//! 三种口径都是按站内额度记的:实扣是站内美元、倍率是站内标价 ÷ 官方牌价。
+//! 而站内 1 美元额度要付几元,每家站不一样 —— 常见 1 元,也有按真实汇率卖 7 元的
+//! (linux.do「中转站百科」帖说的「倍率陷阱」)。7 元一美元、标 ×0.1 的站,
+//! 实际比 1 元一美元、标 ×0.5 的还贵。所以进这里之前,编排层
+//! (`station_ops::decide`)已经把每条线的三个数都乘上了它那家站的充值比例。
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -31,11 +39,11 @@ use ts_rs::TS;
 pub enum CheapBasis {
     /// 24 小时实扣 ÷ 24 小时实际 token。**算进了缓存命中。**
     CostPerToken,
-    /// 按 token 结构加权出来的等效倍率。
+    /// 按 token 结构加权出来的等效倍率(四类各按站点单价 ÷ 官方单价)。
     ///
-    /// 比 [`RealRate`](CheapBasis::RealRate) 准:它把「计费翻倍」算进去了 ——
-    /// 输入便宜但输出翻五倍的那条,跟输入贵但不翻倍的那条,只有按实际
-    /// 输入输出比加权才比得出谁便宜。
+    /// 比 [`RealRate`](CheapBasis::RealRate) 准:它把「输出另外加价」算进去了 ——
+    /// 分组倍率低但把补全倍率调得比官方高的那条,跟分组倍率高但照官方填的那条,
+    /// 只有按实际输入输出比加权才比得出谁便宜。
     BlendedRatio,
     /// 真实倍率(标称 × mult)。连 token 结构都拿不到时的退路。
     RealRate,
@@ -80,7 +88,7 @@ pub fn cheap_values(pool: &[CheapInput]) -> (CheapBasis, Vec<Option<f64>>) {
         );
     }
 
-    // 其次是加权等效倍率 —— 它把「计费翻倍」算进去了。
+    // 其次是加权等效倍率 —— 它把「输出另外加价」算进去了。
     let all_blended = !pool.is_empty() && pool.iter().all(|p| usable(p.blended_ratio).is_some());
     if all_blended {
         return (
@@ -114,18 +122,18 @@ mod tests {
     }
 
     #[test]
-    fn a_weighted_ratio_beats_a_bare_multiplier_when_one_station_folds_completion() {
-        // 一家开了计费翻倍、倍率低，一家不翻倍、倍率高 —— 只比 real_rate
-        // 会永远选前者，而那取决于输入输出比。加权口径才比得对。
+    fn a_weighted_ratio_beats_a_bare_multiplier_when_one_station_marks_up_output() {
+        // 一家分组倍率低、但把补全倍率调得比官方高；一家照官方填、分组倍率高 ——
+        // 只比 real_rate 会永远选前者，而那取决于输入输出比。加权口径才比得对。
         let pool = [
             CheapInput {
-                route_id: "翻倍但倍率低".into(),
+                route_id: "输出加价但倍率低".into(),
                 cost_per_token: None,
                 blended_ratio: Some(0.57), // 长篇生成时的等效倍率
                 real_rate: Some(0.15),     // 只看这个会以为它最便宜
             },
             CheapInput {
-                route_id: "不翻倍但倍率高".into(),
+                route_id: "照官方填但倍率高".into(),
                 cost_per_token: None,
                 blended_ratio: Some(0.40),
                 real_rate: Some(0.40),
@@ -135,7 +143,7 @@ mod tests {
         assert_eq!(basis, CheapBasis::BlendedRatio);
         assert!(
             vals[1].unwrap() < vals[0].unwrap(),
-            "按加权口径，不翻倍那条才便宜"
+            "按加权口径，照官方填的那条才便宜"
         );
     }
 

@@ -66,6 +66,11 @@ export const R = {
   profiles: res(() => api.profileList()),
 
   plugins: res(() => api.pluginList(), { pollMs: 20_000 }),
+  /**
+   * Claude 桌面端中文界面的现状（2026-09-25）。**不联网**（问上游最新版是弹窗里单独那一下）；
+   * 不轮询 —— 它要数一遍桌面端进程。打开页面、点完「汉化」、工作区有变动时刷新。
+   */
+  claudeZh: res(() => api.claudeZhStatus()),
 
   /**
    * 出口一致性（综合评分第五项）。里面有两轮真实探测（绕过代理 / 跟随代理），

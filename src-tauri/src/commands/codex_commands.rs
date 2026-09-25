@@ -46,9 +46,55 @@ pub async fn codex_repair_registration() -> Result<()> {
 #[tauri::command]
 pub async fn codex_create(label: String) -> Result<String> {
     let _guard = operations::exclusive().await?;
-    tokio::task::spawn_blocking(move || codex::create(&codex::root(), &label))
+    // 走编排层：使用者选过「设为中文」的话，新槽位要预写那一行（`codex_locale::seed`）。
+    tokio::task::spawn_blocking(move || qb_app::usecase::codex_accounts::create(&label))
         .await
         .map_err(|e| GateError::Other(e.to_string()))?
+}
+
+/// GPT 界面语言的现状（2026-09-25）：每份 `config.toml` 的 `[desktop] localeOverride`、
+/// GPT 自己写下的界面语言、开着的实例。只读，不联网。
+#[tauri::command]
+pub async fn codex_locale_status() -> Result<qb_app::usecase::codex_locale::CodexLocaleStatus> {
+    qb_app::usecase::codex_locale::status().await
+}
+
+/// 设为中文（`enabled = true`）/ 恢复默认。只写 GPT 自己的设置项，见 `usecase::codex_locale`。
+///
+/// 面板起的 GPT 开着时，用例会先把它关掉；写完这里按关之前那个槽位重开 —— 跟 `codex_launch`
+/// 同一条链（验 IP → 托管会话 → 租约 → 挂看门狗）。重开没成功不算这次失败：
+/// 设置已经写进去了，界面照实说「没能重开」和原因。
+#[tauri::command]
+pub async fn codex_locale_set(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<qb_app::usecase::codex_locale::CodexLocaleOutcome> {
+    let _guard = operations::exclusive().await?;
+    let title = if enabled {
+        "GPT 界面设为中文"
+    } else {
+        "GPT 界面恢复默认"
+    };
+    let mut task = operations::Run::start(events::sink(&app), title, "codex")?;
+    let result = qb_app::usecase::codex_locale::set(enabled, &state.gate).await;
+    let mut outcome = task.finish(result)?;
+    if let Some(id) = outcome.reopen.take() {
+        outcome.reopened = Some(
+            match qb_app::usecase::codex_accounts::launch(&id, &state.gate).await {
+                Ok(()) => {
+                    let target = crate::launch::LaunchTarget::Codex;
+                    if target.gated() {
+                        crate::app::start_watchdog(target.watch_mode(), &state, Some(app.clone()));
+                    }
+                    "已按当前槽位重新打开 GPT 桌面端。".to_string()
+                }
+                Err(e) => format!("设置已写好，但没能重新打开 GPT 桌面端：{e}"),
+            },
+        );
+    }
+    operations::changed(&events::ui(&app), "session", "codex");
+    Ok(outcome)
 }
 #[tauri::command]
 pub async fn codex_switch(

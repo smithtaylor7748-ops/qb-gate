@@ -35,3 +35,30 @@ pub async fn signer_of(path: &std::path::Path) -> Option<String> {
 pub async fn signer_of(_path: &std::path::Path) -> Option<String> {
     None
 }
+
+/// 单个文件的 Authenticode **状态**（`Valid` / `HashMismatch` / `NotSigned` …，2026-09-25）。
+///
+/// [`signer_of`] 只给主体，**说明不了文件有没有被改过**：内容被改、签名变成 `HashMismatch`
+/// 的文件，证书还在，主体照样报 Anthropic。Claude 汉化插件要核的正是「没被改过」——
+/// 上游 claude-desktop-zh-cn 的 official 模式会重写 `Claude.exe` 内嵌的完整性哈希，
+/// 状态就从 `Valid` 变成 `HashMismatch`。
+///
+/// **`None` 表示拿不到**，调用方要说「没验成」，不能说「验证失败」（同 [`signer_of`]）。
+#[cfg(windows)]
+pub async fn status_of(path: &std::path::Path) -> Option<String> {
+    let quoted = path.display().to_string().replace('\'', "''");
+    let script = format!(
+        "try {{ [string](Get-AuthenticodeSignature -LiteralPath '{quoted}' -ErrorAction Stop).Status }} catch {{ }}"
+    );
+    let out = crate::process::powershell_tokio(&script)
+        .output()
+        .await
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+#[cfg(not(windows))]
+pub async fn status_of(_path: &std::path::Path) -> Option<String> {
+    None
+}

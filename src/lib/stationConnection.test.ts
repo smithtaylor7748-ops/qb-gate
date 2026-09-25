@@ -14,6 +14,7 @@ const provider: Provider = {
   tags: [],
   favorite: false,
   revision: 4,
+  topup_per_usd: null,
 };
 const credential: Credential = {
   id: "key-a",

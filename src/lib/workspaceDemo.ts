@@ -14,6 +14,8 @@ const state: Workspace = {
       tags: ["工作"],
       favorite: true,
       revision: 1,
+      // 没填充值比例 = 按最常见的 1 元 = 1 美元额度算。
+      topup_per_usd: null,
     },
     {
       // 第二个站点：中转站页要能看出「一个站点底下挂几个分组」这两层结构，
@@ -26,6 +28,10 @@ const state: Workspace = {
       tags: [],
       favorite: false,
       revision: 1,
+      // 这家按真实汇率卖额度：7 元买 1 美元。它标的 ×0.12 折成每 $1 牌价是 0.84 元，
+      // 比 example 那家 1 元一美元、标 ×0.2 的还贵 —— 帖子说的「倍率陷阱」，
+      // 中转站页的倍率格与站点标题上要看得出来。
+      topup_per_usd: 7,
     },
   ],
   credentials: [

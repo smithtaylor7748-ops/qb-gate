@@ -218,38 +218,66 @@ export function stationsOf(routes: Route[]): string[] {
 }
 
 /**
- * 这个模型那一格怎么写：`×0.15 · 计费翻倍 ×5`。
+ * New API 的倍率为 1 时每百万 token 多少美元（站内额度）。
  *
- * ⛔ **翻倍必须显示出来。** 两家站一个翻倍一个不翻倍时，光看
- * 「×0.15 对 ×0.4」会得出完全相反的结论 —— 输出占七成的活儿上，
- * ×0.15 翻 5 倍那家其实更贵。
+ * 跟 Rust 侧 `pricing::NEW_API_USD_PER_MTOK` 是同一个数，出处是 New API 源码
+ * `1 === $0.002 / 1K tokens`，它自己的定价页也按 `model_ratio * 2 * 分组倍率` 算单价。
+ * ⛔ New API 的 `model_ratio` 是单价，不是「官方的几倍」：照官方价抄的 Opus 5 是 2.5。
+ */
+export const NEW_API_USD_PER_MTOK = 2;
+
+/**
+ * 这个模型那一格怎么写：`每百万 输入 $1 · 输出 $5`。
  *
- * ⛔ **两套口径分开写。** New API 系公布相对倍率，sub2api 系公布绝对单价
- * （使用者原话：「sub2api 的单价就是官方单价」）。把 `$2.5` 写成 `×2.5`
- * 会让一家五折的站点看起来贵两倍半。哪一套有效看谁填了 ——
- * 跟 Rust 侧 `StationRates::basis` 同一个判定顺序。
+ * ⛔ **两套口径都换成单价写。** sub2api 系公布的就是单价（使用者原话：「sub2api
+ * 的单价就是官方单价」）；New API 系公布的倍率也是单价，单位是 $2 / 百万
+ * （使用者原话：「New API 的倍率算在了单价内，所以单价便宜」）。0.25.3 及以前
+ * 把 New API 的倍率写成 `×2.5 · 计费翻倍 ×5` —— 照官方价收费的 Opus 5 看起来
+ * 贵两倍半、输出还翻五倍，而 5 只是官方自己的「输出 ÷ 输入」。
+ *
+ * 已乘站点公布的分组倍率（知道的话），跟站点自己定价页上显示的是同一个数。
+ * 哪一套有效看谁填了 —— 跟 Rust 侧 `StationRates::basis` 同一个判定顺序。
  */
 export function modelRateLabel(m: StationModel): string {
   const r = m.rates;
   if (r.per_request_price != null && r.per_request_price > 0) {
     return `按次 $${r.per_request_price}`;
   }
+  const g = r.group_ratio != null && r.group_ratio > 0 ? r.group_ratio : 1;
+  // ⛔ 缺的一边写 `—`，不拿另一边顶。
+  const money = (v: number | null) =>
+    v == null ? "—" : `$${Number((v * g).toFixed(4))}`;
   const inp = r.input_price;
   const out = r.output_price;
   if ((inp != null && inp > 0) || (out != null && out > 0)) {
-    // 绝对单价那一套。⛔ 缺的一边写 `—`，不拿另一边顶。
-    const g = r.group_ratio != null && r.group_ratio > 0 ? r.group_ratio : 1;
-    const money = (v: number | null) =>
-      v == null ? "—" : `$${Number((v * g).toFixed(4))}`;
     return `每百万 输入 ${money(inp)} · 输出 ${money(out)}`;
   }
-  if (r.model_ratio == null) return "倍率未公布";
-  const base = `×${r.model_ratio}`;
+  if (r.model_ratio == null || !(r.model_ratio > 0)) return "价格未公布";
+  const input = r.model_ratio * NEW_API_USD_PER_MTOK;
   const c = r.completion_ratio;
-  if (c == null) return `${base} · 输出倍率未公布`;
-  if (c > 1) return `${base} · 计费翻倍 ×${c}`;
-  return `${base} · 输出不翻倍`;
+  return `每百万 输入 ${money(input)} · 输出 ${money(c == null ? null : input * c)}`;
 }
+
+/**
+ * 这家站 1 美元站内额度付几元（充值比例）。没填、填坏了都按 1 —— 跟 Rust 侧
+ * `Provider::topup_per_usd()` 同一个规则。
+ *
+ * 中转站的倍率按站内额度算；不同站放在一起比，要先乘上各自的充值比例，
+ * 折成「每 $1 官方牌价付几元」（linux.do「中转站百科」帖说的「倍率陷阱」）。
+ */
+export function topupOf(p?: { topup_per_usd: number | null } | null): number {
+  const v = p?.topup_per_usd;
+  return v != null && Number.isFinite(v) && v > 0 ? v : 1;
+}
+
+/**
+ * 输出另外加价到什么程度才在线路上挂一枚「输出加价」。
+ *
+ * `route.output_markup` 是「站点输出 ÷ 输入」比官方的「输出 ÷ 输入」多出来的倍数，
+ * 检验时由后端拿官方价算好（`StationRates::output_markup`）。5% 以内当舍入，
+ * 跟 `route::RATE_TOLERANCE` 同一个宽度。
+ */
+export const OUTPUT_MARKUP_TOLERANCE = 0.05;
 
 /** 一条线路在界面上叫什么：站点 · 分组。 */
 export function routeLabel(r: Route): string {

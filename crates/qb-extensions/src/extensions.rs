@@ -1378,6 +1378,7 @@ mod tests {
             tags: vec![],
             favorite: false,
             revision: 1,
+            topup_per_usd: None,
         };
         db.put("providers", &p.id, &p).unwrap();
         let e = Environment {

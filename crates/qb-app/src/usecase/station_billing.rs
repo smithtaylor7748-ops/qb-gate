@@ -420,7 +420,8 @@ pub async fn models(
             )
             .await
             {
-                let parsed = pricing::parse_station_pricing(&v.to_string());
+                // 登录后 `/api/pricing` 顶层的 `group_ratio` 是按这个账号调整过的那一份。
+                let parsed = pricing::parse_station_pricing_in_group(&v.to_string(), group);
                 if !parsed.is_empty() {
                     return Ok(parsed);
                 }
@@ -1213,6 +1214,7 @@ mod tests {
             tags: vec![],
             favorite: false,
             revision: 1,
+            topup_per_usd: None,
         };
         db.put("providers", "s", &p).unwrap();
         save(&db, "s", "newapi", "12", Some("fixture-ledger-token")).unwrap();

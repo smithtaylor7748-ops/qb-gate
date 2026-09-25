@@ -115,6 +115,9 @@ pub async fn settings_save(mut next: settings::Settings) -> Result<settings::Set
     // 「跳过这个版本」只经 `update_skip` 改（0.25.3）。设置页拿着打开页面时读的那份旧设置
     // 去存别的开关，不该顺手把使用者刚在更新弹窗里点的「跳过」冲掉。
     next.update_skipped_version = before.update_skipped_version.clone();
+    // GPT 界面语言只经 `codex_locale_set` 改（2026-09-25）：那条命令同时改各槽位的 config.toml，
+    // 这里跟着设置页那份旧快照翻这个布尔值，就成了「设置里写着中文、槽位里一个字没改」。
+    next.gpt_ui_zh = before.gpt_ui_zh;
     usecase::settings_ops::save(&next)?;
 
     if before.codex_outside_gate != next.codex_outside_gate {

@@ -18,6 +18,8 @@ const ROUTES = [
   "extensions/sillytavern",
   // 0.26.0：反重力汉化与审批的插件面板（规则表里一整行正则、日志行都是最容易横向撑爆的）。
   "extensions/antigravity-ui",
+  // 2026-09-25：Claude 桌面端中文界面（资料目录、上游地址、边界说明都是长串）。
+  "extensions/claude-desktop-zh-cn",
   // 0.32.0：用量明细。三个 side 各走一遍 —— 它们的空态与数据源都不一样，
   // 而「Codex 没有按模型分项」那一格只有 gpt 这一档才出现。
   "usage?side=claude",
@@ -1399,6 +1401,91 @@ try {
   await updateDialog.waitFor();
   await page.keyboard.press("Escape");
   await updateDialog.waitFor({ state: "hidden" });
+
+  // 2026-09-25：一键汉化。
+  // Claude：打开弹窗就问一次上游最新版（使用者选的节奏；演示回 1.4.8）；代价那句常驻；
+  // 「一键汉化」要过确认框；做完逐条显示核验，标题栏的按钮跟着变「汉化：开」；恢复英文翻回来。
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await page.goto(origin + "/#/");
+  await page.getByRole("button", { name: "Claude", exact: true }).click();
+  const claudeZhEntry = page.getByTestId("claude-zh-entry");
+  await claudeZhEntry.waitFor();
+  assert.equal((await claudeZhEntry.innerText()).trim(), "汉化");
+  await claudeZhEntry.click();
+  const claudeZhPanel = page.getByTestId("claude-zh-panel");
+  await claudeZhPanel
+    .getByText("上游最新 1.4.8", { exact: false })
+    .first()
+    .waitFor();
+  await claudeZhPanel
+    .getByText("包括它 Code 页里正在跑的会话", { exact: false })
+    .first()
+    .waitFor();
+  for (const width of [680, 900]) {
+    await page.setViewportSize({ width, height: 740 });
+    await assertNoOverflow(page, `Claude 汉化弹窗 ${width}px`);
+  }
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await claudeZhPanel.getByTestId("claude-zh-apply").click();
+  await page
+    .getByRole("button", { name: "关掉 Claude 并汉化", exact: true })
+    .click();
+  const claudeZhOutcome = claudeZhPanel.getByTestId("claude-zh-outcome");
+  await claudeZhOutcome.waitFor();
+  assert.match(
+    await claudeZhOutcome.innerText(),
+    /核验通过[\s\S]*app\.asar 与 claude\.exe 没被动过/,
+  );
+  await claudeZhPanel.getByTestId("claude-zh-restore").waitFor();
+  await page.keyboard.press("Escape");
+  await claudeZhPanel.waitFor({ state: "hidden" });
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector('[data-testid="claude-zh-entry"]')
+        ?.textContent?.includes("汉化：开") === true,
+  );
+  await claudeZhEntry.click();
+  await claudeZhPanel.getByTestId("claude-zh-restore").click();
+  await page
+    .getByRole("button", { name: "关掉 Claude 并恢复", exact: true })
+    .click();
+  await claudeZhOutcome.waitFor();
+  assert.match(await claudeZhOutcome.innerText(), /中文文件已删掉/);
+  await page.keyboard.press("Escape");
+  await claudeZhPanel.waitFor({ state: "hidden" });
+
+  // GPT：写的是它自己的设置项，逐个列出要改的文件；面板起的那份开着要先过确认框；
+  // 别处起的那份开着时默认那一份跳过，并说清楚原因。
+  await page.getByRole("button", { name: "GPT", exact: true }).click();
+  const gptZhEntry = page.getByTestId("gpt-zh-entry");
+  await gptZhEntry.waitFor();
+  assert.equal((await gptZhEntry.innerText()).trim(), "汉化");
+  await gptZhEntry.click();
+  const gptZhPanel = page.getByTestId("gpt-zh-panel");
+  // 等状态读回来（逐个列出的那几份出现了）再判断要不要过确认框 ——
+  // 面板起的那份开着才弹；前面的流程可能已经把它关了。
+  await gptZhPanel.getByText("槽位「", { exact: false }).first().waitFor();
+  await assertNoOverflow(page, "GPT 汉化弹窗");
+  const gptNeedsConfirm =
+    (await gptZhPanel
+      .getByText("面板起的 GPT 开着", { exact: false })
+      .count()) > 0;
+  await gptZhPanel.getByTestId("gpt-zh-apply").click();
+  if (gptNeedsConfirm)
+    await page
+      .getByRole("button", { name: "关掉 GPT 并修改", exact: true })
+      .click();
+  const gptZhOutcome = gptZhPanel.getByTestId("gpt-zh-outcome");
+  await gptZhOutcome.waitFor();
+  const gptZhLines = await gptZhOutcome.innerText();
+  assert.match(gptZhLines, /槽位「[^」]+」：已设为中文/);
+  // 默认那一份要么改了、要么说清楚为什么这次没改（别处起的那份开着）。
+  assert.match(gptZhLines, /默认（[\s\S]*(已设为中文|这一份这次没改)/);
+  await page.keyboard.press("Escape");
+  await gptZhPanel.waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "Claude", exact: true }).click();
+
   assert.deepEqual(errors, []);
   const flows = [
     "catalog isolation",
@@ -1417,6 +1504,7 @@ try {
     "software page: gemini cli install reports a verified result",
     "software page: every pill agrees with its version row",
     "update dialog: manual check, notes, cost sentence, demo install refusal, reopen from settings",
+    "one-click Chinese: Claude upstream check on open, confirmed apply with verification, entry label, restore; GPT own setting with skipped default home",
   ];
   writeFileSync(
     "docs/ui-regression.json",

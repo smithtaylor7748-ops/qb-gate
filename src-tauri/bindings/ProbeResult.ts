@@ -24,4 +24,11 @@ models: Array<StationModel>,
 /**
  * 价目那一步的问题，一句话。`None` = 拉到了。
  */
-pricing_problem: string | null, };
+pricing_problem: string | null, 
+/**
+ * New API 在 `/api/status` 公布的在线充值价（1 美元额度付几元）。
+ *
+ * ⛔ **只当参考**，界面写在「充值比例」旁边、不自动填 —— 这一格默认 7.3，
+ * 很多站没改过、实际靠兑换码按 1 元卖。见 `station_ops::published_topup_price`。
+ */
+topup_hint: number | null, };
