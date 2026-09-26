@@ -39,10 +39,17 @@ export function addDays(day: string, n: number): string {
   return ymd(new Date(y, m - 1, d + n));
 }
 
-/** 从 `first` 到 `last`（含两头）的每一天。最多 `cap` 天，防一个坏日期把循环拖成死循环。 */
+/**
+ * 从 `first` 到 `last`（含两头）的每一天。最多 `cap` 天，防一个坏日期把循环拖成死循环。
+ *
+ * 超过上限时留的是**最近**的 `cap` 天（2026-09-25）：原来从 `first` 往后数满就停，
+ * 历史超过 400 天时，「全部」那张图正好把今天截掉。
+ */
 export function daysFrom(first: string, last: string, cap = 400): string[] {
+  const earliest = addDays(last, -(cap - 1));
+  const start = first < earliest ? earliest : first;
   const out: string[] = [];
-  for (let d = first; d <= last && out.length < cap; d = addDays(d, 1)) {
+  for (let d = start; d <= last && out.length < cap; d = addDays(d, 1)) {
     out.push(d);
   }
   return out;

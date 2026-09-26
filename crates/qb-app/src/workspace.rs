@@ -372,7 +372,7 @@ struct OfficialMigration {
     key: Option<String>,
     style: String,
 }
-fn official_migration(client: Client, dir: &Path) -> Result<OfficialMigration> {
+fn official_migration(client: Client, dir: &Path) -> Result<Option<OfficialMigration>> {
     let mut has_residue = false;
     let mut result = OfficialMigration {
         edits: vec![],
@@ -524,14 +524,16 @@ fn official_migration(client: Client, dir: &Path) -> Result<OfficialMigration> {
             }
         }
     }
+    // 查不到残留是一个**答案**（这个目录走的是官方身份），不是错误（2026-09-25）。原来这里回 Err，
+    // 「检查官方目录」对一个干净目录弹红色报错，界面上那句「没有查到残留」永远到不了。
     if !has_residue {
-        return Err(GateError::Other(
-            "没有发现可迁移的 API 配置，官方配置未改动".into(),
-        ));
+        return Ok(None);
     }
     result.base = crate::endpoint::endpoint_base(&result.base)?;
-    Ok(result)
+    Ok(Some(result))
 }
+
+const NO_RESIDUE: &str = "没有发现可迁移的 API 配置，官方配置未改动";
 fn previews(edits: Vec<Edit>, revision: u32) -> Vec<ConfigPreview> {
     let fingerprint = config_io::fingerprint(&edits, revision);
     edits
@@ -544,11 +546,11 @@ fn previews(edits: Vec<Edit>, revision: u32) -> Vec<ConfigPreview> {
         })
         .collect()
 }
+/// 预览要改哪几个文件。**查不到残留时回空清单**，界面照实说「没有查到 API 配置残留」。
 pub fn official_preview(client: Client, id: &str) -> Result<Vec<ConfigPreview>> {
-    Ok(previews(
-        official_migration(client, &official_dir(client, id)?)?.edits,
-        0,
-    ))
+    Ok(official_migration(client, &official_dir(client, id)?)?
+        .map(|m| previews(m.edits, 0))
+        .unwrap_or_default())
 }
 pub fn official_migrate(client: Client, id: &str, fingerprint: &str) -> Result<String> {
     if crate::sessions::list().iter().any(|s| {
@@ -561,7 +563,8 @@ pub fn official_migrate(client: Client, id: &str, fingerprint: &str) -> Result<S
         ));
     }
     let db = Repository::open()?;
-    let migration = official_migration(client, &official_dir(client, id)?)?;
+    let migration = official_migration(client, &official_dir(client, id)?)?
+        .ok_or_else(|| GateError::Other(NO_RESIDUE.into()))?;
     crate::sessions::ensure_verified(|s| {
         s.context.identity_kind == IdentityKind::Official && s.context.client == client
     })?;
@@ -1426,6 +1429,31 @@ pub fn codex_slot_dirs(slot_dir: &Path) -> (PathBuf, PathBuf) {
     (slot_dir.join("home"), slot_dir.join("desktop"))
 }
 
+/// 官方配置目录里有没有 API 残留（有就拒绝以官方身份起）。
+///
+/// 官方 Codex 槽位被 turn-state「识别」接管时，config.toml 里的
+/// `model_provider = "qb_turnstate"` 是面板自己写的、指向本机路由 —— 那正是
+/// 识别开着时「起 Codex 仍是账户页那颗按钮」要走的配置，不是残留。
+/// 残留检查认不出这一层（它在 L2，不认识 marker），这里替它认。
+fn check_official_residue(client: Client, dir: &Path) -> Result<()> {
+    let ours = client == Client::Codex
+        && crate::turnstate_marker::takeover().is_some_and(|t| Path::new(&t.home) == dir);
+    if !ours {
+        crate::residue::check_official(client, dir)?;
+    }
+    Ok(())
+}
+
+/// 官方 Codex 槽位起之前、**关掉旧窗口之前**就做得了的检查：槽位目录在不在、配置里有没有 API 残留。
+///
+/// 原来这些都在 [`launch`] 里、`close_ours` 关掉面板起的那份**之后**才做 —— 检查不过时，
+/// 旧窗口（连同它正在跑的任务）已经关了、新的也没起来（2026-09-25）。门禁那一关没挪：
+/// 门禁不过时看门狗本来就会收掉归门禁的那份；注册坏了只有真起的那一刻才看得出来。
+pub fn preflight_codex_official(slot_id: &str) -> Result<()> {
+    let (home, _) = codex_official_dirs(slot_id)?;
+    check_official_residue(Client::Codex, &home)
+}
+
 /// 官方身份的 Codex 该用哪套目录（0.25.0 起）。
 ///
 /// `slot_id` 非空 → 那个 GPT 账户槽位；为空 → 当前激活的槽位；一个槽位都没有
@@ -1588,6 +1616,24 @@ pub async fn launch(
         let mut config_dir = product.data_dir(&home).display().to_string();
         if client == Client::AntigravityIde {
             let root = qb_accounts::antigravity::account::root();
+            // 激活的那条账户还没有 IDE 那一半（多半是从老的 Gemini CLI 清单升上来的）：现建一个，
+            // 种子同新建账户（只抄设置与快捷键，不抄登录）。原来这里退回默认资料 —— 行上点的是
+            // 「登录」、磁贴上写着「槽位「X」」，登进去的却是默认那一份，那一行照旧是「IDE ·」（2026-09-25）。
+            if let Some(id) = qb_accounts::antigravity::account::active_missing_ide(&root)? {
+                let roaming = dirs::config_dir().unwrap_or_default();
+                let seed = crate::install::antigravity::user_data_dir(
+                    crate::install::antigravity::Product::Ide,
+                    &roaming,
+                );
+                qb_accounts::antigravity::account::ensure_ide_dir(
+                    &root,
+                    &id,
+                    seed.is_dir().then_some(seed.as_path()),
+                )?;
+                crate::audit::write(&format!(
+                    "反重力账户 {id} 还没有 IDE 那一半，起 IDE 之前现建了一个"
+                ));
+            }
             if let Some((_, _, dir)) = qb_accounts::antigravity::account::active_ide(&root)? {
                 std::fs::create_dir_all(&dir)?;
                 env.push((
@@ -1617,16 +1663,7 @@ pub async fn launch(
             )
         };
         if client != Client::ClaudeDesktop {
-            // 官方 Codex 槽位被 turn-state「识别」接管时，config.toml 里的
-            // `model_provider = "qb_turnstate"` 是面板自己写的、指向本机路由 —— 那正是
-            // 识别开着时「起 Codex 仍是账户页那颗按钮」要走的配置，不是残留。
-            // 残留检查认不出这一层（它在 L2，不认识 marker），这里替它认。
-            let ours = client == Client::Codex
-                && crate::turnstate_marker::takeover()
-                    .is_some_and(|t| Path::new(&t.home) == dir.as_path());
-            if !ours {
-                crate::residue::check_official(client, &dir)?;
-            }
+            check_official_residue(client, &dir)?;
         }
         if client == Client::ClaudeCode {
             crate::gate::hook::ensure_for_dir(&dir)?;
@@ -1932,15 +1969,19 @@ mod tests {
             br#"{"tokens":{"access_token":"synthetic-oauth"}}"#,
         )
         .unwrap();
-        assert!(official_migration(Client::Codex, &root).is_err());
+        assert!(official_migration(Client::Codex, &root).unwrap().is_none());
         std::fs::write(
             root.join("settings.json"),
             br#"{"env":{"OTHER_SETTING":"keep"}}"#,
         )
         .unwrap();
-        assert!(official_migration(Client::ClaudeCode, &root).is_err());
+        assert!(official_migration(Client::ClaudeCode, &root)
+            .unwrap()
+            .is_none());
         std::fs::write(root.join("settings.json"),br#"{"env":{"ANTHROPIC_BASE_URL":"https://example.invalid/v1","ANTHROPIC_API_KEY":"synthetic-key","OTHER_SETTING":"keep"}}"#).unwrap();
-        let migration = official_migration(Client::ClaudeCode, &root).unwrap();
+        let migration = official_migration(Client::ClaudeCode, &root)
+            .unwrap()
+            .expect("有 API 残留");
         assert_eq!(migration.key.as_deref(), Some("synthetic-key"));
         let after = config_io::parse_object(migration.edits[0].body.as_deref()).unwrap();
         assert_eq!(after["env"]["OTHER_SETTING"], "keep");

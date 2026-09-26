@@ -478,6 +478,9 @@ pub fn gemini_login(id: &str) -> Result<()> {
     let env = vec![("GEMINI_CLI_HOME".to_string(), home.display().to_string())];
     let args = vec![cli.entry.display().to_string()];
     crate::sessions::OwnedProgram::launch_detached_console(&cli.node, &args, &home, env)?;
+    // 点了「登录」就把上一次问出来的「登录已失效」清掉（`login_health` 文件头写着要这么做，
+    // 原来只在移除槽位时清）—— 不然凭据文件没变的话，那一行一直红着、刷新也被挡着（2026-09-25）。
+    super::login_health::forget(&super::login_health::gemini_cli_key(id));
     crate::audit::write(&format!(
         "已为 Gemini 槽位 {id} 打开 Gemini CLI 登录窗口（GEMINI_CLI_HOME 指向槽位目录）"
     ));

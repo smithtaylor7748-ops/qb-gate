@@ -104,6 +104,7 @@ function Half({
   name,
   dir,
   loggedIn,
+  unreadable,
   state,
   action,
   disabled,
@@ -112,6 +113,8 @@ function Half({
   name: string;
   dir: string | null;
   loggedIn: boolean;
+  /** 读不出来（状态库正忙 / 打不开、凭据文件读失败）。**不是「未登录」**（§7.17）。 */
+  unreadable: boolean;
   state: string;
   action: string;
   disabled: boolean;
@@ -121,19 +124,30 @@ function Half({
   // 其实不存在的登录 —— 而点完之后它才被建出来，说法和事实差了一步。
   // 第四种（2026-09-23）：点刷新时 Google 说刷新令牌作废了 —— 令牌还躺在本机，
   // 可登录已经没了。后端给的原因一律以「登录已失效」开头（`usecase::login_health`）。
+  // 第五种（2026-09-25）：读不出来。原来跟「未登录」一个样子 —— IDE 写库时占着锁，
+  // 15 秒一轮的读就把一个登着的账户画成「未登录」、摆一颗「登录」。
   const rejected = !loggedIn && !!dir && state.startsWith("登录已失效");
-  const tone = loggedIn ? "ok" : rejected ? "danger" : dir ? "warn" : "default";
+  const cantRead = !loggedIn && !!dir && unreadable;
+  const tone = loggedIn
+    ? "ok"
+    : rejected
+      ? "danger"
+      : cantRead || dir
+        ? "warn"
+        : "default";
   const text = loggedIn
     ? `${name} 已登录`
     : rejected
       ? `${name} 登录已失效`
-      : dir
-        ? `${name} 未登录`
-        : `${name} ·`;
+      : cantRead
+        ? `${name} 读不出来`
+        : dir
+          ? `${name} 未登录`
+          : `${name} ·`;
   return (
     <span className="ag-half" title={state}>
       <Pill tone={tone}>{text}</Pill>
-      {!loggedIn && (
+      {!loggedIn && !cantRead && (
         <Button size="sm" variant="ghost" disabled={disabled} onClick={onClick}>
           {action}
         </Button>
@@ -175,6 +189,8 @@ function WindowGauge({
               .join(" · ")}
           >
             {countdown(w.reset_epoch, now)}
+            {/* 推出来的 0 看得见，不只藏在悬停里（2026-09-25）。 */}
+            {w.remaining_implied && <em>推算</em>}
           </span>
         ) : undefined
       }
@@ -257,9 +273,17 @@ export default function AntigravitySlotRow({
           extra={
             <span
               className="gauge-reset"
-              title={`${model.label} · 重置于 ${model.reset_at ?? "（时刻读不出来）"}`}
+              title={[
+                `${model.label} · 重置于 ${model.reset_at ?? "（时刻读不出来）"}`,
+                model.remaining_implied
+                  ? "Google 没给这个模型的比例 —— 它的 JSON 会把 0 省掉，按用光算"
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
             >
               ↻ {resetIn(model.reset_epoch, now)}
+              {model.remaining_implied && <em>推算</em>}
             </span>
           }
         />
@@ -295,40 +319,56 @@ export default function AntigravitySlotRow({
     );
 
   const tier = online ? tierShort(online.tier_id, online.tier_name) : "";
+  // 联网问到了、但四格与按模型两样都是空的：上面画的是 IDE 写在本机的旧数，
+  // 来源行不许照样写「在线 · 几点」—— 原来两天前的「剩 100%」就这么挂在「在线」底下（2026-09-25）。
+  const onlineHasData =
+    !!online && (online.windows.length > 0 || online.models.length > 0);
   const source: { text: string; title: string; warn: boolean } | null =
     onlineError
       ? { text: "刷新没成 · 悬停看原因", title: onlineError, warn: true }
-      : online
+      : online && !onlineHasData
         ? {
-            text: [
-              `在线 · ${shortStamp(online.fetched_at)}`,
-              tier,
-              online.windows.length === 0 && online.models.length > 0
-                ? "按模型"
-                : "",
-              online.credits != null
-                ? `AI 积分 ${online.credits.toLocaleString("zh-CN")}`
-                : "",
-            ]
+            text: `在线问到了，但没有额度数据${
+              low && s.written_at
+                ? ` · 条子是 IDE 写入 ${shortStamp(s.written_at)} 的`
+                : ""
+            }`,
+            title: [`联网问于 ${online.fetched_at}`, online.windows_note ?? ""]
               .filter(Boolean)
               .join(" · "),
-            title: [
-              `联网问于 ${online.fetched_at}`,
-              online.tier_name ?? "",
-              online.windows_note ?? "",
-            ]
-              .filter(Boolean)
-              .join(" · "),
-            warn: false,
+            warn: true,
           }
-        : s.written_at && (low || s.quota.length > 0)
+        : online
           ? {
-              text: `IDE 写入 ${shortStamp(s.written_at)} · 点右边刷新联网查`,
-              title:
-                "这是 IDE 上次同步时写在本机的数，只有 IDE 开着时才更新；5 小时 / 每周两格要联网才有",
+              text: [
+                `在线 · ${shortStamp(online.fetched_at)}`,
+                tier,
+                online.windows.length === 0 && online.models.length > 0
+                  ? "按模型"
+                  : "",
+                online.credits != null
+                  ? `AI 积分 ${online.credits.toLocaleString("zh-CN")}`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" · "),
+              title: [
+                `联网问于 ${online.fetched_at}`,
+                online.tier_name ?? "",
+                online.windows_note ?? "",
+              ]
+                .filter(Boolean)
+                .join(" · "),
               warn: false,
             }
-          : null;
+          : s.written_at && (low || s.quota.length > 0)
+            ? {
+                text: `IDE 写入 ${shortStamp(s.written_at)} · 点右边刷新联网查`,
+                title:
+                  "这是 IDE 上次同步时写在本机的数，只有 IDE 开着时才更新；5 小时 / 每周两格要联网才有",
+                warn: false,
+              }
+            : null;
 
   return (
     <div
@@ -380,12 +420,15 @@ export default function AntigravitySlotRow({
       </div>
 
       <div className="ag-halves">
+        {/* 没有 IDE 那一半时起 IDE 会先现建这一半（后端 `account::ensure_ide_dir`，2026-09-25）——
+            按钮照实写「建并登录」，跟 CLI 那一半同一个说法。原来写「登录」、起的却是默认资料。 */}
         <Half
           name="IDE"
           dir={s.ide_dir}
           loggedIn={s.ide_logged_in}
+          unreadable={s.ide_unreadable}
           state={s.ide_auth_state}
-          action="登录"
+          action={s.ide_dir ? "登录" : "建并登录"}
           disabled={busy || !ideInstalled}
           onClick={onOpenIde}
         />
@@ -393,6 +436,7 @@ export default function AntigravitySlotRow({
           name="CLI"
           dir={s.cli_dir}
           loggedIn={s.cli_logged_in}
+          unreadable={s.cli_unreadable}
           state={s.cli_auth_state}
           action={s.cli_dir ? "登录" : "建并登录"}
           disabled={busy || !cliInstalled}
@@ -423,12 +467,13 @@ export default function AntigravitySlotRow({
           icon={<RefreshCw size={12} />}
           aria-label={`联网刷新 ${slotName(s.email, s.label)} 的额度`}
           title={
-            s.ide_logged_in
+            s.ide_logged_in || s.ide_unreadable
               ? "联网问一次这个账户的额度（Google 官方接口，只问这一个）"
               : "IDE 那一半还没登录，没有令牌可问"
           }
           loading={onlineLoading}
-          disabled={!s.ide_logged_in}
+          // 读不出来 ≠ 没登录：刷新照样给，真去问时读不读得出来由那一次说（2026-09-25）。
+          disabled={!s.ide_logged_in && !s.ide_unreadable}
           onClick={onRefresh}
         />
         {source && (

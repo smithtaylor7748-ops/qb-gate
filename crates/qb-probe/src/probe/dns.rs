@@ -3,11 +3,19 @@
 //! 两条腿走路，缺一条都会漏：
 //!
 //! **① 真实解析测试**（主）——借 bash.ws 的权威 NS 回显。
-//!   做法：随机生成一个 id，逐个解析 `1..10.<id>.bash.ws`，
-//!   bash.ws 的权威域名服务器会记录**是谁来查的**，再拉
+//!   做法：向 bash.ws 取一个测试 id（**必须由它签发**，见 [`obtain_test_id`]），逐个解析
+//!   `1..10.<id>.bash.ws`，bash.ws 的权威域名服务器会记录**是谁来查的**，再拉
 //!   `https://bash.ws/dnsleak/test/<id>?json` 把解析器清单读回来。
 //!   这是 dnsleaktest.com 那一套的公开接口，不需要自建服务器。
-//!   手法照抄 ygbull/DNSLeakTester（MIT）。
+//!   调用时序照 ygbull/DNSLeakTester 校准（代码没抄，见 ATTRIBUTION）。
+//!
+//!   ⛔ **回显的形状不假设**（2026-09-25）：有使用者那边整份回的是一个 JSON 对象，原来的
+//!   `from_str::<Vec<_>>` 报「JSON 解析失败: invalid type: map, expected a sequence」，整次检测作废 ——
+//!   GitHub 上发过的每一版都是这一句，跟版本无关。怎么认见 [`parse_bash_ws`]；
+//!   换了机器又报「回的不是解析器清单」时，先跑 `cargo run -p qb-probe --example dns-leak` 看形状。
+//!
+//!   探针域名被代理的 fake-ip 接住（解析成 198.18.x.x）时，查询根本没从本机发出去，bash.ws 自然
+//!   收不到回显 —— 那不是「查不到」，报告里单独说（[`no_echo_finding`]）。
 //!
 //! **② 网卡配置检查**（辅）——TUN 开着时，看**连着的**物理网卡上配的 DNS，
 //!   查询是进隧道还是从这张网卡直接出去（`Find-NetRoute`）。Windows 会同时向每张网卡的
@@ -27,9 +35,12 @@
 //!
 //! 两者都是**简易通过**。深度排查（抓包、WebRTC、路由）交给高级通过的 Codex。
 
-use crate::error::Result;
+use super::reach::{classify_ip, DnsClass};
+use crate::error::{GateError, Result};
 use crate::sink::ProgressSink;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
+use std::net::IpAddr;
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -78,16 +89,33 @@ pub struct DnsReport {
     pub adapters_note: String,
 }
 
+/// bash.ws 回显清单里的一条。
+///
+/// 字段一律宽容读（[`lenient`]）：它是 PHP 写的，查不到时给 `false`（参考客户端里就判
+/// `country_name != false`），ASN 也可能是个数。直接用 `Option<String>` 读的话，
+/// **一个 `false` 就让整份清单解析失败** —— 那是另一种「JSON 解析失败」。
 #[derive(Debug, Deserialize)]
 struct BashWsEntry {
+    #[serde(default, deserialize_with = "lenient")]
     ip: Option<String>,
+    #[serde(default, deserialize_with = "lenient")]
     country_name: Option<String>,
-    #[serde(rename = "country")]
+    #[serde(default, rename = "country", deserialize_with = "lenient")]
     country_code: Option<String>,
+    #[serde(default, deserialize_with = "lenient")]
     asn: Option<String>,
     /// "ip" = 你的出口地址；"dns" = 一台解析器；"conclusion" = 结论行
-    #[serde(rename = "type")]
+    #[serde(default, rename = "type", deserialize_with = "lenient")]
     kind: Option<String>,
+}
+
+/// 字符串照收（去掉首尾空白，空串当没有），数字转成字符串，`false` / `null` / 别的一律当没有。
+fn lenient<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Option<String>, D::Error> {
+    Ok(match Value::deserialize(d)? {
+        Value::String(s) => Some(s.trim().to_string()).filter(|s| !s.is_empty()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    })
 }
 
 fn is_private(ip: &str) -> bool {
@@ -132,6 +160,34 @@ async fn obtain_test_id() -> Result<String> {
     Ok(id)
 }
 
+/// 系统解析器把 10 个探针域名解析成了什么 —— **只数个数，不留地址**。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Lookups {
+    /// 有回答（解析出至少一个地址）的探针个数。
+    pub answered: u8,
+    /// 其中地址**全**落在代理 fake-ip 段的个数（198.18.0.0/15、fc00::/7，
+    /// 判法跟体检的「claude.ai 的解析」是同一份：[`classify_ip`]）。
+    pub fake_ip: u8,
+}
+
+impl Lookups {
+    /// 记下一个探针的回答。
+    fn note(&mut self, addrs: &[IpAddr]) {
+        if addrs.is_empty() {
+            return;
+        }
+        self.answered += 1;
+        if addrs.iter().all(|a| classify_ip(*a) == DnsClass::FakeIp) {
+            self.fake_ip += 1;
+        }
+    }
+
+    /// 有回答的探针全是 fake-ip：系统解析器被代理接管了，查询没从本机发出去。
+    pub fn all_fake_ip(&self) -> bool {
+        self.answered > 0 && self.fake_ip == self.answered
+    }
+}
+
 /// 逐个解析探针域名，触发权威 NS 记录「谁来查的」。
 ///
 /// 两个要点：
@@ -139,7 +195,10 @@ async fn obtain_test_id() -> Result<String> {
 ///     自己发包就绕过了要检测的那条链路，测了个寂寞。
 ///   - 串行 + 间隔 200ms。并发打十个查询容易被解析器合并或限流，
 ///     回显清单会不全。
-async fn trigger_probes(id: &str, rep: &dyn ProgressSink) {
+///
+/// 解析结果只用来数 fake-ip（[`Lookups`]），地址本身不留。
+async fn trigger_probes(id: &str, rep: &dyn ProgressSink) -> Lookups {
+    let mut seen = Lookups::default();
     for i in 1..=PROBE_COUNT {
         // 十个域名逐个报，界面上才看得出它在动 —— 整套要六秒多，
         // 一动不动的六秒和卡死没法区分。
@@ -148,23 +207,195 @@ async fn trigger_probes(id: &str, rep: &dyn ProgressSink) {
             &format!("解析第 {i} / {PROBE_COUNT} 个探针域名"),
         );
         let host = format!("{i}.{id}.bash.ws:80");
-        let _ = tokio::time::timeout(
+        if let Ok(Ok(addrs)) = tokio::time::timeout(
             std::time::Duration::from_secs(3),
             tokio::net::lookup_host(host),
         )
-        .await;
+        .await
+        {
+            seen.note(&addrs.map(|a| a.ip()).collect::<Vec<_>>());
+        }
         tokio::time::sleep(std::time::Duration::from_millis(DELAY_BETWEEN_PROBES_MS)).await;
     }
+    seen
 }
 
-async fn fetch_results(id: &str) -> Result<Vec<BashWsEntry>> {
+/// 取回解析器清单的**原文**。怎么读交给 [`read_echo`] —— 诊断例子要看的正是原文的形状。
+async fn fetch_results(id: &str) -> Result<String> {
     let c = reqwest::Client::builder()
         .no_proxy()
         .timeout(std::time::Duration::from_secs(15))
         .build()?;
     let url = format!("https://bash.ws/dnsleak/test/{id}?json");
-    let text = c.get(&url).send().await?.error_for_status()?.text().await?;
-    Ok(serde_json::from_str(&text)?)
+    Ok(c.get(&url).send().await?.error_for_status()?.text().await?)
+}
+
+/// 回显那一半：向 bash.ws 取测试 id、用系统解析器解析 10 个探针域名、等权威 NS 记账、取回原文。
+///
+/// [`check`] 与诊断例子（`examples/dns-leak.rs`）走的是这同一条路。**会联网。**
+pub async fn fetch_echo(rep: &dyn ProgressSink) -> Result<(String, Lookups)> {
+    rep.phase(0, "向 bash.ws 取测试 id");
+    let id = obtain_test_id().await?;
+    let lookups = trigger_probes(&id, rep).await;
+
+    // 权威 NS 记账有延迟，等满 3 秒再取，否则常常读到半截清单。
+    rep.phase(PROBE_COUNT.into(), "等权威域名服务器记账（3 秒）");
+    tokio::time::sleep(std::time::Duration::from_millis(WAIT_AFTER_PROBES_MS)).await;
+
+    rep.phase(PROBE_COUNT.into(), "取回解析器清单");
+    Ok((fetch_results(&id).await?, lookups))
+}
+
+/// bash.ws 回显原文 → 一条条记录。**不假设它一定是数组**（2026-09-25）。
+///
+/// 平时是 `[{…}, {…}]`。有使用者那边整份回的是一个对象（报错原文
+/// `invalid type: map, expected a sequence at line 1 column 0`），原来的 `from_str::<Vec<_>>`
+/// 于是整次作废，连网卡那一半也跟着丢了。它是 PHP 写的，能想到的对象形状两种，都认：
+///
+/// - 下标不连续的数组被 `json_encode` 编成 `{"0":{…},"2":{…}}` —— 每个值都是一条记录，
+///   按**数字**键排回原来的顺序（serde_json 的 Map 按字符串排，"10" 会跑到 "2" 前面）；
+/// - 只有一条记录时直接给了那一条（对象自己带 `type`）。
+///
+/// `{}` 当空清单：后面照旧落到「没收到回显，判不了」，不当成通过。
+/// 别的形状（错误回执之类）如实报「回的不是解析器清单」，**只说形状、不带值** ——
+/// 回执里可能有使用者的出口 IP，而这句话会被截图、贴进 issue（跟 `SecretHit` 同一个原则）。
+fn parse_bash_ws(text: &str) -> Result<Vec<BashWsEntry>> {
+    let body = text.trim_start_matches('\u{feff}').trim();
+    let value: Value = serde_json::from_str(body).map_err(|_| {
+        GateError::Other(format!(
+            "bash.ws 这次回的不是 JSON（{}），判不了有没有泄露。多半是它临时出错或者被拦了，过几分钟再测。",
+            describe_text(body)
+        ))
+    })?;
+    let items: Vec<Value> = match value {
+        Value::Array(items) => items,
+        Value::Object(map) if map.is_empty() => Vec::new(),
+        Value::Object(map) if map.contains_key("type") => vec![Value::Object(map)],
+        Value::Object(map) if map.values().all(Value::is_object) => {
+            let mut rows: Vec<(String, Value)> = map.into_iter().collect();
+            // 稳定排序：不是数字的键排在最后，彼此之间保持原来的次序。
+            rows.sort_by_key(|(k, _)| k.parse::<u64>().unwrap_or(u64::MAX));
+            rows.into_iter().map(|(_, v)| v).collect()
+        }
+        other => return Err(not_a_list(&other)),
+    };
+    // 数组里混着不是记录的东西：不猜它是什么，照实报形状。
+    if !items.iter().all(Value::is_object) {
+        return Err(not_a_list(&Value::Array(items)));
+    }
+    items
+        .into_iter()
+        .map(|v| serde_json::from_value(v).map_err(GateError::from))
+        .collect()
+}
+
+fn not_a_list(v: &Value) -> GateError {
+    GateError::Other(format!(
+        "bash.ws 这次回的不是解析器清单（{}），判不了有没有泄露。多半是它限流或临时出错，过几分钟再测；\
+         一直这样的话，请把这句话原样贴进 issue。",
+        shape_of(v)
+    ))
+}
+
+/// 只描述形状：顶层类型、前几个键名与值的类型。**不带任何值。**
+fn shape_of(v: &Value) -> String {
+    match v {
+        Value::Object(map) => {
+            let keys: Vec<String> = map
+                .iter()
+                .take(6)
+                .map(|(k, v)| format!("{} {}", key_label(k), kind_of(v)))
+                .collect();
+            let more = if map.len() > 6 {
+                format!(" 等 {} 个键", map.len())
+            } else {
+                String::new()
+            };
+            format!("对象：{}{more}", keys.join("、"))
+        }
+        Value::Array(items) => {
+            let odd = items.iter().find(|x| !x.is_object()).map_or("?", kind_of);
+            format!("数组，{} 项，里面混着{odd}", items.len())
+        }
+        other => kind_of(other).to_string(),
+    }
+}
+
+fn kind_of(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "布尔",
+        Value::Number(_) => "数字",
+        Value::String(_) => "字符串",
+        Value::Array(_) => "数组",
+        Value::Object(_) => "对象",
+    }
+}
+
+/// 键名原样给出，但**像 IP 的打码**、太长的截断 —— 键名本身也可能是使用者的地址。
+fn key_label(k: &str) -> String {
+    if k.parse::<IpAddr>().is_ok() {
+        return "<IP>".into();
+    }
+    let mut s: String = k.chars().take(24).collect();
+    if k.chars().count() > 24 {
+        s.push('…');
+    }
+    s
+}
+
+/// 不是 JSON 时只说有多长、第一个字符是什么（`<` 多半是一张网页）—— 正文不带。
+fn describe_text(body: &str) -> String {
+    match body.chars().next() {
+        None => "空的".into(),
+        Some(c) => format!(
+            "{} 个字符，开头是「{}」",
+            body.chars().count(),
+            if c.is_ascii_graphic() { c } else { '?' }
+        ),
+    }
+}
+
+/// 从 bash.ws 回显里读出来的那一份。
+#[derive(Debug, Clone, Default)]
+pub struct Echo {
+    /// 出口 IP 的 ASN。
+    pub egress_asn: Option<String>,
+    /// bash.ws 自己给的结论行。
+    pub conclusion: Option<String>,
+    /// 回显里的解析器（`from_adapter = false`）。
+    pub resolvers: Vec<Resolver>,
+}
+
+/// bash.ws 原文 → 出口 ASN、结论与解析器清单。**纯函数**，形状怎么认见 [`parse_bash_ws`]。
+pub fn read_echo(text: &str) -> Result<Echo> {
+    let mut echo = Echo::default();
+    for e in parse_bash_ws(text)? {
+        match e.kind.as_deref().map(str::to_ascii_lowercase).as_deref() {
+            Some("ip") => echo.egress_asn = e.asn,
+            // 参考客户端的结论文字在 `ip` 字段里；`country_name` 有字时仍以它为先（原来的读法）。
+            Some("conclusion") => echo.conclusion = e.country_name.or(e.ip),
+            Some("dns") => {
+                let Some(ip) = e.ip else { continue };
+                let cc = e.country_code.map(|c| c.to_ascii_uppercase());
+                echo.resolvers.push(Resolver {
+                    is_private: is_private(&ip),
+                    is_domestic: cc.as_deref() == Some("CN"),
+                    address: ip,
+                    country_code: cc,
+                    country_name: e.country_name,
+                    asn: e.asn,
+                    from_adapter: false,
+                    interface: None,
+                    tunnel: false,
+                    connected: true,
+                    via_tunnel: None,
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(echo)
 }
 
 /// 网卡配置里的一个解析器。
@@ -276,47 +507,12 @@ fn parse_adapter_lines(text: &str) -> AdapterScan {
 }
 
 pub async fn check(rep: &dyn ProgressSink) -> Result<DnsReport> {
-    rep.phase(0, "向 bash.ws 取测试 id");
-    let id = obtain_test_id().await?;
-    trigger_probes(&id, rep).await;
-
-    // 权威 NS 记账有延迟，等满 3 秒再取，否则常常读到半截清单。
-    rep.phase(PROBE_COUNT.into(), "等权威域名服务器记账（3 秒）");
-    tokio::time::sleep(std::time::Duration::from_millis(WAIT_AFTER_PROBES_MS)).await;
-
-    rep.phase(PROBE_COUNT.into(), "取回解析器清单");
-    let entries = fetch_results(&id).await?;
-
-    let mut egress_asn = None;
-    let mut upstream_conclusion = None;
-    let mut resolvers: Vec<Resolver> = Vec::new();
-
-    for e in entries {
-        match e.kind.as_deref() {
-            Some("ip") => egress_asn = e.asn.clone(),
-            Some("conclusion") => {
-                upstream_conclusion = e.country_name.clone().or_else(|| e.ip.clone())
-            }
-            Some("dns") => {
-                let Some(ip) = e.ip.clone() else { continue };
-                let cc = e.country_code.clone();
-                resolvers.push(Resolver {
-                    is_private: is_private(&ip),
-                    is_domestic: cc.as_deref() == Some("CN"),
-                    address: ip,
-                    country_code: cc,
-                    country_name: e.country_name.clone(),
-                    asn: e.asn.clone(),
-                    from_adapter: false,
-                    interface: None,
-                    tunnel: false,
-                    connected: true,
-                    via_tunnel: None,
-                });
-            }
-            _ => {}
-        }
-    }
+    let (text, lookups) = fetch_echo(rep).await?;
+    let Echo {
+        egress_asn,
+        conclusion: upstream_conclusion,
+        mut resolvers,
+    } = read_echo(&text)?;
 
     // 补上网卡配置里的解析器（同一张网卡上的同一个地址只留一条）。
     let scan = adapter_resolvers().await?;
@@ -344,7 +540,7 @@ pub async fn check(rep: &dyn ProgressSink) -> Result<DnsReport> {
 
     let mut findings = evaluate(&resolvers, scan.tun_active);
     if !resolvers.iter().any(|r| !r.from_adapter) {
-        findings.push("未收到权威服务器的真实解析回显，不能判定 DNS 无泄露".into());
+        findings.push(no_echo_finding(lookups));
     }
     let (score, adapters_safe) = score_report(&resolvers, scan.tun_active);
     let adapters_note = adapters_note(&resolvers, scan.tun_active);
@@ -362,6 +558,22 @@ pub async fn check(rep: &dyn ProgressSink) -> Result<DnsReport> {
         adapters_safe,
         adapters_note,
     })
+}
+
+/// 没收到真实解析回显时报的那一句。
+///
+/// 探针全被代理的 fake-ip 接住是另一件事（使用者 2026-09-25 要的说明）：系统解析器根本没把查询
+/// 发出去，bash.ws 当然收不到 —— 判不了，但也不是「查不到」。分数照旧是「—」、照旧不算通过：
+/// 代理那一头拿哪台解析器去解析，这里看不见。
+fn no_echo_finding(l: Lookups) -> String {
+    if l.all_fake_ip() {
+        "没收到 bash.ws 的真实解析回显：探针域名全被解析成了代理的 fake-ip 地址（198.18.x.x 这类），\
+         系统解析器的查询被代理接住、没有从本机发出去，所以这里判不了，也不会从本机这一路泄露。\
+         代理那一头用哪台解析器这里看不到，要查就用高级通过。"
+            .into()
+    } else {
+        "未收到权威服务器的真实解析回显，不能判定 DNS 无泄露".into()
+    }
 }
 
 /// 真实解析（回显）那一项占的分。它是实测到的泄露，所以占大头。
@@ -725,5 +937,164 @@ mod tests {
             !s.contains("{{") && !s.contains("}}"),
             "format! 的转义要消掉：{s}"
         );
+    }
+
+    // ---- bash.ws 回显的形状（2026-09-25：有使用者那边整份回的是对象，原来整次检测报「JSON 解析失败」）
+
+    /// 平时的样子：数组，出口一条、解析器若干、结论一条。
+    const USUAL: &str = r#"[
+        {"ip":"203.0.113.9","country":"US","country_name":"United States","asn":"AS64500 Example","type":"ip"},
+        {"ip":"1.1.1.1","country":"AU","country_name":"Australia","asn":"AS13335 Cloudflare","type":"dns"},
+        {"ip":"DNS is not leaking.","country":"","country_name":"","asn":"","type":"conclusion"}
+    ]"#;
+
+    #[test]
+    fn the_usual_array_still_reads() {
+        let e = read_echo(USUAL).unwrap();
+        assert_eq!(e.egress_asn.as_deref(), Some("AS64500 Example"));
+        // 结论文字在 `ip` 字段里、`country_name` 是空串 —— 空串当没有，才退得回 `ip`。
+        assert_eq!(e.conclusion.as_deref(), Some("DNS is not leaking."));
+        assert_eq!(e.resolvers.len(), 1);
+        assert_eq!(e.resolvers[0].address, "1.1.1.1");
+        assert!(!e.resolvers[0].is_domestic && !e.resolvers[0].from_adapter);
+    }
+
+    #[test]
+    fn a_php_object_with_gaps_reads_like_the_array() {
+        // PHP 的 json_encode 遇到下标不连续的数组就编成对象。键按**数字**排回去：
+        // serde_json 按字符串排的话 "10" 会跑到 "2" 前面，国内那台就排到了最前。
+        let text = r#"{
+            "0":{"ip":"203.0.113.9","country":"US","asn":"AS64500","type":"ip"},
+            "10":{"ip":"114.114.114.114","country":"CN","country_name":"China","type":"dns"},
+            "2":{"ip":"8.8.8.8","country":"US","country_name":"United States","type":"dns"},
+            "11":{"ip":"DNS may be leaking.","type":"conclusion"}
+        }"#;
+        let e = read_echo(text).expect("对象也要读得出来");
+        let addrs: Vec<&str> = e.resolvers.iter().map(|r| r.address.as_str()).collect();
+        assert_eq!(addrs, vec!["8.8.8.8", "114.114.114.114"]);
+        assert!(e.resolvers[1].is_domestic, "国内那台不许因为形状变了就丢");
+        assert_eq!(e.egress_asn.as_deref(), Some("AS64500"));
+        assert_eq!(e.conclusion.as_deref(), Some("DNS may be leaking."));
+    }
+
+    #[test]
+    fn a_lone_entry_object_is_one_entry() {
+        let e = read_echo(r#"{"ip":"9.9.9.9","country":"CH","type":"dns"}"#).unwrap();
+        assert_eq!(e.resolvers.len(), 1);
+        assert_eq!(e.resolvers[0].address, "9.9.9.9");
+    }
+
+    #[test]
+    fn an_empty_object_is_an_empty_list_not_a_pass() {
+        let e = read_echo("{}").unwrap();
+        assert!(e.resolvers.is_empty());
+        // 空清单之后照旧落到「判不了」：分数是「—」，不是 100。
+        assert_eq!(score_report(&e.resolvers, TUN_OFF), (None, None));
+    }
+
+    #[test]
+    fn false_and_numbers_do_not_break_the_list() {
+        // PHP 查不到时给 false、ASN 给个数 —— 原来一个 false 就让整份清单解析失败。
+        let text = r#"[
+            {"ip":"9.9.9.9","country":false,"country_name":false,"asn":19281,"type":"dns"},
+            {"ip":"223.5.5.5","country":"cn","country_name":null,"type":"dns"},
+            {"type":"dns","country":"CN"},
+            {"ip":"198.51.100.1","type":"something-new","extra":{"nested":true}}
+        ]"#;
+        let e = read_echo(text).expect("宽容读，不许整份作废");
+        assert_eq!(e.resolvers.len(), 2, "没有地址的那条跳过，不认识的类型跳过");
+        assert_eq!(e.resolvers[0].asn.as_deref(), Some("19281"));
+        assert_eq!(e.resolvers[0].country_code, None);
+        assert!(e.resolvers[1].is_domestic, "小写的 cn 也是国内");
+        assert_eq!(e.resolvers[1].country_code.as_deref(), Some("CN"));
+    }
+
+    #[test]
+    fn an_error_receipt_names_its_shape_but_not_its_values() {
+        let err = read_echo(r#"{"error":"too many requests from 198.51.100.7","code":429}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("不是解析器清单"), "{err}");
+        assert!(
+            err.contains("error 字符串") && err.contains("code 数字"),
+            "{err}"
+        );
+        assert!(
+            !err.contains("198.51.100.7"),
+            "回执里的 IP 不许进报错：{err}"
+        );
+        assert!(!err.contains("too many"), "值一个都不带：{err}");
+    }
+
+    #[test]
+    fn keys_that_look_like_addresses_are_masked() {
+        let err = read_echo(r#"{"198.51.100.7":1}"#).unwrap_err().to_string();
+        assert!(err.contains("<IP> 数字"), "{err}");
+        assert!(!err.contains("198.51.100.7"), "{err}");
+    }
+
+    #[test]
+    fn a_page_that_is_not_json_is_reported_without_its_body() {
+        let err = read_echo("<html>blocked for 198.51.100.7</html>")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("不是 JSON") && err.contains("「<」"), "{err}");
+        assert!(!err.contains("198.51.100.7"), "{err}");
+        assert!(read_echo("").unwrap_err().to_string().contains("空的"));
+    }
+
+    #[test]
+    fn a_list_with_things_that_are_not_records_is_not_guessed() {
+        let err = read_echo("[1,2]").unwrap_err().to_string();
+        assert!(err.contains("数组，2 项，里面混着数字"), "{err}");
+    }
+
+    #[test]
+    fn a_leading_bom_is_fine() {
+        let text = format!("\u{feff}{USUAL}");
+        assert_eq!(read_echo(&text).unwrap().resolvers.len(), 1);
+    }
+
+    // ---- fake-ip：探针被代理接住，查询没从本机发出去
+
+    fn ip_list(v: &[&str]) -> Vec<IpAddr> {
+        v.iter().map(|s| s.parse().unwrap()).collect()
+    }
+
+    #[test]
+    fn lookups_count_a_probe_as_fake_only_when_every_address_is() {
+        let mut l = Lookups::default();
+        l.note(&ip_list(&["198.18.0.5"]));
+        l.note(&ip_list(&["fdfe:dcba:9876::2"]));
+        l.note(&ip_list(&["198.18.0.6", "93.184.216.34"]));
+        l.note(&[]);
+        assert_eq!(
+            l,
+            Lookups {
+                answered: 3,
+                fake_ip: 2
+            }
+        );
+        assert!(!l.all_fake_ip(), "有一个探针解析到了真地址，就不算 fake-ip");
+    }
+
+    #[test]
+    fn fake_ip_explains_the_missing_echo() {
+        let all = Lookups {
+            answered: 10,
+            fake_ip: 10,
+        };
+        assert!(no_echo_finding(all).contains("fake-ip"));
+        // 部分是 fake-ip、或者一个都没回答：说不清是怎么回事，照旧是那句「判不了」。
+        for l in [
+            Lookups {
+                answered: 10,
+                fake_ip: 3,
+            },
+            Lookups::default(),
+        ] {
+            let s = no_echo_finding(l);
+            assert!(s.contains("不能判定") && !s.contains("fake-ip"), "{s}");
+        }
     }
 }

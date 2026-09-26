@@ -44,7 +44,16 @@ export function useSummaries(): Record<string, Readout> {
                 : "ok",
         ];
       }
-    } else if (accounts.data) out["/"] = ["无槽位", "warn"];
+    } else if (accounts.data)
+      // 有槽位、只是一个都没激活（指向失效）时不是「无槽位」；读不出来也不是（2026-09-25）。
+      out["/"] = [
+        accounts.data.slotsError
+          ? "读不出"
+          : accounts.data.slots.length
+            ? "没选槽位"
+            : "无槽位",
+        "warn",
+      ];
 
     // ---- 软件：Claude 两样 + 反重力（0.26.0）。读数只说 Claude 那两样装没装，
     // 反重力装了就在后面加一个字，没装不算「缺」—— 它不是每个人都要的。

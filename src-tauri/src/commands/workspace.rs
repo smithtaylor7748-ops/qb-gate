@@ -225,9 +225,12 @@ pub async fn relay_import(app: tauri::AppHandle, bundle: workspace::RelayExport)
     Ok(n)
 }
 
+/// 切 Claude 账户的确认框报数用：跟 `app::clear_for_switch` 真去关的是**同一个范围**
+/// （只收 Claude 的，中转与反重力不碰）。不发任务进度事件 —— 原来切换框借用的是
+/// 一键关闭的扫描命令，一打开切换框，「一键关闭」那块磁贴就跟着转、扫描失败还会变红。
 #[tauri::command]
 pub async fn official_switch_preview() -> Result<crate::killswitch::KillReport> {
-    crate::killswitch::preview_official().await
+    crate::killswitch::preview_for_switch().await
 }
 
 #[tauri::command]
@@ -254,8 +257,9 @@ pub async fn official_configuration_migrate(
     fingerprint: String,
 ) -> Result<String> {
     let _guard = operations::exclusive().await?;
+    // 只看 Claude 的进程：反重力开着跟迁 Claude Code 的配置毫无关系（原来它也会挡住这一步）。
     if client == Client::ClaudeCode
-        && !crate::killswitch::preview_official()
+        && !crate::killswitch::preview_for_switch()
             .await?
             .targets
             .is_empty()

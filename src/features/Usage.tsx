@@ -33,6 +33,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -273,35 +274,46 @@ export default function Usage() {
   const claudeLabel = activeClaude?.label ?? "";
   const gptId = activeGpt?.id ?? "";
 
+  /**
+   * 每一次读的序号：只认最后发出去的那一次（2026-09-25）。
+   *
+   * 原来没有：先点「30 天」再马上点「7 天」，30 天那一遍扫得慢、后回来，把 7 天的结果盖掉 ——
+   * 标签写着「7 天」，数是 30 天的，要等下一分钟自动重读才对；切边时也一样，慢的那边回来把页面清空。
+   * `busy` 也被先回来的那一次提前清掉。
+   */
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    const latest = () => seq === loadSeq.current;
     setBusy(true);
     setErr("");
     try {
       if (side === "claude") {
         if (!claudeLabel) {
-          setData(null);
+          if (latest()) setData(null);
           return;
         }
         const o = await api.accountsUsageOverview(claudeLabel, days);
-        setData({ side, summary: o.summary, byAccount: o.by_account });
+        if (latest())
+          setData({ side, summary: o.summary, byAccount: o.by_account });
       } else if (side === "gpt") {
         if (!gptId) {
-          setData(null);
+          if (latest()) setData(null);
           return;
         }
         const [codex, limits] = await Promise.all([
           codexApi.usageSummary(gptId, days),
           codexApi.rateLimits(gptId),
         ]);
-        setData({ side, summary: codex.summary, codex, limits });
+        if (latest()) setData({ side, summary: codex.summary, codex, limits });
       } else {
         const ag = await antigravityApi.usage(days);
-        setData({ side, summary: ag.summary, ag });
+        if (latest()) setData({ side, summary: ag.summary, ag });
       }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      if (latest()) setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (latest()) setBusy(false);
     }
   }, [side, days, claudeLabel, gptId]);
 
@@ -331,10 +343,12 @@ export default function Usage() {
     [s, days, metric, unit],
   );
 
+  // 快照里已经过了重置时刻的那一格是重置前的数，不参加比紧（2026-09-25）。
   const tightGpt =
     data?.side === "gpt"
       ? [data.limits?.found?.primary, data.limits?.found?.secondary]
           .filter((w): w is NonNullable<typeof w> => !!w)
+          .filter((w) => !w.window.reset_passed)
           .sort((a, b) => b.window.used - a.window.used)[0]
       : undefined;
 
@@ -813,30 +827,40 @@ export default function Usage() {
                 <div className="slotusage">
                   {[data.limits.found.primary, data.limits.found.secondary]
                     .filter((w): w is NonNullable<typeof w> => !!w)
-                    .map((w) => (
-                      <Gauge
-                        key={w.window_minutes}
-                        name={w.name}
-                        used={w.window.used}
-                        binding={tightGpt?.window_minutes === w.window_minutes}
-                        extra={
-                          w.window.resets_at ? (
-                            <span className="gauge-reset">
-                              ↻{" "}
-                              {new Date(w.window.resets_at).toLocaleString(
-                                "zh-CN",
-                                {
-                                  month: "2-digit",
-                                  day: "2-digit",
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                },
-                              )}
-                            </span>
-                          ) : undefined
-                        }
-                      />
-                    ))}
+                    .map((w, i) =>
+                      w.window.reset_passed ? (
+                        <Gauge
+                          key={`${w.name}-${i}`}
+                          name={w.name}
+                          used={null}
+                          note="已重置，快照是重置前的数"
+                        />
+                      ) : (
+                        <Gauge
+                          // 两格都没带时长时 `window_minutes` 同是 0，拿它当 key 会撞（2026-09-25）。
+                          key={`${w.name}-${i}`}
+                          name={w.name}
+                          used={w.window.used}
+                          binding={tightGpt === w}
+                          extra={
+                            w.window.resets_at ? (
+                              <span className="gauge-reset">
+                                ↻{" "}
+                                {new Date(w.window.resets_at).toLocaleString(
+                                  "zh-CN",
+                                  {
+                                    month: "2-digit",
+                                    day: "2-digit",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  },
+                                )}
+                              </span>
+                            ) : undefined
+                          }
+                        />
+                      ),
+                    )}
                 </div>
                 <p className="notice mt-2">
                   读自 Codex 自己写在会话记录里的 <code>rate_limits</code>
@@ -847,8 +871,13 @@ export default function Usage() {
               </>
             ) : (
               <p className="notice">
-                还没有带额度信息的会话记录 —— 走中转或 API Key
-                的会话不带额度，这很正常。
+                {/* 读不出来 ≠ 没有（§7.17，2026-09-25）：会话目录是联结点、文件打不开时，
+                    原来照样写「这很正常」。 */}
+                {data?.side === "gpt" &&
+                data.limits &&
+                data.limits.files_failed > 0
+                  ? `本机会话记录有 ${data.limits.files_failed} 份读不出来（${data.limits.first_error ?? "原因不明"}），判不了有没有额度记录。`
+                  : "还没有带额度信息的会话记录 —— 走中转或 API Key 的会话不带额度，这很正常。"}
               </p>
             )
           ) : agIdentity ? (

@@ -27,4 +27,10 @@ reset_epoch: number | null,
 /**
  * "Fast" / "Limited time" 之类的标签，原样。
  */
-tags: Array<string>, };
+tags: Array<string>, 
+/**
+ * `remaining` 是按 0 推出来的：联网问到的那一格只有 `resetTime`、没有 `remainingFraction`
+ * （proto3 的 JSON 把零值字段整个省掉）。界面要说出来（CLAUDE.md「联网额度」第 6 条，2026-09-25 补上）。
+ * 本机 IDE 写的那份不推，恒为 false。
+ */
+remaining_implied: boolean, };

@@ -14,6 +14,14 @@ ide_dir: string | null, ide_logged_in: boolean,
  */
 ide_auth_state: string, 
 /**
+ * IDE 那一半的登录**读不出来**（状态库打不开 / 正忙 / 目录读不了，2026-09-25）。
+ *
+ * 这时 `ide_logged_in` 是 false，但**不是「未登录」**（§7.17）：原来界面照样画「IDE 未登录」、
+ * 摆一颗「登录」、把刷新图标灰掉 —— IDE 写库时占着锁超过 250 毫秒，15 秒一轮的读就把一个
+ * 登着的账户说成没登录。
+ */
+ide_unreadable: boolean, 
+/**
  * IDE 自己写下的邮箱与档位。读不到就是 `None`。
  */
 email: string | null, tier: string | null, 
@@ -34,4 +42,8 @@ written_at: string | null,
 /**
  * `GEMINI_CLI_HOME` 指向哪里。`None` = 这条槽位还没有 CLI 那一半。
  */
-cli_dir: string | null, cli_logged_in: boolean, cli_auth_state: string, };
+cli_dir: string | null, cli_logged_in: boolean, cli_auth_state: string, 
+/**
+ * CLI 那一半的凭据文件读不出来（不是「没有」）。同 `ide_unreadable`。
+ */
+cli_unreadable: boolean, };

@@ -72,7 +72,11 @@ pub async fn accounts_delete(
     Ok(out)
 }
 
-/// 这个槽位用掉了多少 token。零网络请求，只读槽位目录里的会话转写。
+/// 这个槽位用掉了多少 token。零网络请求，只读本机的会话转写。
+///
+/// ⛔ **跟账户卡同一条归属路径**（2026-09-25）：槽位目录，外加默认目录 `~\.claude` 里归得上这个
+/// 账户的那部分（三级判定见 `tokens.rs` 文件头）。原来这里只数槽位目录 —— 桌面端 Code 页跑的会话
+/// 全落在默认目录，于是账户卡写「30 天 1,234 条回复」，详情页写「这个范围里没有记录」。
 ///
 /// 是 `async` + `spawn_blocking` 而不是同步命令：实测两个槽位合计 90 MB，
 /// 一遍约半秒 —— 直接在 async 命令体里跑会把 tokio 的 worker 堵住，
@@ -80,10 +84,16 @@ pub async fn accounts_delete(
 /// `mklink` 那一段同一个理由）。
 #[tauri::command]
 pub async fn accounts_tokens(label: String) -> Result<accounts::tokens::TokenUsage> {
-    let dir = accounts::AccountRoots::current().slot_dir(label.trim());
-    tokio::task::spawn_blocking(move || accounts::tokens::for_slot(&dir))
-        .await
-        .map_err(|e| GateError::Other(format!("统计 token 的任务异常结束：{e}")))
+    let roots = accounts::AccountRoots::current();
+    let dir = roots.slot_dir(label.trim());
+    tokio::task::spawn_blocking(move || {
+        let home = roots.default_config_dir();
+        let index = accounts::tokens::OwnerIndex::scan(&roots.desktop_profile_dirs());
+        let uuid = accounts::account_uuid_of(&dir);
+        accounts::tokens::for_slot_and_default(&dir, home.as_deref(), uuid.as_deref(), &index)
+    })
+    .await
+    .map_err(|e| GateError::Other(format!("统计 token 的任务异常结束：{e}")))
 }
 
 /// 账户用量小结：今天（或最近 N 天）用了多少 token、缓存命中多少、

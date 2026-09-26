@@ -69,6 +69,12 @@ pub struct UsageWindow {
     /// `resets_at` 是从样本里推出来的，不是官方客户端写下的。
     /// 界面上**必须**标出来 —— 把推算值伪装成实测值是这套显示最容易犯的错。
     pub estimated: bool,
+    /// 这份读数之后窗口已经重置过了：已知的某个重置时刻夹在「读数时刻」与「现在」之间（2026-09-25）。
+    ///
+    /// 那时 `used` 是重置**之前**的数，界面不许把它当当前值显示。原来只按读数的年龄判过期 ——
+    /// 缓存 09:00 记下「五小时用了 92%、09:40 重置」，10:30 再看，读数才 90 分钟旧，
+    /// 界面照样画「剩 8%」而且标红、重置时刻写「未知」，其实 50 分钟前就重置了。
+    pub reset_passed: bool,
 }
 
 /// 这份读数是从哪儿来的。界面上要标，两个槽位的来源经常不一样。
@@ -129,6 +135,12 @@ pub fn for_slot(histories: &[PathBuf], slot_dir: &Path, org: Option<&str>) -> Op
 
     if use_live {
         let l = live?;
+        let cached_five = cache
+            .as_ref()
+            .and_then(|c| c.five_hour_resets_at.as_deref());
+        let cached_week = cache
+            .as_ref()
+            .and_then(|c| c.seven_day_resets_at.as_deref());
         Some(SlotUsage {
             source: UsageSource::Desktop,
             measured_at: rfc3339(l.t),
@@ -137,43 +149,53 @@ pub fn for_slot(histories: &[PathBuf], slot_dir: &Path, org: Option<&str>) -> Op
                 used: l.fh.clamp(0, 100) as u8,
                 // 桌面端那份只有用量，没有重置时刻。先拿缓存里没过期的实测值，
                 // 拿不到再从样本的断崖下跌反推。
-                resets_at: cache
-                    .as_ref()
-                    .and_then(|c| fresh(c.five_hour_resets_at.as_deref(), now))
-                    .or_else(|| infer_five_hour_reset(&samples, now)),
-                estimated: cache
-                    .as_ref()
-                    .and_then(|c| fresh(c.five_hour_resets_at.as_deref(), now))
-                    .is_none(),
+                resets_at: fresh(cached_five, now).or_else(|| infer_five_hour_reset(&samples, now)),
+                estimated: fresh(cached_five, now).is_none(),
+                // 缓存记下的、或样本推出来的重置时刻，只要有一个落在这条样本之后、现在之前，
+                // 这条样本就是重置前的数。
+                reset_passed: passed_between(cached_five, l.t, now)
+                    || inferred_reset_ms(&samples).is_some_and(|r| r > l.t && r <= now),
             }),
-            seven_day: Some(UsageWindow {
-                used: l.sd.clamp(0, 100) as u8,
-                // 七天窗口**不推算**。样本里根本见不到它重置（实测一路 76→79），
-                // 没有断崖就没有可靠的起点。拿不到就如实说不知道。
-                resets_at: cache
-                    .as_ref()
-                    .and_then(|c| fresh(c.seven_day_resets_at.as_deref(), now)),
+            // 七天窗口**不推算**。样本里根本见不到它重置（实测一路 76→79），
+            // 没有断崖就没有可靠的起点。拿不到就如实说不知道。
+            // 样本里没有 `sd` 就不画这一条 —— 原来按 0 算，画成一条实心的「剩 100%」。
+            seven_day: l.sd.map(|sd| UsageWindow {
+                used: sd.clamp(0, 100) as u8,
+                resets_at: fresh(cached_week, now),
                 estimated: false,
+                reset_passed: passed_between(cached_week, l.t, now),
             }),
         })
     } else {
         let c = cache?;
+        let at = c.fetched_at_ms;
         Some(SlotUsage {
             source: UsageSource::Cache,
-            measured_at: rfc3339(c.fetched_at_ms),
-            age_minutes: (now - c.fetched_at_ms) / 60_000,
+            measured_at: rfc3339(at),
+            age_minutes: (now - at) / 60_000,
             five_hour: c.five_hour.map(|used| UsageWindow {
                 used,
                 resets_at: fresh(c.five_hour_resets_at.as_deref(), now),
                 estimated: false,
+                reset_passed: passed_between(c.five_hour_resets_at.as_deref(), at, now),
             }),
             seven_day: c.seven_day.map(|used| UsageWindow {
                 used,
                 resets_at: fresh(c.seven_day_resets_at.as_deref(), now),
                 estimated: false,
+                reset_passed: passed_between(c.seven_day_resets_at.as_deref(), at, now),
             }),
         })
     }
+}
+
+/// 这个重置时刻落在「读数时刻」之后、「现在」之前吗 —— 是的话那份读数是重置前的数。
+///
+/// 早于读数时刻的重置时刻说明不了什么（那是上一个窗口的，读数本来就是新窗口里的）。
+fn passed_between(iso: Option<&str>, measured_ms: i64, now: i64) -> bool {
+    iso.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|t| t.timestamp_millis())
+        .is_some_and(|r| r > measured_ms && r <= now)
 }
 
 // ------------------------------------------------------------ 桌面端历史
@@ -184,8 +206,19 @@ pub struct Sample {
     pub org: String,
     /// 五小时窗口已用百分比。
     pub fh: i64,
-    /// 七天窗口已用百分比。
-    pub sd: i64,
+    /// 七天窗口已用百分比。**可以没有** —— 没有就是没有，不当成 0（0 在界面上是「剩 100%」）。
+    pub sd: Option<i64>,
+}
+
+/// 百分比读成整数：小数（`12.5`）四舍五入，不是数就是 `None`。
+///
+/// 原来用 `as_i64()`，JSON 里一个 `12.5` 就读不出来 —— 整条样本被丢掉，缓存那一格变成没有。
+fn percent_of(v: &serde_json::Value) -> Option<i64> {
+    v.as_i64().or_else(|| {
+        v.as_f64()
+            .filter(|x| x.is_finite())
+            .map(|x| x.round() as i64)
+    })
 }
 
 /// 读若干份历史文件并合并成一条时间序列。
@@ -237,8 +270,8 @@ pub fn parse_history(text: &str) -> Vec<Sample> {
             Some(Sample {
                 t: s.get("t")?.as_i64()?,
                 org: s.get("org")?.as_str()?.to_string(),
-                fh: u.get("fh")?.as_i64()?,
-                sd: u.get("sd").and_then(|v| v.as_i64()).unwrap_or(0),
+                fh: percent_of(u.get("fh")?)?,
+                sd: u.get("sd").and_then(percent_of),
             })
         })
         .collect();
@@ -254,17 +287,21 @@ pub fn parse_history(text: &str) -> Vec<Sample> {
 ///
 /// 推出来的值**一律标 `estimated`**。
 pub fn infer_five_hour_reset(samples: &[Sample], now: i64) -> Option<String> {
+    let reset = inferred_reset_ms(samples)?;
+    // 推出来的重置时刻已经过去 = 之后又翻过篇了，只是没有样本记下来
+    // （桌面端那段时间没开）。这种情况不猜，如实回 None。
+    (reset > now).then(|| rfc3339(reset))
+}
+
+/// 最近一次断崖下跌推出来的那个重置时刻（毫秒），**过没过去都给** —— 判「读数之后翻过篇没有」要用它。
+fn inferred_reset_ms(samples: &[Sample]) -> Option<i64> {
     // 从后往前找最近一次下跌。
     let drop = samples
         .windows(2)
         .rposition(|w| w[0].fh - w[1].fh >= RESET_DROP)?;
     let before = &samples[drop];
     let after = &samples[drop + 1];
-    let start = (before.t + after.t) / 2;
-    let reset = start + FIVE_HOUR_MS;
-    // 推出来的重置时刻已经过去 = 之后又翻过篇了，只是没有样本记下来
-    // （桌面端那段时间没开）。这种情况不猜，如实回 None。
-    (reset > now).then(|| rfc3339(reset))
+    Some((before.t + after.t) / 2 + FIVE_HOUR_MS)
 }
 
 // -------------------------------------------------------------- 槽位缓存
@@ -290,7 +327,7 @@ pub fn parse_cache(text: &str) -> Option<Cached> {
     let pct = |name: &str| {
         win(name)
             .and_then(|w| w.get("utilization"))
-            .and_then(|x| x.as_i64())
+            .and_then(percent_of)
             .map(|x| x.clamp(0, 100) as u8)
     };
     let reset = |name: &str| {
@@ -336,7 +373,7 @@ mod tests {
             t,
             org: "org-a".into(),
             fh,
-            sd,
+            sd: Some(sd),
         }
     }
 
@@ -548,22 +585,99 @@ mod tests {
                 t: 100,
                 org: "a".into(),
                 fh: 1,
-                sd: 1,
+                sd: Some(1),
             },
             Sample {
                 t: 100,
                 org: "b".into(),
                 fh: 2,
-                sd: 2,
+                sd: Some(2),
             },
             Sample {
                 t: 100,
                 org: "a".into(),
                 fh: 1,
-                sd: 1,
+                sd: Some(1),
             },
         ]);
         assert_eq!(got.len(), 2);
+    }
+
+    /// 2026-09-25：缓存 09:00 记下「五小时 92%、09:40 重置」，10:30 再看 —— 读数才 90 分钟旧，
+    /// 原来照样画「剩 8%」。重置时刻夹在读数与现在之间，读数就是重置前的数。
+    #[test]
+    fn a_cached_reading_from_before_a_known_reset_is_flagged() {
+        let d = Dir::new("reset-passed");
+        let now = chrono::Utc::now().timestamp_millis();
+        let iso = rfc3339;
+        let slot = d.0.join("claude-profile-main");
+        std::fs::create_dir_all(&slot).unwrap();
+        std::fs::write(
+            slot.join(".claude.json"),
+            format!(
+                r#"{{"cachedUsageUtilization":{{"fetchedAtMs":{},"utilization":{{
+                    "five_hour":{{"utilization":92,"resets_at":"{}"}},
+                    "seven_day":{{"utilization":40,"resets_at":"{}"}}}}}}}}"#,
+                now - 90 * MIN,
+                iso(now - 50 * MIN),
+                iso(now + 3 * 24 * 60 * MIN)
+            ),
+        )
+        .unwrap();
+        let got = for_slot(&[], &slot, Some("org-a")).expect("缓存在");
+        let five = got.five_hour.unwrap();
+        assert!(five.reset_passed, "50 分钟前就重置了，92% 不是当前值");
+        assert_eq!(
+            five.resets_at, None,
+            "过去的重置时刻照旧不显示成「恢复时间」"
+        );
+        let week = got.seven_day.unwrap();
+        assert!(!week.reset_passed, "七天窗口还没到点");
+    }
+
+    /// 桌面端样本在前、缓存里的重置时刻在它之后且已过去 —— 同样是重置前的数；
+    /// 反过来样本在重置之后，就是新窗口里的读数，不许误标。
+    #[test]
+    fn a_live_sample_is_stale_only_when_a_reset_came_after_it() {
+        let now = chrono::Utc::now().timestamp_millis();
+        let reset = rfc3339(now - 30 * MIN);
+        let later = rfc3339(now + MIN);
+        assert!(passed_between(Some(reset.as_str()), now - 60 * MIN, now));
+        assert!(!passed_between(Some(reset.as_str()), now - 10 * MIN, now));
+        assert!(!passed_between(Some(later.as_str()), now - 60 * MIN, now));
+        assert!(!passed_between(None, now - 60 * MIN, now));
+        // 样本里那次断崖推出来的重置时刻也算：推出来已经过去了，就说明最后一条样本之后又翻过篇。
+        let samples = vec![s(now - 400 * MIN, 90, 9), s(now - 390 * MIN, 5, 9)];
+        assert!(inferred_reset_ms(&samples).is_some_and(|r| r <= now));
+    }
+
+    /// 样本里没有 `sd`：七天那条不画（原来按 0 算，画成实心的「剩 100%」）；小数照样读得出来。
+    #[test]
+    fn a_missing_week_is_absent_not_zero_and_fractions_are_read() {
+        let text = r#"{"version":2,"samples":[
+            {"t":100,"org":"a","u":{"fh":12.5}},
+            {"t":200,"org":"a","u":{"fh":30,"sd":7.4}}
+        ]}"#;
+        let got = parse_history(text);
+        assert_eq!(got.len(), 2, "小数不许让整条样本被丢掉");
+        assert_eq!(got[0].fh, 13);
+        assert_eq!(got[0].sd, None);
+        assert_eq!(got[1].sd, Some(7));
+
+        let d = Dir::new("no-sd");
+        let now = chrono::Utc::now().timestamp_millis();
+        let hist = d.write(
+            "Roaming/Claude-main/plan-usage-history.json",
+            &format!(
+                r#"{{"version":2,"samples":[{{"t":{},"org":"a","u":{{"fh":20}}}}]}}"#,
+                now - MIN
+            ),
+        );
+        let slot = d.0.join("claude-profile-main");
+        std::fs::create_dir_all(&slot).unwrap();
+        let got = for_slot(&[hist], &slot, Some("a")).unwrap();
+        assert!(got.five_hour.is_some());
+        assert!(got.seven_day.is_none(), "没有七天的数就不画这一条");
     }
 
     /// 读不出来的路径是「少一层来源」，不是错误 —— 另一份照样要读出来。

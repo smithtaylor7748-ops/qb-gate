@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "../ui";
 import { DEMO_ENABLED } from "./demo";
-import { invalidateAll, invalidateAutomatic, res, useResource } from "./store";
+import { invalidate, invalidateAutomatic, res, useResource } from "./store";
 import { call } from "./ipc";
 import { toIpcError } from "./ipcError";
 import type { LaunchPlan } from "./generated/LaunchPlan";
@@ -138,10 +138,22 @@ export function useAction() {
   const pendingRef = useRef(false);
   const [pending, setPending] = useState("");
   const [error, setError] = useState("");
+  /**
+   * 跑一个动作。成功之后**只刷新活状态**（`auto` 的那些资源），不清测量。
+   *
+   * ⛔ 原来这里是 `invalidateAll()`（2026-09-25 查出）：`auto: false` 的测量 —— DNS、中文环境、
+   * 本机体检、出口一致性、出口 IP —— 连同存在 localStorage 里的那份一起扔掉。中转站存一条线路、
+   * 设置里点一个开关、「检查官方目录」看一眼差异，总览上的综合评分都退回「未检测」，
+   * 六秒的 DNS 要重测；引导页「扫描」刚刷新完的结果也被当场扔掉。
+   *
+   * 真改了某个被测对象的动作（恢复系统时区、重装 Chrome……）把那几份测量的键写进 `stale`，
+   * 只扔那几份 —— 跟 `store.ts` 里 `invalidate` 的规矩同一条：破坏性操作之后，那一次测量就是没了。
+   */
   async function run<T>(
     name: string,
     action: () => Promise<T>,
     success?: string,
+    stale: readonly string[] = [],
   ): Promise<T | undefined> {
     if (pendingRef.current) return;
     pendingRef.current = true;
@@ -149,7 +161,8 @@ export function useAction() {
     setError("");
     try {
       const result = await action();
-      invalidateAll();
+      if (stale.length) invalidate(...stale);
+      void invalidateAutomatic();
       if (success) toast.ok(success);
       return result;
     } catch (e) {

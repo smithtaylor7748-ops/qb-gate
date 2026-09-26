@@ -96,7 +96,7 @@ fn window_name(minutes: i64) -> String {
 }
 
 /// 解一个 `primary` / `secondary` 子对象。字段缺一不可少 `used_percent`。
-fn parse_window(v: &Value) -> Option<CodexWindow> {
+fn parse_window(v: &Value, now_ms: i64) -> Option<CodexWindow> {
     let used = v.get("used_percent")?.as_f64()?;
     if !used.is_finite() {
         return None;
@@ -105,10 +105,11 @@ fn parse_window(v: &Value) -> Option<CodexWindow> {
         .get("window_minutes")
         .and_then(Value::as_i64)
         .unwrap_or_default();
-    let resets_at = v
+    let reset_secs = v
         .get("resets_at")
         .and_then(Value::as_i64)
-        .filter(|s| *s > 0)
+        .filter(|s| *s > 0);
+    let resets_at = reset_secs
         .and_then(|s| DateTime::from_timestamp(s, 0))
         .map(|d| d.to_rfc3339());
     Some(CodexWindow {
@@ -119,6 +120,8 @@ fn parse_window(v: &Value) -> Option<CodexWindow> {
             resets_at,
             // Codex 自己写下来的，不是我们推的。
             estimated: false,
+            // 快照里的重置时刻已经过去：这是重置之前记的数（2026-09-25）。
+            reset_passed: reset_secs.is_some_and(|s| s.saturating_mul(1000) <= now_ms),
         },
     })
 }
@@ -139,8 +142,8 @@ pub fn parse_line(line: &str, source_file: &str, now_ms: i64) -> Option<CodexRat
         return None;
     }
     let r = v["payload"].get("rate_limits")?;
-    let primary = r.get("primary").and_then(parse_window);
-    let secondary = r.get("secondary").and_then(parse_window);
+    let primary = r.get("primary").and_then(|w| parse_window(w, now_ms));
+    let secondary = r.get("secondary").and_then(|w| parse_window(w, now_ms));
     if primary.is_none() && secondary.is_none() {
         return None;
     }
@@ -235,7 +238,14 @@ fn last_in_file(path: &Path, now_ms: i64) -> std::io::Result<Option<CodexRateLim
     let name = path.display().to_string();
     let mut found = None;
     for line in std::io::BufReader::new(file).lines() {
-        let line = line?;
+        // 一行坏编码（Codex 正在写的最后一行只写了一半）原来会让整份文件作废 —— 前面已经找到的
+        // 额度一起丢掉，退回更旧的那份（2026-09-25）。坏编码的行跳过；别的读错误停读，前面读到的照样算。
+        let line = match line {
+            Ok(line) => line,
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => continue,
+            Err(e) if found.is_none() => return Err(e),
+            Err(_) => break,
+        };
         if !line.contains("\"rate_limits\"") {
             continue;
         }
@@ -282,6 +292,25 @@ mod tests {
 
     const LINE_WITH: &str = r#"{"timestamp":"2026-09-17T07:53:51.000Z","type":"event_msg","payload":{"type":"token_count","info":{},"rate_limits":{"limit_id":"codex","primary":{"used_percent":2.0,"window_minutes":10080,"resets_at":1790247800},"secondary":null,"credits":{"has_credits":false,"unlimited":false,"balance":null},"plan_type":null}}}"#;
     const LINE_ALL_NULL: &str = r#"{"timestamp":"2026-09-18T20:04:54.998Z","type":"event_msg","payload":{"type":"token_count","info":{},"rate_limits":{"limit_id":"codex","primary":null,"secondary":null,"credits":null,"plan_type":null}}}"#;
+
+    /// Codex 正在写的最后一行只写了一半（坏编码）：前面已经找到的额度照样算，不许整份作废。
+    #[test]
+    fn a_half_written_last_line_does_not_throw_away_the_file() {
+        let path = std::env::temp_dir().join(format!(
+            "qbgate-ratelimit-badline-{}-{}.jsonl",
+            std::process::id(),
+            chrono::Local::now().format("%H%M%S%f")
+        ));
+        let mut bytes = LINE_WITH.as_bytes().to_vec();
+        bytes.extend_from_slice(b"\n{\"rate_limits\":\xff\xfe");
+        std::fs::write(&path, &bytes).unwrap();
+        let got = last_in_file(&path, 0);
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            got.expect("坏编码的一行不许让整份文件报错").is_some(),
+            "前面那条额度要留住"
+        );
+    }
 
     #[test]
     fn a_record_whose_windows_are_all_null_is_not_a_reading() {

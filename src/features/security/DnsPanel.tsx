@@ -269,8 +269,17 @@ export function DnsWhy() {
         「没有泄露」。
       </p>
       <p className="notice mt-2">
-        <strong>网卡配置检查</strong>：看有没有物理网卡的 DNS 指向内网路由器。
-        TUN 网卡上的 <code>172.18.0.2</code> 是合成地址，属于正常，不报。
+        <strong>网卡配置检查</strong>：只在 TUN 开着时算。看
+        <strong>连着的</strong>物理网卡（有线、Wi-Fi 都算）上配的
+        DNS，这条查询从哪张网卡出去：进隧道就没事，从物理网卡直接出去才是缺口 ——
+        Windows 会同时向每张网卡的 DNS 发查询。断开的网卡、隧道网卡自己的 DNS
+        不看；没开 TUN 时没有隧道可绕，这一项不计分。
+      </p>
+      <p className="notice mt-2">
+        用 fake-ip 模式的代理（Clash / mihomo 这类）时，探针域名会被解析成{" "}
+        <code>198.18.x.x</code>
+        ，查询根本没从本机发出去，bash.ws 收不到回显 ——
+        这时判不了，报告里会单独说明，不是检测坏了。
       </p>
     </Collapsible>
   );

@@ -84,6 +84,18 @@ fn out(state: ProbeState, detail: impl Into<String>) -> ProbeResult {
     }
 }
 
+/// 「多久以前」：不到一小时报分钟（原来整数除法，刚过期写成「0 小时前」）。
+fn ago_text(ms: i64) -> String {
+    let minutes = ms.max(0) / 60_000;
+    if minutes < 1 {
+        "刚刚".into()
+    } else if minutes < 60 {
+        format!(" {minutes} 分钟前")
+    } else {
+        format!(" {} 小时前", minutes / 60)
+    }
+}
+
 /// 读槽位里的 `accessToken` 与它的到期毫秒数。
 ///
 /// ⛔ 返回值里带着真令牌 —— 调用方只许把它放进 `Authorization` 头，
@@ -111,11 +123,11 @@ pub async fn probe(slot_dir: &Path, client: &reqwest::Client) -> ProbeResult {
 
     let now = chrono::Utc::now().timestamp_millis();
     if expires_at <= now {
-        let hours = (now - expires_at) / 3_600_000;
+        let ago = ago_text(now - expires_at);
         return out(
             ProbeState::LocallyExpired,
             format!(
-                "本地这份访问令牌 {hours} 小时前就过期了，没有发请求 —— \
+                "本地这份访问令牌{ago}就过期了，没有发请求 —— \
                  拿过期令牌去问，被拒是必然的，报给你只会是假警报。\
                  访问令牌 8–12 小时一换，是正常轮换：用这个账户跑一次 Claude Code，\
                  它会自己换新，再回来测。"
@@ -249,6 +261,14 @@ mod tests {
         assert!(!r.detail.contains(secret), "令牌漏进 detail 了");
         assert!(!format!("{r:?}").contains(secret));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// 刚过期不许写成「0 小时前」。
+    #[test]
+    fn how_long_ago_reads_in_minutes_under_an_hour() {
+        assert_eq!(ago_text(30_000), "刚刚");
+        assert_eq!(ago_text(20 * 60_000), " 20 分钟前");
+        assert_eq!(ago_text(3 * 3_600_000 + 5 * 60_000), " 3 小时前");
     }
 
     /// 传给界面的是纯文本，写 Markdown 的星号会显示成两个星号。

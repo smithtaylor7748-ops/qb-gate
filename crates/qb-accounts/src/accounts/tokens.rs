@@ -891,7 +891,15 @@ fn read_entries(t: &Transcript) -> std::io::Result<Vec<Entry>> {
     for line in std::io::BufReader::new(file).lines() {
         // 读坏的那一行跳过，不让它废掉整个文件 —— 转写是追加写的，
         // 正在写的最后一行可能只写了一半。
-        let Ok(line) = line else { continue };
+        //
+        // ⛔ 只跳过**编码坏了**的行（那几个字节已经读走了，下一次接着往后读）。别的读错误
+        // （磁盘 / 网络盘出错）会一直原样再报，`continue` 就是在 `spawn_blocking` 里空转到天荒地老
+        // —— 界面上那颗转圈永远不停。那种时候停读这个文件，前面读到的照样算。
+        let line = match line {
+            Ok(line) => line,
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => continue,
+            Err(_) => break,
+        };
         if !line.contains("\"usage\"") {
             continue;
         }

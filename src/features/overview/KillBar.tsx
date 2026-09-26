@@ -15,6 +15,7 @@ import { useState } from "react";
 import { Square } from "lucide-react";
 
 import { api, type KillReport } from "../../lib/api";
+import { describeTargets } from "../../pages/accounts/AccountDialogs";
 import Tile from "./Tile";
 import { AFTER } from "../../lib/resources";
 import { invalidate } from "../../lib/store";
@@ -68,6 +69,9 @@ export default function KillBar({
   async function previewKill() {
     setBusy(true);
     resetTask("killswitch-preview");
+    // 新的一轮开始了，上一轮执行的失败原文不再代表现状。原来它会一直挂在贴上，
+    // 挡住后面每一次扫描的进度与结果，直到再执行一次（2026-09-25）。
+    resetTask("killswitch-execute");
     try {
       setKill(await api.killswitchPreview());
       endTask("killswitch-preview");
@@ -132,8 +136,8 @@ export default function KillBar({
           <p className="notice notice--danger text-center">
             只收满足双重证据的进程，绝不按进程名杀。
             <strong>会连这个面板正在服务的 Claude Code 会话一起收掉。</strong>
-            收完会重新上锁，<strong>但你原来的租约会还给你</strong>（出口 IP
-            仍合格的话）。
+            收完会重新上锁、<strong>收回租约</strong>
+            ，之后再启动要重新验出口 IP。
             {shown.error && ` ${shown.error}`}
           </p>
         </>
@@ -144,13 +148,20 @@ export default function KillBar({
         onCancel={() => setKill(null)}
         onConfirm={doKill}
         title="一键关闭所有 Claude"
-        confirmLabel={`确认关闭 ${kill?.targets.length ?? 0} 个进程`}
+        confirmLabel={
+          kill?.targets.length
+            ? `确认关闭 ${kill.targets.length} 个进程`
+            : "照样停掉会话并上锁"
+        }
         loading={killing}
         danger
       >
         {kill?.targets.length ? (
           <>
-            <p>下面这些进程会被收掉，收完自动重新上锁：</p>
+            <p>
+              下面这些进程会被收掉（{describeTargets(kill)}
+              ），收完自动重新上锁：
+            </p>
             <div className="mt-2">
               {kill.targets.map((t) => (
                 <Row
@@ -176,8 +187,17 @@ export default function KillBar({
             </p>
           </>
         ) : (
-          <p>没有满足双重证据的进程，什么都不会动。</p>
+          <p>没有扫到要按证据收的进程。</p>
         )}
+
+        {/* ⛔ 不管扫到几个，确认之后这些都会发生（`gate_ops::stop_managed(true)`）。原来一个进程都没扫到时
+            这里写「什么都不会动」，点下去酒馆、桥接、面板起的会话全停，门也关上了（2026-09-25）。 */}
+        <p className="notice notice--danger mt-3">
+          确认之后还会：停掉酒馆和两条内置桥接（GPT /
+          Gemini）、停掉面板起的全部会话（包括中转的）、
+          把可执行文件重新上锁并收回租约 —— 之后再启动任何一个都要重新验出口
+          IP。
+        </p>
 
         {!!kill?.spared.length && (
           <div className="mt-3">

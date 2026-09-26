@@ -4,7 +4,7 @@ default-run = "qb-gate"
 # 版本号不写 `.workspace = true`：`scripts/release-check.mjs` 在这个文件里
 # 正则找 `^version = "…"`，要跟 package.json / tauri.conf.json 三处对齐。
 # 根 Cargo.toml 的 `[workspace.package] version` 与这里的一致性由同一个脚本钉住。
-version = "0.25.4"
+version = "0.25.5"
 description = "Windows workspace for official accounts, relay environments and extensions"
 # 从不发到 crates.io。写出来有两个作用：`cargo publish` 手滑跑不动，
 # 以及 cargo-deny 的 wildcards 检查会据此把内部 path 依赖放行

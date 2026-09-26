@@ -531,19 +531,75 @@ pub fn close_desktop() -> Result<usize> {
     Ok(0)
 }
 
-/// 真正执行：收掉全部满足证据的 Claude 进程，收完重新上锁。
-pub async fn execute() -> Result<KillReport> {
-    execute_scoped(false).await
+/// 一次关停收哪些进程。三个调用方要的是三件不同的事，**别合并**（2026-09-25）。
+///
+/// 原来只有「全收」与「官方」两档，而「官方」同时给了门禁关停和切 Claude 账户：
+/// 切账户于是把反重力（按安装目录认出来的 [`Role::Antigravity`]）也一起关了 —— 确认框只数
+/// 桌面端 / Claude Code / 桥接三类，只有反重力开着时写「会关掉：。」然后把 IDE 连同没保存的东西收掉。
+/// 门禁那一档又不看使用者有没有把反重力移出门禁。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// 使用者手点「一键关闭」：满足证据的全收（含中转、含反重力）。收完重新上锁。
+    Everything,
+    /// 门禁驱动的关停：官方那一边。中转不归门禁的关停策略管（`LaunchTarget::stops_with_gate`）；
+    /// 反重力只在它**归门禁**时收（`settings::antigravity_under_gate`，使用者可以把它移出）。
+    Gate { antigravity: bool },
+    /// 切 Claude 账户之前的清场：只收 Claude 的（桌面端、Claude Code、酒馆桥接）。
+    /// 反重力是 Google 账户，跟 Claude 槽位无关 —— 跟 [`needs_clearing`] 同一条。
+    AccountSwitch,
 }
-pub async fn preview_official() -> Result<KillReport> {
+
+/// 按范围筛目标。**纯函数**。`relay_owned` 回答「这个 PID 是不是中转会话的」，
+/// 真实环境里是 `sessions::owns_pid(pid, Relay)`。
+pub fn in_scope(
+    targets: Vec<KillTarget>,
+    scope: Scope,
+    relay_owned: impl Fn(u32) -> bool,
+) -> Vec<KillTarget> {
+    targets
+        .into_iter()
+        .filter(|t| match scope {
+            Scope::Everything => true,
+            Scope::Gate { antigravity } => {
+                !relay_owned(t.pid) && (antigravity || t.role != Role::Antigravity)
+            }
+            Scope::AccountSwitch => !relay_owned(t.pid) && t.role != Role::Antigravity,
+        })
+        .collect()
+}
+
+fn relay_owned(pid: u32) -> bool {
+    crate::sessions::owns_pid(pid, crate::domain::IdentityKind::Relay)
+}
+
+/// 只看不动，但按范围筛过 —— 确认框报的数要跟真去关的是同一批。
+pub async fn preview_in(scope: Scope) -> Result<KillReport> {
     let mut report = preview().await?;
-    report
-        .targets
-        .retain(|t| !crate::sessions::owns_pid(t.pid, crate::domain::IdentityKind::Relay));
+    report.targets = in_scope(report.targets, scope, relay_owned);
     Ok(report)
 }
+
+/// 真正执行：收掉全部满足证据的进程，收完重新上锁。
+pub async fn execute() -> Result<KillReport> {
+    execute_scoped(Scope::Everything).await
+}
+
+/// 门禁驱动的关停：官方那一边；反重力归不归门禁看设置。不重锁（调用方开头已经锁过）。
 pub async fn execute_official() -> Result<KillReport> {
-    execute_scoped(true).await
+    execute_scoped(Scope::Gate {
+        antigravity: crate::settings::antigravity_under_gate(),
+    })
+    .await
+}
+
+/// 切 Claude 账户之前看一眼会关掉哪些（确认框报数用）。
+pub async fn preview_for_switch() -> Result<KillReport> {
+    preview_in(Scope::AccountSwitch).await
+}
+
+/// 切 Claude 账户之前的清场：只收 Claude 的。不重锁。
+pub async fn execute_for_switch() -> Result<KillReport> {
+    execute_scoped(Scope::AccountSwitch).await
 }
 
 /// 只收桌面端：桌面端本身，连同它 Code 页拉起的会话（[`Role::Desktop`]）。
@@ -634,20 +690,15 @@ pub fn only_desktop(targets: Vec<KillTarget>) -> Vec<KillTarget> {
         .filter(|t| t.role == Role::Desktop)
         .collect()
 }
-async fn execute_scoped(official_only: bool) -> Result<KillReport> {
-    let mut report = preview().await?;
-    if official_only {
-        report
-            .targets
-            .retain(|t| !crate::sessions::owns_pid(t.pid, crate::domain::IdentityKind::Relay));
-    }
+async fn execute_scoped(scope: Scope) -> Result<KillReport> {
+    let mut report = preview_in(scope).await?;
     for t in &report.targets {
         match crate::sessions::terminate_verified(t.pid, t.process_created) {
             Ok(()) => report.killed.push(t.pid),
             Err(e) => report.failed.push((t.pid, e.to_string())),
         }
     }
-    if !official_only {
+    if scope == Scope::Everything {
         report.relocked = crate::gate::lock_all()?;
     }
     Ok(report)
@@ -775,6 +826,47 @@ mod tests {
             target(4, Role::Desktop),
         ]);
         assert_eq!(kept.iter().map(|t| t.pid).collect::<Vec<_>>(), vec![1, 4]);
+    }
+
+    fn pids(v: &[KillTarget]) -> Vec<u32> {
+        v.iter().map(|t| t.pid).collect()
+    }
+
+    #[test]
+    fn the_three_scopes_take_different_processes() {
+        // 2026-09-25：切 Claude 账户原来用的是门禁那一档，把反重力 IDE 一起关了，
+        // 确认框却只数 Claude 的三类。三件事三个范围，钉在这里。
+        let all = || {
+            vec![
+                target(1, Role::Desktop),
+                target(2, Role::Code),
+                target(3, Role::Bridge),
+                target(4, Role::Antigravity),
+                target(5, Role::Code), // 中转会话的
+            ]
+        };
+        let relay = |pid: u32| pid == 5;
+
+        assert_eq!(
+            pids(&in_scope(all(), Scope::Everything, relay)),
+            vec![1, 2, 3, 4, 5],
+            "使用者手点一键关闭：全收"
+        );
+        assert_eq!(
+            pids(&in_scope(all(), Scope::AccountSwitch, relay)),
+            vec![1, 2, 3],
+            "切 Claude 账户：只收 Claude 的，中转与反重力都不碰"
+        );
+        assert_eq!(
+            pids(&in_scope(all(), Scope::Gate { antigravity: true }, relay)),
+            vec![1, 2, 3, 4],
+            "门禁关停：中转不收，反重力归门禁时收"
+        );
+        assert_eq!(
+            pids(&in_scope(all(), Scope::Gate { antigravity: false }, relay)),
+            vec![1, 2, 3],
+            "反重力移出了门禁：门禁关停不许再按目录收它"
+        );
     }
 
     #[test]

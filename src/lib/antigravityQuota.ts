@@ -27,6 +27,8 @@ export interface QuotaFamily {
   tags: string[];
   /** 合并进来的档位数。 */
   variants: number;
+  /** 取到的那个最低值是按 0 推出来的（Google 只给了重置时刻）。界面要说出来。 */
+  implied: boolean;
 }
 
 /** `Gemini 3.7 Flash (High)` → `Gemini 3.7 Flash`。没有括号就原样。 */
@@ -49,6 +51,7 @@ export function groupQuota(models: AntigravityModelQuota[]): QuotaFamily[] {
         reset_epoch: null,
         tags: [],
         variants: 0,
+        implied: false,
       };
       index.set(family, f);
       out.push(f);
@@ -61,6 +64,7 @@ export function groupQuota(models: AntigravityModelQuota[]): QuotaFamily[] {
       f.remaining = m.remaining;
       f.reset_at = m.reset_at;
       f.reset_epoch = m.reset_epoch;
+      f.implied = m.remaining_implied;
     }
     for (const t of m.tags) if (!f.tags.includes(t)) f.tags.push(t);
   }
@@ -170,6 +174,24 @@ export function tierShort(
   return Array.from(name).length > 12
     ? Array.from(name).slice(0, 12).join("") + "…"
     : name;
+}
+
+/**
+ * 额度来源那一格的短标签（反重力用量卡的 IDE / Hub / Gemini CLI 三格）。完整原因在悬停里。
+ *
+ * ⛔ 顺序要紧（2026-09-25）：先认「登录已失效」「到点」，**只有真的 401 才叫「401 未授权」**。
+ * 原来含「令牌 / token」的全叫 401 —— 连「换新访问令牌没成功（网络超时）」「找不到客户端标识」
+ * 都算，把到点说成被拒，正是 CLAUDE.md「联网额度」第 8 条要防的那件事。
+ */
+export function quotaErrorLabel(message: string): string {
+  if (message.startsWith("登录已失效")) return "登录已失效";
+  if (/到点/.test(message)) return "令牌到点";
+  if (/\b401\b|unauthori[sz]ed/i.test(message)) return "401 未授权";
+  if (/\b403\b|forbidden|拒绝/i.test(message)) return "403 被拒绝";
+  if (/\b429\b|限流|too many/i.test(message)) return "限流";
+  if (/没有激活|未登录|还没登录|没有.*槽位/.test(message)) return "未登录";
+  if (/设置里关掉/.test(message)) return "已关闭";
+  return "读取失败";
 }
 
 /**

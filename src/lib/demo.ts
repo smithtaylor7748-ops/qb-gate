@@ -394,11 +394,13 @@ const accounts: AccountsReport = {
           used: 62,
           resets_at: new Date(Date.now() + 97 * 60_000).toISOString(),
           estimated: true,
+          reset_passed: false,
         },
         seven_day: {
           used: 79,
           resets_at: new Date(Date.now() + 3 * 86_400_000).toISOString(),
           estimated: false,
+          reset_passed: false,
         },
       },
     },
@@ -423,8 +425,18 @@ const accounts: AccountsReport = {
         source: "cache",
         measured_at: "2026-09-02T18:07:05.310Z",
         age_minutes: 14_400,
-        five_hour: { used: 25, resets_at: null, estimated: false },
-        seven_day: { used: 13, resets_at: null, estimated: false },
+        five_hour: {
+          used: 25,
+          resets_at: null,
+          estimated: false,
+          reset_passed: false,
+        },
+        seven_day: {
+          used: 13,
+          resets_at: null,
+          estimated: false,
+          reset_passed: false,
+        },
       },
     },
     {
@@ -453,6 +465,7 @@ const accounts: AccountsReport = {
   sync: { done: [], failed: [] },
   desktop: { managed: true, active: "demo-main" },
   bridgePresent: true,
+  slotsError: null,
 };
 
 // Six fictional slots exercise four-per-page navigation in the demo.
@@ -1193,6 +1206,7 @@ const agAccounts: AntigravityAccount[] = [
     ide_dir: `${HOME}\\AppData\\Local\\ClaudeIpGate\\antigravity-accounts\\ag-demo-0\\ide-user-data`,
     ide_logged_in: true,
     ide_auth_state: "已登录 · 令牌由 IDE 自己保管在它的状态库里",
+    ide_unreadable: false,
     email: "someone@example.com",
     tier: "Google AI Pro",
     identity_error: null,
@@ -1201,6 +1215,7 @@ const agAccounts: AntigravityAccount[] = [
     cli_dir: `${HOME}\\AppData\\Local\\ClaudeIpGate\\antigravity-accounts\\ag-demo-0\\cli-home`,
     cli_logged_in: true,
     cli_auth_state: "已登录 · 本地凭据（由 Gemini CLI 自己保管）",
+    cli_unreadable: false,
   },
   {
     id: "ag-demo-1",
@@ -1209,6 +1224,7 @@ const agAccounts: AntigravityAccount[] = [
     ide_dir: `${HOME}\\AppData\\Local\\ClaudeIpGate\\antigravity-ide-accounts\\ag-ide-demo-1\\user-data`,
     ide_logged_in: false,
     ide_auth_state: "未登录 · 还没在这个账户起过 IDE",
+    ide_unreadable: false,
     email: null,
     tier: null,
     identity_error: null,
@@ -1217,6 +1233,7 @@ const agAccounts: AntigravityAccount[] = [
     cli_dir: null,
     cli_logged_in: false,
     cli_auth_state: "还没有 CLI 那一半",
+    cli_unreadable: false,
   },
   {
     id: "ag-demo-2",
@@ -1225,6 +1242,7 @@ const agAccounts: AntigravityAccount[] = [
     ide_dir: null,
     ide_logged_in: false,
     ide_auth_state: "还没有 IDE 那一半",
+    ide_unreadable: false,
     email: null,
     tier: null,
     identity_error: null,
@@ -1233,6 +1251,7 @@ const agAccounts: AntigravityAccount[] = [
     cli_dir: `${HOME}\\AppData\\Local\\ClaudeIpGate\\gemini-accounts\\gemini-demo-1\\home`,
     cli_logged_in: false,
     cli_auth_state: "未登录",
+    cli_unreadable: false,
   },
 ];
 
@@ -1250,6 +1269,7 @@ const antigravityIdentity = (): AntigravityIdentity => {
     reset_at: remaining == null ? null : "2026-09-21 07:38",
     reset_epoch: remaining == null ? null : reset,
     tags,
+    remaining_implied: false,
   });
   return {
     name: "演示用户",
@@ -2815,6 +2835,11 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     );
   },
   killswitch_preview: () => kill,
+  // 切 Claude 账户的确认框：只报 Claude 那几类（中转与反重力不碰），跟真去关的是同一个范围。
+  official_switch_preview: () => ({
+    ...kill,
+    targets: kill.targets.filter((t) => t.role !== "antigravity"),
+  }),
   plugin_list: () => plugins,
   plugin_catalog_status: () => catalog,
   tavern_config: () => tavern,
@@ -2840,6 +2865,7 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
           remaining_percent: 62,
           reset_at: "2026-09-22 00:00",
           reset_epoch: Math.floor(Date.now() / 1000) + 36000,
+          remaining_implied: false,
         },
         {
           model_id: "gemini-2.5-flash",
@@ -2848,6 +2874,7 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
           remaining_percent: 84,
           reset_at: "2026-09-22 00:00",
           reset_epoch: Math.floor(Date.now() / 1000) + 36000,
+          remaining_implied: false,
         },
       ],
       fetched_at: new Date().toISOString(),
@@ -2928,6 +2955,7 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       ide_dir: `${HOME}\\AppData\\Local\\ClaudeIpGate\\antigravity-accounts\\${id}\\ide-user-data`,
       ide_logged_in: false,
       ide_auth_state: "未登录 · 还没在这个账户起过 IDE",
+      ide_unreadable: false,
       email: null,
       tier: null,
       identity_error: null,
@@ -2936,6 +2964,7 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       cli_dir: `${HOME}\\AppData\\Local\\ClaudeIpGate\\antigravity-accounts\\${id}\\cli-home`,
       cli_logged_in: false,
       cli_auth_state: "未登录",
+      cli_unreadable: false,
     });
     return id;
   },
@@ -3160,6 +3189,7 @@ function agOnlineQuota(paid: boolean) {
           reset_at: demoMinute(now + 5 * 86400),
           reset_epoch: now + 5 * 86400,
           tags: ["Fast"],
+          remaining_implied: false,
         },
         {
           label: "Claude Sonnet 4.6",
@@ -3168,6 +3198,7 @@ function agOnlineQuota(paid: boolean) {
           reset_at: demoMinute(now + 5 * 86400),
           reset_epoch: now + 5 * 86400,
           tags: [],
+          remaining_implied: false,
         },
       ],
       fetched_at: demoMinute(now),
@@ -3317,6 +3348,7 @@ function codexDemo(cmd: string, args: Record<string, unknown>) {
             used: 29,
             resets_at: new Date(Date.now() + 2.4 * 3600_000).toISOString(),
             estimated: false,
+            reset_passed: false,
           },
         },
         secondary: {
@@ -3326,6 +3358,7 @@ function codexDemo(cmd: string, args: Record<string, unknown>) {
             used: 77,
             resets_at: new Date(Date.now() + 3.2 * 86400_000).toISOString(),
             estimated: false,
+            reset_passed: false,
           },
         },
         plan_type: null,

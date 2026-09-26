@@ -138,6 +138,10 @@ pub struct TavernGeminiModelQuota {
     pub reset_at: Option<String>,
     #[ts(type = "number | null")]
     pub reset_epoch: Option<i64>,
+    /// 这一格只有 `resetTime`、没有 `remainingFraction`，按 0 算的（proto3 的 JSON 把零值字段整个省掉）。
+    /// 界面上要说出来（CLAUDE.md「联网额度」第 6 条，2026-09-25 补上 —— 原来这一格被当成「没读到」，
+    /// 用光的那一格反而不显示，「剩余配额」取到的是别的、更高的那一格）。
+    pub remaining_implied: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -370,12 +374,25 @@ fn looks_like_gpt_window(v: &Value) -> bool {
         .any(|key| v.get(*key).is_some())
 }
 
+/// 没带时长、也没有键名说明是哪一格的窗口：**按位置猜「5 小时 / 7 天」不行**（2026-09-25）——
+/// 只剩一个每周窗口时它排第一，会被叫成「5 小时」。跟本机快照那条（`codex::ratelimit::window_name`）
+/// 同一条规矩：认不出来就说认不出来；带序号是为了两格不同名（界面拿名字当 key）。
+fn unknown_window(index: usize) -> &'static str {
+    const NAMES: [&str; 4] = [
+        "窗口 1（时长未知）",
+        "窗口 2（时长未知）",
+        "窗口 3（时长未知）",
+        "窗口 4（时长未知）",
+    ];
+    NAMES[index.min(NAMES.len() - 1)]
+}
+
 fn gpt_candidates(rate: &Value) -> Vec<(&Value, &'static str)> {
     let mut candidates = Vec::new();
     if let Some(items) = rate.as_array() {
         for (index, item) in items.iter().enumerate() {
             if looks_like_gpt_window(item) {
-                candidates.push((item, if index == 0 { "5 小时" } else { "7 天" }));
+                candidates.push((item, unknown_window(index)));
             }
         }
     }
@@ -401,13 +418,13 @@ fn gpt_candidates(rate: &Value) -> Vec<(&Value, &'static str)> {
             if let Some(items) = object.get(nested_key).and_then(Value::as_array) {
                 for (index, item) in items.iter().enumerate() {
                     if looks_like_gpt_window(item) {
-                        candidates.push((item, if index == 0 { "5 小时" } else { "7 天" }));
+                        candidates.push((item, unknown_window(index)));
                     }
                 }
             }
         }
         if candidates.is_empty() && looks_like_gpt_window(rate) {
-            candidates.push((rate, "5 小时"));
+            candidates.push((rate, unknown_window(0)));
         }
     }
     let mut unique = Vec::with_capacity(candidates.len());
@@ -628,6 +645,9 @@ fn parse_gemini_models(v: &Value) -> Vec<TavernGeminiModelQuota> {
         if remaining.is_none() && reset_epoch.is_none() {
             continue;
         }
+        // 有重置时刻、没有比例：proto3 把 0 省掉了，按 0 算并标出来（跟反重力那条同一个规矩）。
+        let remaining_implied = remaining.is_none();
+        let remaining = remaining.or(Some(0));
         let model_id = bucket
             .get("modelId")
             .or_else(|| bucket.get("model_id"))
@@ -654,10 +674,16 @@ fn parse_gemini_models(v: &Value) -> Vec<TavernGeminiModelQuota> {
             remaining_percent: remaining,
             reset_at: display_time(reset_epoch),
             reset_epoch,
+            remaining_implied,
         });
     }
     out.sort_by(|a, b| a.label.cmp(&b.label));
-    out.dedup_by(|a, b| a.model_id == b.model_id && a.token_type == b.token_type);
+    // 去重键要带上标签：汇总接口（没有 project 时走它）的桶没有 `modelId` / `tokenType`，
+    // 原来按那两样去重，四个桶全是 None/None，只剩排在最前的一个 —— 可能还是 Claude/GPT 那一组的，
+    // 被当成 Gemini CLI 的额度显示（2026-09-25）。
+    out.dedup_by(|a, b| {
+        a.model_id == b.model_id && a.token_type == b.token_type && a.label == b.label
+    });
     out
 }
 
@@ -982,6 +1008,19 @@ mod tests {
         assert_eq!(q.windows[0].remaining_percent, None);
     }
 
+    /// 数组里的窗口没带时长：不按位置猜「5 小时 / 7 天」（只剩一个每周窗口时它排第一）。
+    #[test]
+    fn windows_without_a_duration_are_not_guessed_from_their_position() {
+        let body =
+            r#"{"rate_limits":[{"used_percent":40},{"used_percent":10},{"used_percent":5}]}"#;
+        let q = parse_gpt(body, None).unwrap();
+        let labels: Vec<&str> = q.windows.iter().map(|w| w.label.as_str()).collect();
+        assert!(labels.iter().all(|l| l.contains("时长未知")), "{labels:?}");
+        let mut distinct = labels.clone();
+        distinct.dedup();
+        assert_eq!(distinct.len(), labels.len(), "界面拿名字当 key，不许同名");
+    }
+
     #[test]
     fn gemini_buckets_keep_model_identity_and_reset_time() {
         let load = r#"{"cloudaicompanionProject":{"id":"demo-project"},"currentTier":{"tierName":"Google AI Pro"}}"#;
@@ -1003,6 +1042,27 @@ mod tests {
     #[test]
     fn missing_quota_is_an_error_not_zero() {
         assert!(parse_gemini("{}", "{\"buckets\":[]}", None).is_err());
+    }
+
+    /// 2026-09-25：没有 project 时走汇总，桶只有 `bucketId` / `window`、没有 `modelId`。
+    /// 原来按 `modelId + tokenType` 去重，四个桶全是 None/None，只剩一个。
+    #[test]
+    fn summary_buckets_without_model_ids_are_not_collapsed_into_one() {
+        let load = r#"{"currentTier":{"tierName":"Google AI Pro"}}"#;
+        let quota = r#"{"buckets":[
+            {"bucketId":"gemini-5h","window":"gemini-5h","remainingFraction":0.8,"resetTime":"2026-09-24T11:03:25Z"},
+            {"bucketId":"gemini-weekly","window":"gemini-weekly","remainingFraction":0.3,"resetTime":"2026-09-28T11:03:25Z"},
+            {"bucketId":"3p-5h","window":"3p-5h","resetTime":"2026-09-24T12:00:00Z"}
+        ]}"#;
+        let q = parse_gemini(load, quota, None).unwrap();
+        assert_eq!(q.models.len(), 3, "{:?}", q.models);
+        // 只有重置时刻、没有比例的那一格：按 0 算，并且标出来是推出来的。
+        let implied = q.models.iter().find(|m| m.label == "3p-5h").unwrap();
+        assert_eq!(implied.remaining_percent, Some(0));
+        assert!(implied.remaining_implied);
+        let read = q.models.iter().find(|m| m.label == "gemini-5h").unwrap();
+        assert_eq!(read.remaining_percent, Some(80));
+        assert!(!read.remaining_implied);
     }
 
     #[test]

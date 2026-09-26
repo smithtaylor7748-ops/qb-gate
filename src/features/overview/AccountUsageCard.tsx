@@ -243,9 +243,24 @@ export default function AccountUsageCard() {
       {/* 归不到槽位的那部分单独说。瞒下来的话，使用者看到「今天 0」只会以为统计坏了。 */}
       <div className="usage-footer">
         <span className="notice">
-          {data?.unattributed
-            ? `另有 ${NUM.format(data.unattributed_messages)} 条未归属 · 美元按 API 价折算，非账单`
-            : "美元按官方 API 价折算，非账单 · 每分钟刷新"}
+          {/* 没算进美元的、没读成的都要说出来（文件头那句「跳过并报数」，2026-09-25 补上）：
+              原来只在「全部都没有官方价」时才提，一部分没算进去时卡上只剩一个偏小的数。 */}
+          {(() => {
+            const caveats = [
+              data?.unattributed
+                ? `另有 ${NUM.format(data.unattributed_messages)} 条未归属`
+                : "",
+              data && data.unpriced_models > 0
+                ? `${data.unpriced_models} 个模型没有官方价、没算进美元`
+                : "",
+              data?.coverage && data.coverage.files_failed > 0
+                ? `${data.coverage.files_failed} 份记录没读成、统计不完整`
+                : "",
+            ].filter(Boolean);
+            return caveats.length
+              ? `${caveats.join(" · ")} · 美元按 API 价折算，非账单`
+              : "美元按官方 API 价折算，非账单 · 每分钟刷新";
+          })()}
         </span>
         {/* 0.32.0：明细搬到可滚动的 `/usage` 上去了 ——
             这一页是固定高度的，趋势图与按模型分布摆不下。 */}

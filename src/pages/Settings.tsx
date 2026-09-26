@@ -32,6 +32,8 @@ export default function Settings() {
                   "timezone",
                   () => api.tzRestore().then(() => true),
                   "系统时区已恢复",
+                  // 时区变了：中文环境的时区那一项、体检与出口一致性里跟时区有关的读数都作废。
+                  ["signals", "checkup", "egress"],
                 )
                 .then((ok) => {
                   if (ok) setRestore(false);

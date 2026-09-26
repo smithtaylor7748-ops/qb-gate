@@ -104,6 +104,13 @@ function WindowGauge({
 }) {
   // 没这一项就整条不画。画一条空槽会被读成「剩 0」。
   if (!w) return null;
+  // 窗口在这份读数之后已经重置过（后端 `reset_passed`，2026-09-25）。原来只按读数的年龄判过期：
+  // 五小时窗口 40 分钟前就重置了、读数才 90 分钟旧，照样画「剩 8%」标红、重置时刻写「未知」。
+  if (w.reset_passed) {
+    return (
+      <Gauge name={name} used={null} note="已重置过，这份读数是重置之前的" />
+    );
+  }
   if (expired) {
     return <Gauge name={name} used={null} note="读数已过期，不是当前值" />;
   }
@@ -196,8 +203,9 @@ export default function SlotUsageBars({
 
   // 紧的那个：两边都有有效读数时才比得出来，差距太小就不标
   // （都在 50% 上下时标一个「卡这儿」只是噪音）。
-  const fh = fhDead ? null : usage.five_hour;
-  const sd = sdDead ? null : usage.seven_day;
+  // 已经重置过的那一格不参加比紧（它的数不是当前值）。
+  const fh = fhDead || usage.five_hour?.reset_passed ? null : usage.five_hour;
+  const sd = sdDead || usage.seven_day?.reset_passed ? null : usage.seven_day;
   let bind: "five" | "seven" | null = null;
   if (fh && sd && Math.abs(fh.used - sd.used) >= 10) {
     bind = fh.used > sd.used ? "five" : "seven";

@@ -28,4 +28,8 @@ planCaveat: string, sync: SyncReport, desktop: DesktopState,
 /**
  * 本机有酒馆桥接的数据目录 —— 有的话切换会一起切它。
  */
-bridgePresent: boolean, };
+bridgePresent: boolean, 
+/**
+ * 读不出槽位所在目录时的原因（2026-09-25）。有它时 `slots` 是空的，但**不是「还没有槽位」**。
+ */
+slotsError: string | null, };

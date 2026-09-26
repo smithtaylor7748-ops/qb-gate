@@ -86,15 +86,25 @@ const ROLE_WORD: Record<string, string> = {
   desktop: "桌面端",
   code: "Claude Code 会话",
   bridge: "酒馆桥接",
+  antigravity: "反重力",
 };
+const ROLE_ORDER = ["desktop", "code", "bridge", "antigravity"];
 
-/** 「会关掉：桌面端 13 个进程、Claude Code 会话 2 个、酒馆桥接 1 个」这种一句话。 */
-function describeTargets(r: KillReport): string {
+/**
+ * 「会关掉：桌面端 13 个进程、Claude Code 会话 2 个、酒馆桥接 1 个」这种一句话。
+ *
+ * 扫到什么就报什么，认不出的角色照原名报（2026-09-25）：原来只数三类，而切换真去关的
+ * 还包括反重力 —— 只有反重力开着时这句话是「会关掉：。」，然后 IDE 被收掉。现在切换只关
+ * Claude 的（后端 `Scope::AccountSwitch`），这里扫的也是同一个范围（`officialSwitchPreview`）。
+ */
+export function describeTargets(r: KillReport): string {
   const count = new Map<string, number>();
   for (const t of r.targets) count.set(t.role, (count.get(t.role) ?? 0) + 1);
-  return ["desktop", "code", "bridge"]
-    .filter((k) => count.get(k))
-    .map((k) => `${ROLE_WORD[k]} ${count.get(k)} 个`)
+  const rank = (k: string) =>
+    ROLE_ORDER.indexOf(k) < 0 ? ROLE_ORDER.length : ROLE_ORDER.indexOf(k);
+  return [...count.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b))
+    .map(([k, n]) => `${ROLE_WORD[k] ?? k} ${n} 个`)
     .join("、");
 }
 
@@ -112,6 +122,8 @@ function SwitchFlow() {
   const data = accounts.data;
   const slot = data?.slots.find((s) => s.label === label) ?? null;
   const current = data?.slots.find((s) => s.active)?.label;
+  const currentHasDesktop = !!data?.slots.find((s) => s.active)
+    ?.desktop_profile;
   // 给人看的那一串：「邮箱 - 命名」。`label` 仍然是传给后端的那个键。
   const shown = slot ? slotName(slot.email, slot.label) : (label ?? "");
 
@@ -123,8 +135,10 @@ function SwitchFlow() {
     // 这个槽位有自己的桌面端资料就默认一起切；没有的话默认不动桌面端 ——
     // 新建空白资料意味着桌面端要重新登录，得本人选。
     setDesktop(!!data?.slots.find((s) => s.label === label)?.desktop_profile);
+    // 扫的是切换真去关的那个范围（只 Claude 的：中转与反重力不碰），而且不发一键关闭的
+    // 进度事件 —— 原来借用 `killswitchPreview`，一打开切换框，「一键关闭」那块磁贴就跟着转（2026-09-25）。
     void api
-      .killswitchPreview()
+      .officialSwitchPreview()
       .then(setScan)
       .catch((e) => setScanErr(e instanceof Error ? e.message : String(e)));
     // 只在「换了一个要切的槽位」时重来，槽位列表刷新不该把使用者勾的东西冲掉。
@@ -193,8 +207,13 @@ function SwitchFlow() {
     }
     return [
       `会给桌面端新建一份 ${shown} 的空白资料并切过去，打开桌面端后要重新登录。`,
+      // 后端只在 `Claude-<当前>` 还空着时把现在这份存成它；已经有一份了就存成 `Claude-backup-…`
+      // （`plan_desktop` 的 adopt_to）。原来一律许诺「切回时原样回来」，那种情况下切回去用的是
+      // 更早那一份（2026-09-25）。
       !data.desktop.managed && current
-        ? `现在桌面端用的那份资料会存为 ${current} 的，切回 ${current} 时原样回来。`
+        ? currentHasDesktop
+          ? `现在桌面端用的那份资料会另存为 Claude-backup-…（${current} 已经有一份自己的桌面端资料）；切回 ${current} 时用的是它原来那一份，不是现在这一份。`
+          : `现在桌面端用的那份资料会存为 ${current} 的，切回 ${current} 时原样回来。`
         : null,
     ]
       .filter(Boolean)
@@ -214,7 +233,8 @@ function SwitchFlow() {
       danger
     >
       <p>
-        会先<strong>关闭全部正在跑的 Claude</strong>，再切过去。
+        会先<strong>关闭正在跑的官方 Claude</strong>
+        （桌面端、Claude Code、酒馆桥接；中转会话和反重力不动），再切过去。
         <strong>未保存的对话会丢。</strong>
       </p>
 
@@ -265,6 +285,8 @@ function NewSlotDialog() {
   const ready = !!name.trim() && !err && !taken;
   /** 已经有激活槽位 = 建完要登录就得先切，而切会关掉全部 Claude。 */
   const hasActive = !!accounts.data?.slots.some((s) => s.active);
+  /** 有槽位、但一个都没激活（`claude-profile` 指向的目录没了）。那时新建的也直接成为当前的。 */
+  const hasSlots = !!accounts.data?.slots.length;
 
   function close() {
     setOpen(false);
@@ -292,6 +314,7 @@ function NewSlotDialog() {
     try {
       const out = await api.accountsCreate(name.trim());
       await accounts.refresh();
+      invalidate(`tokens:${out.label}`);
       for (const n of out.notes) toast.info(n);
       close();
 
@@ -369,8 +392,11 @@ function NewSlotDialog() {
         <p className="notice mt-1">
           {login
             ? hasActive
-              ? "会先切过去 —— 那一步会关掉正在跑的全部 Claude，下一个框里会告诉你关哪些。"
-              : "这是第一个槽位，直接就是当前的：不切、不关任何进程。"
+              ? "会先切过去 —— 那一步会关掉正在跑的官方 Claude，下一个框里会告诉你关哪些。"
+              : hasSlots
+                ? // 原来这里也写「这是第一个槽位」—— 列表里明明还有别的（2026-09-25）。
+                  "现在没有激活的槽位（原来那个的指向已经失效），建好就直接是当前的：不切、不关任何进程。"
+                : "这是第一个槽位，直接就是当前的：不切、不关任何进程。"
             : "只建目录，不启动任何东西。"}
         </p>
       </div>
@@ -422,7 +448,9 @@ function DeleteSlotDialog() {
       toast.ok(
         `槽位 ${out.label} 已删除（删掉了 ${out.removed.length} 个目录）。`,
       );
-      invalidate("accounts");
+      // 详情页的 token 表按 `tokens:<标签>` 缓存、不会自己过期：不扔的话，删了再建一个同名的，
+      // 详情页显示的还是被删那个的数（2026-09-25）。
+      invalidate("accounts", `tokens:${out.label}`);
       close();
     } catch (e) {
       toast.error(

@@ -80,7 +80,7 @@ pub async fn stop_managed(
     } else {
         crate::killswitch::execute_official().await
     };
-    // `execute_official` 不做第二次重锁（它只收官方进程，不动中转），
+    // `execute_official` 不做第二次重锁（它只收官方进程，不动中转；反重力被移出门禁时也不动它），
     // 所以这一档要把函数开头那次上锁的数量报出去 —— 否则 `gate_lock_all`
     // 会如实地返回一个 0，而锁其实已经加上了。
     if let (false, Ok(r)) = (all_sessions, &mut report) {

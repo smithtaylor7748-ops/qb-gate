@@ -135,7 +135,7 @@ cargo deny check
 主题组合 + 17 个交互流程）和 `cargo deny`（advisories / bans / licenses / sources）
 各自抓过别处抓不到的东西。`cargo test --workspace` 的通过数**只许涨不许跌**
 （0.29.0 是 **1081**，0.30.0 是 **1106**，0.31.0 是 **1110**，0.32.0 是 **1154**，
-0.25.1 是 **1204**，0.25.2 是 **1268**，0.25.3 是 **1288**，0.25.4 是 **1334**）。
+0.25.1 是 **1204**，0.25.2 是 **1268**，0.25.3 是 **1288**，0.25.4 是 **1334**，0.25.5 是 **1360**）。
 
 ⛔ **跑完这十项不要接着出安装包** —— 先问「出包还是有别的需求」，见本文件开头那一节。
 
@@ -162,6 +162,8 @@ cargo deny check
    `## 未发布` 换成 `## <版本> — <日期>`，**并把 `.github/release-notes.md` 整份换成这一版的更新说明**
    （0.25.3 起；装着旧版的人在更新弹窗里读到的就是它，`release:check` 核它的版本号），再去 `npm run tauri build`。
    ⛔ 新版本号必须比已经发出去的**大** —— 面板的更新提醒按版本号比，小了就没人收得到（见「应用自己的更新」）。
+   **发出去的说明写多细也由使用者定。** 0.25.5 使用者要「日志就写修复了若干 bug」：`CHANGELOG.md` 那一版和
+   `.github/release-notes.md` 都只有这一句，逐条记录挪进了桌面 `claude-op` 的 `11`。**别把细节补回仓库。**
 
 ---
 
@@ -187,6 +189,23 @@ cargo deny check
 `usecase::gate_ops` —— 它要同时碰 killswitch / plugins / sessions / tray /
 operations，是跨域编排而不是门禁自己的事。留在 `gate` 里正是 `gate` 变成
 「伪装成底层的编排器」的原因。判定与执行仍在 `gate`。）
+
+### ⛔ 三种关停，三个范围（2026-09-25）
+
+`killswitch::Scope` 三档，筛法是纯函数 `in_scope`，**别合并成两档**：
+
+| 调用方                           | 范围                                         | 入口                                            |
+| -------------------------------- | -------------------------------------------- | ----------------------------------------------- |
+| 使用者点「一键关闭」             | `Everything`：全收（含中转、含反重力），重锁 | `execute()`                                     |
+| 门禁驱动的关停（`stop_managed`） | `Gate`：剔中转；反重力只在归门禁时收         | `execute_official()`                            |
+| 切 Claude 账户之前的清场         | `AccountSwitch`：剔中转、剔反重力            | `execute_for_switch()` / `preview_for_switch()` |
+
+原来只有前两档，切账户借用了「官方」那一档 —— 反重力是按安装目录认的，于是切 Claude 账户把 IDE 连同没保存的东西
+一起关了，确认框却只数 Claude 的三类（只有反重力开着时写「会关掉：。」）；门禁那一档也不看 `antigravity_under_gate()`。
+反重力是 Google 账户，跟 Claude 槽位无关，跟 `needs_clearing` 同一条。
+
+**确认框扫的必须是真去关的那个范围**：切换框走 `official_switch_preview` → `preview_for_switch`，清场执行与清场后的
+「剩没剩」复查也是 `AccountSwitch`。三处任何一处换了范围，报的数就跟做的事对不上。
 
 ## ⛔ 这是个开源项目：别人的机器跟你的不一样
 
@@ -279,12 +298,15 @@ operations，是跨域编排而不是门禁自己的事。留在 `gate` 里正�
 6. **读不出来就说读不出来。** 端点改版 / 字段改名 / 网络不通 / 令牌换不下来 → 界面显示一句能照着做的话，
    **永远不显示一个猜出来的数**。唯一的「推」：一格有 `resetTime` 却没有 `remainingFraction` 时按 0 算
    （proto3 的 JSON 把零值字段整个省掉），那一格带 `remaining_implied`，悬停里说出来。
+   IDE 本机那份（`AntigravityModelQuota`）与 Gemini CLI 的桶（`TavernGeminiModelQuota`）同一条（2026-09-25 补上）。
 7. **请求形状照官方 IDE**：`User-Agent: antigravity/<本机 IDE 的 ideVersion> windows/<arch>`，
    `metadata.ideType = ANTIGRAVITY`。版本从 `product.json` 读，不写死（开源兼容性那一节）。
 8. **「登录已失效」只来自服务端的明确拒绝**（2026-09-23，`usecase::login_health`）。本机文件只说得出
    「有没有令牌」；点刷新时 Google 回 `invalid_grant`、或 GPT 的访问令牌**没到点**却被回 401，才记一笔，
    账户行上那一半改说「登录已失效」、露出「登录」。按**凭据文件的修改时刻 + 长度**记、不读内容，
-   官方客户端重新登录或自己换新了令牌（文件一变）就自动作废；只在内存里。原因文案一律以
+   官方客户端重新登录或自己换新了令牌（文件一变）就自动作废；使用者点「登录 / 打开」时也清掉
+   （`codex_accounts::launch`、`antigravity_ops::gemini_login` 调 `login_health::forget`，2026-09-25 补上 ——
+   原来只在移除槽位时清，点了登录那一行照样挂着「登录已失效」）；只在内存里。原因文案一律以
    「登录已失效」开头 —— 界面按这个前缀把它跟「从没登过」分开标红，改措辞之前先看两处前端。
    ⛔ **「访问令牌到点了」不许说成「登录失效」**：那是这一条要修的错本身。
 
@@ -302,8 +324,11 @@ cargo run -p qb-app --example antigravity-hub-quota -- --account <槽位 id>
 ```
 
 它只打印键名、类型、长度，**一个值都不打印**。同一族的还有
-`cargo run -p qb-accounts --example antigravity-hub-cred`（看那条凭据的形状与令牌何时过期）
-与 `cargo run -p qb-accounts --example codex-ratelimits`（看 Codex 的额度记录）。
+`cargo run -p qb-accounts --example antigravity-hub-cred`（看那条凭据的形状与令牌何时过期）、
+`cargo run -p qb-accounts --example codex-ratelimits`（看 Codex 的额度记录），
+与 `cargo run -p qb-probe --example dns-leak`（真跑一次 DNS 泄露的 bash.ws 回显，看回的是数组还是对象、
+认出几条、几个探针被 fake-ip 接住；**一个地址都不打印**。2026-09-25 有使用者那边回的是对象，
+原来只认数组，整次检测报「JSON 解析失败」）。
 
 ### 本机路由不在此列（0.14.0，使用者定的）
 

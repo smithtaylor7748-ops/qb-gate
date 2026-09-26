@@ -25,7 +25,7 @@
  *   * IP 不合格爆红卡（档案 §4.2 的硬要求）。
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DoorOpen, ShieldAlert } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -64,6 +64,11 @@ export default function Home() {
 
   /** 门被面板自己关上了，而且还没能自己开回来。 */
   const needsReopen = gate.data?.needs_reopen ?? null;
+
+  // 待办都处理完了（重新放行成功、复核通过）就把弹窗收起来 —— 原来它留着一个只有标题的空框（2026-09-25）。
+  useEffect(() => {
+    if (showAlerts && !needsReopen && !purityFailed) setShowAlerts(false);
+  }, [showAlerts, needsReopen, purityFailed]);
 
   /**
    * 一键全面体检。跑什么、怎么记进度全在 `useChecks` 里，这里只负责按一下。

@@ -156,13 +156,38 @@ pub fn directory(root: &Path, id: &str) -> Result<PathBuf> {
 /// 0.32.0 起 `antigravity::account` 也要问这一位（一条账户槽位的 CLI 那一半），
 /// 所以放开可见性。**「不读内容」那条口径不变**：这里只看 `metadata`。
 pub fn login_state(home: &Path) -> (bool, String) {
-    match std::fs::metadata(creds_path(home)) {
-        Ok(m) if m.is_file() && m.len() > 2 => {
-            (true, "已登录 · 本地凭据（由 Gemini CLI 自己保管）".into())
-        }
-        Ok(_) => (false, "凭据文件是空的：在登录窗口里重新登录".into()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (false, "未登录".into()),
-        Err(_) => (false, "凭据文件不可读".into()),
+    let c = login_check(home);
+    (c.logged_in, c.detail)
+}
+
+/// 登没登录，外加**读不读得出来**（2026-09-25）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CliLogin {
+    pub logged_in: bool,
+    /// 凭据文件在、但读不出来。这时 `logged_in` 是 false，但**不是「未登录」**（§7.17）。
+    pub unreadable: bool,
+    pub detail: String,
+}
+
+pub fn login_check(home: &Path) -> CliLogin {
+    let (logged_in, unreadable, detail) = match std::fs::metadata(creds_path(home)) {
+        Ok(m) if m.is_file() && m.len() > 2 => (
+            true,
+            false,
+            "已登录 · 本地凭据（由 Gemini CLI 自己保管）".to_string(),
+        ),
+        Ok(_) => (
+            false,
+            false,
+            "凭据文件是空的：在登录窗口里重新登录".to_string(),
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (false, false, "未登录".to_string()),
+        Err(e) => (false, true, format!("凭据文件读不出来（{e}）")),
+    };
+    CliLogin {
+        logged_in,
+        unreadable,
+        detail,
     }
 }
 

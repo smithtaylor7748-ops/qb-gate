@@ -55,6 +55,12 @@ pub struct AntigravityAccount {
     pub ide_logged_in: bool,
     /// 一句人话：已登录 / 未登录 / 状态库不可读。
     pub ide_auth_state: String,
+    /// IDE 那一半的登录**读不出来**（状态库打不开 / 正忙 / 目录读不了，2026-09-25）。
+    ///
+    /// 这时 `ide_logged_in` 是 false，但**不是「未登录」**（§7.17）：原来界面照样画「IDE 未登录」、
+    /// 摆一颗「登录」、把刷新图标灰掉 —— IDE 写库时占着锁超过 250 毫秒，15 秒一轮的读就把一个
+    /// 登着的账户说成没登录。
+    pub ide_unreadable: bool,
     /// IDE 自己写下的邮箱与档位。读不到就是 `None`。
     pub email: Option<String>,
     pub tier: Option<String>,
@@ -72,6 +78,8 @@ pub struct AntigravityAccount {
     pub cli_dir: Option<String>,
     pub cli_logged_in: bool,
     pub cli_auth_state: String,
+    /// CLI 那一半的凭据文件读不出来（不是「没有」）。同 `ide_unreadable`。
+    pub cli_unreadable: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, TS)]
@@ -84,6 +92,12 @@ pub struct AntigravityAccounts {
 struct Index {
     slots: Vec<Entry>,
     active: Option<String>,
+    /// 使用者移除过的、从 0.30.0 老索引迁上来的目录（2026-09-25）。
+    ///
+    /// [`archive`] 对迁上来的那种只删索引项（目录在老位置，面板没资格动），而 [`migrate`] 每次启动都跑、
+    /// 把老索引里「新清单里没有」的目录再加回来 —— 于是移除掉的账户重启就又回来了。记在这里，迁移跳过。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    retired: Vec<PathBuf>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -154,6 +168,7 @@ fn describe(e: &Entry, active: bool) -> AntigravityAccount {
         ide_dir: e.ide_dir.as_ref().map(|p| p.display().to_string()),
         ide_logged_in: false,
         ide_auth_state: "还没有 IDE 那一半".into(),
+        ide_unreadable: false,
         email: None,
         tier: None,
         identity_error: None,
@@ -162,15 +177,18 @@ fn describe(e: &Entry, active: bool) -> AntigravityAccount {
         cli_dir: e.cli_dir.as_ref().map(|p| p.display().to_string()),
         cli_logged_in: false,
         cli_auth_state: "还没有 CLI 那一半".into(),
+        cli_unreadable: false,
     };
     if let Some(dir) = &e.ide_dir {
         // 路径经过联结点就不读 —— 跟别处一条口径，而且要说得出是为什么。
         if let Err(err) = config_io::ensure_plain_path(dir) {
             out.ide_auth_state = "目录读不了".into();
+            out.ide_unreadable = true;
             out.identity_error = Some(err.to_string());
         } else {
             let login = status::login_state(dir);
             out.ide_logged_in = login.logged_in;
+            out.ide_unreadable = login.unreadable;
             out.ide_auth_state = login.detail;
             match status::identity(dir) {
                 Ok(Some(id)) => {
@@ -186,9 +204,10 @@ fn describe(e: &Entry, active: bool) -> AntigravityAccount {
         }
     }
     if let Some(dir) = &e.cli_dir {
-        let (ok, detail) = gemini::login_state(dir);
-        out.cli_logged_in = ok;
-        out.cli_auth_state = detail;
+        let login = gemini::login_check(dir);
+        out.cli_logged_in = login.logged_in;
+        out.cli_unreadable = login.unreadable;
+        out.cli_auth_state = login.detail;
     }
     out
 }
@@ -217,6 +236,19 @@ pub fn active_ide(root: &Path) -> Result<Option<(String, String, PathBuf)>> {
         return Ok(None);
     };
     Ok(e.ide_dir.map(|d| (e.id, e.label, d)))
+}
+
+/// 激活的那条账户**在、但还没有 IDE 那一半**时回它的 id（起 IDE 之前现建那一半用，2026-09-25）。
+pub fn active_missing_ide(root: &Path) -> Result<Option<String>> {
+    let index = load(root)?;
+    let Some(id) = index.active.as_deref() else {
+        return Ok(None);
+    };
+    Ok(index
+        .slots
+        .iter()
+        .find(|e| e.id == id && e.ide_dir.is_none())
+        .map(|e| e.id.clone()))
 }
 
 /// 激活槽位的 id。没有槽位 / 没激活就是 `None`。
@@ -403,7 +435,7 @@ pub fn attach(root: &Path, into: &str, from: &str) -> Result<()> {
 /// 那些目录是 0.30.0 的槽位，面板没搬过它们，也就没有资格替使用者动它们。
 pub fn archive(root: &Path, id: &str) -> Result<()> {
     let mut index = load(root)?;
-    entry_of(&index, id)?;
+    let entry = entry_of(&index, id)?;
     if index.active.as_deref() == Some(id) {
         return Err(GateError::Other("请先切换到其他账户，再移除这一条".into()));
     }
@@ -413,6 +445,12 @@ pub fn archive(root: &Path, id: &str) -> Result<()> {
         config_io::ensure_plain_path(&archive)?;
         std::fs::create_dir_all(&archive)?;
         std::fs::rename(&own, archive.join(format!("{}-{}", id, config_io::id())))?;
+    }
+    // 指向老位置的那两半记进 `retired`：不然下次启动 `migrate` 又把它们当成「新清单里没有」加回来。
+    for dir in [entry.ide_dir, entry.cli_dir].into_iter().flatten() {
+        if !dir.starts_with(&own) && !index.retired.contains(&dir) {
+            index.retired.push(dir);
+        }
     }
     index.slots.retain(|s| s.id != id);
     save(root, &index)
@@ -425,17 +463,25 @@ pub fn archive(root: &Path, id: &str) -> Result<()> {
 /// 规矩见模块头：不猜配对、不搬目录、已经迁过的不再迁。
 pub fn migrate(root: &Path, ide_root: &Path, gemini_root: &Path) -> Result<u32> {
     let mut index = load(root)?;
+    // 使用者移除过的老目录也算「已知」—— 不然移除一条，下次启动它又回来（2026-09-25）。
     let known: std::collections::HashSet<PathBuf> = index
         .slots
         .iter()
         .flat_map(|e| e.ide_dir.iter().chain(e.cli_dir.iter()).cloned())
+        .chain(index.retired.iter().cloned())
         .collect();
     let mut added = 0u32;
+    // 老索引各自的「当前」。迁完之后沿用它，不是随手取第一条（原来 IDE 那几条排在前面，
+    // 第一条赢 —— 升级之后 IDE 起的是另一份资料，Gemini CLI 那边也报「没有激活的槽位」）。
+    let mut old_active: Vec<PathBuf> = Vec::new();
 
     // 老的 IDE 槽位。
     if let Ok(old) = ide::list(ide_root) {
         for s in old.slots {
             let dir = PathBuf::from(&s.user_data);
+            if s.active {
+                old_active.push(dir.clone());
+            }
             if known.contains(&dir) {
                 continue;
             }
@@ -452,6 +498,9 @@ pub fn migrate(root: &Path, ide_root: &Path, gemini_root: &Path) -> Result<u32> 
     if let Ok(old) = gemini::list(gemini_root) {
         for s in old.slots {
             let dir = PathBuf::from(&s.home);
+            if s.active {
+                old_active.push(dir.clone());
+            }
             if known.contains(&dir) {
                 continue;
             }
@@ -468,7 +517,16 @@ pub fn migrate(root: &Path, ide_root: &Path, gemini_root: &Path) -> Result<u32> 
         return Ok(0);
     }
     if index.active.is_none() {
-        index.active = index.slots.first().map(|e| e.id.clone());
+        index.active = old_active
+            .iter()
+            .find_map(|want| {
+                index
+                    .slots
+                    .iter()
+                    .find(|e| e.ide_dir.as_ref() == Some(want) || e.cli_dir.as_ref() == Some(want))
+            })
+            .or_else(|| index.slots.first())
+            .map(|e| e.id.clone());
     }
     save(root, &index)?;
     Ok(added)
@@ -510,7 +568,94 @@ mod tests {
                 })
                 .collect(),
             active: None,
+            retired: Vec::new(),
         }
+    }
+
+    /// 一台临时的假机器：新索引根 + 0.30.0 的两份老索引。结束时整棵删掉。
+    struct Roots(PathBuf);
+
+    impl Roots {
+        fn new(tag: &str) -> Self {
+            let base = std::env::temp_dir().join(format!(
+                "qbgate-agaccount-{tag}-{}-{}",
+                std::process::id(),
+                chrono::Local::now().format("%H%M%S%f")
+            ));
+            std::fs::create_dir_all(base.join("new")).unwrap();
+            std::fs::create_dir_all(base.join("ide")).unwrap();
+            std::fs::create_dir_all(base.join("gemini")).unwrap();
+            Self(base)
+        }
+        fn old(&self, which: &str, index: &str) {
+            std::fs::write(self.0.join(which).join("index.json"), index).unwrap();
+        }
+        fn migrate(&self) -> u32 {
+            migrate(
+                &self.0.join("new"),
+                &self.0.join("ide"),
+                &self.0.join("gemini"),
+            )
+            .unwrap()
+        }
+        fn load(&self) -> Index {
+            load(&self.0.join("new")).unwrap()
+        }
+    }
+
+    impl Drop for Roots {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// 2026-09-25：移除一条从老索引迁上来的账户，重启（再跑一次迁移）它不许回来；
+    /// 迁移时沿用老索引各自的「当前」，不是随手取第一条。
+    #[test]
+    fn migration_keeps_the_old_active_slot_and_never_brings_back_a_removed_one() {
+        let r = Roots::new("migrate");
+        r.old(
+            "ide",
+            r#"{"slots":[{"id":"i1","label":"甲"},{"id":"i2","label":"乙"}],"active":"i2"}"#,
+        );
+        r.old(
+            "gemini",
+            r#"{"slots":[{"id":"g1","label":"丙"}],"active":"g1"}"#,
+        );
+        assert_eq!(r.migrate(), 3);
+        let idx = r.load();
+        let active = idx.active.clone().unwrap();
+        let active_entry = idx.slots.iter().find(|e| e.id == active).unwrap();
+        assert_eq!(
+            active_entry.label, "乙",
+            "老 IDE 索引的当前是 i2，不是排在第一的 i1"
+        );
+
+        // 移除一条不是当前的（「丙」，CLI 那一半在老位置）。
+        let gone = idx
+            .slots
+            .iter()
+            .find(|e| e.label == "丙")
+            .unwrap()
+            .id
+            .clone();
+        archive(&r.0.join("new"), &gone).unwrap();
+        assert_eq!(r.migrate(), 0, "再跑一次迁移（= 重启）不许把它加回来");
+        assert!(r.load().slots.iter().all(|e| e.label != "丙"));
+        assert_eq!(r.load().slots.len(), 2);
+    }
+
+    /// 「没有凭据文件」是未登录、不是读不出来；有了就是已登录。（真读不出来要文件系统报错，
+    /// 单测里凑不出来 —— 那一支只是把 `NotFound` 以外的错误标成 `unreadable`。）
+    #[test]
+    fn a_missing_cli_credential_is_logged_out_not_unreadable() {
+        let r = Roots::new("cli-unreadable");
+        let home = r.0.join("cli");
+        std::fs::create_dir_all(home.join(".gemini")).unwrap();
+        let c = gemini::login_check(&home);
+        assert!(!c.logged_in && !c.unreadable, "没有凭据文件：未登录");
+        std::fs::write(gemini::creds_path(&home), r#"{"access_token":"x"}"#).unwrap();
+        assert!(gemini::login_check(&home).logged_in);
     }
 
     #[test]

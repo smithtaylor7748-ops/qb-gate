@@ -79,6 +79,10 @@ pub struct AntigravityModelQuota {
     pub reset_epoch: Option<i64>,
     /// "Fast" / "Limited time" 之类的标签，原样。
     pub tags: Vec<String>,
+    /// `remaining` 是按 0 推出来的：联网问到的那一格只有 `resetTime`、没有 `remainingFraction`
+    /// （proto3 的 JSON 把零值字段整个省掉）。界面要说出来（CLAUDE.md「联网额度」第 6 条，2026-09-25 补上）。
+    /// 本机 IDE 写的那份不推，恒为 false。
+    pub remaining_implied: bool,
 }
 
 /// IDE 写下的账户状态。
@@ -99,6 +103,8 @@ pub struct AntigravityIdentity {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoginState {
     pub logged_in: bool,
+    /// 读不出来（库打不开 / 正忙 / 损坏）。这时 `logged_in` 是 false，但**不是「未登录」**（§7.17）。
+    pub unreadable: bool,
     /// 一句人话。
     pub detail: String,
 }
@@ -121,6 +127,7 @@ pub fn login_state(user_data: &Path) -> LoginState {
     if !db.is_file() {
         return LoginState {
             logged_in: false,
+            unreadable: false,
             detail: "未登录 · 还没在这个槽位起过 IDE".into(),
         };
     }
@@ -129,6 +136,7 @@ pub fn login_state(user_data: &Path) -> LoginState {
         Err(e) => {
             return LoginState {
                 logged_in: false,
+                unreadable: true,
                 detail: format!("状态库不可读：{e}"),
             }
         }
@@ -145,14 +153,17 @@ pub fn login_state(user_data: &Path) -> LoginState {
     match len {
         Ok(Some(n)) if n > 0 => LoginState {
             logged_in: true,
+            unreadable: false,
             detail: "已登录 · 令牌由 IDE 自己保管在它的状态库里".into(),
         },
         Ok(_) => LoginState {
             logged_in: false,
+            unreadable: false,
             detail: "未登录 · 在 IDE 窗口里用 Google 登录".into(),
         },
         Err(e) => LoginState {
             logged_in: false,
+            unreadable: true,
             detail: format!("状态库正忙或损坏（{e}），稍后再读"),
         },
     }
@@ -214,6 +225,7 @@ pub fn parse_identity(inner: &[u8], written_at: String) -> Result<AntigravityIde
                     .filter(|t| !t.is_empty())
                     .map(str::to_owned)
                     .collect(),
+                remaining_implied: false,
             });
         }
     }

@@ -284,20 +284,37 @@ impl AccountRoots {
 /// 冒号尤其不行 —— 托盘菜单的 id 拿冒号分段（`tray.rs`），名字里有冒号就会
 /// 静默落到「什么都不做」那条分支上。
 pub fn validate_label(label: &str) -> Result<()> {
-    let ok = !label.is_empty()
-        && label.chars().count() <= 32
-        && label
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
-        && !label.starts_with('.')
-        && !label.ends_with('.');
-    if ok {
+    if label_ok(label) && label.chars().count() <= 32 {
         Ok(())
     } else {
         Err(GateError::Other(format!(
             "槽位名「{label}」不合规：只能用字母、数字、中文和 - _ .，最长 32 个字符，不能以点开头或结尾。"
         )))
     }
+}
+
+/// **已经在磁盘上**的槽位（切换、删除）：字符规矩同 [`validate_label`]，只是不卡 32 个字符。
+///
+/// 长度只该在起新名字时卡。老布局改名备份出来的 `claude-profile-backup-<时间戳 + 32 位>`
+/// 按 [`clear_link`] 的意思就是要被当成一个槽位列出来的，名字 55 个字符 —— 原来切换、删除都先过
+/// `validate_label`，于是这一行列在那里、却切不过去也删不掉（2026-09-25 查出）。
+pub fn validate_existing_label(label: &str) -> Result<()> {
+    if label_ok(label) {
+        Ok(())
+    } else {
+        Err(GateError::Other(format!(
+            "槽位名「{label}」不合规：只能用字母、数字、中文和 - _ .，不能以点开头或结尾。"
+        )))
+    }
+}
+
+fn label_ok(label: &str) -> bool {
+    !label.is_empty()
+        && label
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+        && !label.starts_with('.')
+        && !label.ends_with('.')
 }
 
 // ---------------------------------------------------------------- 联结点
@@ -548,7 +565,29 @@ fn refresh_token_expiry(dir: &std::path::Path) -> Option<i64> {
 }
 
 fn days_from(ms: i64) -> i64 {
-    (ms - chrono::Utc::now().timestamp_millis()) / 86_400_000
+    days_left(ms, chrono::Utc::now().timestamp_millis(), &chrono::Local)
+}
+
+/// 凭证还剩几天。**纯函数**，时区由调用方给（单测给固定时区）。
+///
+/// - 已经过了：**至少 −1**。界面据此写「凭证已过期」、按钮写「切换并重登」、当前槽位给「重新登录」；
+/// - 还没过：按**本地日历**数 —— 今天到期是 0、明天是 1（跟界面上「今天到期」那句的意思一致）。
+///
+/// 原来是 `(到期 − 现在) / 一天`（2026-09-25 查出）：整数除法向零截断，过期不到 24 小时算出来是 0，
+/// 界面写黄色的「今天到期」，按钮写「切换」，当前槽位显示「使用中」而不是「重新登录」；
+/// 反过来 23 小时后（已经是明天）到期的也写成「今天到期」，跟详情页的到期日对不上。
+fn days_left<Tz: chrono::TimeZone>(expiry_ms: i64, now_ms: i64, tz: &Tz) -> i64 {
+    const DAY_MS: i64 = 86_400_000;
+    if expiry_ms <= now_ms {
+        return (expiry_ms - now_ms).div_euclid(DAY_MS).min(-1);
+    }
+    let day = |ms: i64| {
+        chrono::DateTime::from_timestamp_millis(ms).map(|t| t.with_timezone(tz).date_naive())
+    };
+    match (day(expiry_ms), day(now_ms)) {
+        (Some(e), Some(n)) => (e - n).num_days(),
+        _ => (expiry_ms - now_ms) / DAY_MS,
+    }
 }
 
 /// 毫秒时间戳 → 本地 `YYYY-MM-DD HH:MM`。
@@ -706,7 +745,7 @@ pub struct DeleteOutcome {
 /// 清场与否由调用方决定 —— 删的是非当前槽位，正在跑的会话钉在别的目录上
 /// （`CLAUDE_CONFIG_DIR` 是具体目录，见文件头），不受影响。
 pub fn delete_slot(r: &AccountRoots, label: &str, drop_desktop: bool) -> Result<DeleteOutcome> {
-    validate_label(label)?;
+    validate_existing_label(label)?;
     let dir = r.slot_dir(label);
     if !dir.is_dir() {
         return Err(GateError::Other(format!("槽位 {label} 不存在")));
@@ -732,8 +771,25 @@ pub fn delete_slot(r: &AccountRoots, label: &str, drop_desktop: bool) -> Result<
 
     let mut removed = Vec::new();
     let mut notes = Vec::new();
-    std::fs::remove_dir_all(&dir)?;
+    // ⛔ 先改名、再删（2026-09-25）。`remove_dir_all` 不是原子的：里面有文件被占着（编辑器、索引、
+    // 杀软）时它删到一半就停 —— 凭证可能已经没了、目录还在，而界面照着报错写「删除失败，槽位没有变动」。
+    // 同一个目录底下改名是原子的：改名失败 = 真的一个文件都没动；改名成功之后槽位就不在列表里了
+    // （暂存名不以 `claude-profile-` 开头），删不干净的只剩一个报得出路径的残留目录。
+    let staged = r
+        .panel
+        .join(format!(".deleting-{label}-{}", crate::config_io::id()));
+    std::fs::rename(&dir, &staged).map_err(|e| {
+        GateError::Other(format!(
+            "槽位 {label} 的目录改不了名（{e}），一个文件都没动。多半是里面有文件正被占用（编辑器、索引、杀毒软件），关掉再删。"
+        ))
+    })?;
     removed.push(dir.display().to_string());
+    if let Err(e) = std::fs::remove_dir_all(&staged) {
+        notes.push(format!(
+            "槽位已删除，但目录没删干净：{}（{e}）。里面是它剩下的文件，可以稍后手动删掉。",
+            staged.display()
+        ));
+    }
 
     if drop_desktop {
         match r.desktop_dir(label) {
@@ -871,7 +927,7 @@ pub fn retain_switches(cutoff: std::time::SystemTime) -> Result<Vec<String>> {
 /// **前提同 [`switch_in`]：调用方已经清场。** 这两条路在 `lib.rs` 的命令层
 /// 先 `clear_before_account_change`（要换号才关全部 Claude）再调到这里。
 pub fn preflight_switch(label: &str) -> Result<()> {
-    validate_label(label)?;
+    validate_existing_label(label)?;
     let target = AccountRoots::current().slot_dir(label);
     if !target.is_dir() {
         return Err(GateError::NotFound(target.display().to_string()));
@@ -1541,6 +1597,75 @@ mod tests {
         assert!(delete_slot(&m.roots, "a:b", true).is_err(), "名字先过校验");
     }
 
+    /// 2026-09-25：删除先改名、再删。删完不许留下暂存目录，暂存名也不许被当成槽位列出来。
+    #[test]
+    fn deleting_goes_through_a_staged_name_and_leaves_nothing_listed() {
+        let m = Machine::new("del-staged", false);
+        create_slot(&m.roots, "main").unwrap();
+        create_slot(&m.roots, "work").unwrap();
+        std::fs::write(m.roots.slot_dir("work").join(".credentials.json"), "{}").unwrap();
+
+        let out = delete_slot(&m.roots, "work", false).unwrap();
+        assert!(
+            out.notes.iter().all(|n| !n.contains("没删干净")),
+            "{:?}",
+            out.notes
+        );
+        let leftovers: Vec<String> = std::fs::read_dir(&m.roots.panel)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with(".deleting-"))
+            .collect();
+        assert!(leftovers.is_empty(), "暂存目录要删掉：{leftovers:?}");
+
+        // 删不干净时留下的暂存目录（这里手搭一个）不许被列成槽位。
+        std::fs::create_dir_all(m.roots.panel.join(".deleting-ghost-1")).unwrap();
+        let labels: Vec<String> = slots_in(&m.roots).into_iter().map(|s| s.label).collect();
+        assert_eq!(labels, vec!["main".to_string()]);
+    }
+
+    /// 老布局改名备份出来的槽位名 55 个字符：列得出来，就得切得过去、删得掉。
+    #[test]
+    fn a_long_backup_slot_can_still_be_deleted() {
+        let m = Machine::new("del-long", false);
+        create_slot(&m.roots, "main").unwrap();
+        let label = "backup-20260925-101500-0123456789abcdef0123456789abcdef";
+        assert!(validate_label(label).is_err(), "新起的名字照旧卡 32 个字符");
+        assert!(validate_existing_label(label).is_ok());
+        m.slot(label, None);
+        switch_in(&m.roots, label, DesktopMode::Keep).expect("列出来的槽位要切得过去");
+        switch_in(&m.roots, "main", DesktopMode::Keep).unwrap();
+        delete_slot(&m.roots, label, false).expect("列出来的槽位要删得掉");
+        assert!(!m.roots.slot_dir(label).exists());
+        // 字符规矩照旧：冒号、路径分隔符一个都不许。
+        assert!(validate_existing_label("a:b").is_err());
+        assert!(validate_existing_label(r"..\x").is_err());
+    }
+
+    #[test]
+    fn days_left_counts_calendar_days_and_never_calls_an_expired_token_today() {
+        use chrono::TimeZone;
+        let tz = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+        let at = |d: u32, h: u32, mi: u32| {
+            tz.with_ymd_and_hms(2026, 9, d, h, mi, 0)
+                .unwrap()
+                .timestamp_millis()
+        };
+        let now = at(25, 23, 0);
+        // 原来整数除法向零截断：三小时前过期算出来是 0，界面写「今天到期」。
+        assert_eq!(days_left(at(25, 20, 0), now, &tz), -1);
+        assert_eq!(days_left(at(24, 20, 0), now, &tz), -2);
+        assert_eq!(days_left(now, now, &tz), -1, "到点就算过期");
+        assert_eq!(days_left(at(25, 23, 30), now, &tz), 0, "今晚到期");
+        assert_eq!(
+            days_left(at(26, 22, 0), now, &tz),
+            1,
+            "23 小时后、但已经是明天"
+        );
+        assert_eq!(days_left(at(30, 9, 0), now, &tz), 5);
+    }
+
     /// 用量历史要两条路径都给出来：只给联结点那条，非当前槽位就永远
     /// 读不到实时样本（0.19.2 的「快照已过期」就是这么来的）。
     #[test]
@@ -1740,16 +1865,38 @@ pub struct AccountsReport {
     pub desktop: DesktopState,
     /// 本机有酒馆桥接的数据目录 —— 有的话切换会一起切它。
     pub bridge_present: bool,
+    /// 读不出槽位所在目录时的原因（2026-09-25）。有它时 `slots` 是空的，但**不是「还没有槽位」**。
+    pub slots_error: Option<String>,
 }
 
 /// 列一次账户现状。`sync` 由调用方决定要不要先跑一轮合并。
 pub fn report(roots: &AccountRoots, sync: SyncReport) -> AccountsReport {
+    let (slots, slots_error) = match slots_checked(roots) {
+        Ok(s) => (s, None),
+        Err(e) => (Vec::new(), Some(e.to_string())),
+    };
     AccountsReport {
-        slots: slots_in(roots),
+        slots,
         caveat: EXPIRY_CAVEAT.into(),
         plan_caveat: PLAN_CAVEAT.into(),
         sync,
         desktop: desktop_state(roots),
         bridge_present: roots.bridge.is_some(),
+        slots_error,
+    }
+}
+
+/// 列槽位，但**读不出面板目录时报错**（目录不存在不算错 —— 那是还没建过槽位）。
+///
+/// [`slots_in`] 读不出来就回空清单，账户页于是写「还没有账户槽位，点新建」—— 照做只会撞上
+/// 同一个读不出来的目录。账户页走这一条，把原因显示出来（2026-09-25）。
+pub fn slots_checked(r: &AccountRoots) -> Result<Vec<Slot>> {
+    match std::fs::read_dir(&r.panel) {
+        Ok(_) => Ok(slots_in(r)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(GateError::Other(format!(
+            "读不出账户槽位所在的目录 {}：{e}",
+            r.panel.display()
+        ))),
     }
 }

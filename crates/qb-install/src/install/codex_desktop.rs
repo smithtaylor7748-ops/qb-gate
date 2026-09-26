@@ -348,11 +348,19 @@ throw 'Codex 桌面端未完全退出（可能以管理员或沙箱提权运行�
 ///
 /// 安全检查跟 [`close`] 一样：面板的祖先链上有它就拒绝；动手前按 PID + 创建时间再核一次。
 pub fn close_ours() -> Result<usize> {
+    close_where(|p| p.ours)
+}
+
+/// 同 [`close_ours`]，但只关满足 `pick` 的那几个（2026-09-25）。
+///
+/// 「设为中文」只改**官方槽位**与默认那几份 `config.toml`，中转环境起的桌面端不改它的配置，
+/// 就不该为这件事被关掉 —— 原来整份 `close_ours` 一起关了，事后还按当前槽位重开一个。
+pub fn close_where(pick: impl Fn(&CodexDesktopProcess) -> bool) -> Result<usize> {
     let d = detect()?;
     let Some(exe) = d.executable else {
         return Ok(0);
     };
-    let targets: Vec<&CodexDesktopProcess> = d.processes.iter().filter(|p| p.ours).collect();
+    let targets: Vec<&CodexDesktopProcess> = d.processes.iter().filter(|p| pick(p)).collect();
     if targets.is_empty() {
         return Ok(0);
     }

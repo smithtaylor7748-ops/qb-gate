@@ -126,6 +126,10 @@ pub(crate) async fn reopen_and_rewatch(
 /// 不再自己查桌面端在不在跑，它信的就是「调用方已经清过场」。清场没成还硬切，
 /// 就是在一个跑着的桌面端脚下换它的资料目录。对话框、托盘、档案 / 快照回滚都走这一个。
 ///
+/// ⛔ **只收 Claude 的**（`killswitch::Scope::AccountSwitch`，2026-09-25）。原来用的是门禁那一档，
+/// 反重力开着时也被收掉，而确认框只报 Claude 的三类。「剩没剩」那一遍复查也必须是同一个范围 ——
+/// 否则反重力一直开着，每次切都报「未完全退出，账户未切换」。
+///
 /// `wait_desktop`：taskkill 返回时进程未必已经退干净，桌面端要跟着换资料目录的话
 /// 等它真的退了再动（最多约 3 秒）。
 pub(crate) async fn clear_for_switch(
@@ -140,12 +144,20 @@ pub(crate) async fn clear_for_switch(
         .into_iter()
         .filter(|s| killswitch::needs_clearing(s) && s.state == "running")
         .collect::<Vec<_>>();
+    let mut stopped = Vec::new();
     for session in official {
         sessions::stop(&session.id)?;
         gate::release_holder(&state.gate, &session.id)?;
+        stopped.push(session.pid);
     }
-    let closed = killswitch::execute_official().await;
-    let closed = closed?;
+    let mut closed = killswitch::execute_for_switch().await?;
+    // 按会话停掉的那几个也是这次关掉的：确认框按进程报数，这里少算了就对不上
+    // （原来确认框写「Claude Code 会话 2 个」，toast 写「关掉了 0 个」）。
+    for pid in stopped {
+        if !closed.killed.contains(&pid) {
+            closed.killed.push(pid);
+        }
+    }
     if !closed.failed.is_empty() {
         return Err(GateError::Other(killswitch::unfinished_detail(
             &closed.failed,
@@ -159,7 +171,7 @@ pub(crate) async fn clear_for_switch(
             tokio::time::sleep(std::time::Duration::from_millis(400)).await;
         }
     }
-    let remaining = killswitch::preview_official().await?;
+    let remaining = killswitch::preview_for_switch().await?;
     if !remaining.targets.is_empty() {
         return Err(GateError::Other(
             "相关官方进程未完全退出，账户未切换".into(),

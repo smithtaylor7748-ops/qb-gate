@@ -32,7 +32,7 @@ resolver = "2"
 members = ["src-tauri", "crates/*"]
 
 [workspace.package]
-version = "0.25.4"
+version = "0.25.5"
 edition = "2021"
 rust-version = "1.88"
 license = "AGPL-3.0-only"

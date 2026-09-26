@@ -601,7 +601,8 @@ function GeminiQuotaPanel({
       <div className="tavern-quota-models">
         {(quota?.models ?? []).map((model) => (
           <div
-            key={`${model.model_id}-${model.token_type}`}
+            // 汇总接口的桶没有 model_id / token_type（2026-09-25 起不再被合成一个），键要带上名字。
+            key={`${model.model_id}-${model.token_type}-${model.label}`}
             className="tavern-quota-window"
           >
             <QuotaBar
@@ -617,9 +618,17 @@ function GeminiQuotaPanel({
                   : `剩 ${model.remaining_percent}%`
               }
               extra={
-                <span className="gauge-reset">
+                <span
+                  className="gauge-reset"
+                  title={
+                    model.remaining_implied
+                      ? "Google 没给这一格的比例 —— 它的 JSON 会把 0 省掉，按用光算"
+                      : undefined
+                  }
+                >
                   ↻ {model.reset_at ?? "重置时间未知"} ·{" "}
                   {resetLabel(model.reset_epoch, now)}
+                  {model.remaining_implied && <em>推算</em>}
                 </span>
               }
               className="tavern-quota-gauge"

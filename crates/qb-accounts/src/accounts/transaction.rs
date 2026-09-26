@@ -167,7 +167,7 @@ fn apply(path: &Path, journal: &mut Journal, after: impl Fn(usize) -> Result<()>
     Ok(())
 }
 pub(super) fn switch(r: &AccountRoots, label: &str, mode: DesktopMode) -> Result<SwitchOutcome> {
-    validate_label(label)?;
+    validate_existing_label(label)?;
     let target = r.slot_dir(label);
     if !target.is_dir() {
         return Err(GateError::NotFound(target.display().to_string()));

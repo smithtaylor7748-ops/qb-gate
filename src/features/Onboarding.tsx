@@ -21,7 +21,7 @@ import { useNavigate } from "react-router-dom";
 import { Check, ChevronRight, Play, RotateCw, Trash2 } from "lucide-react";
 
 import { api } from "../lib/api";
-import { R } from "../lib/resources";
+import { AFTER, R } from "../lib/resources";
 import { invalidate, useResource, useSession } from "../lib/store";
 import { markStep } from "../lib/progress";
 import { slotName } from "../lib/slotName";
@@ -411,6 +411,8 @@ export default function Onboarding() {
                           "chrome",
                           api.chromeReinstall,
                           "已装上一个全新的 Chrome",
+                          // Chrome 换了一份：扫出来的痕迹与隐私审计都是旧那份的。
+                          AFTER.browser,
                         )
                       }
                     >

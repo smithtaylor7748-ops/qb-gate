@@ -25,7 +25,7 @@
  *
  * ⛔ 这一页是固定高度（test:ui 钉着 680×640 起四档不许裁切），每一行都要省着用。
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Code2,
   Gauge,
@@ -45,7 +45,9 @@ import {
   countdown,
   groupLabel,
   lowestQuota,
+  modelGroups,
   percent,
+  quotaErrorLabel,
   resetIn,
   spanLabel,
   tightestWindow,
@@ -157,7 +159,14 @@ export default function AntigravityBand() {
 
   // ------------------------------------------------------------ 起 / 关反重力
   const [ask, setAsk] = useState<
-    | { action: "launch"; product: AntigravityProduct; running: number }
+    | {
+        action: "launch";
+        product: AntigravityProduct;
+        /** 点的时候实测到的进程数。`null` = 查不出来（枚举失败）—— 照弹，但不许编一个数。 */
+        running: number | null;
+        /** 这次要起的是哪一条账户（提示里要写它，不是切换之前那一条）。 */
+        slot?: AntigravityAccount;
+      }
     | { action: "close-all"; running: number }
     | { action: "ide-switch" | "ide-archive"; id: string; label: string }
     | {
@@ -170,6 +179,8 @@ export default function AntigravityBand() {
     | null
   >(null);
   const [busy, setBusy] = useState(false);
+  /** 「启动」正在查进程 / 正在起：挡住第二次点击（见 `requestLaunch`）。 */
+  const launching = useRef(false);
   const [error, setError] = useState("");
   const hubTask = useTask("launch-antigravity");
   const ideTask = useTask("launch-antigravity-ide");
@@ -251,23 +262,46 @@ export default function AntigravityBand() {
    * ⛔ 查不出来（枚举失败）一律当作**可能在跑**照弹。把「不知道」降级成「没有」
    * 正是 §7.17 那条坑的形状（`-AsArray` 让一键关闭永远数出 0 个）。
    */
-  async function requestLaunch(product: AntigravityProduct) {
+  async function requestLaunch(
+    product: AntigravityProduct,
+    slot?: AntigravityAccount,
+  ) {
+    // 查进程要跑一遍 PowerShell 加签名核对，要几秒。这几秒里再点一次，原来会起两次 ——
+    // 第二次起之前把第一次刚起的那个关掉（2026-09-25）。用 ref 挡，不等下一次渲染。
+    if (launching.current) return;
+    launching.current = true;
+    setBusy(true);
     setError("");
-    let running = 1;
     try {
-      running = await antigravityApi.running(product);
-    } catch {
-      running = 1;
+      let running: number | null;
+      try {
+        running = await antigravityApi.running(product);
+      } catch {
+        // 查不出来一律当作**可能在跑**照弹（§7.17），但框里不许写一个编出来的数。
+        running = null;
+      }
+      if (running === null || running > 0) {
+        setAsk({ action: "launch", product, running, slot });
+        return;
+      }
+      await runLaunch(product, slot);
+    } finally {
+      launching.current = false;
+      setBusy(false);
     }
-    if (running > 0) {
-      setAsk({ action: "launch", product, running });
-      return;
-    }
-    await runLaunch(product);
   }
 
-  /** 真正去起。确认框走这里，没东西在跑时也走这里（跳过确认框）。 */
-  async function runLaunch(product: AntigravityProduct) {
+  /**
+   * 真正去起。确认框走这里，没东西在跑时也走这里（跳过确认框）。
+   *
+   * `slot` 是这次要起的那条账户。⛔ 别读 `activeIde`：从账户行上起的时候是「先切过去、再起」，
+   * 而这里拿到的是切换之前那次渲染的闭包 —— 原来提示写的是切换前那条账户、
+   * 「要不要在窗口里登录」也是按那一条判的（2026-09-25）。
+   */
+  async function runLaunch(
+    product: AntigravityProduct,
+    slot?: AntigravityAccount,
+  ) {
     setBusy(true);
     setError("");
     try {
@@ -281,11 +315,12 @@ export default function AntigravityBand() {
         endTask(task, e instanceof Error ? e.message : String(e));
         throw e;
       }
+      const who = product === "ide" ? (slot ?? activeIde) : undefined;
       toast.ok(
         product === "hub"
           ? "反重力已启动；汉化引擎会在它的调试端口起来后自动附加"
-          : activeIde
-            ? `反重力 IDE 已用账户「${activeIde.label}」启动；${activeIde.ide_logged_in ? "" : "在它的窗口里用 Google 登录，"}汉化引擎会在调试端口起来后自动附加`
+          : who
+            ? `反重力 IDE 已用账户「${who.label}」启动；${who.ide_logged_in ? "" : "在它的窗口里用 Google 登录，"}汉化引擎会在调试端口起来后自动附加`
             : "反重力 IDE 已启动；汉化引擎会在它的调试端口起来后自动附加",
       );
       await status.refresh();
@@ -308,13 +343,17 @@ export default function AntigravityBand() {
         await antigravityApi.ideSelect(slot.id);
         await status.refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        // ⛔ 这里没有弹窗开着，`error` 只在两个弹窗里显示 —— 原来切不过去（比如酒馆的 Gemini
+        // 桥接正在跑）就什么都看不见，点了跟没点一样（2026-09-25）。
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        toast.error(msg);
         setBusy(false);
         return;
       }
       setBusy(false);
     }
-    await requestLaunch("ide");
+    await requestLaunch("ide", slot);
   }
 
   /** 点「一键关闭反重力」：Hub 与 IDE 一起收。同样先查有没有东西在跑。 */
@@ -360,7 +399,7 @@ export default function AntigravityBand() {
       } else if (ask.action === "launch") {
         // 确认过了，交给同一条启动路径 —— 别在这里再写一份。
         setBusy(false);
-        await runLaunch(ask.product);
+        await runLaunch(ask.product, ask.slot);
         return;
       } else if (ask.action === "ide-switch") {
         await antigravityApi.ideSelect(ask.id);
@@ -417,6 +456,7 @@ export default function AntigravityBand() {
         ide_dir: "",
         ide_logged_in: false,
         ide_auth_state: "",
+        ide_unreadable: false,
         email: null,
         tier: null,
         identity_error: null,
@@ -425,6 +465,7 @@ export default function AntigravityBand() {
         cli_dir: "",
         cli_logged_in: false,
         cli_auth_state: "",
+        cli_unreadable: false,
       });
       return;
     } catch (e) {
@@ -466,6 +507,21 @@ export default function AntigravityBand() {
 
   // ------------------------------------------------------------ 酒馆（Gemini 后端）
   const [tavernBusy, setTavernBusy] = useState(false);
+  // Gemini 桥接在不在跑（本机状态，不联网）。原来这块贴不看它：在跑时照样写「起 Gemini 桥接与酒馆」，
+  // 而 GPT 页那块会写「GPT 桥接运行中 · 再点只打开页面」（2026-09-25）。
+  const [geminiRunning, setGeminiRunning] = useState(false);
+  const refreshGeminiBridge = useCallback(async () => {
+    try {
+      setGeminiRunning((await api.tavernGeminiStatus()).running);
+    } catch {
+      // 演示模式或后端没起时读不到；保持上一次的值。
+    }
+  }, []);
+  useEffect(() => {
+    void refreshGeminiBridge();
+    const timer = window.setInterval(() => void refreshGeminiBridge(), 20_000);
+    return () => window.clearInterval(timer);
+  }, [refreshGeminiBridge]);
   async function launchTavern() {
     setTavernBusy(true);
     resetTask("tavern-start");
@@ -473,6 +529,7 @@ export default function AntigravityBand() {
       const url = await api.pluginStart("gemini");
       endTask("tavern-start");
       invalidate(...AFTER.tavern);
+      void refreshGeminiBridge();
       try {
         if (url.startsWith("http")) await openUrl(url);
         toast.ok("酒馆已就绪（Gemini 桥接），已打开页面");
@@ -543,10 +600,15 @@ export default function AntigravityBand() {
         name={p?.label ?? (product === "hub" ? "反重力" : "反重力 IDE")}
         // ⛔ 代价常驻：省掉确认框之后，「开着的会先关掉」这句必须一直看得见，
         // 不许缩进悬停提示里（档案 §7 / CLAUDE.md 桌面端那一条同源）。
+        // 状态还没回来 / 读失败时不许说「未安装」—— 那是「不知道」，不是「没有」（§7.17，2026-09-25）。
         note={
-          p?.installed
-            ? `${state}${who} · 开着的会先关掉`
-            : "未安装 · 到「软件」页一键装"
+          !status.data
+            ? status.error
+              ? "状态读不出来 · 见左边的报错"
+              : "读取中…"
+            : p?.installed
+              ? `${state}${who} · 开着的会先关掉`
+              : "未安装 · 到「软件」页一键装"
         }
         tone={product === "hub" ? "accent" : "warn"}
         task={task}
@@ -579,8 +641,14 @@ export default function AntigravityBand() {
         ideInstalled={!!ide?.installed}
         cliInstalled={!!status.data?.gemini_cli_installed}
         now={nowMs}
+        // 源行自己也要拿到 `attachFrom`：它那一行上的「取消」靠的就是它（2026-09-25）。
+        // 原来只传给「能并进去」的行，而 `canAttach` 对同一条回 false —— 取消键永远不出现，
+        // 挑不到能并的那一条时只能离开这一页。
         attachFrom={
-          attachSource && canAttach(s, attachSource) ? attachFrom : null
+          attachSource &&
+          (s.id === attachSource.id || canAttach(s, attachSource))
+            ? attachFrom
+            : null
         }
         onSwitch={() => {
           setError("");
@@ -652,7 +720,7 @@ export default function AntigravityBand() {
               {status.error}
             </p>
           )}
-          {!slots.length && (
+          {status.data && !slots.length && (
             <div className="py-3">
               <h3>建一个反重力账户</h3>
               <p className="notice mt-2">
@@ -660,8 +728,9 @@ export default function AntigravityBand() {
                 一个独立的资料目录（在 IDE 自己的窗口里登录），
                 <strong>Gemini CLI</strong> 一个 <code>GEMINI_CLI_HOME</code>
                 （酒馆的 Gemini
-                桥接用）。两半各登各的，面板一个字节的令牌都不碰。
-                现有的默认资料保持原样。
+                桥接用）。两半各登各的，登录都在官方客户端里完成；面板不经手登录，
+                只在你点额度刷新时读一次它们存在本机的令牌、在内存里用（过期了在内存里换新），
+                不写回、不落盘。现有的默认资料保持原样。
                 <strong>Hub 没有槽位</strong>
                 ：它的令牌在 Windows 凭据管理器里，换号在它自己界面里做。
               </p>
@@ -684,7 +753,13 @@ export default function AntigravityBand() {
                 挑一条把「{attachSource.label}」并进去
               </span>
             ) : (
-              <span className="notice">{count} 个账户</span>
+              <span className="notice">
+                {status.data
+                  ? `${count} 个账户`
+                  : status.error
+                    ? "账户清单读不出来"
+                    : "读取中…"}
+              </span>
             )}
             {pages > 1 && (
               <span className="pager ml-auto">
@@ -723,9 +798,11 @@ export default function AntigravityBand() {
                 >
                   {ui?.running ? "汉化：开" : "汉化"}
                 </Button>
-                <Pill tone={underGate ? "ok" : "warn"}>
-                  {underGate ? "归 IP 锁" : "已移出门禁"}
-                </Pill>
+                {status.data && (
+                  <Pill tone={underGate ? "ok" : "warn"}>
+                    {underGate ? "归 IP 锁" : "已移出门禁"}
+                  </Pill>
+                )}
               </div>
             }
           >
@@ -741,7 +818,10 @@ export default function AntigravityBand() {
                   note={
                     tavernUnready
                       ? "还没配好 · 点开去填路径"
-                      : "起 Gemini 桥接与酒馆 · 最长 60 秒"
+                      : geminiRunning
+                        ? "Gemini 桥接运行中 · 再点只打开页面"
+                        : // 就绪窗口是 180 秒（`sillytavern.rs` 的 ST_READY_ATTEMPTS），原来写「最长 60 秒」。
+                          "起 Gemini 桥接与酒馆 · 最长约 3 分钟"
                   }
                   tone={tavernUnready ? "warn" : undefined}
                   task={tavernTask}
@@ -909,7 +989,7 @@ export default function AntigravityBand() {
           />
           <p className="notice">
             {
-              "两半一起建：IDE 的资料目录与 Gemini CLI 的 home。下一步用它启动反重力 IDE，在 IDE 自己的窗口里用 Google 登录；CLI 那一半在列表里单独点「登录」。两处都不需要填写密码或粘贴 Token，面板也不读它们写下的凭据。新账户只复制你的设置与快捷键，不复制登录。"
+              "两半一起建：IDE 的资料目录与 Gemini CLI 的 home。下一步用它启动反重力 IDE，在 IDE 自己的窗口里用 Google 登录；CLI 那一半在列表里单独点「登录」。两处都不需要填写密码或粘贴 Token；面板只在你点额度刷新时读一次它们存在本机的令牌（在内存里用，不写回）。新账户只复制你的设置与快捷键，不复制登录。"
             }
           </p>
           {error && (
@@ -962,7 +1042,7 @@ export default function AntigravityBand() {
             所以正文可以直接报数，不用再写「如果有的话」这种模棱两可的话。 */}
         <p>
           {ask?.action === "launch"
-            ? `${ask.running > 0 ? `现在有 ${ask.running} 个进程在跑，` : ""}会先关掉正在跑的同一个程序（它是单实例，不退干净新起的只会把旧窗口拉到前面），正在运行的任务会中断，请先保存。归门禁时会先验出口 IP。`
+            ? `${ask.running === null ? "查不出现在有没有在跑（照样会先关）。" : ask.running > 0 ? `现在有 ${ask.running} 个进程在跑，` : ""}会先关掉正在跑的同一个程序（它是单实例，不退干净新起的只会把旧窗口拉到前面），正在运行的任务会中断，请先保存。归门禁时会先验出口 IP。`
             : ask?.action === "close-all"
               ? `${ask.running > 0 ? `现在有 ${ask.running} 个进程在跑。` : "查不出现在有没有在跑（照关不误）。"}Hub 与 IDE 的所有窗口及正在运行的任务都会关掉，请先保存工作。登录资料保留在它们自己那里。`
               : ask?.action === "ide-switch"
@@ -990,14 +1070,6 @@ const RANGES = [
   [30, "30 天"],
   [0, "全部"],
 ] as const;
-
-function quotaErrorLabel(message: string): string {
-  if (/401|unauthori[sz]ed|令牌|token/i.test(message)) return "401 未授权";
-  if (/403|拒绝|forbidden/i.test(message)) return "403 被拒绝";
-  if (/429|限流|too many/i.test(message)) return "限流";
-  if (/没有激活|未登录|没有.*槽位/.test(message)) return "未登录";
-  return "读取失败";
-}
 
 /**
  * 反重力的本机用量 + IDE 写下的账户状态与配额（0.30.0）。
@@ -1160,10 +1232,35 @@ function AntigravityUsageCard({
       setHubBusy(false);
     }
   }, []);
+  // 凭据读不出来不是「没登录」（§7.17）：那时 `hubLoggedIn` 是 false，但刷新照样给 ——
+  // 原来这一格写「未登录」、把刷新藏起来，悬停里却说「读不出来」（2026-09-25）。
+  const hubUnreadable = !hubLoggedIn && !!hubIdentityError;
   useEffect(() => {
     // ⛔ 挂载时只读「最近一次」，**不联网、没有定时器** —— 会对外发请求的动作不许自己发生。
-    if (hubLoggedIn) void loadHub(false);
-  }, [hubLoggedIn, loadHub]);
+    if (hubLoggedIn || hubUnreadable) void loadHub(false);
+  }, [hubLoggedIn, hubUnreadable, loadHub]);
+  /**
+   * Hub 那一格问到了什么。按 0 推出来的那一格要说出来（Google 的 JSON 把 0 省掉了）；
+   * 免费档没有四格，就按模型分两组给（原来免费档问到了按模型的，一个数都不显示，2026-09-25）。
+   */
+  const hubQuotaText = (q: AntigravityOnlineQuota): string => {
+    if (q.windows.length)
+      return q.windows
+        .map(
+          (w) =>
+            `${groupLabel(w.group)} ${spanLabel(w.span)} ${percent(w.remaining)}${w.remaining_implied ? "（没给比例，按用光算）" : ""}`,
+        )
+        .join(" · ");
+    return [
+      ...modelGroups(q.models).map(
+        ({ group, model }) =>
+          `${groupLabel(group)} ${percent(model.remaining)}${model.remaining_implied ? "（没给比例，按用光算）" : ""}`,
+      ),
+      q.windows_note ?? "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  };
   const hubLine = hubIdentityError
     ? `Hub 的登录读不出来：${hubIdentityError}`
     : !hubLoggedIn
@@ -1173,16 +1270,7 @@ function AntigravityUsageCard({
         } · Hub 的登录（本机解码）${
           hubQuota
             ? ` · 额度问于 ${hubQuota.fetched_at}${
-                hubQuota.windows.length
-                  ? ` · ${hubQuota.windows
-                      .map(
-                        (w) =>
-                          `${groupLabel(w.group)} ${spanLabel(w.span)} ${percent(w.remaining)}`,
-                      )
-                      .join(" · ")}`
-                  : hubQuota.windows_note
-                    ? ` · ${hubQuota.windows_note}`
-                    : ""
+                hubQuotaText(hubQuota) ? ` · ${hubQuotaText(hubQuota)}` : ""
               }${hubQuota.credits != null ? ` · AI 积分 ${NUM.format(hubQuota.credits)}` : ""}`
             : " · 点「刷新」联网查额度"
         }`;
@@ -1241,13 +1329,15 @@ function AntigravityUsageCard({
               ? quotaErrorLabel(hubErr)
               : hubQuota
                 ? "在线"
-                : !hubLoggedIn
-                  ? "未登录"
-                  : hubBusy
-                    ? "读取中…"
-                    : "未读取"}
+                : hubUnreadable
+                  ? "读不出来"
+                  : !hubLoggedIn
+                    ? "未登录"
+                    : hubBusy
+                      ? "读取中…"
+                      : "未读取"}
           </span>
-          {hubLoggedIn && !hubBusy && (
+          {(hubLoggedIn || hubUnreadable) && !hubBusy && (
             <button
               type="button"
               className="btn btn--ghost btn--sm !px-1 !py-0"
@@ -1348,13 +1438,14 @@ function AntigravityUsageCard({
                     ? percent(low.remaining)
                     : "—"}
           </span>
+          {/* 按 0 推出来的（Google 只给了重置时刻）要说出来，不许装成读到的 0（2026-09-25）。 */}
           <span className="ustat-sub">
             {onlineTight
-              ? `${groupLabel(onlineTight.group)} ${spanLabel(onlineTight.span)} · ${countdown(onlineTight.reset_epoch, now)}`
+              ? `${groupLabel(onlineTight.group)} ${spanLabel(onlineTight.span)} · ${countdown(onlineTight.reset_epoch, now)}${onlineTight.remaining_implied ? " · 没给比例，按用光算" : ""}`
               : onlineLowModel
-                ? `${onlineLowModel.family} · ${resetIn(onlineLowModel.reset_epoch, now)}`
+                ? `${onlineLowModel.family} · ${resetIn(onlineLowModel.reset_epoch, now)}${onlineLowModel.implied ? " · 没给比例，按用光算" : ""}`
                 : cliLow
-                  ? `${cliLow.label} · ${cliLow.reset_at ?? "重置时间未知"}`
+                  ? `${cliLow.label} · ${cliLow.reset_at ?? "重置时间未知"}${cliLow.remaining_implied ? " · 没给比例，按用光算" : ""}`
                   : low
                     ? `${low.family} · ${resetIn(low.reset_epoch, now)}`
                     : geminiQuotaError
@@ -1369,17 +1460,30 @@ function AntigravityUsageCard({
         <div className="slotusage">
           {geminiQuota.models.map((model) => (
             <QuotaBar
-              key={`${model.model_id}-${model.token_type}`}
+              // 汇总接口的桶没有 model_id / token_type（2026-09-25 起不再被合成一个），
+              // 键要带上名字，不然几格全是 `null-null`。
+              key={`${model.model_id}-${model.token_type}-${model.label}`}
               name={model.label}
               used={
                 model.remaining_percent == null
                   ? null
                   : 100 - model.remaining_percent
               }
-              binding={cliLow?.model_id === model.model_id}
+              // 按对象认是不是最紧的那一格：按 model_id 比，没有 id 的几格会全被标成「卡这儿」。
+              binding={cliLow === model}
               extra={
                 model.reset_at ? (
-                  <span className="gauge-reset">↻ {model.reset_at}</span>
+                  <span
+                    className="gauge-reset"
+                    title={
+                      model.remaining_implied
+                        ? "Google 没给这一格的比例 —— 它的 JSON 会把 0 省掉，按用光算"
+                        : undefined
+                    }
+                  >
+                    ↻ {model.reset_at}
+                    {model.remaining_implied && <em>推算</em>}
+                  </span>
                 ) : undefined
               }
             />

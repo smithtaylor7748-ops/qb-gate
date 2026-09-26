@@ -159,8 +159,11 @@ pub struct AntigravityOnlineQuota {
 
 // ------------------------------------------------------------------ 内存里的东西
 
+/// 问到的那一份，连同**问的时候登的是谁**（邮箱；读不出来是 `None`）。
+type Asked = (Option<String>, AntigravityOnlineQuota);
+
 /// 「最近一次」问到的，按 [`Source::key`] 存。没有 TTL（见模块头「什么时候问」）。
-static LAST: Mutex<Option<HashMap<String, AntigravityOnlineQuota>>> = Mutex::new(None);
+static LAST: Mutex<Option<HashMap<String, Asked>>> = Mutex::new(None);
 
 /// 换新来的访问令牌，按来源存。**只在内存里。**
 static TOKENS: TokenCache = TokenCache::new();
@@ -169,14 +172,41 @@ static TOKENS: TokenCache = TokenCache::new();
 static WORKING_CLIENT: Mutex<Option<(PathBuf, usize)>> = Mutex::new(None);
 
 /// 最近一次问到的。**不联网。**
+///
+/// ⛔ 问的时候登的是 A、现在登的是 B（Hub 里换了号，或者那个槽位的 IDE 重新登了别的账户）：
+/// 那份档位、AI 积分、四格都是 A 的，不许挂在 B 的邮箱底下显示（2026-09-25 查出）。
+/// 两边都读得出邮箱、又对不上时就当没问过；读不出来时说不清，照旧给。
 pub fn last(source: &Source) -> Option<AntigravityOnlineQuota> {
-    LAST.lock().ok()?.as_ref()?.get(&source.key()).cloned()
+    let (asked, q) = LAST.lock().ok()?.as_ref()?.get(&source.key()).cloned()?;
+    same_account(asked.as_deref(), who(source).as_deref()).then_some(q)
+}
+
+/// 问的时候登的是谁 vs 现在登的是谁。两边都读得出、又对不上 → 不是同一个人。**纯函数。**
+fn same_account(asked: Option<&str>, now: Option<&str>) -> bool {
+    match (asked, now) {
+        (Some(then), Some(now)) => then.eq_ignore_ascii_case(now),
+        _ => true,
+    }
 }
 
 fn remember(source: &Source, q: &AntigravityOnlineQuota) {
+    let asked = who(source);
     if let Ok(mut g) = LAST.lock() {
         g.get_or_insert_with(HashMap::new)
-            .insert(source.key(), q.clone());
+            .insert(source.key(), (asked, q.clone()));
+    }
+}
+
+/// 这个来源此刻登的是谁（邮箱）。**只读本机、不联网**：Hub 从凭据里 `id_token` 的载荷解
+/// （状态页每 15 秒本来就这么读一次），账户槽位读 IDE 写在 `state.vscdb` 里的 `userStatus`。
+fn who(source: &Source) -> Option<String> {
+    use qb_accounts::antigravity::{account, hub, status};
+    match source {
+        Source::Hub => hub::identity().ok().flatten().and_then(|i| i.email),
+        Source::Account(id) => {
+            let (_, dir) = account::ide_half(&account::root(), id).ok().flatten()?;
+            status::identity(&dir).ok().flatten().and_then(|i| i.email)
+        }
     }
 }
 
@@ -764,11 +794,13 @@ pub fn parse_models(body: &str) -> Result<Vec<AntigravityModelQuota>> {
             continue;
         };
         let reset_epoch = q.get("resetTime").and_then(epoch_of).filter(|x| *x > 0);
-        let remaining = q
+        let read = q
             .get("remainingFraction")
             .and_then(number)
-            .map(|f| f.clamp(0.0, 1.0) as f32)
-            .or(reset_epoch.map(|_| 0.0));
+            .map(|f| f.clamp(0.0, 1.0) as f32);
+        // 只有 `resetTime`：proto3 把 0 省掉了，按 0 算 —— 并且记下是推出来的（界面要说）。
+        let remaining_implied = read.is_none() && reset_epoch.is_some();
+        let remaining = read.or(reset_epoch.map(|_| 0.0));
         if remaining.is_none() {
             continue;
         }
@@ -790,6 +822,7 @@ pub fn parse_models(body: &str) -> Result<Vec<AntigravityModelQuota>> {
                 seen.remaining = remaining;
                 seen.reset_epoch = reset_epoch;
                 seen.reset_at = reset_epoch.and_then(local_minute);
+                seen.remaining_implied = remaining_implied;
             }
             continue;
         }
@@ -800,6 +833,7 @@ pub fn parse_models(body: &str) -> Result<Vec<AntigravityModelQuota>> {
             reset_at: reset_epoch.and_then(local_minute),
             reset_epoch,
             tags,
+            remaining_implied,
         });
     }
     out.sort_by(|a, b| a.label.cmp(&b.label));
@@ -978,5 +1012,14 @@ mod tests {
         assert_eq!(last(&s), Some(q));
         forget(&s);
         assert!(last(&s).is_none());
+    }
+
+    /// Hub 里换了号：上一个号问到的档位与额度不许挂在新号底下。读不出来时说不清，照旧给。
+    #[test]
+    fn a_result_asked_for_another_account_is_not_shown() {
+        assert!(same_account(Some("a@example.com"), Some("A@Example.com")));
+        assert!(!same_account(Some("a@example.com"), Some("b@example.com")));
+        assert!(same_account(None, Some("b@example.com")));
+        assert!(same_account(Some("a@example.com"), None));
     }
 }

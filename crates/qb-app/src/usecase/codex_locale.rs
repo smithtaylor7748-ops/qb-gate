@@ -264,13 +264,47 @@ pub async fn set(enable: bool, gate: &crate::gate::GateState) -> Result<CodexLoc
     let desktop = detect()
         .await
         .map_err(|e| GateError::Other(format!("查不到 GPT 桌面端有没有在跑，这次没改：{e}")))?;
-    let (ours, foreign) = running(&desktop);
-    let reopen = if ours > 0 {
-        let active = codex::active_id(&codex::root())?;
-        super::codex_accounts::close_ours(gate).await?;
-        active
-    } else {
+    let (_, foreign) = running(&desktop);
+    // ⛔ 只关、只重开**官方槽位**（以及没槽位时退回的默认那份）起的桌面端（2026-09-25）：改的只是
+    // 它们的 config.toml。原来只要面板起的有一份在跑就整份 `close_ours` —— 中转环境起的那份
+    // （连同它的任务）也被关掉，事后还按当前槽位重开一个官方的：关掉的是中转、起来的是另一份。
+    let root = codex::root();
+    let mut official: Vec<(Option<String>, std::path::PathBuf)> = Vec::new();
+    for slot in codex::list(&root)?.slots {
+        let (_, profile) = crate::workspace::codex_official_dirs(&slot.id)?;
+        official.push((Some(slot.id), profile));
+    }
+    if let Some(home) = dirs::home_dir() {
+        official.push((None, home.join(".codex").join("desktop")));
+    }
+    let running_official: Vec<&(Option<String>, std::path::PathBuf)> = official
+        .iter()
+        .filter(|(_, profile)| {
+            desktop.processes.iter().any(|p| {
+                p.ours
+                    && p.profile.as_deref().is_some_and(|d| {
+                        crate::install::inventory::same_path(std::path::Path::new(d), profile)
+                    })
+            })
+        })
+        .collect();
+    let reopen = if running_official.is_empty() {
         None
+    } else {
+        let active = codex::active_id(&root)?;
+        // 关掉的里面有当前槽位那一份，才按当前槽位重开 —— 不替使用者起一个他没开着的窗口。
+        let was_active = active.as_deref().is_some_and(|a| {
+            running_official
+                .iter()
+                .any(|(id, _)| id.as_deref() == Some(a))
+        });
+        let profiles = running_official.iter().map(|(_, p)| p.clone()).collect();
+        super::codex_accounts::close_official(gate, profiles).await?;
+        if was_active {
+            active
+        } else {
+            None
+        }
     };
     let mut outcome = tokio::task::spawn_blocking(move || apply(enable, foreign > 0))
         .await

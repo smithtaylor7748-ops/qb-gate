@@ -192,9 +192,20 @@ export default function AccountBand() {
               </span>
             </div>
 
+            {/* 读不出来 ≠ 没有槽位（§7.17，2026-09-25）：原来槽位目录读不开、或者这一轮请求失败，
+                这里照样写「还没有账户槽位，点新建」—— 照做只会撞上同一个读不出来的目录。 */}
+            {(accounts.data?.slotsError || accounts.error) && (
+              <p role="alert" className="notice notice--danger">
+                {accounts.data?.slotsError ?? accounts.error}
+              </p>
+            )}
             {shown.length === 0 ? (
               <p className="notice">
-                {slots.length === 0 ? (
+                {!accounts.data ? (
+                  accounts.error ? null : (
+                    "读取中…"
+                  )
+                ) : accounts.data.slotsError ? null : slots.length === 0 ? (
                   // 原来这里写「用右边的 Claude Code 登录一次，第一个槽位就建好了」——
                   // 那不成立：没有槽位时 Claude Code 登录进的是它自己的默认目录，
                   // 永远不会凭空长出一个槽位来。
@@ -359,7 +370,8 @@ export default function AccountBand() {
                       ? "还没配好 · 点开去填路径"
                       : running
                         ? "运行中 · 再点只打开页面"
-                        : "起桥接与酒馆 · 最长 80 秒"
+                        : // Claude 桥接等 20 秒、酒馆等 180 秒（`sillytavern.rs`），原来写「最长 80 秒」。
+                          "起桥接与酒馆 · 最长约 3 分钟"
                   }
                   tone={tavernUnready ? "warn" : undefined}
                   task={tavernTask}

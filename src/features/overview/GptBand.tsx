@@ -16,6 +16,7 @@ import { api } from "../../lib/api";
 import { CODEX_R, codexApi } from "../../lib/codexAccounts";
 import type { CodexSlot } from "../../lib/generated/CodexSlot";
 import type { CodexUsage } from "../../lib/generated/CodexUsage";
+import type { TavernGptQuota } from "../../lib/generated/TavernGptQuota";
 import { AFTER, R } from "../../lib/resources";
 import { stationApi } from "../../lib/station";
 import { invalidate, useResource, useSession } from "../../lib/store";
@@ -30,6 +31,15 @@ import { Button, Card, ConfirmDialog, Modal, Pill, useToast } from "../../ui";
 
 const PER_PAGE = 4;
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** 两份联网额度里问得更晚的那一份（`fetched_at` 是定宽的本地时刻，按字符串比就是按时间比）。 */
+function newer(
+  a: TavernGptQuota | null,
+  b: TavernGptQuota | null,
+): TavernGptQuota | null {
+  if (!a) return b;
+  if (!b) return a;
+  return b.fetched_at >= a.fetched_at ? b : a;
+}
 const short = (n: number) =>
   new Intl.NumberFormat("zh-CN", {
     notation: "compact",
@@ -102,13 +112,18 @@ export default function GptBand() {
         id: string;
         label: string;
         action: "switch" | "launch" | "archive";
-        /** 点的时候实测到的桌面端进程数。0 = 没在跑（那时候 launch 压根不弹框）。 */
-        running?: number;
+        /**
+         * 点的时候实测到的桌面端进程数。0 = 没在跑（那时候 launch 压根不弹框）；
+         * `null` = 查不出来 —— 照弹，但不许编一个数（原来写「还开着（1 个窗口）」，2026-09-25）。
+         */
+        running?: number | null;
       }
     | { action: "close" }
     | null
   >(null);
   const launchTask = useTask("launch-codex");
+  /** 「启动」正在查进程 / 正在起：挡住第二次点击（见 `requestLaunch`）。 */
+  const launching = useRef(false);
   const [closing, setClosing] = useState(false);
   const [closeErr, setCloseErr] = useState("");
   const slots = accounts.data?.slots ?? [];
@@ -152,24 +167,35 @@ export default function GptBand() {
           codexApi.rateLimits(id),
           codexApi.quota(id, false),
         ]);
-        return [
-          id,
-          {
-            local: local.status === "fulfilled" ? local.value : null,
-            live: live.status === "fulfilled" ? live.value : null,
-            error:
-              local.status === "rejected"
-                ? errorText(local.reason)
-                : live.status === "rejected"
-                  ? errorText(live.reason)
-                  : "",
-            loading: false,
-          },
-        ] as const;
+        return [id, local, live] as const;
       }),
     );
     if (run !== quotaRun.current) return;
-    setSlotQuotas(Object.fromEntries(results));
+    // ⛔ 合并，不整份替换（2026-09-25）：这一轮读的时候，某一行可能正在联网刷新、或者刚刷新完 ——
+    // 整份替换会把那一行的「读取中」抹掉，或者拿内存里更旧的那份盖掉刚问到的。
+    setSlotQuotas((prev) =>
+      Object.fromEntries(
+        results.map(([id, local, live]) => {
+          const was = prev[id];
+          if (was?.loading) return [id, was];
+          const fresh = live.status === "fulfilled" ? live.value : null;
+          return [
+            id,
+            {
+              local:
+                local.status === "fulfilled"
+                  ? local.value
+                  : (was?.local ?? null),
+              live: newer(was?.live ?? null, fresh),
+              liveError: was?.liveError ?? "",
+              localError:
+                local.status === "rejected" ? errorText(local.reason) : "",
+              loading: false,
+            },
+          ];
+        }),
+      ),
+    );
   }, [slotKey]);
   useEffect(() => {
     void loadSlotQuotas();
@@ -182,7 +208,8 @@ export default function GptBand() {
         [id]: {
           local: prev[id]?.local ?? null,
           live: prev[id]?.live ?? null,
-          error: "",
+          liveError: "",
+          localError: prev[id]?.localError ?? "",
           loading: true,
         },
       }));
@@ -201,12 +228,9 @@ export default function GptBand() {
           // 这次没问到就留着上一次问到的 —— 界面上时刻照实，不会被当成此刻。
           live:
             live.status === "fulfilled" ? live.value : (prev[id]?.live ?? null),
-          error:
-            live.status === "rejected"
-              ? errorText(live.reason)
-              : local.status === "rejected"
-                ? errorText(local.reason)
-                : "",
+          liveError: live.status === "rejected" ? errorText(live.reason) : "",
+          localError:
+            local.status === "rejected" ? errorText(local.reason) : "",
           loading: false,
         },
       }));
@@ -310,19 +334,29 @@ export default function GptBand() {
    * 只数**面板起的**（`ours`）：别处起的那份不会被关，就不该为它弹框。
    */
   async function requestLaunch(slot: CodexSlot) {
+    // 查进程要跑一遍 PowerShell，要一两秒。这期间再点一次，原来会起两次 —— 第二次起之前
+    // 先把第一次刚起的那个关掉（2026-09-25）。用 ref 挡，不等下一次渲染。
+    if (launching.current) return;
+    launching.current = true;
+    setBusy(true);
     setError("");
-    let running = 1;
     try {
-      const d = await codexApi.desktop();
-      running = d.processes.filter((p) => p.ours).length;
-    } catch {
-      running = 1;
+      let running: number | null;
+      try {
+        const d = await codexApi.desktop();
+        running = d.processes.filter((p) => p.ours).length;
+      } catch {
+        running = null;
+      }
+      if (running === null || running > 0) {
+        setAsk({ id: slot.id, label: slot.label, action: "launch", running });
+        return;
+      }
+      await runLaunch(slot.id);
+    } finally {
+      launching.current = false;
+      setBusy(false);
     }
-    if (running > 0) {
-      setAsk({ id: slot.id, label: slot.label, action: "launch", running });
-      return;
-    }
-    await runLaunch(slot.id);
   }
 
   /** 真正去起。确认框走这里，没东西在跑时也走这里（跳过确认框）。 */
@@ -523,7 +557,11 @@ export default function GptBand() {
                 )}
                 <CodexQuotaBars
                   state={slotQuotas[s.id]}
-                  canRefresh={s.logged_in}
+                  // 「登录已失效」的行令牌还在本机：让它能再问一次（原来被灰掉、悬停说「还没登录」，
+                  // 而一次偶发的 401 就能把一行卡成这样，直到凭据文件变了或者面板重启，2026-09-25）。
+                  canRefresh={
+                    s.logged_in || s.auth_state.startsWith("登录已失效")
+                  }
                   onRefresh={() => void refreshSlotQuota(s.id)}
                 />
               </div>
@@ -629,7 +667,8 @@ export default function GptBand() {
                       ? "还没配好 · 点开去填路径"
                       : gptBridge?.running
                         ? "GPT 桥接运行中 · 再点只打开页面"
-                        : "起 GPT 桥接与酒馆 · 最长 60 秒"
+                        : // 就绪窗口是 180 秒（`sillytavern.rs` 的 ST_READY_ATTEMPTS），原来写「最长 60 秒」。
+                          "起 GPT 桥接与酒馆 · 最长约 3 分钟"
                   }
                   tone={tavernUnready ? "warn" : undefined}
                   task={tavernTask}
@@ -664,6 +703,22 @@ export default function GptBand() {
               {desktop.data && !desktop.data.executable && (
                 <p className="notice">
                   <Link to="/software">去软件页安装 Codex 桌面端</Link>
+                </p>
+              )}
+              {/* 注册坏了（Store 更新之后常见）时的一键修复。原来这颗按钮只长在确认框里，
+                  而没有面板起的窗口开着时不弹确认框 —— 正是更新后最常见的那种情形，
+                  报错写着「点修复」，界面上却找不到它（2026-09-25）。 */}
+              {needsReg && !ask && (
+                <p className="notice notice--danger">
+                  Codex 的注册坏了，起不来（多半是它刚在 Store 里更新过）。{" "}
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    loading={repairing}
+                    onClick={() => void repairRegistration()}
+                  >
+                    修复 Codex 注册（需要管理员）
+                  </Button>
                 </p>
               )}
             </div>
@@ -755,7 +810,10 @@ export default function GptBand() {
             : ask?.action === "archive"
               ? "移除并保留归档"
               : ask?.action === "switch"
-                ? "关闭桌面端并切换"
+                ? // 没东西要关时按钮也写「关闭桌面端并切换」，正文却说「直接切」（2026-09-25）。
+                  oursRunning
+                  ? "关闭桌面端并切换"
+                  : "切换"
                 : "关闭旧窗口并打开"
         }
         danger
@@ -772,7 +830,9 @@ export default function GptBand() {
                 ? oursRunning
                   ? "会先关闭面板起的 Codex 桌面端及其正在运行的任务（开始菜单或别的程序起的不动）。请确认当前工作已经保存，再继续。"
                   : "面板起的 Codex 桌面端没在跑，直接切。"
-                : `面板起的 Codex 桌面端还开着（${ask?.running ?? 0} 个窗口），会先关掉它及其正在运行的任务；开始菜单或别的程序起的不动。请确认当前工作已经保存，再继续。`}
+                : ask?.running === null
+                  ? "查不出面板起的 Codex 桌面端现在开没开 —— 照样会先关掉它及其正在运行的任务（开始菜单或别的程序起的不动）。请确认当前工作已经保存，再继续。"
+                  : `面板起的 Codex 桌面端还开着（${ask?.running ?? 0} 个窗口），会先关掉它及其正在运行的任务；开始菜单或别的程序起的不动。请确认当前工作已经保存，再继续。`}
         </p>
         {error && (
           <p role="alert" className="notice notice--danger mt-2">
@@ -847,8 +907,10 @@ function CodexUsageCard({
   }, [slot?.id, days, revision]);
 
   const found = quota?.local?.found ?? null;
+  // 本机快照里已经过了重置时刻的那一格是重置前的数，不许拿来当「剩余额度」（2026-09-25）。
   const tight = [found?.primary, found?.secondary]
     .filter((window): window is NonNullable<typeof window> => !!window)
+    .filter((window) => !window.window.reset_passed)
     .sort((a, b) => b.window.used - a.window.used)[0];
   const liveTight = quota?.live?.windows
     .filter((window) => window.remaining_percent != null)
@@ -875,9 +937,11 @@ function CodexUsageCard({
       ? "本地快照"
       : quota?.loading
         ? "读取中…"
-        : quota?.error
+        : quota?.liveError
           ? "在线读取失败"
-          : "未读取额度";
+          : quota?.localError
+            ? "本机记录读不出来"
+            : "未读取额度";
 
   return (
     <Card

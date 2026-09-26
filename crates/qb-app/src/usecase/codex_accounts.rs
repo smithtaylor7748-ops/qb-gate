@@ -75,20 +75,45 @@ pub async fn switch(id: &str, gate: &GateState) -> Result<()> {
 pub async fn launch(id: &str, gate: &GateState) -> Result<()> {
     let root = codex::root();
     codex::directory(&root, id)?;
+    // 会拒绝启动的检查先做，再关旧窗口（2026-09-25）：原来先关、后查，
+    // 查不过时面板起的那份已经连同它的任务一起没了，新的也没起来。
+    crate::workspace::preflight_codex_official(id)?;
     close_ours(gate).await?;
     let session =
         crate::workspace::launch(Client::Codex, IdentityKind::Official, id, None, gate).await?;
+    // 点了「登录 / 打开」就把上一次问出来的「登录已失效」清掉（`login_health` 文件头写着要这么做）。
+    super::login_health::forget(&super::login_health::codex_key(id));
+
+    // ⛔ 到这里桌面端已经起来了，会话和租约也登记了 —— 后面只是记账。记账失败不许把一次成功的
+    // 启动报成失败：界面会说「启动失败」，使用者再点一次，`close_ours` 就把刚起的那个窗口关掉。
     // 账户页靠 `index.json` 里的 pid + 创建时间认「当前启动的是哪个槽位」，
     // 创建时间要 WMI 那种格式，所以按 pid 从 detect() 里找回来。
-    let started = tokio::task::spawn_blocking(codex_desktop::detect)
-        .await
-        .map_err(|e| crate::error::GateError::Other(e.to_string()))??
-        .processes
-        .into_iter()
-        .find(|p| p.pid == session.pid)
-        .map(|p| p.started)
-        .unwrap_or_else(|| session.started_at.clone());
-    codex::mark_launched(&root, id, session.pid, &started)
+    let started = match tokio::task::spawn_blocking(codex_desktop::detect).await {
+        Ok(Ok(d)) => d
+            .processes
+            .into_iter()
+            .find(|p| p.pid == session.pid)
+            .map(|p| p.started),
+        Ok(Err(e)) => {
+            crate::audit::write(&format!(
+                "GPT 槽位 {id} 已启动，但读不出它的进程创建时间（{e}），按会话记录的时刻记"
+            ));
+            None
+        }
+        Err(e) => {
+            crate::audit::write(&format!(
+                "GPT 槽位 {id} 已启动，但读进程的任务异常结束（{e}），按会话记录的时刻记"
+            ));
+            None
+        }
+    }
+    .unwrap_or_else(|| session.started_at.clone());
+    if let Err(e) = codex::mark_launched(&root, id, session.pid, &started) {
+        crate::audit::write(&format!(
+            "GPT 槽位 {id} 已启动，但没记下「是哪个槽位起的」（{e}）；账户页的用量卡会按当前槽位显示"
+        ));
+    }
+    Ok(())
 }
 
 /// 关掉所有 Codex 桌面端（使用者点的「一键关闭」、装桌面端之前）。
@@ -101,6 +126,32 @@ pub async fn close(gate: &GateState) -> Result<()> {
     tokio::task::spawn_blocking(codex_desktop::close)
         .await
         .map_err(|e| crate::error::GateError::Other(e.to_string()))??;
+    codex::mark_closed(&codex::root())
+}
+
+/// 只关**官方身份**、而且资料目录是 `profiles` 之一的那几份（「设为中文」之前用，2026-09-25）。
+///
+/// 中转环境起的桌面端不归这件事管 —— 改的是官方槽位与默认那几份 `config.toml`，它的配置一个字不动。
+/// 原来这里走的是 [`close_ours`]，中转那份也被关掉（连同它正在跑的任务），事后还按当前槽位重开一个官方的。
+pub async fn close_official(gate: &GateState, profiles: Vec<std::path::PathBuf>) -> Result<()> {
+    let stopped = crate::sessions::stop_matching(|s| {
+        s.context.client == Client::Codex && s.context.identity_kind == IdentityKind::Official
+    })?;
+    for id in &stopped {
+        crate::gate::release_holder(gate, id)?;
+    }
+    tokio::task::spawn_blocking(move || {
+        codex_desktop::close_where(|p| {
+            p.ours
+                && p.profile.as_deref().is_some_and(|d| {
+                    profiles.iter().any(|want| {
+                        crate::install::inventory::same_path(std::path::Path::new(d), want)
+                    })
+                })
+        })
+    })
+    .await
+    .map_err(|e| crate::error::GateError::Other(e.to_string()))??;
     codex::mark_closed(&codex::root())
 }
 

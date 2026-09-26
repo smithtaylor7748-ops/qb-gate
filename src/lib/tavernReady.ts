@@ -38,8 +38,10 @@ export interface BridgeReadiness {
 export function bridgeBlockers(o: BridgeReadiness): string[] {
   const out: string[] = [];
   if (o.tavernPathsUnset) {
+    // 这句话在三个账户页的桥接设置弹窗和插件页里都会出现 —— 别写「在上面」（弹窗上面什么都没有），
+    // 插件页里那张卡也不叫「设置与定位」，叫「定位」（2026-09-25）。
     out.push(
-      "酒馆路径还没配 —— 在上面「设置与定位」里点「自动定位」，或自己填。",
+      "酒馆路径还没配 —— 到酒馆插件页的「定位」里点「自动定位」，或自己填。",
     );
   }
   if (!o.cli) out.push(`找不到${o.cliLabel} —— ${o.cliWhere}。`);

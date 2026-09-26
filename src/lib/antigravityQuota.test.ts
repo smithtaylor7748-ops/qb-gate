@@ -10,6 +10,7 @@ import {
   lowestQuota,
   modelGroups,
   percent,
+  quotaErrorLabel,
   resetIn,
   tierShort,
   tightestWindow,
@@ -44,6 +45,7 @@ function q(
     reset_at: reset_epoch == null ? null : "2026-09-21 07:38",
     reset_epoch,
     tags,
+    remaining_implied: false,
   };
 }
 
@@ -155,5 +157,33 @@ describe("反重力联网额度（四格）的显示", () => {
     expect(tierShort("free-tier", "Antigravity Starter Quota")).toBe("免费档");
     expect(tierShort("standard-tier", "Standard")).toBe("Standard");
     expect(tierShort(null, null)).toBe("");
+  });
+});
+
+describe("额度来源那一格的短标签", () => {
+  // 2026-09-25：原来含「令牌 / token」的错误一律叫「401 未授权」，连网络超时、
+  // 找不到客户端标识都算 —— 把到点说成被拒。
+  it("只有真的 401 才叫 401", () => {
+    expect(quotaErrorLabel("Google 回了 HTTP 401：unauthenticated")).toBe(
+      "401 未授权",
+    );
+    expect(quotaErrorLabel("换新访问令牌没成功（operation timed out）")).toBe(
+      "读取失败",
+    );
+    expect(quotaErrorLabel("本机没有能用的客户端标识，令牌换不下来")).toBe(
+      "读取失败",
+    );
+  });
+
+  it("登录已失效、到点、被拒、限流、没登录各说各的", () => {
+    expect(quotaErrorLabel("登录已失效：Google 说刷新令牌作废了")).toBe(
+      "登录已失效",
+    );
+    expect(quotaErrorLabel("访问令牌已经到点了（登录本身没问题）")).toBe(
+      "令牌到点",
+    );
+    expect(quotaErrorLabel("HTTP 403 forbidden")).toBe("403 被拒绝");
+    expect(quotaErrorLabel("HTTP 429 too many requests")).toBe("限流");
+    expect(quotaErrorLabel("没有激活的 Gemini CLI 槽位")).toBe("未登录");
   });
 });
