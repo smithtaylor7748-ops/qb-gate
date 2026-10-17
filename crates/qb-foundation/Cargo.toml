@@ -27,6 +27,8 @@ reqwest.workspace = true
 chrono.workspace = true
 dirs.workspace = true
 tracing.workspace = true
+# 只给 `json_canonical` 的短哈希用（2026-10-17）。早就在依赖树里，不引入新来源。
+sha2.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

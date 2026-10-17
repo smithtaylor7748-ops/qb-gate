@@ -13,6 +13,7 @@
 //! | [`paths`] | 本机数据放哪 |
 //! | [`audit`] | 使用者能看的那份日志怎么写 |
 //! | [`sink`] | 领域代码怎么在**不认识 UI 框架**的前提下往界面报进度 |
+//! | [`json_canonical`] | 跟键顺序无关的 JSON 文本与哈希（workspace 开了 `preserve_order`） |
 //!
 //! # 为什么它得是一个单独的 crate
 //!
@@ -27,5 +28,6 @@
 
 pub mod audit;
 pub mod error;
+pub mod json_canonical;
 pub mod paths;
 pub mod sink;

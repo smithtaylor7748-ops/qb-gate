@@ -747,8 +747,17 @@ async fn preview_in(db: &mut Repository, r: &InstallRequest) -> Result<InstallPr
         )),
     }
 }
+/// MCP 条目的内容指纹。**先排键再算**（`json_canonical`）。
+///
+/// workspace 的 `serde_json` 开了 `preserve_order`（2026-10-17）：`Value` 按文件里的顺序存，
+/// 直接序列化的话，同一份条目只要键的顺序不同就得出另一个指纹 —— 装好的条目会被判成
+/// 「外部修改过」、卸载也被拒。排好之后的字节跟没开那个特性时逐字节相同，
+/// 所以老版本存下的 `content_hash` 照样对得上。
 fn hash_json(v: &serde_json::Value) -> String {
-    hex::encode(Sha256::digest(serde_json::to_vec(v).unwrap_or_default()))
+    let canonical = qb_foundation::json_canonical::canonicalize_value(v.clone());
+    hex::encode(Sha256::digest(
+        serde_json::to_vec(&canonical).unwrap_or_default(),
+    ))
 }
 fn mcp_entry(dir: &Path, client: Client, id: &str) -> Result<Option<serde_json::Value>> {
     let file = if client == Client::ClaudeCode {
@@ -1266,6 +1275,17 @@ fn resolve_mcp_command(command: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 开了 `preserve_order` 之后，指纹仍然跟键的顺序无关，而且跟老版本算出来的一样。
+    #[test]
+    fn mcp_entry_hashes_ignore_key_order_and_match_what_older_builds_stored() {
+        let a = serde_json::json!({"command": "npx", "args": ["-y", "pkg"], "env": {"B": "1", "A": "2"}});
+        let b = serde_json::json!({"env": {"A": "2", "B": "1"}, "args": ["-y", "pkg"], "command": "npx"});
+        assert_eq!(hash_json(&a), hash_json(&b));
+        // 没开 `preserve_order` 的老版本序列化出来就是按字母序的这一串，存进库里的就是它的哈希。
+        let older = r#"{"args":["-y","pkg"],"command":"npx","env":{"A":"2","B":"1"}}"#;
+        assert_eq!(hash_json(&a), hex::encode(Sha256::digest(older.as_bytes())));
+    }
 
     /// Codex 不读 `skills/`。装进去不生效却报「已安装」＝面板在说谎，
     /// 跟 `launch.rs` 里「设一个不存在的变量却显示已关闭」是同一条规矩。

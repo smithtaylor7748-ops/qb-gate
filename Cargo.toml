@@ -60,7 +60,13 @@ qb-foundation = { path = "crates/qb-foundation" }
 qb-platform = { path = "crates/qb-platform" }
 
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `preserve_order`（2026-10-17，中转站重构阶段 1 第 2 步）：对象按插入 / 解析顺序存，不再按字母序。
+# 本机路由要改请求体（模型映射、整流器、协议转换，照搬 cc-switch，它也开着这个特性）——
+# 不开的话改一个字段就把整个请求的键按字母重排，结构化输出的 JSON Schema 属性顺序跟着变，
+# 而那个顺序会影响模型生成字段的顺序。特性在整个构建里是并集，没法「只给 qb-proxy 开」。
+# 打开前后 `cargo test --workspace` 1402 条一条没变；要跟顺序无关的哈希走
+# `qb_foundation::json_canonical`（MCP 条目指纹就是这么改的）。
+serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 chrono = "0.4"
 dirs = "5"
