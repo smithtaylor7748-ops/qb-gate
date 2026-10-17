@@ -78,6 +78,35 @@ const MIGRATIONS: &[&str] = &[
         SET body = json_set(body, '$.client', 'claude-code',
                                   '$.id', 'claude-code' || char(31) || id),
             id   = 'claude-code' || char(31) || id;",
+    // 4：智能调度的落盘状态（2026-10-17 补上）。
+    //
+    // 0.16.0 把智能调度从前端的一个 useState 改成「落盘的承诺」，命令层从那时起就往
+    // `station_schedule` 里读写 —— 可这张表**从来没有迁移建过**，`table()` 白名单里也没有它。
+    // 于是每一次「开启调度」都在 `put` 那一步报「未知的数据表」，读的一侧又把错误吞成
+    // 「关着」：真机上调度从没开成过，而演示模式喂的是假数据，`test:ui` 一直全绿。
+    // 形状跟别的表一样是 `(id, body)`，一个软件一行，主键是软件名。
+    "CREATE TABLE IF NOT EXISTS station_schedule(id TEXT PRIMARY KEY,body TEXT NOT NULL);",
+];
+
+/// 通用读写（`list` / `get` / `find` / `put` / `remove` / `prune`）认得的表。
+///
+/// ⛔ **加一张表要同时做两件事**：在 [`MIGRATIONS`] 末尾追加建表语句，并把名字写进这里。
+/// 只写进这里，第一次读写就是「no such table」；只建表不写进这里，就是「未知的数据表」——
+/// 迁移 4 之前的 `station_schedule` 就是后一种，而调用方把错误吞掉了。
+/// `every_whitelisted_table_is_created_by_a_migration` 钉着前一种。
+const TABLES: &[&str] = &[
+    "providers",
+    "credentials",
+    "environments",
+    "installations",
+    "catalog",
+    "operations",
+    "sessions",
+    "diagnostics",
+    "station_routes",
+    "station_audits",
+    "request_logs",
+    "station_schedule",
 ];
 
 impl Repository {
@@ -132,24 +161,10 @@ COMMIT;"
             .map_err(sql)
     }
     fn table(table: &str) -> Result<&str> {
-        if [
-            "providers",
-            "credentials",
-            "environments",
-            "installations",
-            "catalog",
-            "operations",
-            "sessions",
-            "diagnostics",
-            "station_routes",
-            "station_audits",
-            "request_logs",
-        ]
-        .contains(&table)
-        {
+        if TABLES.contains(&table) {
             Ok(table)
         } else {
-            Err(GateError::Other("未知的数据表".into()))
+            Err(GateError::Other(format!("未知的数据表 {table}")))
         }
     }
     pub fn list<T: DeserializeOwned>(&self, table: &str) -> Result<Vec<T>> {
@@ -163,14 +178,24 @@ COMMIT;"
             .collect()
     }
     pub fn get<T: DeserializeOwned>(&self, table: &str, id: &str) -> Result<T> {
+        self.find(table, id)?
+            .ok_or_else(|| GateError::Other(format!("找不到记录 {id}")))
+    }
+    /// 按主键取一行，**没有这一行时给 `None`**。
+    ///
+    /// 跟 [`get`](Self::get) 只差「没有」这一档：`get` 把它当错误，这里把它当正常结果；
+    /// 别的失败（表不在白名单里、库读不了、body 解析不了）照样是错误。
+    /// 拿 `get(..).unwrap_or_else(默认值)` 的话，这两类会被一起吞成「没有」——
+    /// `station_schedule` 那张表从没建过，就是这样从 0.16.0 一直藏到迁移 4。
+    pub fn find<T: DeserializeOwned>(&self, table: &str, id: &str) -> Result<Option<T>> {
         let query = format!("SELECT body FROM {} WHERE id=?1", Self::table(table)?);
         let body: Option<String> = self
             .conn
             .query_row(&query, [id], |r| r.get(0))
             .optional()
             .map_err(sql)?;
-        serde_json::from_str(&body.ok_or_else(|| GateError::Other(format!("找不到记录 {id}")))?)
-            .map_err(Into::into)
+        body.map(|b| serde_json::from_str(&b).map_err(Into::into))
+            .transpose()
     }
     pub fn put<T: Serialize>(&self, table: &str, id: &str, body: &T) -> Result<()> {
         if ["credentials", "environments"].contains(&table) {
@@ -808,6 +833,126 @@ mod tests {
         // 于是所有已经升上去的库都会被判成「更新版本创建的」而拒绝打开。
         assert_eq!(SCHEMA as usize, MIGRATIONS.len());
         assert!(SCHEMA >= 2, "已经发布过版本 2，不许再变小");
+    }
+
+    #[test]
+    fn every_whitelisted_table_is_created_by_a_migration() {
+        // 白名单与迁移是两份清单。只进了白名单的表，第一次读写就是「no such table」——
+        // 而调用方要是把错误吞成默认值，那就是 `station_schedule` 那种「功能从没生效过」。
+        let p = fixture();
+        let db = Repository::open_in(&p).unwrap();
+        for table in TABLES {
+            let found: Option<String> = db
+                .conn
+                .query_row(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |r| r.get(0),
+                )
+                .optional()
+                .unwrap();
+            assert_eq!(found.as_deref(), Some(*table), "{table} 没有迁移建过");
+            // 通用读写确实认得它。
+            let _: Vec<serde_json::Value> = db.list(table).unwrap();
+        }
+        drop(db);
+        std::fs::remove_dir_all(p).unwrap();
+    }
+
+    #[test]
+    fn a_schedule_switched_on_is_still_on_after_reopening_the_database() {
+        // 迁移 4 之前：这一句 put 报「未知的数据表」，读的一侧把错误吞成「关着」——
+        // 智能调度在真机上从没开成过，面板重启后「接着跑」也就无从谈起。
+        let p = fixture();
+        {
+            let db = Repository::open_in(&p).unwrap();
+            db.put(
+                "station_schedule",
+                "claude-code",
+                &serde_json::json!({"client": "claude-code", "enabled": true}),
+            )
+            .unwrap();
+        }
+        let db = Repository::open_in(&p).unwrap();
+        let got: serde_json::Value = db.get("station_schedule", "claude-code").unwrap();
+        assert_eq!(got["enabled"], true);
+        // 一个软件一行：别的软件没存过就是没有，不是报错。
+        assert!(db
+            .find::<serde_json::Value>("station_schedule", "codex")
+            .unwrap()
+            .is_none());
+        drop(db);
+        std::fs::remove_dir_all(p).unwrap();
+    }
+
+    #[test]
+    fn a_version_three_database_gains_the_schedule_table_and_keeps_its_routes() {
+        // 装着 0.16.0–0.25.6 的人，库停在版本 3：升上来要多出调度表，线路一条都不能掉。
+        let p = fixture();
+        {
+            let db = Repository::open_in(&p).unwrap();
+            db.put(
+                "station_routes",
+                "claude-code\u{1f}moxi\u{1f}",
+                &serde_json::json!({"id": "claude-code\u{1f}moxi\u{1f}", "client": "claude-code"}),
+            )
+            .unwrap();
+            db.conn
+                .execute_batch("DROP TABLE station_schedule; PRAGMA user_version=3;")
+                .unwrap();
+        }
+        let db = Repository::open_in(&p).unwrap();
+        assert_eq!(db.pragma_query_value_user_version().unwrap(), SCHEMA);
+        let routes: Vec<serde_json::Value> = db.list("station_routes").unwrap();
+        assert_eq!(routes.len(), 1, "一条都不许掉");
+        // 迁移 3 是 UPDATE 型的：重跑一遍会把 id 再前缀一次。版本号在同一个事务里推上去，
+        // 所以从 3 升到 4 只跑第 4 条。
+        assert_eq!(routes[0]["id"], "claude-code\u{1f}moxi\u{1f}");
+        db.put(
+            "station_schedule",
+            "codex",
+            &serde_json::json!({"client": "codex", "enabled": true}),
+        )
+        .unwrap();
+        let got: serde_json::Value = db.get("station_schedule", "codex").unwrap();
+        assert_eq!(got["enabled"], true);
+        drop(db);
+        std::fs::remove_dir_all(p).unwrap();
+    }
+
+    #[test]
+    fn find_tells_a_missing_row_apart_from_a_broken_lookup() {
+        let p = fixture();
+        let db = Repository::open_in(&p).unwrap();
+        // 没有这一行：正常结果。
+        assert!(db
+            .find::<serde_json::Value>("station_schedule", "codex")
+            .unwrap()
+            .is_none());
+        // 表名不在白名单里：错误，而且说得出是哪张表。
+        let err = db
+            .find::<serde_json::Value>("station_schedules", "codex")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("未知的数据表 station_schedules"), "{err}");
+        // body 读不出来：错误，不是「没有」。
+        db.conn
+            .execute(
+                "INSERT INTO station_schedule(id,body) VALUES('codex','not json')",
+                [],
+            )
+            .unwrap();
+        assert!(db
+            .find::<serde_json::Value>("station_schedule", "codex")
+            .is_err());
+        // get 在「没有」那一档仍然是错误（老调用方靠这个）。
+        assert!(db
+            .get::<serde_json::Value>("station_schedule", "claude-code")
+            .unwrap_err()
+            .to_string()
+            .contains("找不到记录"));
+        drop(db);
+        std::fs::remove_dir_all(p).unwrap();
     }
 
     #[test]

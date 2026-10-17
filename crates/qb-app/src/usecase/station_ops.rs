@@ -15,12 +15,12 @@
 //! CLAUDE.md 明确不做的「自动换号」。`qb-station` 物理上不认识账户,
 //! `architecture.rs` 有测试钉着。
 
-use crate::domain::{Credential, Provider};
+use crate::domain::{Client, Credential, Provider};
 use crate::error::{GateError, Result};
 use crate::repository::Repository;
 use qb_station::health::{self, Windows};
 use qb_station::schedule::{
-    cheap_values, cost_per_token, rank, Candidate, CheapBasis, CheapInput, Prefs, Ranking,
+    cheap_values, cost_per_token, rank, Candidate, CheapBasis, CheapInput, Prefs, Ranking, Schedule,
 };
 use qb_station::station::audit::{AuditRound, Check, CheckKind};
 use qb_station::station::model::Protocols;
@@ -673,6 +673,36 @@ pub async fn fetch_prices(
 /// 不封顶的话库会一直长,而使用者根本不会去看三个月前那一条。
 pub const REQUEST_LOG_KEEP: usize = 2000;
 
+/// 智能调度落在哪张表：一个软件一行。
+const SCHEDULE_TABLE: &str = "station_schedule";
+
+/// 调度那一行的主键：软件在 IPC 上的名字。**直接取 `Client` 的 serde 写法**，
+/// 不再另写一份映射 —— 两份映射迟早会漂，漂了之后存的和读的就不是同一行。
+fn schedule_key(client: Client) -> Result<String> {
+    match serde_json::to_value(client)? {
+        serde_json::Value::String(key) => Ok(key),
+        other => Err(GateError::Other(format!(
+            "软件名序列化成了意外的形状：{other}"
+        ))),
+    }
+}
+
+/// 读一个软件的智能调度。**没存过 = 关着的那一份**（[`Schedule::new`]）。
+///
+/// ⛔ 只有「没有这一行」才回落成默认值；表不在、库读不了、存的读不出来都是错误，照实往上报。
+/// 0.16.0–0.25.6 这里是 `get(..).unwrap_or_else(|_| Schedule::new(c))`：
+/// 那张表从没建过，每一次读都失败、都被吞成「关着」，而界面上看起来只是「没开」。
+pub fn load_schedule(db: &Repository, client: Client) -> Result<Schedule> {
+    Ok(db
+        .find(SCHEDULE_TABLE, &schedule_key(client)?)?
+        .unwrap_or_else(|| Schedule::new(client)))
+}
+
+/// 存一个软件的智能调度（主键取 `schedule.client`）。
+pub fn save_schedule(db: &Repository, schedule: &Schedule) -> Result<()> {
+    db.put(SCHEDULE_TABLE, &schedule_key(schedule.client)?, schedule)
+}
+
 /// 把攒下的请求日志落库。
 pub fn persist_logs(
     db: &qb_platform::repository::Repository,
@@ -729,6 +759,58 @@ mod tests {
             windows: health::windows(&rows, now),
             error: None,
         }
+    }
+
+    #[test]
+    fn a_schedule_switched_on_is_still_on_after_the_panel_reopens_the_database() {
+        // 「落盘的承诺」：开了存进库，面板重启（重新打开库）读回来还是开着。
+        // 迁移 4 之前 save 必报「未知的数据表」、load 把错误吞成「关着」——
+        // 智能调度在真机上从没开成过，而演示模式喂的是假数据，看不出来。
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        {
+            let db = Repository::open_in(&root).unwrap();
+            // 没存过 = 关着的那一份，不是错误。
+            assert_eq!(
+                load_schedule(&db, Client::Codex).unwrap(),
+                Schedule::new(Client::Codex)
+            );
+            let mut s = load_schedule(&db, Client::Codex).unwrap();
+            s.enabled = true;
+            s.prefs = Prefs::batch();
+            s.last_switch_ms = Some(1_700_000_000_000);
+            s.last_note = "现任仍然是最好的那条".into();
+            save_schedule(&db, &s).unwrap();
+        }
+        let db = Repository::open_in(&root).unwrap();
+        let back = load_schedule(&db, Client::Codex).unwrap();
+        assert!(back.enabled);
+        assert_eq!(back.prefs, Prefs::batch());
+        assert_eq!(back.last_switch_ms, Some(1_700_000_000_000));
+        assert_eq!(back.last_note, "现任仍然是最好的那条");
+        // 一个软件一份：开了 Codex 不会把另外两个一起打开。
+        assert!(!load_schedule(&db, Client::ClaudeCode).unwrap().enabled);
+        assert!(!load_schedule(&db, Client::ClaudeDesktop).unwrap().enabled);
+        // 主键就是 IPC 上的软件名（`Client` 的 serde 写法）。
+        let raw: serde_json::Value = db.get("station_schedule", "codex").unwrap();
+        assert_eq!(raw["enabled"], true);
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_schedule_is_reported_instead_of_read_as_off() {
+        // 「读不出来」不许降级成「关着」（§7.17）：那正是调度表的 bug 藏了这么久的原因。
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        db.put(
+            "station_schedule",
+            "claude-code",
+            &serde_json::json!({"enabled": true}),
+        )
+        .unwrap();
+        assert!(load_schedule(&db, Client::ClaudeCode).is_err());
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -1125,7 +1125,20 @@ Electron 里注 JS、扫 Chrome 的 Cookies、改防火墙与代理），删不�
 实际上从点下去那一刻起什么都没发生过。
 
 现在它是 `station_schedule` 那张表里的一行（一个软件一行），面板启动时
-会把上次开着的接回来（`lib.rs` 的 setup 里）。相应地：
+会把上次开着的接回来（`lib.rs` 的 setup 里）。
+
+⛔ **那张表在 0.16.0–0.25.6 根本不存在**（2026-10-17 才查出来）：命令层一直在读写它，可没有一条迁移建过它，
+`Repository::table()` 的白名单里也没有 —— 「开启」那一步必报「未知的数据表」，读的一侧又把错误吞成「关着」，
+真机上调度从没开成过；演示模式喂的是假数据，`test:ui` 一直全绿。迁移 4 补上了。所以：
+
+- 调度的存取只走 `station_ops::load_schedule` / `save_schedule`。**只有「没有这一行」才回落成「关着」**
+  （`Repository::find` 给 `None`），表不在、库读不了、存的读不出来都照实报错 —— 别再写回
+  `get(..).unwrap_or_else(|_| 默认值)`，这个 bug 就是这样从 0.16.0 一直藏到 0.25.6 的（§7.17）；
+- **加一张表要同时做两件事**：`MIGRATIONS` 末尾追加建表语句、名字写进 `repository.rs` 的 `TABLES`。
+  `every_whitelisted_table_is_created_by_a_migration` 钉着「进了白名单却没建」那一半；
+  「建了却没进白名单」只能靠走真实存取路径的测试抓（`a_schedule_switched_on_is_still_on_after_the_panel_reopens_the_database`）。
+
+相应地：
 
 - **界面上必须写明「面板关掉即停」**。循环活在面板进程里，关掉面板调度
   就不再换上游了，而客户端还在照着上一次选的那条线跑 —— 可能是几天前

@@ -1197,16 +1197,16 @@ pub(crate) fn stop_scheduler(state: &AppState) {
 
 /// 三个软件各自的调度状态。**一次全给** —— 界面上那三个分页要同时显示
 /// 「这个软件的调度开着没有」，一个一个问会让切分页时闪一下旧值。
+///
+/// 没存过的软件给「关着」那一份；**读不出来就报错**，不吞成「关着」——
+/// 0.16.0–0.25.6 这里吞了，调度表从没建过这件事因此一直没人看见（迁移 4 的说明）。
 #[tauri::command]
 pub fn station_schedules() -> Result<Vec<Schedule>> {
     let db = crate::repository::Repository::open()?;
-    Ok(ALL_CLIENTS
+    ALL_CLIENTS
         .iter()
-        .map(|&c| {
-            db.get::<Schedule>("station_schedule", client_key(c))
-                .unwrap_or_else(|_| Schedule::new(c))
-        })
-        .collect())
+        .map(|&c| station_ops::load_schedule(&db, c))
+        .collect()
 }
 
 /// 开关这个软件的智能调度，顺带存下偏好。
@@ -1234,9 +1234,7 @@ pub fn station_schedule_set(
 ) -> Result<Schedule> {
     use tauri::Manager;
     let db = crate::repository::Repository::open()?;
-    let mut s = db
-        .get::<Schedule>("station_schedule", client_key(client))
-        .unwrap_or_else(|_| Schedule::new(client));
+    let mut s = station_ops::load_schedule(&db, client)?;
     if let Some(on) = enabled {
         s.enabled = on;
         if !on {
@@ -1248,7 +1246,7 @@ pub fn station_schedule_set(
     if let Some(p) = prefs {
         s.prefs = p;
     }
-    db.put("station_schedule", client_key(client), &s)?;
+    station_ops::save_schedule(&db, &s)?;
     if s.enabled {
         start_scheduler(&app.state::<AppState>(), Some(app.clone()));
     } else if station_schedules()?.iter().all(|s| !s.enabled) {
@@ -1285,8 +1283,15 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
     let http = station_billing::http_client();
 
     for &client in ALL_CLIENTS {
-        let Ok(mut sched) = db.get::<Schedule>("station_schedule", client_key(client)) else {
-            continue;
+        let mut sched = match station_ops::load_schedule(&db, client) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    "智能调度：读不出 {} 的设置，这一跳跳过它：{e}",
+                    client_key(client)
+                );
+                continue;
+            }
         };
         if !sched.enabled {
             continue;
@@ -1298,13 +1303,13 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
             .collect();
         if routes.is_empty() {
             sched.last_note = "没有已配置可用 API Key 的线路，请添加或编辑线路".into();
-            let _ = db.put("station_schedule", client_key(client), &sched);
+            keep_schedule(&db, &sched);
             out.push(sched);
             continue;
         }
         let Ok(http) = &http else {
             sched.last_note = "无法建立账单连接，请检查本机网络配置".into();
-            let _ = db.put("station_schedule", client_key(client), &sched);
+            keep_schedule(&db, &sched);
             out.push(sched);
             continue;
         };
@@ -1355,10 +1360,24 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
                 };
             }
         }
-        let _ = db.put("station_schedule", client_key(client), &sched);
+        keep_schedule(&db, &sched);
         out.push(sched);
     }
     out
+}
+
+/// 把这一跳的结论写回库。写不回去不挡这一跳（上游已经换了），但要留下痕迹 ——
+/// 默默丢掉正是调度表那个 bug 藏了这么久的原因。
+///
+/// 是函数不是闭包：闭包会把 `&Repository` 一路揣过 `route_health(..).await`，
+/// 而 `Repository` 不是 `Sync`，调度循环的 future 就不能再交给 `spawn`。
+fn keep_schedule(db: &crate::repository::Repository, sched: &Schedule) {
+    if let Err(e) = station_ops::save_schedule(db, sched) {
+        tracing::warn!(
+            "智能调度：{} 这一跳的结论没写进库：{e}",
+            client_key(sched.client)
+        );
+    }
 }
 
 #[cfg(test)]
