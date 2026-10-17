@@ -10,7 +10,7 @@ export type CodexLocaleStatus = {
  */
 enabled: boolean, homes: Array<CodexLocaleHome>, 
 /**
- * 面板起的 GPT 桌面端开着几个 —— 改之前要先关，改完重开当前槽位。
+ * 面板起的 GPT 桌面端开着几个 —— 要写的那几份先关，改完重开当前槽位。
  */
 ours_running: number, 
 /**

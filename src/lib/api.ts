@@ -18,7 +18,6 @@ import type { Ipv6Status } from "./generated/Ipv6Status";
 // 页面的 import 路径（`from "../lib/api"`）一个字都没变。
 
 import type { AccountsReport } from "./generated/AccountsReport";
-import type { ApplyReport } from "./generated/ApplyReport";
 import type { AssetItem } from "./generated/AssetItem";
 import type { AuthStyle } from "./generated/AuthStyle";
 import type { BackupEntry } from "./generated/BackupEntry";
@@ -74,9 +73,7 @@ import type { ManagedProbe } from "./generated/ManagedProbe";
 import type { ManagedStatus } from "./generated/ManagedStatus";
 import type { MigrateReport } from "./generated/MigrateReport";
 import type { NetAdapter } from "./generated/NetAdapter";
-import type { OfficialCatalogStatus } from "./generated/OfficialCatalogStatus";
 import type { PackageProbe } from "./generated/PackageProbe";
-import type { PanelVerdict } from "./generated/PanelVerdict";
 import type { PluginState } from "./generated/PluginState";
 import type { EgressConfig } from "./generated/EgressConfig";
 import type { EgressInstall } from "./generated/EgressInstall";
@@ -84,8 +81,6 @@ import type { PluginStatus } from "./generated/PluginStatus";
 import type { PolicyScope } from "./generated/PolicyScope";
 import type { PolicyValue } from "./generated/PolicyValue";
 import type { Preset } from "./generated/Preset";
-import type { Profile } from "./generated/Profile";
-import type { ProfileStore } from "./generated/ProfileStore";
 import type { AccountProbe } from "./generated/AccountProbe";
 import type { AccountProbeState } from "./generated/AccountProbeState";
 import type { Progress } from "./generated/Progress";
@@ -110,13 +105,30 @@ import type { SoftwareReport } from "./generated/SoftwareReport";
 import type { StepRecord } from "./generated/StepRecord";
 import type { StepState } from "./generated/StepState";
 import type { SwitchReport } from "./generated/SwitchReport";
-import type { SyncReport } from "./generated/SyncReport";
 import type { TavernCandidate } from "./generated/TavernCandidate";
 import type { GptBridgeStatus } from "./generated/GptBridgeStatus";
 import type { TavernBackend } from "./generated/TavernBackend";
 import type { TavernConfig } from "./generated/TavernConfig";
 import type { TavernEvidence } from "./generated/TavernEvidence";
 import type { TavernSurvey } from "./generated/TavernSurvey";
+import type { BridgeCallDetail } from "./generated/BridgeCallDetail";
+import type { TavernSetupStatus } from "./generated/TavernSetupStatus";
+import type { TavernRelease } from "./generated/TavernRelease";
+import type { TavernUninstalled } from "./generated/TavernUninstalled";
+import type { TavernReleaseNote } from "./generated/TavernReleaseNote";
+import type { ConsoleChunk } from "./generated/ConsoleChunk";
+import type { ConsoleHint } from "./generated/ConsoleHint";
+import type { BookEntry } from "./generated/BookEntry";
+import type { CharacterCard } from "./generated/CharacterCard";
+import type { CharacterDetail } from "./generated/CharacterDetail";
+import type { ImportReport } from "./generated/ImportReport";
+import type { WorldInfo } from "./generated/WorldInfo";
+import type { WorldDetail } from "./generated/WorldDetail";
+import type { TavernExtension } from "./generated/TavernExtension";
+import type { TavernExtensionList } from "./generated/TavernExtensionList";
+import type { TavernExtensionScope } from "./generated/TavernExtensionScope";
+import type { ExtensionCheck } from "./generated/ExtensionCheck";
+import type { TrashEntry } from "./generated/TrashEntry";
 import type { TokenBucket } from "./generated/TokenBucket";
 import type { TokenSummary } from "./generated/TokenSummary";
 import type { TokenUsage } from "./generated/TokenUsage";
@@ -140,7 +152,6 @@ export type {
   AccountProbe,
   AccountProbeState,
   AccountsReport,
-  ApplyReport,
   AssetItem,
   AuthStyle,
   BackupEntry,
@@ -189,16 +200,12 @@ export type {
   ManagedStatus,
   MigrateReport,
   NetAdapter,
-  OfficialCatalogStatus,
   PackageProbe,
-  PanelVerdict,
   PluginState,
   PluginStatus,
   PolicyScope,
   PolicyValue,
   Preset,
-  Profile,
-  ProfileStore,
   Progress,
   ProxyState,
   PurgeAction,
@@ -221,12 +228,28 @@ export type {
   StepRecord,
   StepState,
   SwitchReport,
-  SyncReport,
   TavernBackend,
   TavernCandidate,
   TavernConfig,
   TavernEvidence,
+  TavernRelease,
+  TavernSetupStatus,
   TavernSurvey,
+  TavernUninstalled,
+  TavernReleaseNote,
+  ConsoleChunk,
+  ConsoleHint,
+  BookEntry,
+  CharacterCard,
+  CharacterDetail,
+  ImportReport,
+  WorldInfo,
+  WorldDetail,
+  TavernExtension,
+  TavernExtensionList,
+  TavernExtensionScope,
+  ExtensionCheck,
+  TrashEntry,
   TokenBucket,
   TokenSummary,
   TokenUsage,
@@ -254,23 +277,17 @@ export const api = {
   gateStatus: () => call<GateStatus>("gate_status"),
   gateLockAll: () => call<number>("gate_lock_all"),
   gateUnlockAll: () => call<number>("gate_unlock_all"),
-  gateOpen: (holder: string) => call<void>("gate_open", { holder }),
   /**
    * 重新放行：验一次出口 IP，过了就把门重新打开并接回看门狗。
    *
-   * 跟 `gateOpen` 的区别是**不需要说出 holder** —— 沿用上一次那个，
-   * 因为点它的场景永远是「门被面板自己关上了，我要开回来」。
-   * 它**不启动任何进程**。
+   * **不需要说出 holder** —— 沿用上一次那个，因为点它的场景永远是
+   * 「门被面板自己关上了，我要开回来」。它**不启动任何进程**。
    */
   gateReopen: () => call<string>("gate_reopen"),
-  gateRelease: () => call<void>("gate_release"),
   gateCleanStale: () => call<Array<[string, boolean]>>("gate_clean_stale"),
-  /**
-   * 备用入口：常规读取走 `gateStatus()`，它已经带 `allowlist` 字段。
-   * 保留是因为这个文件与 Rust 的 handler 列表一一对应，这是它的既定不变量 ——
-   * 为省三行破坏对应关系不划算。
-   */
-  allowlistRead: () => call<string[]>("allowlist_read"),
+  // 读白名单走 `gateStatus()`（它带 `allowlist` 字段）。原来还有一条单独的 `allowlist_read`，
+  // 只有新手引导在用，2026-09-27 跟着删了 —— 这个文件跟 Rust 的 handler 列表一一对应，
+  // 而且两边都得真有人调（`apiUsage.test.ts` 与 `architecture.rs` 各守一半）。
   allowlistWrite: (entries: string[]) =>
     call<void>("allowlist_write", { entries }),
   /**
@@ -295,9 +312,8 @@ export const api = {
   /**
    * 验 IP → 解锁 → 真的把进程拉起来 → 挂看门狗。任何一步失败都回滚并重新上锁。
    *
-   * `gate_open` 只解锁不启动，所以旧界面上那两个叫「启动 Claude Code」
-   * 「启动 Claude 桌面端」的按钮其实一个进程都没起过 —— 点完什么都不发生，
-   * 用户还得自己去找 exe，而 exe 上恰好挂着 Deny ACE。
+   * 原来还有一条只解锁不启动的 `gate_open`，旧界面上那两个叫「启动 Claude Code」
+   * 「启动 Claude 桌面端」的按钮走的就是它 —— 一个进程都没起过。命令已删（2026-09-27）。
    */
   launchClaude: (target: LaunchTarget) =>
     call<LaunchResult>("launch_claude", { target }),
@@ -305,7 +321,6 @@ export const api = {
   // 探测
   probeIp: () => call<IpInfo>("probe_ip"),
   lookupIp: (ip: string) => call<IpLookupReport>("probe_ip_lookup", { ip }),
-  probePurity: () => call<PanelVerdict>("probe_purity"),
   probeDns: () => call<DnsReport>("probe_dns"),
   purityCriteria: () => call<PurityCriteria>("purity_criteria"),
 
@@ -469,32 +484,16 @@ export const api = {
    */
   checkupScan: () => call<Checkup>("checkup_scan"),
 
-  // 时区
-  tzCurrent: () => call<string>("tz_current"),
-  tzApply: (iana: string, restoreOnExit: boolean) =>
-    call<{ original: string; applied: string; restore_on_exit: boolean }>(
-      "tz_apply",
-      {
-        iana,
-        restoreOnExit,
-      },
-    ),
-  tzRestore: () => call<void>("tz_restore"),
+  // 时区没有命令了：切换走「设置 › 启动时对齐」（面板启动时自动对到出口 IP），
+  // 原值只进审计日志。原来的读 / 切 / 恢复三条 2026-09-27 删了 —— 「恢复」只认旧时区卡
+  // 记下的原值，启动对齐从来不记，点了永远是「已恢复」。
 
-  // 进度
+  // 快照
   snapshotList: () => call<SnapshotEntry[]>("snapshot_list"),
   snapshotCreate: (note: string) =>
     call<SnapshotEntry>("snapshot_create", { note }),
   snapshotRestore: (id: string) => call<string>("snapshot_restore", { id }),
   snapshotRemove: (id: string) => call<void>("snapshot_remove", { id }),
-  snapshotDir: (id: string) => call<string>("snapshot_dir", { id }),
-
-  profileList: () => call<ProfileStore>("profile_list"),
-  profileSave: (item: Profile) => call<string>("profile_save", { item }),
-  profileRemove: (id: string) => call<void>("profile_remove", { id }),
-  profileCapture: (name: string) => call<Profile>("profile_capture", { name }),
-  /** 会切账户。**只由界面点击触发**，不要从任何自动路径调。 */
-  profileApply: (id: string) => call<ApplyReport>("profile_apply", { id }),
 
   settingsLoad: () => call<Settings>("settings_load"),
   ipv6Status: () => call<Ipv6Status>("ipv6_status"),
@@ -576,8 +575,6 @@ export const api = {
 
   // 插件
   pluginList: () => call<PluginStatus[]>("plugin_list"),
-  pluginCatalogStatus: () =>
-    call<OfficialCatalogStatus>("plugin_catalog_status"),
   /** 起酒馆。缺省 Claude 后端（你自己的 bridge.py）；`"gpt"` 走面板内置的 GPT 桥接。 */
   pluginStart: (backend?: TavernBackend) =>
     call<string>("plugin_start", { backend: backend ?? null }),
@@ -609,11 +606,86 @@ export const api = {
   /** 清空调用日志。**不可逆** —— 调用方先弹确认框。 */
   tavernBridgeTelemetryClear: () =>
     call<number>("tavern_bridge_telemetry_clear"),
+  /** 一条调用的全文（系统提示词、消息、回复）。只在使用者点「展开」时读。 */
+  tavernBridgeCallDetail: (id: string) =>
+    call<BridgeCallDetail>("tavern_bridge_call_detail", { id }),
+
+  // 软件页托管 SillyTavern（2026-09-29）。
+  /** 装在哪、是不是面板装的、Node 够不够、有没有 winget。**不联网。** */
+  tavernSetupStatus: () => call<TavernSetupStatus>("tavern_setup_status"),
+  /** 问 SillyTavern 官方 GitHub 最新的正式版。**联网**，只在使用者点了之后调。 */
+  tavernLatest: () => call<TavernRelease>("tavern_latest"),
+  /**
+   * 下载安装一份面板托管的酒馆。`importFrom` 给了就从那份复制数据（源不动）；
+   * `installNode` 勾了才在缺 Node.js 时用 winget 装 LTS。进度走 `install-sillytavern`。
+   */
+  tavernInstall: (
+    importFrom: string | null,
+    installNode: boolean,
+    tag: string | null = null,
+  ) => call<string>("tavern_install", { importFrom, installNode, tag }),
+  /** 换成最新正式版（`tag` 给了就换成那一版，可以更旧）：数据复制过去，原来那份留一份。 */
+  tavernUpdate: (installNode: boolean, tag: string | null = null) =>
+    call<string>("tavern_update", { installNode, tag }),
+  /** 卸载面板装的那份：先备份数据再删。 */
+  tavernUninstall: () => call<TavernUninstalled>("tavern_uninstall"),
+
+  // 软件页 SillyTavern 卡（2026-09-29）：版本 · 控制台 · 角色卡 · 世界书 · 扩展 · 回收站。
+  /** 最近的正式版（发布页的 Atom，最多 10 个，带更新说明）。**联网**，只在点了之后调。 */
+  tavernReleases: () => call<TavernReleaseNote[]>("tavern_releases"),
+  /** 某一个正式版（手填的标签核格式、读它要多新的 Node）。**联网**。 */
+  tavernRelease: (tag: string) =>
+    call<TavernRelease>("tavern_release", { tag }),
+  /** 面板装的那份与留着的那一版对调；`carryData` = 把现在的数据带过去。进度走 `install-sillytavern`。 */
+  tavernSwapPrevious: (carryData: boolean) =>
+    call<string>("tavern_swap_previous", { carryData }),
+  /** 读一次控制台。本机文件，不联网；`run` / `offset` 是上一次读到哪。 */
+  tavernConsole: (previous: boolean, run: string | null, offset: number) =>
+    call<ConsoleChunk>("tavern_console", { previous, run, offset }),
+  tavernCharacters: () => call<CharacterCard[]>("tavern_characters"),
+  tavernCharacterDetail: (file: string) =>
+    call<CharacterDetail>("tavern_character_detail", { file }),
+  /** 酒馆自己生成的缩略图（data URL）；还没生成过是 `null`。 */
+  tavernCharacterThumbnail: (file: string) =>
+    call<string | null>("tavern_character_thumbnail", { file }),
+  tavernCharactersImport: (files: string[]) =>
+    call<ImportReport>("tavern_characters_import", { files }),
+  /** 挪进回收站（能恢复）。`withChats` = 连同它的聊天记录。 */
+  tavernCharacterDelete: (file: string, withChats: boolean) =>
+    call<TrashEntry>("tavern_character_delete", { file, withChats }),
+  tavernWorlds: () => call<WorldInfo[]>("tavern_worlds"),
+  tavernWorldDetail: (file: string) =>
+    call<WorldDetail>("tavern_world_detail", { file }),
+  tavernWorldsImport: (files: string[]) =>
+    call<ImportReport>("tavern_worlds_import", { files }),
+  tavernWorldDelete: (file: string) =>
+    call<TrashEntry>("tavern_world_delete", { file }),
+  tavernExtensions: () => call<TavernExtensionList>("tavern_extensions"),
+  /** **联网**（git fetch）。 */
+  tavernExtensionCheck: (name: string, scope: TavernExtensionScope) =>
+    call<ExtensionCheck>("tavern_extension_check", { name, scope }),
+  /** **联网**（git pull --ff-only）。 */
+  tavernExtensionUpdate: (name: string, scope: TavernExtensionScope) =>
+    call<string>("tavern_extension_update", { name, scope }),
+  /** **联网**（git clone --depth 1），只收 https 地址。 */
+  tavernExtensionInstall: (url: string) =>
+    call<string>("tavern_extension_install", { url }),
+  tavernExtensionDelete: (name: string, scope: TavernExtensionScope) =>
+    call<TrashEntry>("tavern_extension_delete", { name, scope }),
+  tavernTrash: () => call<TrashEntry[]>("tavern_trash"),
+  tavernTrashRestore: (id: string) =>
+    call<TrashEntry>("tavern_trash_restore", { id }),
+  /** 真删。`id` 为 `null` = 清空整个回收站。 */
+  tavernTrashPurge: (id: string | null) =>
+    call<number>("tavern_trash_purge", { id }),
   tavernGeminiToken: () => call<string>("tavern_gemini_token"),
   /** 激活账户 Gemini CLI 那一半的联网额度。`refresh` 同上。 */
   tavernGeminiQuota: (refresh: boolean) =>
     call<TavernGeminiQuota | null>("tavern_gemini_quota", { refresh }),
-  tavernBridgeRoleplayTest: (provider: "claude" | "gpt" | "gemini", fixture?: string) =>
+  tavernBridgeRoleplayTest: (
+    provider: "claude" | "gpt" | "gemini",
+    fixture?: string,
+  ) =>
     call<TavernRoleplayTest>("tavern_bridge_roleplay_test", {
       provider,
       fixture: fixture ?? null,
@@ -631,34 +703,20 @@ export const api = {
   antigravityUiRulesReset: () =>
     call<DangerRules>("antigravity_ui_rules_reset"),
 
-  // Claude 桌面端中文界面（插件 claude-desktop-zh-cn，2026-09-25）：
-  // 运行时取上游 javaht/claude-desktop-zh-cn 的 Release，只调用它的安全模式。
-  /** 现状。**不联网**（只读 Claude 安装目录、各份资料的界面语言、插件自己的记录）。 */
-  claudeZhStatus: () =>
-    call<import("./generated/ClaudeZhStatus").ClaudeZhStatus>(
-      "claude_zh_status",
+  // Claude 汉化残留（2026-09-27）：Claude 汉化撤掉了（官方账户下必然被改回英文），
+  // 只剩一次性清理 0.25.4–0.25.5 留下的东西。
+  /** 还剩什么。**不联网**（只读 Claude 各个 app-* 目录、各份资料的界面语言、面板自己的目录）。 */
+  claudeZhLeftovers: () =>
+    call<import("./generated/ClaudeZhLeftovers").ClaudeZhLeftovers>(
+      "claude_zh_leftovers",
     ),
   /**
-   * 问一次上游最新版。**会联网**（`github.com/<上游>/releases/latest` 的跳转，不走 api.github.com）。
-   * 使用者选的节奏：只在打开汉化弹窗 / 插件页、或点「检查更新」时调，没有定时器。
+   * 一次性清理。要往 Claude 现在用的那一版里写时**会关掉 Claude 桌面端**（含 Code 页里的会话），
+   * 界面事前说明；不用写就不关。不联网。进度走 `claude-zh` 任务。
    */
-  claudeZhCheck: () =>
-    call<import("./generated/ClaudeZhStatus").ClaudeZhStatus>(
-      "claude_zh_check",
-    ),
-  /**
-   * 一键汉化。`upgrade` = 先换成上游最新版。**会关掉 Claude 桌面端**（含 Code 页里的会话），
-   * 界面事前说明。进度走 `claude-zh` 任务。
-   */
-  claudeZhApply: (upgrade: boolean) =>
+  claudeZhCleanup: () =>
     call<import("./generated/ClaudeZhOutcome").ClaudeZhOutcome>(
-      "claude_zh_apply",
-      { upgrade },
-    ),
-  /** 恢复英文：跑上游自己的卸载，再把各份资料的界面语言写回汉化之前的值。 */
-  claudeZhRestore: () =>
-    call<import("./generated/ClaudeZhOutcome").ClaudeZhOutcome>(
-      "claude_zh_restore",
+      "claude_zh_cleanup",
     ),
   // ⚠ `geminiCliInstall` 原来在这里也有一份、跟 `lib/antigravity.ts` 里那份一模一样。
   // 0.29.0 它变成了一个长任务（要带进度、要返回结果），两份定义必然漂开，

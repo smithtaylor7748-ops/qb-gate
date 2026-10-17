@@ -982,34 +982,24 @@ pub fn installation_state(db: &Repository, i: &ExtensionInstallation) -> Result<
     }
     .into())
 }
-pub fn connect_application() -> Result<ExtensionInstallation> {
-    let db = Repository::open()?;
-    let cfg = crate::plugins::sillytavern::load_config_checked()?;
-    let root = cfg.sillytavern_root.canonicalize()?;
-    if !root.join("server.js").is_file() {
-        return Err(GateError::Other(
-            "请先在应用详情填写已有 SillyTavern 的目录".into(),
-        ));
-    }
-    let package = config_io::read_object(&root.join("package.json"))?;
-    if package["version"].as_str().is_none() {
-        return Err(GateError::Other("应用 package.json 缺少版本信息".into()));
-    }
-    let installation = ExtensionInstallation {
-        id: "application-sillytavern".into(),
-        extension_id: "sillytavern".into(),
-        environment_id: String::new(),
-        identity_kind: IdentityKind::Official,
-        client: Client::ClaudeCode,
-        version: "integration-1".into(),
-        state: "connected".into(),
-        path: root.display().to_string(),
-        content_hash: hash_json(&package),
-        installed_at: chrono::Utc::now().to_rfc3339(),
-    };
-    db.put("installations", &installation.id, &installation)?;
-    Ok(installation)
+// 原来这里有 `connect_application()`：扩展中心酒馆页那颗「接入已配置的本地安装」，给酒馆写一条
+// `application-sillytavern` 安装行。2026-09-29 酒馆变成面板的内置功能、从精选目录里撤掉了，
+// 那颗按钮连同命令一起删了；已经写下的那一行留在库里（数据形状不动），见 [`RETIRED`]。
+
+/// 从精选目录里撤掉、但使用者库里可能还留着安装行的条目。
+///
+/// 2026-09-29：酒馆（`sillytavern`）变成面板的内置功能，不再是扩展。原来点过「接入已配置的
+/// 本地安装」的人库里有一行 `application-sillytavern`：**行不删**（数据形状不动，老备份照样导得回来），
+/// 列安装记录时跳过它们（[`visible_installations`]），不然「已安装」那一栏会数出一个哪儿都找不到的东西。
+pub const RETIRED: &[&str] = &["sillytavern"];
+
+/// 去掉 [`RETIRED`] 那几种的安装行。
+pub fn visible_installations(list: Vec<ExtensionInstallation>) -> Vec<ExtensionInstallation> {
+    list.into_iter()
+        .filter(|i| !RETIRED.contains(&i.extension_id.as_str()))
+        .collect()
 }
+
 pub fn uninstall(id: &str) -> Result<()> {
     uninstall_in(&Repository::open()?, id)
 }
@@ -1017,11 +1007,7 @@ fn uninstall_in(db: &Repository, id: &str) -> Result<()> {
     let i: ExtensionInstallation = db.get("installations", id)?;
     let m = manifest_in(db, &i.extension_id)?;
     if m.kind == ExtensionKind::Application {
-        if crate::plugins::sillytavern::status().state == crate::plugins::PluginState::Running {
-            return Err(GateError::Other(
-                "请先停止应用，再解除接入；应用文件与数据会保留".into(),
-            ));
-        }
+        // 应用类的安装行只是一条「接入」记录，删行即可，应用自己的文件与数据不动。
         return db.remove("installations", id);
     }
     let dir = target_dir(db, i.identity_kind, &i.environment_id, i.client)?;
@@ -1552,8 +1538,9 @@ mod tests {
         assert!(skill_metadata("# no metadata").is_err());
         assert!(skill_metadata("---\nname: ../outside\ndescription: bad\n---").is_err());
     }
+    /// 三类都有、id 不重复。（原来是四类：「中转环境模板」2026-09-27 删了。）
     #[test]
-    fn curated_catalog_has_four_types_and_unique_ids() {
+    fn curated_catalog_has_three_types_and_unique_ids() {
         let list: Vec<ExtensionManifest> =
             serde_json::from_str(include_str!("../extension-catalog.json")).unwrap();
         let ids: std::collections::BTreeSet<_> = list.iter().map(|m| m.id.as_str()).collect();
@@ -1562,10 +1549,47 @@ mod tests {
             ExtensionKind::Application,
             ExtensionKind::Mcp,
             ExtensionKind::Skill,
-            ExtensionKind::Template,
         ] {
             assert!(list.iter().any(|m| m.kind == kind));
         }
+        assert!(
+            !ids.iter().any(|id| id.starts_with("template-")),
+            "中转环境模板已经删了，别加回来"
+        );
+        // 2026-09-29：酒馆变成面板的内置功能（软件页 + 三个账户页），不再是扩展。
+        for retired in RETIRED {
+            assert!(
+                !ids.contains(retired),
+                "{retired} 已经从扩展中心撤掉了，别加回来"
+            );
+        }
+    }
+
+    /// 撤掉酒馆之后，老库里那行 `application-sillytavern`（原来点「接入已配置的本地安装」写的）
+    /// 照样读得出来、**行不删**，只是不再列出来 —— 列出来就是一个哪儿都找不到的「已安装」。
+    #[test]
+    fn a_retired_tavern_installation_row_still_loads_but_is_not_listed() {
+        let root = std::env::temp_dir().join(format!("qb-retired-{}", config_io::id()));
+        let db = Repository::open_in(&root).unwrap();
+        let row = ExtensionInstallation {
+            id: "application-sillytavern".into(),
+            extension_id: "sillytavern".into(),
+            environment_id: String::new(),
+            identity_kind: IdentityKind::Official,
+            client: Client::ClaudeCode,
+            version: "integration-1".into(),
+            state: "connected".into(),
+            path: r"x:\SillyTavern".into(),
+            content_hash: String::new(),
+            installed_at: String::new(),
+        };
+        db.put("installations", &row.id, &row).unwrap();
+        let all = db.list::<ExtensionInstallation>("installations").unwrap();
+        assert_eq!(all.len(), 1, "行还在");
+        assert!(visible_installations(all).is_empty());
+        // 它的清单不在目录里了：查状态是错误（列表那边记成 unverified），不会 panic。
+        assert!(installation_state(&db, &row).is_err());
+        let _ = std::fs::remove_dir_all(&root);
     }
     #[test]
     fn invalid_mcp_arguments_are_rejected() {

@@ -32,7 +32,7 @@ resolver = "2"
 members = ["src-tauri", "crates/*"]
 
 [workspace.package]
-version = "0.25.5"
+version = "0.25.6"
 edition = "2021"
 rust-version = "1.88"
 license = "AGPL-3.0-only"
@@ -135,6 +135,9 @@ windows = { version = "0.58", features = [
   "Win32_System_JobObjects",
   "Win32_System_Memory",
   "Win32_Storage_FileSystem",
+  # 酒馆控制台（2026-09-29）：cmd 自己的报错（「'node' 不是内部或外部命令」）走 OEM 代码页，
+  # 中文 Windows 上是 GBK，按 UTF-8 读就是一串替换字符。只用 MultiByteToWideChar，见 qb-platform 的 process.rs。
+  "Win32_Globalization",
 ] }
 
 # profile 只认 workspace 根。留在成员 crate 里会被静默忽略 ——

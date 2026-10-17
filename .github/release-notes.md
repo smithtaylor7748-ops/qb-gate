@@ -1,4 +1,4 @@
-<!-- release-notes: 0.25.5 -->
+<!-- release-notes: 0.25.6 -->
 <!--
   这份文件是「这一版更新了什么」的唯一来源，发版时由 scripts/update-manifest.mjs 读：
   中文那一段进 update.json（面板里「发现新版本」弹窗显示的就是它），中英两段一起进 GitHub Release 的正文。
@@ -8,12 +8,12 @@
 
 <!-- zh -->
 
-## 更新内容（相对上一个公开版本 v0.25.4）
+## 更新内容（相对上一个公开版本 v0.25.5）
 
 - 修复了若干 bug。
 
 <!-- en -->
 
-## What's new (since the previous public release v0.25.4)
+## What's new (since the previous public release v0.25.5)
 
 - Fixed several bugs.

@@ -34,9 +34,6 @@ export const antigravityApi = {
    */
   running: (product: AntigravityProduct) =>
     call<number>("antigravity_running", { product }),
-  /** Hub 的「自动检查更新」。只并入一个键，重启 Hub 生效。 */
-  autoUpdateSet: (enabled: boolean) =>
-    call<void>("antigravity_auto_update_set", { enabled }),
   /**
    * 一键安装（0.29.0）。A 路 winget 官方包，没成从 Google 自己的下载域直下、
    * 核 Authenticode 主体含 Google 之后静默装。进度走 `install-antigravity`。
@@ -66,8 +63,6 @@ export const antigravityApi = {
   /** 把 `from` 那条并进 `into`。**只改索引，不搬目录**。 */
   accountAttach: (into: string, from: string) =>
     call<void>("antigravity_account_attach", { into, from }),
-  accountRename: (id: string, label: string) =>
-    call<void>("antigravity_account_rename", { id, label }),
   /**
    * 本机用量：扫语言服务器的对话记录库。`days`：1 今天 / 7 / 30 / 0 全部。
    * 零网络；「缓存省下」按 Claude 用量卡同一份价目算。

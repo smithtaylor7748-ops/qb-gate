@@ -3,23 +3,21 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import assert from "node:assert/strict";
-// 五个入口加一条详情页。`""` 是根路径（官方账户，同时是仪表盘）。
+// 五个入口加几条详情页。`""` 是根路径（官方账户，同时是仪表盘）。
 // 前五条必须跟 src/lib/routes.ts 的 NAV 对得上，否则 CI 直接红。
-// 多带一条**详情页**：`extensions` 只覆盖列表，酒馆那一整块面板
-// （路径设置、依赖检查、资产、备份）挂在 `extensions/sillytavern` 下，
-// 一直没被这套断言碰过。它恰恰是最容易横向撑爆的一页 ——
-// 依赖检查那几行要完整显示绝对路径，680 宽下不许溢出。
+// （原来还有一条 `extensions/sillytavern`：酒馆那一整块面板 —— 路径、依赖、资产、备份。
+// 2026-09-29 酒馆变成内置功能，那一块搬到了软件页的 SillyTavern 卡，`software` 这一条就盖住了它。
+// 同一天第三轮对调：用酒馆的那几页在账户页的「酒馆」弹窗里（弹窗没有地址，由下面「tavern panel」
+// 那几条流程查）；三家的桥接设置在软件页三张 CLI 卡的最下面，默认收起，由「software page bridge sections」查。）
 const ROUTES = [
   "",
   "relays",
   "subscription",
   "software",
   "extensions",
-  "extensions/sillytavern",
   // 0.26.0：反重力汉化与审批的插件面板（规则表里一整行正则、日志行都是最容易横向撑爆的）。
   "extensions/antigravity-ui",
-  // 2026-09-25：Claude 桌面端中文界面（资料目录、上游地址、边界说明都是长串）。
-  "extensions/claude-desktop-zh-cn",
+  // （2026-09-25 加过 `extensions/claude-desktop-zh-cn`；09-27 Claude 汉化撤掉，那一页没了。）
   // 0.32.0：用量明细。三个 side 各走一遍 —— 它们的空态与数据源都不一样，
   // 而「Codex 没有按模型分项」那一格只有 gpt 这一档才出现。
   "usage?side=claude",
@@ -464,17 +462,23 @@ try {
   await switcher
     .getByRole("button", { name: "Claude", exact: true, pressed: true })
     .waitFor();
-  await page.goto(origin + "/#/relays/new");
-  await page
-    .getByLabel("名称", { exact: true })
-    .fill("Draft survives navigation");
+  // 草稿跨页面留得住、Esc 关得掉小窗。这两条原来测在「服务商与环境」旧页的「添加服务商」
+  // 表单与「添加凭证」小窗上；那一页 2026-09-27 删了，同一条规矩改在扩展中心「手动导入」上测 ——
+  // 它的表单内容同样存在会话态里（`useSession`），关掉、切走、回来都还在。
+  await page.goto(origin + "/#/extensions");
+  await page.getByRole("button", { name: "手动导入" }).click();
+  const importSource = page
+    .locator("dialog[open]")
+    .getByLabel("GitHub 仓库地址或本地目录");
+  await importSource.fill("Draft survives navigation");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("dialog[open]").count(), 0);
   await page.getByRole("link", { name: /官方账户/ }).click();
   await page.goBack();
-  await page.getByLabel("名称", { exact: true }).waitFor();
-  assert.equal(
-    await page.getByLabel("名称", { exact: true }).inputValue(),
-    "Draft survives navigation",
-  );
+  await page.getByRole("button", { name: "手动导入" }).click();
+  assert.equal(await importSource.inputValue(), "Draft survives navigation");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("dialog[open]").count(), 0);
   // 总览上的安全方块：点开是小窗，**不跳页**。使用者点名要的就是这个形态，
   // 所以这条要断言地址一个字都没变 —— 退化成跳页的话这里会红。
   await page.goto(origin + "/#/");
@@ -539,8 +543,8 @@ try {
   }
   await page.setViewportSize({ width: 1180, height: 820 });
 
-  // 中转站页**没有外壳分页栏**了（0.16.0）：它就是一页。
-  // 「供应商 / 凭证 / 环境」那一套只有深链接进得去 —— 走 RELAY_LEGACY
+  // 中转站页**没有外壳分页栏**了（0.16.0）：它就是一页。原来底下那套「供应商 / 凭证 / 环境」
+  // 旧页只剩深链接进得去，2026-09-27 删了 —— 下面「已经删掉的页面」那一段钉着它回不来。
   // Relay launch/close follows the actual workspace session, not router uptime.
   await page.goto(origin + "/#/relays");
   await page.locator(".qb-st-ctl").waitFor();
@@ -558,16 +562,72 @@ try {
   await page.getByRole("button", { name: /一键关闭 Claude Code/ }).click();
   await page.getByRole("button", { name: /^启动 Claude Code/ }).waitFor();
 
-  // 那个不指定服务商的入口（/relays/new 落到的是「添加服务商」编辑器，
-  // 那上面没有「API 凭证」分页）。
-  await page.goto(origin + "/#/relays/providers");
-  await page.getByRole("tab", { name: /API 凭证/ }).click();
-  await page.getByRole("button", { name: "添加凭证" }).click();
+  // 已经删掉的页面（2026-09-27）：地址打进来一律回首页，旧页面的任何一块都不许再露面。
+  // 快速跳转、扩展页的「中转环境模板」、设置页的「打开新手引导」原来都在往这些地址上送人。
+  for (const removed of [
+    "onboarding",
+    "relays/new",
+    "relays/providers",
+    "relays/example?environment=sample-code",
+    "environment/software",
+    "security",
+    "accounts",
+  ]) {
+    await page.goto(origin + "/#/" + removed);
+    await page.waitForFunction(() => location.hash === "#/");
+    await page.locator(".qb-page h1, .qb-page .qb-st-ctl").first().waitFor();
+    for (const gone of [
+      "服务商与环境",
+      "新手引导",
+      "添加服务商",
+      "创建独立环境",
+    ]) {
+      assert.equal(
+        await page.getByText(gone).count(),
+        0,
+        `/#/${removed} 还能露出旧页面的「${gone}」`,
+      );
+    }
+  }
+  // 「中转环境模板」那两条目录项也没了：直接打它的地址只落回扩展中心的列表。
+  await page.goto(origin + "/#/extensions/template-claude");
+  await page.getByRole("heading", { name: "扩展中心", exact: true }).waitFor();
+  assert.equal(await page.getByText("创建独立环境").count(), 0);
+  // 2026-09-29：酒馆变成内置功能、从扩展中心撤掉了。旧详情页地址只落回列表，列表里也没有它。
+  await page.goto(origin + "/#/extensions/sillytavern");
+  await page.getByRole("heading", { name: "扩展中心", exact: true }).waitFor();
+  await page.locator(".qb-extension-card").first().waitFor();
+  assert.equal(
+    await page
+      .locator(".qb-extension-card", { hasText: "SillyTavern" })
+      .count(),
+    0,
+    "扩展中心的列表里还有酒馆",
+  );
+  assert.equal(await page.getByText("接入已配置的本地安装").count(), 0);
+  // 快速跳转搜「酒馆」落到软件页的 SillyTavern 卡（它不在扩展目录里了，没这一条就什么都搜不到）。
+  await page.keyboard.press("Control+k");
   await page
-    .getByLabel("API Key", { exact: true })
-    .fill("synthetic-unsubmitted-key");
-  await page.keyboard.press("Escape");
-  assert.equal(await page.locator("dialog[open]").count(), 0);
+    .getByRole("textbox", { name: "搜索功能、账户、服务商或扩展" })
+    .fill("酒馆");
+  await page
+    .locator(".qb-search-results button")
+    .filter({ hasText: "酒馆 SillyTavern" })
+    .click();
+  await page.locator("#sillytavern").waitFor();
+  assert.match(page.url(), /#\/software\?focus=sillytavern$/);
+  // 快速跳转里搜站点，落在中转站页本身，不再是 `/relays/<id>`。
+  await page.keyboard.press("Control+k");
+  await page
+    .getByRole("textbox", { name: "搜索功能、账户、服务商或扩展" })
+    .fill("备用中转");
+  await page
+    .locator(".qb-search-results button")
+    .filter({ hasText: "中转站点" })
+    .first()
+    .click();
+  await page.locator(".qb-st-ctl").waitFor();
+  assert.match(page.url(), /#\/relays$/);
 
   // 软件页「Google Chrome」那张卡的隐私审计。
   //
@@ -1402,19 +1462,26 @@ try {
   await page.keyboard.press("Escape");
   await updateDialog.waitFor({ state: "hidden" });
 
-  // 2026-09-25：一键汉化。
-  // Claude：打开弹窗就问一次上游最新版（使用者选的节奏；演示回 1.4.8）；代价那句常驻；
-  // 「一键汉化」要过确认框；做完逐条显示核验，标题栏的按钮跟着变「汉化：开」；恢复英文翻回来。
+  // 2026-09-27：Claude 汉化撤掉了，只剩「清理汉化残留」。
+  // 演示默认没有残留（README 的截图不该挂着这颗按钮）—— 先没有按钮；打开演示专用的开关、
+  // 刷新之后才出现；弹窗逐样列出、代价那句（会关 Claude）常驻；过确认框清完，按钮消失。
   await page.setViewportSize({ width: 1320, height: 940 });
   await page.goto(origin + "/#/");
   await page.getByRole("button", { name: "Claude", exact: true }).click();
-  const claudeZhEntry = page.getByTestId("claude-zh-entry");
+  await page.getByText("Claude 桌面端", { exact: true }).first().waitFor();
+  assert.equal(await page.getByTestId("claude-zh-cleanup-entry").count(), 0);
+  await page.evaluate(() =>
+    localStorage.setItem("qb-demo-claude-zh-leftovers", "1"),
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Claude", exact: true }).click();
+  const claudeZhEntry = page.getByTestId("claude-zh-cleanup-entry");
   await claudeZhEntry.waitFor();
-  assert.equal((await claudeZhEntry.innerText()).trim(), "汉化");
+  assert.equal((await claudeZhEntry.innerText()).trim(), "清理汉化残留");
   await claudeZhEntry.click();
-  const claudeZhPanel = page.getByTestId("claude-zh-panel");
+  const claudeZhPanel = page.getByTestId("claude-zh-cleanup");
   await claudeZhPanel
-    .getByText("上游最新 1.4.8", { exact: false })
+    .getByText("3 个前端文件跟原版不一样", { exact: false })
     .first()
     .waitFor();
   await claudeZhPanel
@@ -1423,39 +1490,30 @@ try {
     .waitFor();
   for (const width of [680, 900]) {
     await page.setViewportSize({ width, height: 740 });
-    await assertNoOverflow(page, `Claude 汉化弹窗 ${width}px`);
+    await assertNoOverflow(page, `Claude 汉化残留弹窗 ${width}px`);
   }
   await page.setViewportSize({ width: 1320, height: 940 });
-  await claudeZhPanel.getByTestId("claude-zh-apply").click();
+  await claudeZhPanel.getByTestId("claude-zh-cleanup-run").click();
   await page
-    .getByRole("button", { name: "关掉 Claude 并汉化", exact: true })
+    .getByRole("button", { name: "关掉 Claude 并清理", exact: true })
     .click();
-  const claudeZhOutcome = claudeZhPanel.getByTestId("claude-zh-outcome");
+  const claudeZhOutcome = claudeZhPanel.getByTestId(
+    "claude-zh-cleanup-outcome",
+  );
   await claudeZhOutcome.waitFor();
   assert.match(
     await claudeZhOutcome.innerText(),
-    /核验通过[\s\S]*app\.asar 与 claude\.exe 没被动过/,
+    /清完了[\s\S]*换回了原版[\s\S]*删掉了上游留下的备份/,
   );
-  await claudeZhPanel.getByTestId("claude-zh-restore").waitFor();
   await page.keyboard.press("Escape");
   await claudeZhPanel.waitFor({ state: "hidden" });
-  await page.waitForFunction(
-    () =>
-      document
-        .querySelector('[data-testid="claude-zh-entry"]')
-        ?.textContent?.includes("汉化：开") === true,
+  await claudeZhEntry.waitFor({ state: "hidden" });
+  await page.evaluate(() =>
+    localStorage.removeItem("qb-demo-claude-zh-leftovers"),
   );
-  await claudeZhEntry.click();
-  await claudeZhPanel.getByTestId("claude-zh-restore").click();
-  await page
-    .getByRole("button", { name: "关掉 Claude 并恢复", exact: true })
-    .click();
-  await claudeZhOutcome.waitFor();
-  assert.match(await claudeZhOutcome.innerText(), /中文文件已删掉/);
-  await page.keyboard.press("Escape");
-  await claudeZhPanel.waitFor({ state: "hidden" });
 
-  // GPT：写的是它自己的设置项，逐个列出要改的文件；面板起的那份开着要先过确认框；
+  // GPT：写的是它自己的设置项，逐个列出要改的文件；GPT 自己写坏的那一份说清楚、点的时候顺手修；
+  // 面板起的那份开着要先过确认框（确认框里也给出「在 GPT 自己的设置里选」那条不用关的路）；
   // 别处起的那份开着时默认那一份跳过，并说清楚原因。
   await page.getByRole("button", { name: "GPT", exact: true }).click();
   const gptZhEntry = page.getByTestId("gpt-zh-entry");
@@ -1466,6 +1524,10 @@ try {
   // 等状态读回来（逐个列出的那几份出现了）再判断要不要过确认框 ——
   // 面板起的那份开着才弹；前面的流程可能已经把它关了。
   await gptZhPanel.getByText("槽位「", { exact: false }).first().waitFor();
+  await gptZhPanel
+    .getByText("[desktop] 重复定义了", { exact: false })
+    .first()
+    .waitFor();
   await assertNoOverflow(page, "GPT 汉化弹窗");
   const gptNeedsConfirm =
     (await gptZhPanel
@@ -1480,18 +1542,436 @@ try {
   await gptZhOutcome.waitFor();
   const gptZhLines = await gptZhOutcome.innerText();
   assert.match(gptZhLines, /槽位「[^」]+」：已设为中文/);
+  assert.match(gptZhLines, /顺手并掉了 GPT 自己写重复的 \[desktop\]/);
   // 默认那一份要么改了、要么说清楚为什么这次没改（别处起的那份开着）。
   assert.match(gptZhLines, /默认（[\s\S]*(已设为中文|这一份这次没改)/);
   await page.keyboard.press("Escape");
   await gptZhPanel.waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "Claude", exact: true }).click();
 
+  // 2026-09-29 第三轮：账户页酒馆磁贴右上角开的是「酒馆」弹窗 —— 酒馆本身的控制面板，三页开的是同一个。
+  // 使用者原话「1弹窗太小，2这个应该在软件页面，软件页面的应该在这个官方账户弹窗页面」：
+  // 1320×940 下弹窗宽高都得接近满屏；分页正好那六个；桥接的字段一个都不许出现（它们搬去了软件页）；
+  // 底部「X 桥接设置」落到软件页这一家那一段，而且那一段已经展开。
+  const PANEL_TABS = [
+    "概览",
+    "控制台",
+    "角色卡",
+    "世界书",
+    "扩展",
+    "备份与回收站",
+  ];
+  const BRIDGE_FIELDS = [
+    "附加系统提示词",
+    "推理强度",
+    "复制密钥",
+    "记入槽位用量",
+  ];
+  /** 从账户页（`side` 那一边）打开「酒馆」弹窗。 */
+  async function openTavernPanel(side) {
+    await page.getByRole("button", { name: side, exact: true }).click();
+    const corner = page.getByTestId("tavern-panel-corner");
+    await corner.waitFor();
+    await corner.click();
+    const panel = page.getByRole("dialog", { name: "酒馆", exact: true });
+    await panel.waitFor();
+    return panel;
+  }
+  await page.setViewportSize({ width: 1320, height: 940 });
+  for (const [side, provider, bridgeTitle, bridgeField] of [
+    ["Claude", "claude", "Claude 桥接设置", "附加系统提示词"],
+    ["GPT", "gpt", "GPT 桥接设置", "推理强度"],
+    ["反重力", "gemini", "Gemini 桥接设置", "Gemini CLI 模型额度"],
+  ]) {
+    await page.goto(origin + "/#/");
+    const panel = await openTavernPanel(side);
+    assert.equal(
+      await page.getByTestId("tavern-panel-corner").getAttribute("aria-label"),
+      "酒馆面板",
+    );
+    // 「太小」的回归：原来是 huge 那一档（1180 宽、高度跟着内容走）。
+    const box = await panel.boundingBox();
+    assert.ok(
+      box && box.width >= 1320 - 64 && box.height >= 940 - 64,
+      `「酒馆」弹窗太小：${JSON.stringify(box)}`,
+    );
+    assert.deepEqual(await panel.getByRole("tab").allInnerTexts(), PANEL_TABS);
+    // 每一页都查：桥接的字段一个都不许出现（一家的设置只在软件页那一处）。
+    for (const tab of PANEL_TABS) {
+      await panel.getByRole("tab", { name: tab, exact: true }).click();
+      await panel.locator("#tv-tabpanel").waitFor();
+      for (const text of BRIDGE_FIELDS)
+        assert.equal(
+          await panel.getByText(text, { exact: false }).count(),
+          0,
+          `「酒馆」弹窗的「${tab}」里不该有桥接的「${text}」`,
+        );
+    }
+    await panel.getByRole("tab", { name: "概览", exact: true }).click();
+    for (const width of [680, 900, 1320]) {
+      await page.setViewportSize({ width, height: 900 });
+      await assertNoOverflow(page, `「酒馆」弹窗（${side}）${width}px`);
+    }
+    await page.setViewportSize({ width: 1320, height: 940 });
+    const link = panel.getByTestId("tavern-bridge-link");
+    assert.equal(await link.innerText(), bridgeTitle);
+    await link.click();
+    await panel.waitFor({ state: "hidden" });
+    assert.match(
+      page.url(),
+      new RegExp(`#/software\\?focus=bridge-${provider}$`),
+    );
+    const section = page.getByTestId(`bridge-section-${provider}`);
+    assert.equal(
+      await section
+        .getByTestId(`bridge-toggle-${provider}`)
+        .getAttribute("aria-expanded"),
+      "true",
+    );
+    await section.getByText(bridgeField, { exact: false }).first().waitFor();
+  }
+  // 底部另一颗「下载与版本」落到软件页的 SillyTavern 卡。
+  await page.goto(origin + "/#/");
+  const panelToCard = await openTavernPanel("Claude");
+  await panelToCard
+    .getByRole("button", { name: "下载与版本", exact: true })
+    .click();
+  await page.locator("#sillytavern").waitFor();
+  assert.match(page.url(), /#\/software\?focus=sillytavern$/);
+
+  // 2026-09-29 第三轮：三条桥的设置在软件页各自那张 CLI 卡的最下面（Claude → Claude Code、GPT → Codex CLI、
+  // Gemini → Gemini CLI，使用者选的）。默认收起，**收起就是没挂**：进软件页不该去探 bridge.py、读额度。
+  // 每一段只装自己那条桥的全部设置，别家的一项都不许出现；三个宽度各查一次溢出。
+  await page.goto(origin + "/#/software");
+  await page.getByTestId("bridge-section-gemini").waitFor();
+  for (const text of ["附加系统提示词", "复制密钥", "推理强度"])
+    assert.equal(
+      await page.getByText(text, { exact: false }).count(),
+      0,
+      `没展开就挂上了桥接设置的正文（「${text}」）`,
+    );
+  for (const [provider, card, must, mustNot] of [
+    [
+      "claude",
+      "Claude Code",
+      [
+        "桥接项目目录（bridge.py 所在）",
+        "附加系统提示词",
+        "贴尾提示词",
+        "每条消息起一次",
+        "消息监控",
+      ],
+      ["推理强度", "状态见插件页", "提示词和监控仍在插件页"],
+    ],
+    [
+      "gpt",
+      "Codex CLI",
+      ["推理强度", "记入槽位用量", "复制密钥", "ChatGPT / Codex 剩余额度"],
+      ["附加系统提示词", "Gemini CLI 模型额度"],
+    ],
+    [
+      "gemini",
+      "Gemini CLI",
+      ["复制密钥", "Gemini CLI 模型额度"],
+      ["推理强度", "附加系统提示词", "ChatGPT / Codex 剩余额度"],
+    ],
+  ]) {
+    // 挂在哪张卡上：那张卡的标题。
+    const section = page
+      .locator(".card", {
+        has: page.getByRole("heading", { name: card, exact: true }),
+      })
+      .getByTestId(`bridge-section-${provider}`);
+    const toggle = section.getByTestId(`bridge-toggle-${provider}`);
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+    await toggle.click();
+    for (const text of must)
+      await section.getByText(text, { exact: false }).first().waitFor();
+    for (const text of mustNot)
+      assert.equal(
+        await section.getByText(text, { exact: false }).count(),
+        0,
+        `${card} 卡的桥接设置里不该有「${text}」`,
+      );
+    if (provider === "claude") {
+      // 逐条全文：原来只在 bridge.py 自己的监控页上（「展开查看输入/输出」）。
+      await section
+        .getByRole("button", { name: "展开输入 / 输出" })
+        .first()
+        .click();
+      await section.getByTestId("claude-call-detail").waitFor();
+      await section
+        .getByText("林澈从一排排书架间抬起头", { exact: false })
+        .waitFor();
+    }
+    for (const width of [680, 900, 1320]) {
+      await page.setViewportSize({ width, height: 900 });
+      await assertNoOverflow(page, `软件页 ${card} 卡的桥接设置 ${width}px`);
+    }
+    await page.setViewportSize({ width: 1320, height: 940 });
+    await toggle.click();
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+  }
+  // 快速跳转搜「酒馆桥接」：三条都在，点了落到那一段、已经展开。
+  await page.goto(origin + "/#/");
+  await page.keyboard.press("Control+k");
+  await page
+    .getByRole("textbox", { name: "搜索功能、账户、服务商或扩展" })
+    .fill("酒馆桥接");
+  const bridgeHits = page.locator(".qb-search-results button");
+  assert.equal(await bridgeHits.count(), 3);
+  await bridgeHits.filter({ hasText: "酒馆桥接 · GPT" }).click();
+  assert.match(page.url(), /#\/software\?focus=bridge-gpt$/);
+  assert.equal(
+    await page.getByTestId("bridge-toggle-gpt").getAttribute("aria-expanded"),
+    "true",
+  );
+  await page
+    .getByTestId("bridge-section-gpt")
+    .getByText("推理强度", { exact: false })
+    .first()
+    .waitFor();
+
+  // 软件页的 SillyTavern 卡（2026-09-29）：酒馆本体的下载安装 / 更新 / 卸载都在这里。
+  // 「没有 Node」那一档：安装框里露出 winget 勾选，不勾不让装；导入源预填成你自己那份；
+  // 装完是「面板装的」、更新框说已是最新、卸载先备份再回到「你自己的」。
+  await page.evaluate(() =>
+    localStorage.setItem("qb-demo-tavern-no-node", "1"),
+  );
+  await page.goto(origin + "/#/software?focus=sillytavern");
+  await page.reload();
+  const stCard = page.locator("#sillytavern");
+  await stCard.waitFor();
+  await stCard.getByText("你自己的", { exact: true }).waitFor();
+  await stCard.getByRole("button", { name: "下载安装", exact: true }).click();
+  const installDialog = page.getByRole("dialog", {
+    name: "下载安装 SillyTavern？",
+  });
+  await installDialog.getByTestId("tavern-node-choice").waitFor();
+  await installDialog.getByText("要装的版本", { exact: true }).waitFor();
+  const installConfirm = installDialog.getByTestId("tavern-install-confirm");
+  assert.ok(
+    await installConfirm.isDisabled(),
+    "没有 Node 又没勾 winget，不该让点「下载安装」",
+  );
+  assert.match(
+    await installDialog.getByLabel("从哪一份复制").inputValue(),
+    /SillyTavern$/,
+  );
+  assert.match(await installDialog.innerText(), /源目录不动/);
+  await installDialog
+    .getByText("先用 winget 装 Node.js LTS", { exact: false })
+    .click();
+  assert.ok(await installConfirm.isEnabled());
+  for (const width of [680, 1180]) {
+    await page.setViewportSize({ width, height: 900 });
+    await assertNoOverflow(page, `SillyTavern 安装框 ${width}px`);
+  }
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await installConfirm.click();
+  await installDialog.waitFor({ state: "hidden" });
+  await stCard.getByText("面板装的", { exact: true }).waitFor();
+  await stCard.getByRole("button", { name: "检查并更新", exact: true }).click();
+  const stUpdateDialog = page.getByRole("dialog", {
+    name: "更新面板装的 SillyTavern？",
+  });
+  await stUpdateDialog
+    .getByText("已经是最新的正式版", { exact: false })
+    .waitFor();
+  assert.ok(
+    await stUpdateDialog.getByTestId("tavern-update-confirm").isDisabled(),
+  );
+  assert.match(await stUpdateDialog.innerText(), /sillytavern\.previous/);
+  await page.keyboard.press("Escape");
+  await stUpdateDialog.waitFor({ state: "hidden" });
+  // 2026-09-29「版本」：最近的正式版清单 → 降级到更旧的一版（确认框写明是降级、要 Node 的勾选照旧）→
+  // 「换回」留着的那一版回到原来那版；卸载也在卡上。第三轮起卡上不分页了（别的几页搬进了账户页的「酒馆」弹窗），
+  // 「版本」直接摆在卡上。
+  assert.equal(
+    await stCard.getByRole("tab").count(),
+    0,
+    "SillyTavern 卡上不该再有分页",
+  );
+  await stCard.getByTestId("tavern-releases-list").click();
+  const releases = stCard.getByTestId("tavern-releases");
+  await releases.waitFor();
+  const older = releases.locator(".tv-release").filter({ hasText: "1.17.0" });
+  await older.getByText("比现在旧", { exact: true }).waitFor();
+  await older
+    .getByRole("button", { name: "降级到这一版", exact: true })
+    .click();
+  const downDialog = page.getByRole("dialog", {
+    name: "把面板装的 SillyTavern 换成 1.17.0？",
+  });
+  await downDialog.getByTestId("tavern-downgrade-note").waitFor();
+  const downConfirm = downDialog.getByTestId("tavern-update-confirm");
+  await downDialog.getByText("要装的版本", { exact: true }).waitFor();
+  assert.ok(
+    await downConfirm.isDisabled(),
+    "没有 Node 又没勾 winget，不该让点「降级」",
+  );
+  await downDialog
+    .getByText("先用 winget 装 Node.js LTS", { exact: false })
+    .click();
+  assert.match(await downConfirm.innerText(), /降级到 1\.17\.0/);
+  await downConfirm.click();
+  await downDialog.waitFor({ state: "hidden" });
+  await stCard.locator(".metric-v", { hasText: "v1.17.0" }).waitFor();
+  await stCard.getByTestId("tavern-swap-open").click();
+  const swapDialog = page.getByRole("dialog", { name: "换回留着的 1.18.1？" });
+  await swapDialog.getByTestId("tavern-swap-confirm").click();
+  await swapDialog.waitFor({ state: "hidden" });
+  await stCard.locator(".metric-v", { hasText: "v1.18.1" }).waitFor();
+  await assertNoOverflow(page, "SillyTavern 卡 · 版本");
+  await stCard.getByRole("button", { name: "卸载面板装的那份" }).click();
+  const uninstallDialog = page.getByRole("dialog", {
+    name: "卸载面板装的 SillyTavern？",
+  });
+  assert.match(await uninstallDialog.innerText(), /tavern-uninstall/);
+  await uninstallDialog
+    .getByRole("button", { name: "备份后卸载", exact: true })
+    .click();
+  await stCard.getByText("你自己的", { exact: true }).waitFor();
+  await page.evaluate(() => localStorage.removeItem("qb-demo-tavern-no-node"));
+
+  // 「控制台」分页（2026-09-29；第三轮起在账户页的「酒馆」弹窗里）：面板起的酒馆没有窗口，它的输出在这里读。
+  // 起不来那一档（端口被占）要认出来、给一句能照着做的话；颜色码按主题上色，不原样印出来。
+  await page.evaluate(() =>
+    localStorage.setItem("qb-demo-tavern-console-error", "1"),
+  );
+  await page.goto(origin + "/#/");
+  await page.reload();
+  const consolePanel = await openTavernPanel("Claude");
+  await consolePanel.getByRole("tab", { name: "控制台", exact: true }).click();
+  const consoleTab = consolePanel.getByTestId("tavern-console");
+  await consoleTab.waitFor();
+  const hints = consoleTab.getByTestId("tavern-console-hints");
+  await hints.getByText("酒馆端口被占了", { exact: true }).waitFor();
+  await consoleTab
+    .locator(".ansi-red", { hasText: "is already in use" })
+    .first()
+    .waitFor();
+  assert.equal(
+    await consoleTab.locator(".tv-console").getByText("\u001b[31m").count(),
+    0,
+    "颜色码被原样印出来了",
+  );
+  await consoleTab.getByRole("button", { name: "上一次", exact: true }).click();
+  await consoleTab
+    .getByText("SillyTavern 1.18.0", { exact: true })
+    .first()
+    .waitFor();
+  assert.equal(await consoleTab.getByTestId("tavern-console-hints").count(), 0);
+  for (const width of [680, 1180]) {
+    await page.setViewportSize({ width, height: 900 });
+    await assertNoOverflow(page, `「酒馆」弹窗 · 控制台 ${width}px`);
+  }
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await page.keyboard.press("Escape");
+  await consolePanel.waitFor({ state: "hidden" });
+  await page.evaluate(() =>
+    localStorage.removeItem("qb-demo-tavern-console-error"),
+  );
+
+  // 「角色卡」→ 详情 →「挪进回收站」（连同聊天）→「备份与回收站」里放回去 → 回到列表。
+  // 「世界书」看条目（条目那个弹窗叠在「酒馆」弹窗上面，Esc 只关它自己）；「扩展」检查更新 → 落后两个提交 → 更新。
+  await page.goto(origin + "/#/");
+  await page.reload();
+  const panel2 = await openTavernPanel("GPT");
+  await panel2.getByRole("tab", { name: "角色卡", exact: true }).click();
+  const chars = panel2.getByTestId("tavern-characters");
+  const lin = chars.locator(".tv-char", { hasText: "林澈" });
+  await lin.waitFor();
+  await chars
+    .locator(".tv-char", { hasText: "broken" })
+    .getByText("读不出卡数据", { exact: true })
+    .waitFor();
+  await lin.click();
+  // exact：确认框的标题里也有「林澈」，两个同时开着时不许匹配成两个。
+  const charDialog = page.getByRole("dialog", { name: "林澈", exact: true });
+  await charDialog
+    .getByText("林澈从一排排书架间抬起头", { exact: false })
+    .waitFor();
+  await charDialog
+    .getByRole("button", { name: "挪进回收站", exact: true })
+    .click();
+  const trashConfirm = page.getByRole("dialog", {
+    name: "把「林澈」挪进回收站？",
+  });
+  await trashConfirm
+    .getByText("连同它的 3 段聊天记录一起挪", { exact: true })
+    .click();
+  await trashConfirm
+    .getByRole("button", { name: "挪进回收站", exact: true })
+    .click();
+  await charDialog.waitFor({ state: "hidden" });
+  await chars
+    .locator(".tv-char", { hasText: "林澈" })
+    .waitFor({ state: "detached" });
+  await panel2.getByRole("tab", { name: "备份与回收站", exact: true }).click();
+  const trashList = panel2.getByTestId("tavern-trash");
+  const trashed = trashList.locator(".row", { hasText: "林澈" });
+  await trashed.waitFor();
+  assert.match(await trashed.innerText(), /chats/);
+  await trashed.getByRole("button", { name: "放回去", exact: true }).click();
+  await trashList.getByText("回收站是空的", { exact: true }).waitFor();
+  await panel2.getByRole("tab", { name: "角色卡", exact: true }).click();
+  await panel2
+    .getByTestId("tavern-characters")
+    .locator(".tv-char", { hasText: "林澈" })
+    .waitFor();
+
+  await panel2.getByRole("tab", { name: "世界书", exact: true }).click();
+  const worlds = panel2.getByTestId("tavern-worlds");
+  await worlds
+    .locator(".row", { hasText: "图书馆" })
+    .getByRole("button", { name: "看条目" })
+    .click();
+  const worldDialog = page.getByRole("dialog", {
+    name: "图书馆",
+    exact: true,
+  });
+  await worldDialog.getByText("北门", { exact: true }).waitFor();
+  await worldDialog.getByText("常驻", { exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  await worldDialog.waitFor({ state: "hidden" });
+  assert.ok(await panel2.isVisible(), "Esc 关条目弹窗时把「酒馆」弹窗一起关了");
+  assert.match(
+    await worlds.locator(".row", { hasText: "残缺" }).innerText(),
+    /JSON 读不懂/,
+  );
+
+  await panel2.getByRole("tab", { name: "扩展", exact: true }).click();
+  const exts = panel2.getByTestId("tavern-extensions");
+  const memory = exts.locator(".tv-ext", { hasText: "记忆增强（演示）" });
+  await memory.getByRole("button", { name: "检查更新", exact: true }).click();
+  await memory.getByText("远端多了 2 个提交", { exact: true }).waitFor();
+  await memory.getByRole("button", { name: "更新", exact: true }).click();
+  await memory
+    .getByRole("button", { name: "更新", exact: true })
+    .waitFor({ state: "detached" });
+  await exts
+    .locator(".tv-ext", { hasText: "leftover-folder" })
+    .getByText("没有 manifest.json", { exact: true })
+    .waitFor();
+  // 每一页在窄屏上都不许横向溢出。
+  for (const tab of PANEL_TABS) {
+    await panel2.getByRole("tab", { name: tab, exact: true }).click();
+    await page.setViewportSize({ width: 680, height: 900 });
+    await assertNoOverflow(page, `「酒馆」弹窗 · ${tab} 680px`);
+    await page.setViewportSize({ width: 1320, height: 940 });
+  }
+  await panel2.getByRole("tab", { name: "概览", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await panel2.waitFor({ state: "hidden" });
+
   assert.deepEqual(errors, []);
   const flows = [
     "catalog isolation",
     "global search and browser back, official-account side from search results",
-    "draft navigation persistence",
-    "keyboard modal close",
+    "draft navigation persistence (extension import form)",
+    "keyboard modal close (extension import form)",
+    "removed pages stay unreachable: old routes land home, template entries and the tavern gone from extensions, site search lands on the relay page, tavern search lands on the software card",
     "overview security modal",
     "system theme matches explicit theme",
     "desktop account pagination and safe login confirmation",
@@ -1504,7 +1984,13 @@ try {
     "software page: gemini cli install reports a verified result",
     "software page: every pill agrees with its version row",
     "update dialog: manual check, notes, cost sentence, demo install refusal, reopen from settings",
-    "one-click Chinese: Claude upstream check on open, confirmed apply with verification, entry label, restore; GPT own setting with skipped default home",
+    "Claude localization leftovers: hidden without leftovers, listed with the close-Claude cost, confirmed cleanup, entry disappears; GPT own setting with duplicate-table repair and skipped default home",
+    "tavern panel from all three account pages: the same near-full-window dialog, exactly six tabs, no bridge field on any tab, no overflow at three widths, the footer lands on that provider's bridge section already expanded and on the SillyTavern card",
+    "software page bridge sections: collapsed means unmounted, each CLI card carries only its own bridge (Claude with per-call detail), no overflow at three widths, quick jump lands expanded",
+    "software page SillyTavern card: missing Node gates install behind the winget choice, import source prefilled, install makes it managed, update says latest, uninstall backs up first",
+    "SillyTavern card versions without tabs: release list, downgrade names itself and still gates on Node, swap back to the kept copy",
+    "tavern panel console tab: a failed start is recognized with a hint, colors are rendered not printed, the previous run is one click away",
+    "tavern panel library tabs: character detail, to trash with its chats and back, world entries whose Esc closes only the entry dialog, extension check then update, every tab without overflow at 680px",
   ];
   writeFileSync(
     "docs/ui-regression.json",

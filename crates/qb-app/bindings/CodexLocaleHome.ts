@@ -13,17 +13,24 @@ label: string,
  */
 config: string, 
 /**
- * 现在 `[desktop] localeOverride` 的值。`None` = 没设，跟随 GPT 自己的默认。
+ * 现在 `[desktop] localeOverride` 的值 —— **GPT 读得到的那个**。`None` = 没设，
+ * 或者这份 GPT 现在读不了（见 `repair` / `error`）。
  */
 current: string | null, 
 /**
- * 读不出来的原因（不是 UTF-8、不是有效 TOML）。有值时这一份不改。
+ * 读不出来、也修不了的原因。有值时这一份不改。
  */
 error: string | null, 
 /**
+ * GPT 自己把这份写坏了（这几张表重复定义，写法如 `[desktop]、[mcp_servers.x]`），它现在读不到里面
+ * 任何一项桌面设置；点「设为中文」会先把重复段并掉（不改任何值）。
+ */
+repair: string | null, 
+/**
  * GPT 上一次用这份资料运行时自己写下的界面语言（`computer-use\config.json` 的 `locale`）。
  *
- * 它说明 GPT **读到了**这项设置，不说明界面真的翻译了 —— 那还要看 `enable_i18n`。
+ * 26.924 里它是「`localeOverride` 有就用它，没有就用系统界面语言」：是 zh-CN 说明 GPT **读到了**
+ * 这项设置，不说明界面真的翻译了 —— 那还要看 `enable_i18n`。
  */
 adopted: string | null, 
 /**

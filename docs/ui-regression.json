@@ -31,19 +31,7 @@
       "passed": true
     },
     {
-      "route": "extensions/sillytavern",
-      "width": 1180,
-      "theme": "light",
-      "passed": true
-    },
-    {
       "route": "extensions/antigravity-ui",
-      "width": 1180,
-      "theme": "light",
-      "passed": true
-    },
-    {
-      "route": "extensions/claude-desktop-zh-cn",
       "width": 1180,
       "theme": "light",
       "passed": true
@@ -103,19 +91,7 @@
       "passed": true
     },
     {
-      "route": "extensions/sillytavern",
-      "width": 944,
-      "theme": "light",
-      "passed": true
-    },
-    {
       "route": "extensions/antigravity-ui",
-      "width": 944,
-      "theme": "light",
-      "passed": true
-    },
-    {
-      "route": "extensions/claude-desktop-zh-cn",
       "width": 944,
       "theme": "light",
       "passed": true
@@ -175,19 +151,7 @@
       "passed": true
     },
     {
-      "route": "extensions/sillytavern",
-      "width": 786,
-      "theme": "light",
-      "passed": true
-    },
-    {
       "route": "extensions/antigravity-ui",
-      "width": 786,
-      "theme": "light",
-      "passed": true
-    },
-    {
-      "route": "extensions/claude-desktop-zh-cn",
       "width": 786,
       "theme": "light",
       "passed": true
@@ -247,19 +211,7 @@
       "passed": true
     },
     {
-      "route": "extensions/sillytavern",
-      "width": 680,
-      "theme": "light",
-      "passed": true
-    },
-    {
       "route": "extensions/antigravity-ui",
-      "width": 680,
-      "theme": "light",
-      "passed": true
-    },
-    {
-      "route": "extensions/claude-desktop-zh-cn",
       "width": 680,
       "theme": "light",
       "passed": true
@@ -319,19 +271,7 @@
       "passed": true
     },
     {
-      "route": "extensions/sillytavern",
-      "width": 1180,
-      "theme": "dark",
-      "passed": true
-    },
-    {
       "route": "extensions/antigravity-ui",
-      "width": 1180,
-      "theme": "dark",
-      "passed": true
-    },
-    {
-      "route": "extensions/claude-desktop-zh-cn",
       "width": 1180,
       "theme": "dark",
       "passed": true
@@ -391,19 +331,7 @@
       "passed": true
     },
     {
-      "route": "extensions/sillytavern",
-      "width": 944,
-      "theme": "dark",
-      "passed": true
-    },
-    {
       "route": "extensions/antigravity-ui",
-      "width": 944,
-      "theme": "dark",
-      "passed": true
-    },
-    {
-      "route": "extensions/claude-desktop-zh-cn",
       "width": 944,
       "theme": "dark",
       "passed": true
@@ -463,19 +391,7 @@
       "passed": true
     },
     {
-      "route": "extensions/sillytavern",
-      "width": 786,
-      "theme": "dark",
-      "passed": true
-    },
-    {
       "route": "extensions/antigravity-ui",
-      "width": 786,
-      "theme": "dark",
-      "passed": true
-    },
-    {
-      "route": "extensions/claude-desktop-zh-cn",
       "width": 786,
       "theme": "dark",
       "passed": true
@@ -535,19 +451,7 @@
       "passed": true
     },
     {
-      "route": "extensions/sillytavern",
-      "width": 680,
-      "theme": "dark",
-      "passed": true
-    },
-    {
       "route": "extensions/antigravity-ui",
-      "width": 680,
-      "theme": "dark",
-      "passed": true
-    },
-    {
-      "route": "extensions/claude-desktop-zh-cn",
       "width": 680,
       "theme": "dark",
       "passed": true
@@ -612,21 +516,7 @@
       "passed": true
     },
     {
-      "route": "extensions/sillytavern",
-      "width": 944,
-      "theme": "light",
-      "scale": 1.25,
-      "passed": true
-    },
-    {
       "route": "extensions/antigravity-ui",
-      "width": 944,
-      "theme": "light",
-      "scale": 1.25,
-      "passed": true
-    },
-    {
-      "route": "extensions/claude-desktop-zh-cn",
       "width": 944,
       "theme": "light",
       "scale": 1.25,
@@ -696,21 +586,7 @@
       "passed": true
     },
     {
-      "route": "extensions/sillytavern",
-      "width": 944,
-      "theme": "dark",
-      "scale": 1.25,
-      "passed": true
-    },
-    {
       "route": "extensions/antigravity-ui",
-      "width": 944,
-      "theme": "dark",
-      "scale": 1.25,
-      "passed": true
-    },
-    {
-      "route": "extensions/claude-desktop-zh-cn",
       "width": 944,
       "theme": "dark",
       "scale": 1.25,
@@ -780,21 +656,7 @@
       "passed": true
     },
     {
-      "route": "extensions/sillytavern",
-      "width": 786,
-      "theme": "light",
-      "scale": 1.5,
-      "passed": true
-    },
-    {
       "route": "extensions/antigravity-ui",
-      "width": 786,
-      "theme": "light",
-      "scale": 1.5,
-      "passed": true
-    },
-    {
-      "route": "extensions/claude-desktop-zh-cn",
       "width": 786,
       "theme": "light",
       "scale": 1.5,
@@ -864,21 +726,7 @@
       "passed": true
     },
     {
-      "route": "extensions/sillytavern",
-      "width": 786,
-      "theme": "dark",
-      "scale": 1.5,
-      "passed": true
-    },
-    {
       "route": "extensions/antigravity-ui",
-      "width": 786,
-      "theme": "dark",
-      "scale": 1.5,
-      "passed": true
-    },
-    {
-      "route": "extensions/claude-desktop-zh-cn",
       "width": 786,
       "theme": "dark",
       "scale": 1.5,
@@ -1030,8 +878,9 @@
   "flows": [
     "catalog isolation",
     "global search and browser back, official-account side from search results",
-    "draft navigation persistence",
-    "keyboard modal close",
+    "draft navigation persistence (extension import form)",
+    "keyboard modal close (extension import form)",
+    "removed pages stay unreachable: old routes land home, template entries and the tavern gone from extensions, site search lands on the relay page, tavern search lands on the software card",
     "overview security modal",
     "system theme matches explicit theme",
     "desktop account pagination and safe login confirmation",
@@ -1044,7 +893,13 @@
     "software page: gemini cli install reports a verified result",
     "software page: every pill agrees with its version row",
     "update dialog: manual check, notes, cost sentence, demo install refusal, reopen from settings",
-    "one-click Chinese: Claude upstream check on open, confirmed apply with verification, entry label, restore; GPT own setting with skipped default home"
+    "Claude localization leftovers: hidden without leftovers, listed with the close-Claude cost, confirmed cleanup, entry disappears; GPT own setting with duplicate-table repair and skipped default home",
+    "tavern panel from all three account pages: the same near-full-window dialog, exactly six tabs, no bridge field on any tab, no overflow at three widths, the footer lands on that provider's bridge section already expanded and on the SillyTavern card",
+    "software page bridge sections: collapsed means unmounted, each CLI card carries only its own bridge (Claude with per-call detail), no overflow at three widths, quick jump lands expanded",
+    "software page SillyTavern card: missing Node gates install behind the winget choice, import source prefilled, install makes it managed, update says latest, uninstall backs up first",
+    "SillyTavern card versions without tabs: release list, downgrade names itself and still gates on Node, swap back to the kept copy",
+    "tavern panel console tab: a failed start is recognized with a hint, colors are rendered not printed, the previous run is one click away",
+    "tavern panel library tabs: character detail, to trash with its chats and back, world entries whose Esc closes only the entry dialog, extension check then update, every tab without overflow at 680px"
   ],
   "pageErrors": []
 }

@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use crate::{
     error::{GateError, Result},
-    events, gate, killswitch, sessions, sysenv, usecase,
+    events, gate, killswitch, sessions, usecase,
 };
 
 /// 「界面该刷新了」。装配时由 `run()` 填上，内容是重建托盘菜单。
@@ -32,7 +32,6 @@ pub type UiRefresher = Arc<dyn Fn() + Send + Sync>;
 pub struct AppState {
     pub gate: Arc<gate::GateState>,
     pub watchdog_stop: std::sync::Mutex<Option<tokio::sync::watch::Sender<bool>>>,
-    pub tz: std::sync::Mutex<Option<sysenv::TzState>>,
     /// 「界面该刷新了」。`run()` 建好托盘之后填进来。
     ///
     /// 没填时是 `None`，所有刷新都是空操作 —— demo 模式、单测、

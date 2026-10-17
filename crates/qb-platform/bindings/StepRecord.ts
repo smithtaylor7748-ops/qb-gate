@@ -4,6 +4,6 @@ import type { StepState } from "./StepState";
 
 export type StepRecord = { state: StepState, risk: Risk, 
 /**
- * 一句话说明，直接显示在侧栏 tooltip 与总览里。
+ * 一句话说明（审计留痕用，界面上纯净度那一项会显示它）。
  */
 detail: string, updated_at: string | null, };

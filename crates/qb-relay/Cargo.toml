@@ -1,6 +1,6 @@
 [package]
 name = "qb-relay"
-description = "QB Gate 的中转站：供应商目录、协议探测、连通性诊断"
+description = "QB Gate 的中转：官方端点预设、协议与凭证形态、写进工具配置的纯函数"
 publish = false
 version.workspace = true
 edition.workspace = true
@@ -13,9 +13,5 @@ qb-foundation.workspace = true
 qb-platform.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-reqwest.workspace = true
-tokio.workspace = true
-chrono.workspace = true
-dirs.workspace = true
 toml_edit.workspace = true
 ts-rs.workspace = true

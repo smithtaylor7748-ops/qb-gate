@@ -4,34 +4,6 @@
    ⛔ 所有表格放在 .qb-st-tw 里横向滚动：`npm run test:ui` 在 680px 上
       断言 .qb-main 不横向溢出，一张不滚的表当场红。 */
 
-.qb-st-tabs {
-  display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-}
-.qb-st-tabs button {
-  appearance: none;
-  background: none;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  color: var(--text-2);
-  font: inherit;
-  font-size: 12.5px;
-  padding: 8px 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.qb-st-tabs button:hover {
-  color: var(--text);
-  background: var(--surface-2);
-}
-.qb-st-tabs button[aria-selected="true"] {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-  font-weight: 500;
-}
-
 /* 客户端分页：线路出现在哪一页只看协议 */
 .qb-st-ctabs {
   display: flex;
@@ -72,44 +44,6 @@
   flex: none;
 }
 
-/* 启动条：整页只有这一处能启动 */
-.qb-st-launch {
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  background: var(--surface-2);
-  padding: 12px 14px;
-}
-.qb-st-launch .top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.qb-st-launch .st {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 14px;
-  font-weight: 600;
-}
-.qb-st-launch .led {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-3);
-  flex: none;
-}
-.qb-st-launch.up .led {
-  background: var(--ok);
-}
-.qb-st-launch .foot {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-  color: var(--text-3);
-  font-size: 11.5px;
-}
-
 /* 站点 → 分组两层。⛔ 余额是站点级的，倍率与 24h 实扣是分组级的 ——
    画成平级会让同一份余额在两张卡上各写一遍，看起来像两笔钱。 */
 .qb-st-site {
@@ -125,84 +59,7 @@
   padding: 10px 13px;
   flex-wrap: wrap;
 }
-.qb-st-sitehd .sn {
-  min-width: 0;
-  flex: 1;
-}
-.qb-st-sitehd .sn b {
-  font-size: 14.5px;
-  font-weight: 600;
-}
-.qb-st-sitehd .sn small {
-  display: block;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-3);
-  margin-top: 1px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.qb-st-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  background: var(--border);
-  border-top: 1px solid var(--border);
-}
-.qb-st-lc {
-  background: var(--surface);
-  overflow: hidden;
-}
-.qb-st-lc.on {
-  background: var(--accent-bg);
-}
-.qb-st-lc .pick {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  width: 100%;
-  text-align: left;
-  appearance: none;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: var(--text);
-  padding: 11px 13px;
-  cursor: pointer;
-}
-.qb-st-lc .pick:hover {
-  background: var(--surface-2);
-}
-.qb-st-rd {
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
-  border: 1.5px solid var(--border-strong);
-  flex: none;
-}
-.qb-st-lc.on .qb-st-rd {
-  border-color: var(--accent);
-  background: radial-gradient(circle, var(--accent) 0 45%, transparent 46%);
-}
-.qb-st-lc .who {
-  min-width: 0;
-  flex: 1;
-}
-.qb-st-lc .who b {
-  font-weight: 600;
-  font-size: 14px;
-}
-.qb-st-lc .who small {
-  display: block;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-3);
-  margin-top: 1px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+
 .qb-st-quick {
   display: flex;
   border-top: 1px solid var(--border);
@@ -479,98 +336,6 @@
   color: var(--text-2);
 }
 
-/* 站点检验 */
-.qb-st-cred {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 96px;
-}
-.qb-st-cred .bar {
-  width: 44px;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--border);
-  overflow: hidden;
-  flex: none;
-}
-.qb-st-cred .bar i {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-}
-/* ⛔ 从没检验过不写成 0 —— 0 分是一个断言，没检验过是还没有断言。 */
-.qb-st-never {
-  display: inline-flex;
-  align-items: center;
-  font-size: 10.5px;
-  color: var(--text-3);
-  border: 1px dashed var(--border-strong);
-  border-radius: 999px;
-  padding: 1px 8px;
-  white-space: nowrap;
-}
-.qb-st-fails {
-  display: block;
-  font-size: 11.5px;
-  color: var(--danger);
-  line-height: 1.45;
-}
-/* 「选中转站 → 选分组 → 选模型」那三级。
-   窄面板里换行成一列 —— 模型那一格最宽（要放下 `×0.15 · 计费翻倍 ×5`）。 */
-.qb-st-cascade {
-  display: flex;
-  align-items: flex-end;
-  gap: 11px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-}
-.qb-st-cascade label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  flex: 1 1 150px;
-}
-.qb-st-cascade label:last-of-type {
-  flex: 2 1 240px;
-}
-.qb-st-cascade label > span {
-  font-size: 11.5px;
-  color: var(--text-3);
-}
-.qb-st-cascade select,
-.qb-st-cascade input {
-  width: 100%;
-  min-width: 0;
-  font: inherit;
-  font-size: 12.5px;
-  color: var(--text-1);
-  background: var(--surface-1);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  padding: 6px 8px;
-}
-.qb-st-cascade select:disabled {
-  color: var(--text-3);
-}
-
-.qb-st-runbar {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  flex-wrap: wrap;
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  background: var(--surface-2);
-  padding: 11px 14px;
-}
-.qb-st-bound {
-  font-size: 11.5px;
-  color: var(--text-3);
-  text-align: center;
-  padding: 2px;
-}
 .qb-st-nudge {
   display: flex;
   gap: 10px;
@@ -1356,17 +1121,6 @@
   font-size: 11px;
 }
 
-/* 说明条：这一块还没按定稿重做。 */
-.qb-st-todo {
-  margin: 0 0 12px;
-  border: 1px dashed var(--border-strong);
-  border-radius: 8px;
-  padding: 8px 11px;
-  font-size: 11px;
-  color: var(--text-3);
-  line-height: 1.6;
-}
-
 /* ---------------------------------------------------------- 标签 */
 .qb-st-pill {
   font-size: 10px;
@@ -1835,116 +1589,12 @@
   border-radius: var(--radius-md);
   tab-size: 2;
 }
-.qb-st-maprows {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 8px 12px;
-  margin-top: 8px;
-}
 
 /* ================================================================ 站点检验 · 判决书（A 版）
 
    ⛔ 结论顶在最上面，而且**颜色跟着证据走不跟着分数走** ——
    同样是 29 分，证据不足那一档画成红色会让人以为查出了问题，
    而实际上一项问题都没查出来。 */
-
-.qb-st-lead {
-  display: flex;
-  gap: 14px;
-  align-items: center;
-  flex-wrap: wrap;
-  padding: 12px 14px;
-  margin-bottom: 12px;
-  border-radius: var(--radius-lg);
-}
-.qb-st-lead.bad {
-  background: var(--danger-bg);
-  border: 1px solid var(--danger-border);
-}
-/* 虚线 = 「还没有断言」。⛔ 跟上面那一档必须一眼分得开。 */
-.qb-st-lead.unk {
-  background: var(--surface-2);
-  border: 1px dashed var(--border-strong);
-}
-.qb-st-lead h4 {
-  margin: 0 0 3px;
-  font-size: 15px;
-  font-weight: 600;
-}
-.qb-st-lead p {
-  margin: 0;
-  max-width: 52ch;
-  font-size: 11px;
-  line-height: 1.6;
-  color: var(--text-2);
-}
-.qb-st-leadpills {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 7px;
-}
-
-.qb-st-ring {
-  position: relative;
-  width: 84px;
-  height: 84px;
-  flex: none;
-}
-.qb-st-ring svg {
-  display: block;
-  transform: rotate(-90deg);
-}
-.qb-st-ring .mid {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-content: center;
-  text-align: center;
-  line-height: 1.1;
-}
-.qb-st-ring .mid b {
-  font-size: 24px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-.qb-st-ring .mid span {
-  display: block;
-  font-size: 9px;
-  color: var(--text-3);
-}
-
-.qb-st-rounds {
-  display: flex;
-  gap: 5px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-}
-.qb-st-rounds .rd {
-  font: inherit;
-  text-align: left;
-  padding: 5px 9px;
-  cursor: pointer;
-  color: var(--text-2);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-.qb-st-rounds .rd[aria-pressed="true"] {
-  color: var(--accent);
-  background: var(--accent-bg);
-  border-color: var(--accent-border);
-}
-.qb-st-rounds .rd b {
-  display: block;
-  font-size: 12px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-.qb-st-rounds .rd small {
-  font-size: 9.5px;
-  color: var(--text-3);
-}
 
 .qb-st-sect {
   margin: 16px 0 9px;
@@ -1953,9 +1603,4 @@
   font-weight: 500;
   color: var(--text-2);
   border-bottom: 1px solid var(--border);
-}
-.qb-st-checks {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 9px;
 }

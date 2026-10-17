@@ -61,9 +61,10 @@ pub async fn codex_locale_status() -> Result<qb_app::usecase::codex_locale::Code
 
 /// 设为中文（`enabled = true`）/ 恢复默认。只写 GPT 自己的设置项，见 `usecase::codex_locale`。
 ///
-/// 面板起的 GPT 开着时，用例会先把它关掉；写完这里按关之前那个槽位重开 —— 跟 `codex_launch`
-/// 同一条链（验 IP → 托管会话 → 租约 → 挂看门狗）。重开没成功不算这次失败：
-/// 设置已经写进去了，界面照实说「没能重开」和原因。
+/// 面板起的 GPT 开着时，用例会先把它关掉；没有外部 GPT 窗口时，写完按关之前那个槽位重开 ——
+/// 跟 `codex_launch` 同一条链（验 IP → 托管会话 → 租约 → 挂看门狗）。检测到外部 GPT 窗口时
+/// 不自动重开，避免汉化动作在当前对话旁边弹出第二个独立窗口；设置已经写进去，使用者可关闭外部窗口后手动启动。
+/// 重开没成功不算这次失败：设置已经写进去了，界面照实说原因。
 #[tauri::command]
 pub async fn codex_locale_set(
     app: tauri::AppHandle,

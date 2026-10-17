@@ -3,7 +3,6 @@ import { computeScore, isLegacyDnsReport } from "./score";
 import type { DnsReport, GateStatus, IpInfo, Progress } from "./api";
 
 const progress: Progress = {
-  completed_once: true,
   steps: {
     purity: {
       state: "passed",
@@ -17,7 +16,7 @@ const ip = { ip: "203.0.113.7" } as IpInfo;
 describe("evidence behind the score", () => {
   it("counts a successful IP self-test separately from a manual score", () => {
     const score = computeScore({
-      progress: { completed_once: false, steps: {} },
+      progress: { steps: {} },
       ip: { ...ip, fraudScore: 3, isResidential: true },
     });
     expect(score.measured).toBe(1);
@@ -63,7 +62,7 @@ describe("evidence behind the score", () => {
       resolvers: [{ from_adapter: true }],
     } as unknown as DnsReport;
     const score = computeScore({
-      progress: { steps: {}, completed_once: false },
+      progress: { steps: {} },
       dns,
     });
     expect(score.items.find((i) => i.id === "dns")?.earned).toBeNull();
@@ -78,7 +77,7 @@ describe("evidence behind the score", () => {
       resolvers: [{ from_adapter: false }, { from_adapter: true }],
     } as unknown as DnsReport;
     const item = computeScore({
-      progress: { steps: {}, completed_once: false },
+      progress: { steps: {} },
       dns,
     }).items.find((i) => i.id === "dns");
     expect(item?.earned).toBe(20);
@@ -94,7 +93,7 @@ describe("evidence behind the score", () => {
     } as unknown as DnsReport;
     expect(isLegacyDnsReport(dns)).toBe(true);
     const item = computeScore({
-      progress: { steps: {}, completed_once: false },
+      progress: { steps: {} },
       dns,
     }).items.find((i) => i.id === "dns");
     expect(item?.earned).toBeNull();
@@ -114,7 +113,7 @@ describe("evidence behind the score", () => {
   });
   it("keeps all-unknown reports unscored", () => {
     const r = computeScore({
-      progress: { steps: {}, completed_once: false },
+      progress: { steps: {} },
       egress: {
         items: [
           {

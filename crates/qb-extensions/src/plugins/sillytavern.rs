@@ -1,4 +1,11 @@
-//! 酒馆插件：启动真正的 SillyTavern + ClaudeTavernBridge。
+//! 酒馆：启动真正的 SillyTavern + ClaudeTavernBridge。
+//!
+//! 2026-09-29 起酒馆是面板的**内置功能**，不再挂在扩展中心。同一天第三轮对调之后：
+//! 用酒馆（控制台、角色卡、世界书、扩展、备份与回收站）在三个账户页酒馆磁贴右上角的「酒馆」弹窗里；
+//! 酒馆本体（下载安装 / 更新 / 指定版本 / 卸载、位置、端口）在软件页的 SillyTavern 卡上
+//! （下载与位置表在 `qb-install::install::{sillytavern, sillytavern_setup}`）；三家各自的桥接设置在
+//! 软件页 Claude Code / Codex CLI / Gemini CLI 三张卡的最下面。
+//! 模块名与 IPC 命令名（`plugin_start` / `plugin_stop` …）没改 —— 改名只有搬家成本。
 //!
 //! 逻辑移植自 `start-claude-pro-rp.ps1`。**下面这些是移植时最容易丢的，
 //! 每一条都有出处，动手前先读**：
@@ -168,11 +175,20 @@ pub fn unset_paths(cfg: &TavernConfig, backend: TavernBackend) -> Vec<&'static s
         .collect()
 }
 
-/// 没配时给出的那句话。**面板不分发 SillyTavern，也不分发 bridge.py**
-/// （见 DISCLAIMER 第 296 行），所以这里只能指路，不能替他装。
+/// 没配时给出的那句话 —— **指到能填的那一处**（2026-09-29 起酒馆不在扩展中心了）：
+///
+/// * 缺酒馆本体（目录 / 启动脚本）→ 软件页的 SillyTavern 卡：下载安装一份（面板从官方 GitHub 取），
+///   或者「自动定位」/ 自己填你那份；
+/// * 只缺 Claude 桥的项目目录 → 软件页 Claude Code 卡最下面的「酒馆 · Claude 桥接设置」
+///   （2026-09-29 第三轮从账户页的弹窗搬过去的）。`bridge.py` 是使用者自己的，面板**不分发**它，只能指路。
 fn setup_hint(missing: &[&str]) -> String {
+    if missing.iter().all(|m| *m == "桥接项目目录") {
+        return "还没填 Claude 桥接的项目目录（你自己那份 bridge.py 所在的目录）：\
+                到「软件」页 Claude Code 卡最下面的「酒馆 · Claude 桥接设置」里填，或点那里的「自动定位」。"
+            .into();
+    }
     format!(
-        "还没配路径（{}）。点「自动定位」让面板在本机找，或自己填。",
+        "还没配酒馆（{}）：到「软件」页的 SillyTavern 卡下载安装一份，或点「自动定位」找你自己那份。",
         missing.join("、")
     )
 }
@@ -324,6 +340,176 @@ pub fn bridge_data_dir() -> PathBuf {
     crate::paths::tavern_bridge_dir()
 }
 
+// ------------------------------------------------------------------ 接管（2026-09-29）
+
+/// 软件页下载安装（或更新）好一份之后**接管它**：酒馆配置指过去。
+///
+/// 新那份的 `config.yaml` 里写了端口（导入过来的才有）就跟着它 —— 酒馆听哪个端口由它自己的
+/// `config.yaml` 定，面板只是去那个端口上等它。对齐之后跟某条桥撞号就不改，如实说出来。
+/// 返回给界面的一句话（没有要说的就是 `None`）。
+pub fn adopt(dir: &Path, config_port: Option<u16>) -> Result<Option<String>> {
+    let (cfg, note) = adopted(load_config_checked()?, dir, config_port);
+    save_config(&cfg)?;
+    Ok(note)
+}
+
+/// [`adopt`] 的判定部分。**纯函数** —— 落盘由调用方做（单测不许写真实的运行期状态）。
+fn adopted(
+    mut cfg: TavernConfig,
+    dir: &Path,
+    config_port: Option<u16>,
+) -> (TavernConfig, Option<String>) {
+    cfg.sillytavern_root = dir.to_path_buf();
+    cfg.st_launcher = crate::install::sillytavern::launcher_in(dir);
+    let mut note = None;
+    if let Some(p) = config_port.filter(|p| *p != cfg.st_port) {
+        let next = TavernConfig {
+            st_port: p,
+            ..cfg.clone()
+        };
+        if validate(&next).is_ok() {
+            cfg = next;
+            note = Some(format!("酒馆端口跟着它的 config.yaml 改成了 {p}"));
+        } else {
+            note = Some(format!(
+                "它的 config.yaml 写的端口 {p} 跟某条桥撞号，面板这边的酒馆端口没改（仍是 {}）—— 到软件页改一个",
+                cfg.st_port
+            ));
+        }
+    }
+    (cfg, note)
+}
+
+/// 卸载了面板装的那份之后，配置里指着它的两个路径清空（指着别处的不动）。
+pub fn release_paths_if(dir: &Path) -> Result<bool> {
+    let mut cfg = load_config_checked()?;
+    if cfg.sillytavern_root != dir {
+        return Ok(false);
+    }
+    cfg.sillytavern_root = PathBuf::new();
+    cfg.st_launcher = PathBuf::new();
+    save_config(&cfg)?;
+    Ok(true)
+}
+
+/// 酒馆端口上有人在听、而不是面板起的那份（使用者自己双击 `Start.bat` 开的）。
+///
+/// 装 / 更新 / 卸载 / 导入之前问这一句：那份开着的时候它的文件改不了名，
+/// 从它那里复制数据也可能复制到写了一半的聊天。面板不替他关别人起的进程。
+pub fn foreign_tavern_running() -> bool {
+    let cfg = load_config();
+    port_in_use(cfg.st_port) && !owned_running("sillytavern").unwrap_or(false)
+}
+
+/// 软件页「SillyTavern（酒馆）」卡要的全部事实。**不联网**（最新版要点「检查新版本」才问）。
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[ts(export)]
+pub struct TavernSetupStatus {
+    /// 酒馆配置里的 SillyTavern 目录（没配是空串）。
+    pub root: String,
+    pub launcher: String,
+    /// 那个目录像不像一份 SillyTavern（有 `server.js`、`package.json` 的名字对）。
+    pub present: bool,
+    pub version: Option<String>,
+    /// 它自己写的 `engines.node`。
+    pub node_engine: Option<String>,
+    /// 面板装的那份的标记；`None` = 不是面板装的，或者没装。
+    pub managed: Option<crate::install::sillytavern::Marker>,
+    /// 「下载安装」会装到哪（当前托管根下）。
+    pub managed_dir: String,
+    /// 更新前那一版的版本号（只有面板装的那份才有这一份旧版）。
+    pub previous_version: Option<String>,
+    pub node: crate::install::sillytavern_setup::NodeInfo,
+    /// 本机 Node 满不满足它的 `engines.node`。判断不了（没装酒馆、版本读不出、写法认不出）是 `None`。
+    pub node_ok: Option<bool>,
+    /// 有没有 winget（「顺手用 winget 装 Node.js」那个勾选能不能用）。
+    pub winget: bool,
+    /// 它的 `config.yaml` 顶层写的端口（只读）。
+    pub config_port: Option<u16>,
+    pub st_port: u16,
+    /// 面板起的那份酒馆正在跑。
+    pub running: bool,
+    /// 酒馆端口上有人在听，但不是面板起的（[`foreign_tavern_running`]）。
+    pub foreign_running: bool,
+}
+
+pub async fn setup_status() -> TavernSetupStatus {
+    use crate::install::{sillytavern as st, sillytavern_setup as setup};
+    let cfg = load_config();
+    let root = cfg.sillytavern_root.clone();
+    let has_root = !root.as_os_str().is_empty();
+    let pkg = if has_root {
+        st::read_package(&root).unwrap_or_default()
+    } else {
+        st::Package::default()
+    };
+    let managed = if has_root {
+        st::read_marker(&root)
+    } else {
+        None
+    };
+    let previous_version = managed
+        .as_ref()
+        .and_then(|_| st::read_package(&st::previous_of(&root)))
+        .and_then(|p| p.version);
+    // `where node.exe` + `node --version` 是两次起进程，放到阻塞线程池里。
+    let node = tokio::task::spawn_blocking(setup::node_info)
+        .await
+        .unwrap_or_default();
+    let node_ok = match (&node.path, &node.version, &pkg.node_engine) {
+        (None, _, Some(_)) => Some(false),
+        (Some(_), Some(v), Some(e)) => setup::node_satisfies(e, v),
+        _ => None,
+    };
+    let winget = crate::install::winget::winget_version().await.is_some();
+    let st_up = port_in_use(cfg.st_port);
+    let owned = st_up && owned_running("sillytavern").unwrap_or(false);
+    TavernSetupStatus {
+        present: has_root && st::looks_like_sillytavern(&root),
+        version: pkg.version,
+        node_engine: pkg.node_engine,
+        config_port: if has_root {
+            st::config_port(&root)
+        } else {
+            None
+        },
+        root: if has_root {
+            root.display().to_string()
+        } else {
+            String::new()
+        },
+        launcher: if cfg.st_launcher.as_os_str().is_empty() {
+            String::new()
+        } else {
+            cfg.st_launcher.display().to_string()
+        },
+        managed,
+        managed_dir: st::managed_dir().display().to_string(),
+        previous_version,
+        node,
+        node_ok,
+        winget,
+        st_port: cfg.st_port,
+        running: owned,
+        foreign_running: st_up && !owned,
+    }
+}
+
+/// 起酒馆时把 node 所在目录放到 PATH 最前面。
+///
+/// `Start.bat` 里的 `npm` / `node` 靠 PATH 找。刚在软件页用 winget 装上的 Node.js 不在面板进程
+/// 那份 PATH 里（环境变量只在进程启动时继承一次），不补的话要重启面板、甚至重新登录才起得来。
+/// 找不到 node 就什么都不加 —— 那时候依赖检查里「Node.js」那一项已经是红的。
+fn node_path_env() -> Vec<(String, String)> {
+    let Some(dir) =
+        crate::install::detect::node_exe().and_then(|p| p.parent().map(Path::to_path_buf))
+    else {
+        return Vec::new();
+    };
+    let path = std::env::var("PATH").unwrap_or_default();
+    vec![("PATH".into(), format!("{};{path}", dir.display()))]
+}
+
 // ------------------------------------------------------------------ 端口
 
 /// 端口是否被占。用试绑定判断，不需要额外依赖。
@@ -463,6 +649,20 @@ pub fn status_with(gpt_running: Option<bool>, gemini_running: Option<bool>) -> P
         shown(&cfg.st_launcher),
     ));
 
+    // 酒馆是 Node 程序（`Start.bat` 先 `npm install` 再 `node server.js`）。2026-09-29 之前这一项
+    // 不查：没有 Node 的机器上点启动，只看得到一个一闪而过的窗口和「在就绪前退出了」。
+    // 版本够不够在软件页的 SillyTavern 卡上判断（要起一次 `node --version`，这里 20 秒轮一次不起它）。
+    let node = crate::install::detect::node_exe();
+    checks.push(DependencyCheck::new(
+        "Node.js",
+        node.is_some(),
+        match &node {
+            Some(p) => p.display().to_string(),
+            None => "找不到 node.exe：到「软件」页的 SillyTavern 卡装（可以顺手用 winget 装 LTS）"
+                .into(),
+        },
+    ));
+
     let py = find_python();
     checks.push(DependencyCheck::new(
         "Python 3",
@@ -550,7 +750,7 @@ pub fn status_with(gpt_running: Option<bool>, gemini_running: Option<bool>) -> P
     let tavern_deps_ok = checks
         .iter()
         .take(claude_deps_len)
-        .filter(|c| c.label == "SillyTavern" || c.label == "酒馆启动脚本")
+        .filter(|c| ["SillyTavern", "酒馆启动脚本", "Node.js"].contains(&c.label.as_str()))
         .all(|c| c.ok);
     let claude_deps_ok = checks.iter().take(claude_deps_len).all(|c| c.ok);
     let unset_claude = unset_paths(&cfg, TavernBackend::Claude);
@@ -784,7 +984,20 @@ fn start_owned(
     cwd: &Path,
     env: Vec<(String, String)>,
 ) -> Result<()> {
-    let program = crate::sessions::OwnedProgram::launch(exe, &args, cwd, env)?;
+    // 酒馆的输出进控制台那份日志（`tavern_console`）；Claude 那条桥（使用者自己的 bridge.py）不收，
+    // 理由写在那个模块头。
+    let program = if name == "sillytavern" {
+        super::tavern_console::rotate(exe)?;
+        crate::sessions::OwnedProgram::launch_logged(
+            exe,
+            &args,
+            cwd,
+            env,
+            &super::tavern_console::log_path(),
+        )?
+    } else {
+        crate::sessions::OwnedProgram::launch(exe, &args, cwd, env)?
+    };
     if let Err(error) = crate::config_io::replace(
         &program_path(name),
         Some(&serde_json::to_vec(&program.record)?),
@@ -1013,7 +1226,7 @@ async fn start_tavern(
             &cfg.st_launcher,
             vec![],
             cfg.st_launcher.parent().unwrap_or(Path::new(".")),
-            vec![],
+            node_path_env(),
         )?;
         attempt.created.push("sillytavern".into());
     }
@@ -1025,7 +1238,7 @@ async fn start_tavern(
     for i in 0..ST_READY_ATTEMPTS {
         if !owned_running("sillytavern")? {
             return Err(GateError::Other(
-                "酒馆进程在就绪前退出了。到它自己的窗口看最后几行 —— \
+                "酒馆进程在就绪前退出了。到账户页「酒馆」磁贴右上角 →「控制台」看最后几行 —— \
                  多半是依赖没装上或者端口被占，面板没有停止任何进程。"
                     .into(),
             ));
@@ -1058,7 +1271,7 @@ async fn start_tavern(
         attempt.created.retain(|n| n != "sillytavern");
         return Err(GateError::Other(format!(
             "等了 {limit} 秒，酒馆还没在 127.0.0.1:{} 上应答。\
-             进程还活着，面板没有停它 —— 到它自己的窗口看看进度（首次启动要装依赖，可能更久），\
+             进程还活着，面板没有停它 —— 到账户页「酒馆」磁贴右上角 →「控制台」看看进度（首次启动要装依赖，可能更久），\
              起来之后再点一次「启动」就会直接复用它。",
             cfg.st_port
         )));
@@ -1067,6 +1280,16 @@ async fn start_tavern(
         "等了 {limit} 秒，酒馆既没应答也不在了；本次新启动的进程将清理。"
     )))
 }
+/// 「酒馆」弹窗的「控制台」读一次。`running` 由这里问（面板起的那份还在不在），读法在 [`super::tavern_console::read`]。
+pub fn console(
+    previous: bool,
+    run: Option<&str>,
+    offset: u64,
+) -> Result<super::tavern_console::ConsoleChunk> {
+    let running = owned_running("sillytavern").unwrap_or(false);
+    super::tavern_console::read(previous, run, offset, running)
+}
+
 pub async fn stop() -> Result<Vec<String>> {
     let mut done = Vec::new();
     let mut failures = Vec::new();
@@ -1199,6 +1422,15 @@ mod tests {
         ));
         assert!(msg.contains("自动定位"), "得给出下一步：{msg}");
         assert!(msg.contains("桥接项目目录"), "得说还缺哪几项：{msg}");
+        // 2026-09-29：酒馆不在扩展中心了，下一步是软件页（能直接下载安装一份）。
+        assert!(msg.contains("软件") && msg.contains("下载安装"), "{msg}");
+        assert!(!msg.contains("扩展"), "扩展中心里已经没有酒馆了：{msg}");
+        // 只缺 Claude 桥的目录：指到软件页 Claude Code 卡最下面那一段（2026-09-29 第三轮起桥的设置在那里），
+        // 不是 SillyTavern 卡、也不是账户页的弹窗（那里现在是酒馆本身的控制面板，没有桥的字段）。
+        let bridge_only = setup_hint(&["桥接项目目录"]);
+        assert!(bridge_only.contains("Claude Code"), "{bridge_only}");
+        assert!(bridge_only.contains("自动定位"), "{bridge_only}");
+        assert!(!bridge_only.contains("官方账户"), "{bridge_only}");
         // GPT 后端用不着 bridge.py：缺的只有酒馆那两项。
         let gpt = unset_paths(&TavernConfig::default(), TavernBackend::Gpt);
         assert_eq!(gpt, ["SillyTavern 目录", "酒馆启动脚本"]);
@@ -1244,6 +1476,27 @@ mod tests {
         assert!(cfg.gpt_model.is_empty());
         assert!(!cfg.gpt_persist_sessions);
         assert_eq!(cfg.bridge_port, 5001);
+    }
+
+    /// 接管一份新装的酒馆：两个路径指过去；它的 `config.yaml` 写了别的端口就跟着它
+    /// （酒馆听哪个端口由它自己定，面板只是去那儿等）；跟某条桥撞号就不改、说出来。
+    #[test]
+    fn adopting_a_managed_copy_points_at_it_and_follows_its_port_unless_that_collides() {
+        let dir = Path::new(r"x:\apps\sillytavern");
+        let (cfg, note) = adopted(TavernConfig::default(), dir, None);
+        assert_eq!(cfg.sillytavern_root, dir);
+        assert_eq!(cfg.st_launcher, dir.join("Start.bat"));
+        assert_eq!((cfg.st_port, note), (8000, None));
+
+        let (cfg, note) = adopted(TavernConfig::default(), dir, Some(8123));
+        assert_eq!(cfg.st_port, 8123);
+        assert!(note.unwrap().contains("8123"));
+
+        // 5002 是 GPT 桥：不改，照实说。
+        let (cfg, note) = adopted(TavernConfig::default(), dir, Some(5002));
+        assert_eq!(cfg.st_port, 8000);
+        assert!(note.unwrap().contains("撞号"));
+        assert!(validate(&cfg).is_ok());
     }
 
     #[test]

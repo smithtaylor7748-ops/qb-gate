@@ -3,14 +3,23 @@ import type { BridgeCall } from "./BridgeCall";
 
 export type BridgeTelemetry = { records: Array<BridgeCall>, total: number, offset: number, has_more: boolean, 
 /**
- * 缓存命中率 0–1。`None` = 桥没给这一项。
+ * 缓存命中率 0–1。桥给的是百分数，这里除以 100。`None` = 桥没给这一项。
  */
-hit_rate: number | null, cache_read: number, cache_write: number, 
+hit_rate: number | null, 
 /**
- * 可统计的调用数（桥自己的口径）。
+ * 全部记录读到的缓存 token 合计（桥的 `read_tokens`）。
  */
-countable: number, 
+cache_read: number | null, 
 /**
- * 前缀可复用的比例 0–1。`None` = 桥没给。
+ * 全部记录新写入的缓存 token 合计（桥的 `creation_tokens`）。
+ */
+cache_write: number | null, 
+/**
+ * 可统计的调用数（桥的 `known_calls`：带回了缓存字段的那些）。
+ */
+countable: number | null, 
+/**
+ * 前缀可复用的比例 0–1 = 可复用 ÷（可复用 + 被打断），跟桥自己的监控页同一个算法。
+ * 「首轮」两边都不算。`None` = 桥没给、或者还没有可判断的记录。
  */
 prefix_reusable: number | null, };

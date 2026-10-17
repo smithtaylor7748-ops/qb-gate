@@ -62,7 +62,9 @@ import type { TavernGeminiQuota } from "../../lib/generated/TavernGeminiQuota";
 import type { UiStatus } from "../../lib/generated/UiStatus";
 import { AFTER, R } from "../../lib/resources";
 import AntigravitySlotRow, { canAttach } from "./AntigravitySlotRow";
-import BridgeSettings, { BridgeSettingsCorner } from "../tavern/BridgeSettings";
+import TavernPanel, { TavernPanelCorner } from "../tavern/TavernPanel";
+import { bridgeHref } from "../tavern/bridge/where";
+import { tavernBodyMissing } from "../../lib/tavernReady";
 import { invalidate, useResource, useSession } from "../../lib/store";
 import { endTask, resetTask, useTask, type TaskState } from "../../lib/tasks";
 import {
@@ -105,6 +107,9 @@ export default function AntigravityBand() {
   const navigate = useNavigate();
   const tavern = plugins.data?.find((p) => p.id === "sillytavern");
   const tavernUnready = tavern?.state === "missing";
+  // 都去软件页：酒馆本体缺东西去 SillyTavern 卡；缺 Gemini CLI / 槽位就去 Gemini CLI 卡最下面的
+  // 「酒馆 · Gemini 桥接设置」（那里列着缺什么）。
+  const tavernBodyGone = tavernBodyMissing(tavern?.checks);
   const tavernTask = useTask("tavern-start");
 
   // ------------------------------------------------------------ 汉化与审批引擎
@@ -548,14 +553,12 @@ export default function AntigravityBand() {
     }
   }
 
-  // ---------------------------------------------------- 桥接设置（0.31.0，0.32.0 抽成组件）
+  // ---------------------------------------------------- 酒馆弹窗（0.31.0 起的那个角标）
   //
-  // 使用者定的：**三条桥的设置全由面板管**，入口做成酒馆那格右上角的小按钮。
-  // 0.32.0 弹窗本体搬去了 `features/tavern/BridgeSettings.tsx` —— 原来它是这个
-  // 文件里一个内联的 `<Modal>` 字面量，于是**只有反重力页开得了它**，
-  // 而 Claude / GPT 两页的酒馆磁贴上没有入口 —— 可那两条桥的端口与模型
-  // 恰恰也在这里改。
-  const [bridgeOpen, setBridgeOpen] = useState(false);
+  // 0.31.0–0.32.0 这里开的是桥接设置（一个内联 `<Modal>`，只有反重力页开得了，于是抽成了组件）。
+  // 2026-09-29 第三轮起，三个账户页的角标开的是同一个「酒馆」弹窗（`features/tavern/TavernPanel.tsx`，
+  // 酒馆本身的控制面板）；Gemini 那条桥的设置在软件页 Gemini CLI 卡的最下面。
+  const [panelOpen, setPanelOpen] = useState(false);
 
   // 「一键关闭」那格没有后端进度事件，用本地状态凑一个 TaskState：
   // 失败原文要留在贴上（toast 会自己消失）。
@@ -817,7 +820,9 @@ export default function AntigravityBand() {
                   name="酒馆"
                   note={
                     tavernUnready
-                      ? "还没配好 · 点开去填路径"
+                      ? tavernBodyGone
+                        ? "酒馆还没装好 · 点开去软件页"
+                        : "还缺东西 · 点开看缺什么"
                       : geminiRunning
                         ? "Gemini 桥接运行中 · 再点只打开页面"
                         : // 就绪窗口是 180 秒（`sillytavern.rs` 的 ST_READY_ATTEMPTS），原来写「最长 60 秒」。
@@ -829,11 +834,13 @@ export default function AntigravityBand() {
                   testId="ag-tile-tavern"
                   onClick={
                     tavernUnready
-                      ? () => navigate("/extensions/sillytavern")
+                      ? tavernBodyGone
+                        ? () => navigate("/software?focus=sillytavern")
+                        : () => navigate(bridgeHref("gemini"))
                       : () => void launchTavern()
                   }
                   corner={
-                    <BridgeSettingsCorner onClick={() => setBridgeOpen(true)} />
+                    <TavernPanelCorner onClick={() => setPanelOpen(true)} />
                   }
                 />
                 <Tile
@@ -870,12 +877,11 @@ export default function AntigravityBand() {
           />
         </div>
       </div>
-      {/* 桥接设置（0.31.0）：一份酒馆、三条桥，端口与模型全在这里改。
-          入口是酒馆那格右上角的小按钮 —— 使用者要的是「都由面板操控设置」。 */}
-      <BridgeSettings
-        open={bridgeOpen}
+      {/* 酒馆本身的控制面板（2026-09-29 第三轮；三个账户页开的是同一个）。 */}
+      <TavernPanel
+        open={panelOpen}
         provider="gemini"
-        onClose={() => setBridgeOpen(false)}
+        onClose={() => setPanelOpen(false)}
       />
       {/* 汉化 / 自动审批 / 高危拦截：附加 / 停止、三个开关、计数、规则入口。 */}
       <Modal

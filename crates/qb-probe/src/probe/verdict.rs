@@ -21,6 +21,11 @@ pub const IPROYAL_AFF: &str = "https://iproyal.cn/?r=sulianyan";
 pub const IPQS_CRITERIA: &str = "Fraud Score ≤ 5，且 Proxy / VPN / TOR / Recent Abuse 全部为 No，且 Connection Type = Residential";
 pub const IPPURE_CRITERIA: &str = "IPPure 系数 ≤ 5%，且 IP来源 = 原生IP，且 IP属性 = 住宅IP";
 
+/// 单项检查的三态。**只是给界面用的词表**（纯净度卡上那几枚标签，见 `PurityPanel.tsx`）。
+///
+/// 原来还有一个面板自判的 `PanelVerdict` / `evaluate()`（命令 `probe_purity`）：「原生 IP」
+/// 那一项公开接口不给，所以它结构上永远判不过，界面早就改成人工复核、不调它了。
+/// 2026-09-27 删掉，只留这个词表。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
 #[ts(export)]
 pub enum Check {
@@ -28,43 +33,6 @@ pub enum Check {
     Fail,
     /// 接口没给这个字段 —— 如实说不知道，不要猜成通过。
     Unknown,
-}
-
-#[derive(Debug, Clone, Serialize, TS)]
-#[ts(export)]
-pub struct PanelVerdict {
-    pub purity: Check,
-    pub residential: Check,
-    pub native: Check,
-    /// 三项全 Pass 才是 true。任一项 Unknown 都不算通过。
-    pub passed: bool,
-    pub note: &'static str,
-}
-
-pub fn evaluate(info: &crate::probe::ip::IpInfo) -> PanelVerdict {
-    let purity = match info.fraud_score {
-        Some(s) if s <= MAX_FRAUD_SCORE => Check::Pass,
-        Some(_) => Check::Fail,
-        None => Check::Unknown,
-    };
-    let residential = match info.is_residential {
-        Some(true) => Check::Pass,
-        Some(false) => Check::Fail,
-        None => Check::Unknown,
-    };
-    // 「原生 IP」ippure 网页上有，公开接口的示例输出里没有这个字段。
-    // 拿不到就如实报 Unknown，让用户去站点上自己看，不要用别的字段硬凑。
-    let native = Check::Unknown;
-
-    PanelVerdict {
-        purity,
-        residential,
-        native,
-        passed: matches!(purity, Check::Pass)
-            && matches!(residential, Check::Pass)
-            && matches!(native, Check::Pass),
-        note: "面板自测仅供参考，不权威。以 IPQualityScore 与 ippure.com 的结果为准。",
-    }
 }
 
 /// 纯净度判定用的是哪几家、门槛是多少。界面上要如实列出来。
@@ -130,50 +98,25 @@ pub fn criteria() -> PurityCriteria {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::probe::ip::IpInfo;
 
-    fn info(f: Option<u32>, r: Option<bool>) -> IpInfo {
-        IpInfo {
-            ip: "203.0.113.7".into(),
-            fraud_score: f,
-            is_residential: r,
-            ..Default::default()
-        }
-    }
-
+    /// 界面上摊开的标准原文跟门槛常量说的是同一个数。
+    ///
+    /// 这一份是**面板对使用者的承诺**（见 `PurityCriteria` 的注释）：有人把门槛改成 3、
+    /// 原文还写着「≤ 5」，界面就在替一条已经不用的标准说话。原来钉着门槛的是自判
+    /// `evaluate()` 那几条测试；自判 2026-09-27 删了，改钉在原文上。
     #[test]
-    fn clean_residential_still_unknown_without_native_field() {
-        // 接口给不出「原生 IP」，所以即使前两项通过也不能判定整体通过。
-        let v = evaluate(&info(Some(3), Some(true)));
-        assert_eq!(v.purity, Check::Pass);
-        assert_eq!(v.residential, Check::Pass);
-        assert_eq!(v.native, Check::Unknown);
-        assert!(!v.passed);
-    }
-
-    #[test]
-    fn score_above_threshold_fails() {
-        assert_eq!(evaluate(&info(Some(6), Some(true))).purity, Check::Fail);
-    }
-
-    #[test]
-    fn boundary_five_passes() {
-        assert_eq!(evaluate(&info(Some(5), Some(true))).purity, Check::Pass);
-    }
-
-    #[test]
-    fn datacenter_fails_residential() {
-        assert_eq!(
-            evaluate(&info(Some(1), Some(false))).residential,
-            Check::Fail
+    fn the_published_criteria_quote_the_threshold_in_use() {
+        let c = criteria();
+        assert_eq!(c.max_fraud_score, MAX_FRAUD_SCORE);
+        assert!(
+            c.ipqs.criteria.contains(&format!("≤ {MAX_FRAUD_SCORE}")),
+            "{}",
+            c.ipqs.criteria
         );
-    }
-
-    #[test]
-    fn missing_fields_are_unknown_not_pass() {
-        let v = evaluate(&info(None, None));
-        assert_eq!(v.purity, Check::Unknown);
-        assert_eq!(v.residential, Check::Unknown);
-        assert!(!v.passed);
+        assert!(
+            c.ippure.criteria.contains(&format!("≤ {MAX_FRAUD_SCORE}%")),
+            "{}",
+            c.ippure.criteria
+        );
     }
 }

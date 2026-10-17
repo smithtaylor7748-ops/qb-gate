@@ -194,8 +194,10 @@ pub fn parse_shown_version(stdout: &str) -> Option<String> {
     None
 }
 
+/// winget 在不在（版本号）。只起一次 `winget --version`，比 [`probe`] 快得多 ——
+/// 只想知道「能不能用 winget 装」的地方（托管 SillyTavern 的 Node.js 勾选）用它。
 #[cfg(windows)]
-async fn winget_version() -> Option<String> {
+pub async fn winget_version() -> Option<String> {
     let out = crate::process::hidden_tokio(tokio::process::Command::new("winget"))
         .arg("--version")
         .output()
@@ -206,7 +208,7 @@ async fn winget_version() -> Option<String> {
 }
 
 #[cfg(not(windows))]
-async fn winget_version() -> Option<String> {
+pub async fn winget_version() -> Option<String> {
     None
 }
 

@@ -1,361 +1,42 @@
-//! Claude 桌面端 · 中文界面（插件 `claude-desktop-zh-cn`，2026-09-25，使用者定的）。
+//! Claude 桌面端 · 中文界面：**撤掉了**（2026-09-27，使用者定的），这里只剩「清理残留」。
 //!
-//! 接入 [javaht/claude-desktop-zh-cn](https://github.com/javaht/claude-desktop-zh-cn)（MIT）。
-//! 面板**不内置**它的任何文件：运行时从它的 GitHub Release 取（一版一个标签、没有附件，
-//! 取的是那个标签的源码归档），**只调用它 Windows 脚本的安全模式**（`-PatchMode safe`，
-//! 上游叫「Cowork 兼容模式」）。上游平均一周一版 —— Claude 一改前端结构它就跟着改脚本，
-//! 所以跟的是它的脚本本身，不是面板照着抄一份（那样上游的修复永远流不进来）。
+//! 0.25.4–0.25.5 接入过社区项目 [javaht/claude-desktop-zh-cn](https://github.com/javaht/claude-desktop-zh-cn)
+//! （MIT）Windows 脚本的安全模式。2026-09-27 查清楚了：**官方账户下它必然不生效**。
 //!
-//! # ⛔ 合规边界（使用者 2026-09-25 选的：只接安全模式 + 事后核验）
+//! - 官方账户（claude.ai 登录）模式下，Claude 主窗口加载的是在线的 `https://claude.ai`（2.9939.2 的
+//!   `app.asar`：官方模式的 `getMainWindowUrl()` 返回它；只有第三方 API 模式才是本地的 `app://localhost`）。
+//!   安全模式只改本地那份前端（`ion-dist`），碰不到在线页；
+//! - 在线页每次加载都调 `window.electronIntl.requestLocaleChange(它自己的语言)`，而 claude.ai 没有中文，
+//!   推回来的是 en-US —— 主进程随即切回英文、把 `config.json` 的 `locale` 改写掉，连菜单都保不住；
+//! - 能把语言锁住的只有上游另外两种模式（改 `app.asar` 并重写 `Claude.exe` 的完整性哈希 / Frida 内存补丁），
+//!   都是绕过 Claude 的防篡改：Anthropic 消费者条款不许，使用者也定过「必须符合厂商政策」。
 //!
-//! 上游 Windows 脚本有五个动作、两种补丁模式。面板只碰两个动作、一种模式：
+//! 所以入口、插件条目、下载与应用全删了。⛔ **别把「应用」那条路加回来** —— 在官方账户下它只会让人
+//! 看到「核验通过」而界面照旧是英文（坑 7.100）。
 //!
-//! | 上游 | 做什么 | 面板 |
-//! |---|---|---|
-//! | `install -PatchMode safe` | 往 Claude 安装目录放三份翻译 JSON、改 `ion-dist\assets\v1\*.js` 里的语言白名单与硬编码英文、写 `config.json` 的 `locale` | ✅ 一键汉化 |
-//! | `uninstall` | 从它自己的 `.zh-cn-backups` 还原、删翻译、locale 设回 `en-US` | ✅ 恢复英文 |
-//! | `-PatchMode official` | 改 `app.asar`，再**重写 `Claude.exe` 内嵌的 asar 完整性哈希**（Authenticode 变 `HashMismatch`） | ⛔ 绕过防篡改 = Anthropic 消费者条款 §3「bypassing … protective measures」 |
-//! | `frida-launch` | Frida 在内存里改掉「带调试开关就拒绝启动」的闸门与完整性值 | ⛔ 同上；`scripts\experimental\` 一个字节都不落盘 |
-//! | `disable-updates` / `sync-skills` | 关 Claude 自动更新 / 同步 CC Switch 的 skills | ⛔ 跟汉化无关 |
+//! # 清理不跑上游的卸载脚本
 //!
-//! 参数只由 [`script_args`] 拼、动作只有 [`Action`] 两个值，单测钉着永远拼不出别的。
-//! 安全模式也是**非官方修改**：条款没有条目禁止改本机界面文字，但 Anthropic 不支持它、
-//! Claude 一更新就被覆盖 —— 界面与 DISCLAIMER 都这么写，不说成「官方支持」。
+//! 上游 `uninstall` 的第三步「移除 zh-CN 语言注册」是按字符串删 `"zh-CN"`，把 Claude **原版**文件里
+//! 本来就有的那几处也删了：本机 09-25 卸载之后，有 3 个前端文件跟上游自己的备份对不上，而备份跟旧版
+//! 2.9939.1 里同名（文件名带内容哈希）的文件逐字一致 —— 备份才是原版，现在的是被改坏的。
 //!
-//! ⛔ 反重力那套 CDP 注入引擎**不能**搬到 Claude 上：Claude 桌面端见到 `--remote-debugging-port`
-//! 就拒绝启动（2.9939.2 字符串核过：`refusing to start — a debugging or network-override switch
-//! is present`）。那是它有意设的保护，绕过去就是上面第三、四行。
-//!
-//! # 同步上游（使用者选的：打开汉化弹窗或插件页时查）
-//!
-//! 只问 `github.com/<repo>/releases/latest` 的跳转（不跟跳转，读 `Location`），**不走
-//! `api.github.com`**（0.25.3 self_update 同一个理由：未登录一个出口 IP 一小时 60 次）。
-//! 有新版只显示，点了「更新」才下载。每一版下载后都**重核许可证**（`LICENSE` 仍是 MIT 原文），
-//! 不是就不用、留着旧版。归档注释里的提交号记下来（GitHub 源码归档自带）。
-//!
-//! # 只做位置表认得的那种装法
-//!
-//! Squirrel（`%LOCALAPPDATA%\AnthropicClaude\app-<版本>`，[`inventory::desktop_app_dir`]）。
-//! MSIX 装在 `WindowsApps` 里，上游要 UAC 接管那个目录的 ACL —— 面板不做，如实说。
+//! 所以清理直接用上游自己留下的备份（`resources\.zh-cn-backups` 里最早那一套 —— 上游卸载的第一步用的
+//! 也是它）把文件逐字换回去，再删中文文件与备份：不起 PowerShell、不联网，只写备份里列着的前端文件
+//! （`ion-dist\` 下）。备份里出现 `app.asar`、`claude.exe` 之类，说明用过上游改程序文件的模式 ——
+//! 那一版不自动还原，如实让使用者到官网重装。
 use crate::error::{GateError, Result};
 use crate::install::inventory;
-use crate::install::zipread;
-use crate::plugins::{DependencyCheck, PluginState, PluginStatus};
-use crate::sink::ProgressSink;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use ts_rs::TS;
 
+/// 那版插件下载上游副本用的目录名（`state_dir\plugins\<它>`）。清理时整份删掉。
 pub const PLUGIN_ID: &str = "claude-desktop-zh-cn";
-pub const PLUGIN_NAME: &str = "Claude 桌面端 · 中文界面";
-/// 上游仓库。**常量** —— 不收使用者输入的地址（同插件清单那条规矩）。
-pub const UPSTREAM_REPO: &str = "javaht/claude-desktop-zh-cn";
-/// 汉化成哪种中文。上游还有 zh-TW / zh-HK，一键汉化只用这一种。
-pub const LANGUAGE: &str = "zh-CN";
-/// 上游 Windows 脚本在归档里的位置。
-pub const SCRIPT: &str = "scripts/install_windows.ps1";
-/// 关掉上游脚本自己问 `api.github.com` 的那一下 —— 查新版是面板的事，而且只在打开弹窗时。
-pub const SKIP_UPDATE_CHECK: (&str, &str) = ("CLAUDE_ZH_SKIP_UPDATE_CHECK", "1");
-
-/// 归档最多收多大。1.4.8 是 2.5 MB。
-const ARCHIVE_MAX: usize = 64 << 20;
-/// 单个文件最多多大。最大的翻译文件 1.4.8 是 561 KB。
-const FILE_MAX: u64 = 16 << 20;
-
-pub fn upstream_url() -> String {
-    format!("https://github.com/{UPSTREAM_REPO}")
-}
-
-fn latest_url() -> String {
-    format!("https://github.com/{UPSTREAM_REPO}/releases/latest")
-}
-
-fn archive_url(tag: &str) -> String {
-    format!("https://github.com/{UPSTREAM_REPO}/archive/refs/tags/{tag}.zip")
-}
-
-// ================================================================ 纯函数
-
-/// 标签只收这些字符：GitHub 标签能长成什么样都行，但要拼进地址、当目录名，就得收紧。
-pub fn valid_tag(tag: &str) -> bool {
-    !tag.is_empty()
-        && tag.len() <= 64
-        && !tag.starts_with(['.', '-'])
-        && tag
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-}
-
-/// **纯函数**：`releases/latest` 跳到的地址里取标签。认不出就是 `None`，不猜。
-pub fn tag_from_location(location: &str) -> Option<String> {
-    let url = reqwest::Url::parse(location).ok()?;
-    if url.scheme() != "https" || url.host_str() != Some("github.com") {
-        return None;
-    }
-    let parts: Vec<&str> = url.path_segments()?.collect();
-    let repo: Vec<&str> = UPSTREAM_REPO.split('/').collect();
-    match parts.as_slice() {
-        [owner, name, "releases", "tag", tag]
-            if owner.eq_ignore_ascii_case(repo[0]) && name.eq_ignore_ascii_case(repo[1]) =>
-        {
-            valid_tag(tag).then(|| tag.to_string())
-        }
-        _ => None,
-    }
-}
-
-/// 归档里的一个文件要不要。**只要 Windows 安全模式用得到的**：
-///
-/// - 根目录的 `LICENSE`（每版重核）、`README.md`（给人看）；
-/// - `resources\` 下的 `.json`（翻译、清单、版本号）；
-/// - `scripts\` 下的 PowerShell（`.ps1` / `.psm1` / `.psd1`），**`scripts\experimental\` 除外** ——
-///   那里是 Frida 内存补丁与绕过调试开关闸门的脚本，面板永远不调用，也就一个字节都不落盘。
-///
-/// 按规则挑而不是按文件名列死：上游以后把脚本拆成几个模块，照样跟得上。
-fn wanted(rel: &str) -> bool {
-    let lower = rel.to_ascii_lowercase();
-    if lower == "license" || lower == "readme.md" {
-        return true;
-    }
-    if lower.starts_with("resources/") {
-        return lower.ends_with(".json");
-    }
-    if lower.starts_with("scripts/") && !lower.starts_with("scripts/experimental/") {
-        return lower.ends_with(".ps1") || lower.ends_with(".psm1") || lower.ends_with(".psd1");
-    }
-    false
-}
-
-/// 相对路径落盘前的检查：每一段非空、不是 `.` / `..`、不带盘符与反斜杠、不以点或空格结尾、
-/// 不是 Windows 设备名。跟 `extensions::safe_relative` 同一套规矩 —— 那个在 `extensions` 里，
-/// 而 `extensions` 已经引用 `plugins`（接入酒馆），这里再引用回去就成环了（`architecture.rs` 的
-/// `module_cycles_only_ever_shrink` 当场抓住过）。
-fn safe_relative(path: &str) -> bool {
-    const DEVICES: [&str; 22] = [
-        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-    ];
-    !path.is_empty()
-        && path.split('/').all(|part| {
-            !part.is_empty()
-                && part != "."
-                && part != ".."
-                && !part.ends_with(['.', ' '])
-                && !part.contains(['\\', ':', '\0'])
-                && !DEVICES.contains(&part.split('.').next().unwrap_or("").to_uppercase().as_str())
-        })
-}
-
-/// **纯函数**：从归档目录里挑出要解的那些，返回 `(归档里的名字, 相对路径)`。
-///
-/// GitHub 源码归档所有条目都在一个顶层目录（`<仓库>-<标签>/`）下 —— 不是的话不认。
-/// 相对路径过 [`safe_relative`]（不许 `..`、盘符、设备名）。
-/// 必须挑到 `LICENSE` 和 [`SCRIPT`]，缺一个这一版就不用。
-pub fn select_entries(names: &[&str]) -> Result<Vec<(String, String)>> {
-    let first = names
-        .iter()
-        .find(|n| !n.is_empty())
-        .ok_or_else(|| GateError::Other("上游归档是空的".into()))?;
-    let prefix = match first.split_once('/') {
-        Some((top, _)) if !top.is_empty() => format!("{top}/"),
-        _ => {
-            return Err(GateError::Other(
-                "上游归档不是 GitHub 源码归档的样子".into(),
-            ))
-        }
-    };
-    let mut out = Vec::new();
-    for name in names {
-        let rel = name
-            .strip_prefix(&prefix)
-            .ok_or_else(|| GateError::Other(format!("上游归档里有不在顶层目录下的条目：{name}")))?;
-        if rel.is_empty() || rel.ends_with('/') || !wanted(rel) {
-            continue;
-        }
-        if !safe_relative(rel) {
-            return Err(GateError::Other(format!("上游归档里有不安全的路径：{rel}")));
-        }
-        out.push((name.to_string(), rel.to_string()));
-    }
-    for must in ["LICENSE", SCRIPT] {
-        if !out.iter().any(|(_, rel)| rel.eq_ignore_ascii_case(must)) {
-            return Err(GateError::Other(format!(
-                "上游这一版没有 {must}，面板不认这一版"
-            )));
-        }
-    }
-    Ok(out)
-}
-
-/// **纯函数**：`LICENSE` 还是不是 MIT。空白一律压成一个空格再比那三句原文。
-pub fn license_is_mit(text: &str) -> bool {
-    let norm = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    [
-        "Permission is hereby granted, free of charge, to any person obtaining a copy of this software",
-        "The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.",
-        "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND",
-    ]
-    .iter()
-    .all(|s| norm.contains(s))
-}
-
-/// 上游脚本支持什么 —— 从它的 `param(...)` 里读出来，**不假设**。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct ScriptCaps {
-    /// 声明了 `-SkipAsarPatch`（那个开关会把 PatchMode 强制成 safe）。有就一并传，双保险。
-    pub skip_asar_patch: bool,
-}
-
-/// `param(` 到与它配对的 `)`。括号计数时跳过引号里的内容（`ValidateSet("a", "b")` 里就有括号）。
-fn param_block(text: &str) -> Option<&str> {
-    let lower = text.to_ascii_lowercase();
-    let start = lower.find("param(")? + "param(".len();
-    let bytes = text.as_bytes();
-    let mut depth = 1usize;
-    let mut quote: Option<u8> = None;
-    for (i, &b) in bytes.iter().enumerate().skip(start) {
-        match quote {
-            Some(q) if b == q => quote = None,
-            Some(_) => {}
-            None => match b {
-                b'"' | b'\'' => quote = Some(b),
-                b'(' => depth += 1,
-                b')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(&text[start..i]);
-                    }
-                }
-                _ => {}
-            },
-        }
-    }
-    None
-}
-
-/// 某个参数的 `ValidateSet(...)` 里列了哪些值。只看**这个参数自己的**那段属性
-/// （上一个 `$变量` 之后、`$name` 之前）。没有 `ValidateSet` → `None`。
-fn validate_set(block: &str, name: &str) -> Option<Vec<String>> {
-    let lower = block.to_ascii_lowercase();
-    let at = find_var(&lower, &name.to_ascii_lowercase())?;
-    let region_start = lower[..at].rfind('$').map(|i| i + 1).unwrap_or(0);
-    let region = &block[region_start..at];
-    let vs = region.to_ascii_lowercase().find("validateset(")? + "validateset(".len();
-    let end = region[vs..].find(')')? + vs;
-    Some(
-        region[vs..end]
-            .split(',')
-            .map(|s| s.trim().trim_matches(['"', '\'']).to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-    )
-}
-
-/// `$name` 作为一个完整变量名出现的位置（`$Action` 不能匹配到 `$ActionX`）。
-fn find_var(lower: &str, name: &str) -> Option<usize> {
-    let needle = format!("${name}");
-    let mut from = 0;
-    while let Some(i) = lower[from..].find(&needle) {
-        let at = from + i;
-        let after = lower[at + needle.len()..].chars().next();
-        if !after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
-            return Some(at);
-        }
-        from = at + needle.len();
-    }
-    None
-}
-
-/// **纯函数**：读上游脚本的参数，确认它还支持面板要用的那几样。
-///
-/// `PatchMode` 必须列着 `safe`、`Action` 必须列着 `install` 与 `uninstall`、`Language` 必须列着
-/// `zh-CN` —— 缺一样就说明上游改了接口，这一版不用（等面板跟上），而不是闭着眼把参数塞过去。
-/// 没有 `ValidateSet` 也算不认：那样面板就没法确认 `safe` 还是不是「不碰 app.asar」的那个意思。
-pub fn script_caps(text: &str) -> Result<ScriptCaps> {
-    let block = param_block(text)
-        .ok_or_else(|| GateError::Other("上游脚本里找不到 param(...)，接口变了".into()))?;
-    let need = |name: &str, values: &[&str]| -> Result<()> {
-        let set = validate_set(block, name).ok_or_else(|| {
-            GateError::Other(format!("上游脚本的 -{name} 没有列出可选值，接口变了"))
-        })?;
-        for v in values {
-            if !set.iter().any(|s| s.eq_ignore_ascii_case(v)) {
-                return Err(GateError::Other(format!(
-                    "上游脚本的 -{name} 不再支持 {v}，接口变了"
-                )));
-            }
-        }
-        Ok(())
-    };
-    need("PatchMode", &["safe"])?;
-    need("Action", &["install", "uninstall"])?;
-    need("Language", &[LANGUAGE])?;
-    Ok(ScriptCaps {
-        skip_asar_patch: find_var(&block.to_ascii_lowercase(), "skipasarpatch").is_some(),
-    })
-}
-
-/// 面板会让上游脚本做的**全部**动作。没有第三个值 —— 见模块头那张表。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Action {
-    Install,
-    Uninstall,
-}
-
-impl Action {
-    fn arg(self) -> &'static str {
-        match self {
-            Action::Install => "install",
-            Action::Uninstall => "uninstall",
-        }
-    }
-}
-
-/// **纯函数**：拼 `powershell` 的参数。每个参数一个 argv（`winget::run_streaming_env`），
-/// 不经过任何 shell 拼接。
-///
-/// - `-ExecutionPolicy RemoteSigned` 而不是 `Bypass`：脚本是面板自己下的、没有网络来源标记，
-///   两者效果一样，少一个杀软信号（CLAUDE.md「杀软会把这个面板当木马」）；
-/// - `-PatchMode safe` **写死**，声明了 `-SkipAsarPatch` 就再加一道。
-pub fn script_args(action: Action, caps: ScriptCaps, script: &Path) -> Vec<String> {
-    let mut args: Vec<String> = [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "RemoteSigned",
-        "-File",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    args.push(script.display().to_string());
-    args.push(action.arg().into());
-    args.push(LANGUAGE.into());
-    args.push("-PatchMode".into());
-    args.push("safe".into());
-    if caps.skip_asar_patch {
-        args.push("-SkipAsarPatch".into());
-    }
-    args
-}
-
-/// **纯函数**：上游脚本输出里 `app: <目录>` 那一行 —— 它实际改的是哪个 Claude。
-/// 没有这一行（上游改了措辞）就是 `None`，由调用方按文件核验。
-pub fn reported_app_dir(lines: &[String]) -> Option<String> {
-    lines.iter().find_map(|l| {
-        l.trim()
-            .strip_prefix("app:")
-            .map(|p| p.trim().to_string())
-            .filter(|p| !p.is_empty())
-    })
-}
-
-/// 两个目录是不是同一处（大小写、斜杠、结尾分隔符都不算）。
-pub fn same_dir(a: &str, b: &Path) -> bool {
-    inventory::same_path(Path::new(a), b)
-}
+/// 上游的三种中文。面板只用过 zh-CN，但上游卸载时三种都删 —— 清理也三种都认。
+pub const LANGUAGES: [&str; 3] = ["zh-CN", "zh-TW", "zh-HK"];
+/// 上游备份目录的名字（在 `app-<版本>\resources\` 下）。
+pub const BACKUP_DIR: &str = ".zh-cn-backups";
 
 // ---------------------------------------------------------------- config.json 里的 locale
 
@@ -499,31 +180,18 @@ fn value_end(b: &[u8], i: usize) -> Result<usize> {
     }
 }
 
-// ================================================================ 落盘的状态
+// ---------------------------------------------------------------- 那版插件留下的记录
 
-/// 插件自己记的东西。**证据优先**：「汉化了没」看的是 Claude 安装目录里的文件，不是这里。
+/// 0.25.4–0.25.5 那版插件自己记的东西。**只读**（清理完整份删掉）：「汉化过没有、各份资料原来是什么语言」
+/// 以它为准，别的一概看文件。旧文件里多出来的字段（上游版本、查新版的时间……）读的时候丢掉。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct State {
-    /// 已下载、核过许可证与参数的上游版本。
-    pub tag: Option<String>,
-    /// 那一版对应的提交（GitHub 写在归档注释里）。
-    pub commit: Option<String>,
-    /// 下载下来的归档的 SHA-256（审计与排查用；上游不发校验和，**不作判据**）。
-    pub archive_sha256: Option<String>,
-    pub downloaded_at: Option<String>,
-    /// 最近一次查到的上游最新版与时间。
-    pub latest_tag: Option<String>,
-    pub latest_checked_at: Option<String>,
-    /// 核验发现越线、被停用的上游版本。**不再用它们**，除非上游发了新版。
-    pub blocked: Vec<String>,
-    /// 使用者点过「一键汉化」、没点「恢复英文」。用来说「Claude 更新了，需要重新应用」。
+    /// 使用者点过「一键汉化」、没点「恢复英文」。
     pub desired: bool,
-    /// 上一次成功应用：上游版本、Claude 版本、时间。
+    /// 上一次成功应用的上游版本。
     pub applied_tag: Option<String>,
-    pub applied_claude: Option<String>,
-    pub applied_at: Option<String>,
-    /// 应用之前各份 Claude 资料的 `locale`（恢复英文时写回）。键是资料目录。
+    /// 应用之前各份 Claude 资料的 `locale`。键是真实目录（联结点解开，见 [`real_dir`]）。
     pub previous_locales: BTreeMap<String, Option<String>>,
 }
 
@@ -540,266 +208,41 @@ pub fn load_state() -> State {
         .unwrap_or_default()
 }
 
-pub fn save_state(s: &State) -> Result<()> {
-    crate::config_io::replace(&state_path(), Some(&serde_json::to_vec_pretty(s)?))
-}
-
-// ================================================================ 本机的上游副本
-
-/// 上游副本放在哪。一版一个目录，只留当前那一版。
+/// 那版插件下载的上游副本放在哪。
 pub fn packages_root() -> PathBuf {
     crate::paths::state_dir().join("plugins").join(PLUGIN_ID)
 }
 
-/// 一份下载好、核过的上游副本。
-#[derive(Debug, Clone)]
-pub struct Package {
-    pub tag: String,
-    pub dir: PathBuf,
-    pub script: PathBuf,
-    pub caps: ScriptCaps,
-}
-
-/// 当前那一版副本。目录、脚本、许可证都在、参数也还认得，才算有。
-pub fn current_package(state: &State) -> Option<Package> {
-    let tag = state.tag.clone().filter(|t| valid_tag(t))?;
-    let dir = packages_root().join(&tag);
-    let script = dir.join(SCRIPT.replace('/', "\\"));
-    let license = std::fs::read_to_string(dir.join("LICENSE")).ok()?;
-    if !license_is_mit(&license) {
-        return None;
+/// 删面板下载过的上游副本与那版插件的记录（都在面板自己的状态目录下）。返回删了哪几样。
+pub fn remove_panel_copy() -> Result<Vec<String>> {
+    let mut removed = Vec::new();
+    let copy = packages_root();
+    if copy.is_dir() {
+        std::fs::remove_dir_all(&copy)
+            .map_err(|e| GateError::Other(format!("删不掉 {}：{e}", copy.display())))?;
+        removed.push(copy.display().to_string());
     }
-    let caps = script_caps(&std::fs::read_to_string(&script).ok()?).ok()?;
-    Some(Package {
-        tag,
-        dir,
-        script,
-        caps,
-    })
-}
-
-/// 问最新版（`follow_redirects = false`）的那个带 30 秒总超时；下载那个不设总超时 ——
-/// 慢网速下 2.5 MB 可能要一两分钟，卡没卡住由 [`download_capped`] 的「60 秒一个字节都没收到」判。
-fn client(follow_redirects: bool) -> Result<reqwest::Client> {
-    let mut b = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(20))
-        .user_agent(concat!("QB Gate/", env!("CARGO_PKG_VERSION")));
-    if !follow_redirects {
-        b = b
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(std::time::Duration::from_secs(30));
-    }
-    b.build()
-        .map_err(|e| GateError::Other(format!("建不了网络客户端：{e}")))
-}
-
-/// 问一次上游最新版，**只问、不记**（诊断例子用它，不动插件自己的记录）。会联网。
-pub async fn latest_tag_online() -> Result<String> {
-    let resp = client(false)?
-        .get(latest_url())
-        .send()
-        .await
-        .map_err(|e| GateError::Other(format!("问 GitHub 上游最新版失败：{e}")))?;
-    let status = resp.status();
-    let location = resp
-        .headers()
-        .get(reqwest::header::LOCATION)
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_string);
-    location.as_deref().and_then(tag_from_location).ok_or_else(|| {
-        GateError::Other(format!(
-            "GitHub 没说上游最新版是哪个（HTTP {status}{}）。可能是上游还没发过 Release，或者 GitHub 改了页面。",
-            location.map(|l| format!("，跳到 {l}")).unwrap_or_default()
-        ))
-    })
-}
-
-/// 问一次上游最新版并记下来（几点问的、问到的是哪一版）。**会联网**，
-/// 只在打开汉化弹窗 / 插件页、或点「检查更新」时调。
-pub async fn fetch_latest_tag() -> Result<String> {
-    let found = latest_tag_online().await;
-    let mut state = load_state();
-    state.latest_checked_at = Some(chrono::Local::now().format("%Y-%m-%d %H:%M").to_string());
-    if let Ok(tag) = &found {
-        state.latest_tag = Some(tag.clone());
-    }
-    save_state(&state)?;
-    found
-}
-
-/// 下载好、逐项核过、**还没落盘**的一版上游。
-#[derive(Debug, Clone)]
-pub struct Verified {
-    pub tag: String,
-    /// GitHub 写在归档注释里的提交号。
-    pub commit: Option<String>,
-    /// 归档的 SHA-256（审计与排查用，不作判据 —— 上游不发校验和）。
-    pub archive_sha256: String,
-    /// 挑出来的文件：（相对路径，内容）。
-    pub files: Vec<(String, Vec<u8>)>,
-    pub caps: ScriptCaps,
-}
-
-/// 下载上游这一版并**逐项核过**：归档 → 挑文件 → 核许可证 → 核脚本参数。只在内存里，不落盘。
-pub async fn fetch_verified(tag: &str, rep: &dyn ProgressSink, step: u32) -> Result<Verified> {
-    if !valid_tag(tag) {
-        return Err(GateError::Other(format!("上游标签不认：{tag}")));
-    }
-    rep.log(step, &format!("下载 {}", archive_url(tag)));
-    let bytes = download_capped(&archive_url(tag)).await?;
-    let sha = {
-        use sha2::{Digest, Sha256};
-        hex::encode(Sha256::digest(&bytes))
-    };
-    rep.log(
-        step,
-        &format!("下载完成：{} KB，SHA-256 {sha}", bytes.len() / 1024),
-    );
-    let archive = zipread::read_index(&bytes)?;
-    let names: Vec<&str> = archive.entries.iter().map(|e| e.name.as_str()).collect();
-    let selected = select_entries(&names)?;
-    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
-    for (name, rel) in &selected {
-        let entry = archive
-            .entries
-            .iter()
-            .find(|e| &e.name == name)
-            .expect("selected from this archive");
-        files.push((rel.clone(), zipread::extract(&bytes, entry, FILE_MAX)?));
-    }
-    let text = |rel: &str| -> Result<String> {
-        let (_, body) = files
-            .iter()
-            .find(|(r, _)| r.eq_ignore_ascii_case(rel))
-            .ok_or_else(|| GateError::Other(format!("上游这一版没有 {rel}")))?;
-        String::from_utf8(body.clone())
-            .map_err(|_| GateError::Other(format!("上游的 {rel} 不是 UTF-8 文本")))
-    };
-    if !license_is_mit(&text("LICENSE")?) {
-        return Err(GateError::Other(format!(
-            "上游 {tag} 的许可证不再是 MIT 原文，面板不用这一版（已有的那一版原样留着）。"
-        )));
-    }
-    // 上游脚本存成带 BOM 的 UTF-8（PowerShell 5.1 要它才认中文），读的时候去掉 BOM 再看参数。
-    let script_text = text(SCRIPT)?;
-    let caps = script_caps(script_text.trim_start_matches('\u{feff}'))?;
-    rep.log(
-        step,
-        &format!(
-            "核过：许可证仍是 MIT；脚本支持 install / uninstall 与安全模式{}；挑出 {} 个文件（scripts\\experimental 一个都没解）",
-            if caps.skip_asar_patch { "（带 -SkipAsarPatch）" } else { "" },
-            files.len()
-        ),
-    );
-    Ok(Verified {
-        tag: tag.to_string(),
-        commit: archive.commit().map(str::to_string),
-        archive_sha256: sha,
-        files,
-        caps,
-    })
-}
-
-/// 下载、核过、换进来。任何一步不对，已有的那一版原样留着。
-pub async fn download(tag: &str, rep: &dyn ProgressSink, step: u32) -> Result<Package> {
-    let v = fetch_verified(tag, rep, step).await?;
-    install_package(v)
-}
-
-/// 把核过的一版落盘：先写到暂存目录，整份写完再换名就位 —— 不会留下一个写了一半的版本。
-fn install_package(v: Verified) -> Result<Package> {
-    let Verified {
-        tag,
-        commit,
-        archive_sha256: sha,
-        files,
-        ..
-    } = v;
-    let tag = tag.as_str();
-    let root = packages_root();
-    std::fs::create_dir_all(&root)?;
-    let staging = root.join(format!(".incoming-{}", crate::config_io::id()));
-    let written = (|| -> Result<()> {
-        for (rel, body) in &files {
-            let path = staging.join(rel.replace('/', "\\"));
-            std::fs::create_dir_all(path.parent().unwrap_or(&staging))?;
-            std::fs::write(&path, body)?;
-        }
-        Ok(())
-    })();
-    if let Err(e) = written {
-        let _ = std::fs::remove_dir_all(&staging);
-        return Err(e);
-    }
-    let target = root.join(tag);
-    if target.exists() {
-        let _ = std::fs::remove_dir_all(&target);
-    }
-    if let Err(e) = std::fs::rename(&staging, &target) {
-        let _ = std::fs::remove_dir_all(&staging);
-        return Err(GateError::Other(format!("上游副本换不进去：{e}")));
-    }
-    // 只留这一版：旧版本与上次没收完的暂存目录都清掉。
-    if let Ok(rd) = std::fs::read_dir(&root) {
-        for e in rd.flatten() {
-            if e.path() != target && e.path().is_dir() {
-                let _ = std::fs::remove_dir_all(e.path());
-            }
+    let state = state_path();
+    if state.is_file() {
+        std::fs::remove_file(&state)
+            .map_err(|e| GateError::Other(format!("删不掉 {}：{e}", state.display())))?;
+        removed.push(state.display().to_string());
+        // 目录空了才删得掉；删不掉（里面还有别的）就留着。
+        if let Some(parent) = state.parent() {
+            let _ = std::fs::remove_dir(parent);
         }
     }
-    let mut state = load_state();
-    state.tag = Some(tag.to_string());
-    state.commit = commit;
-    state.archive_sha256 = Some(sha);
-    state.downloaded_at = Some(chrono::Local::now().format("%Y-%m-%d %H:%M").to_string());
-    save_state(&state)?;
-    crate::audit::write(&format!(
-        "Claude 汉化插件：已取上游 {UPSTREAM_REPO} {tag}（提交 {}），许可证 MIT，只解了安全模式用得到的 {} 个文件",
-        state.commit.as_deref().unwrap_or("未知"),
-        files.len()
-    ));
-    current_package(&state).ok_or_else(|| GateError::Other("上游副本写好了却读不回来".into()))
+    Ok(removed)
 }
 
-/// 下载到内存，最多 [`ARCHIVE_MAX`]。60 秒一个字节都没收到就放弃。
-async fn download_capped(url: &str) -> Result<Vec<u8>> {
-    let mut resp = client(true)?
-        .get(url)
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| GateError::Other(format!("下载上游归档失败：{e}")))?;
-    let mut out = Vec::new();
-    loop {
-        let chunk = tokio::time::timeout(std::time::Duration::from_secs(60), resp.chunk())
-            .await
-            .map_err(|_| GateError::Other("下载卡住，60 秒没有收到任何数据，已停止".into()))?
-            .map_err(|e| GateError::Other(format!("下载上游归档失败：{e}")))?;
-        let Some(chunk) = chunk else { break };
-        out.extend_from_slice(&chunk);
-        if out.len() > ARCHIVE_MAX {
-            return Err(GateError::Other("上游归档大得不正常，已停止下载".into()));
-        }
-    }
-    Ok(out)
-}
+// ---------------------------------------------------------------- 各份资料的界面语言
 
-// ================================================================ Claude 那一侧（证据）
-
-/// 位置表认得的 Squirrel 装法：（版本, `app-<版本>` 目录）。
-pub fn target() -> Option<(String, PathBuf)> {
-    inventory::desktop_app_dir(&dirs::data_local_dir()?)
-}
-
-/// 这一版 Claude 上中文文件在不在（上游安全模式放的那两份）。
-pub fn zh_files_present(app_dir: &Path) -> bool {
-    let res = app_dir.join("resources");
-    res.join(format!("{LANGUAGE}.json")).is_file()
-        && res
-            .join("ion-dist")
-            .join("i18n")
-            .join(format!("{LANGUAGE}.json"))
-            .is_file()
+/// 实际的资料目录（联结点解开、去掉 `\\?\` 前缀）。[`State::previous_locales`] 的键就是它：
+/// `%APPDATA%\Claude` 是指向当前账户的联结点，换了账户它就指向别处了。
+pub fn real_dir(p: &Path) -> PathBuf {
+    let real = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let s = real.display().to_string();
+    PathBuf::from(s.strip_prefix(r"\\?\").unwrap_or(&s))
 }
 
 /// Claude 桌面端的各份资料（每个账户槽位一份 `%APPDATA%\Claude-<名字>`，当前那份经联结点
@@ -843,34 +286,9 @@ pub fn set_profile_locale(dir: &Path, value: &str) -> Result<bool> {
     Ok(true)
 }
 
-// ================================================================ 给界面的状态
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
-#[ts(export)]
-#[serde(rename_all = "kebab-case")]
-pub enum ClaudeZhInstall {
-    /// Squirrel 装法（位置表认得）：能做。
-    Squirrel,
-    /// MSIX（WindowsApps 里）：上游要 UAC 接管那个目录的权限，面板不做。
-    Msix,
-    /// 没装 Claude 桌面端。
-    Missing,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
-#[ts(export)]
-#[serde(rename_all = "kebab-case")]
-pub enum ClaudeZhState {
-    /// 这一版 Claude 上没有中文文件。
-    Off,
-    /// 中文文件在，当前资料的 locale 也是 zh-CN。核实过的。
-    On,
-    /// 中文文件在，但当前资料的 locale 不是 zh-CN —— 半套（使用者自己在 Claude 里改回了别的语言也是这样）。
-    Partial,
-    /// 点过「一键汉化」，而 Claude 自己更新成了新的 app-版本，汉化随之没了。
-    NeedsReapply,
-    /// 做不了（没装 / MSIX）。
-    Unsupported,
+/// 这个界面语言是不是上游的三种中文之一。
+pub fn is_zh(locale: &str) -> bool {
+    LANGUAGES.iter().any(|l| l.eq_ignore_ascii_case(locale))
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -881,369 +299,446 @@ pub struct ClaudeZhProfile {
     pub locale: Option<String>,
 }
 
+// ---------------------------------------------------------------- Claude 安装目录那一侧
+
+/// 上游安全模式往一个 `app-<版本>` 里放的中文文件（`resources\zh-*.json`、`ion-dist\i18n\zh-*.json`、
+/// `ion-dist\i18n\statsig\zh-*.json`），只列现在还在的。
+pub fn zh_files(app_dir: &Path) -> Vec<PathBuf> {
+    let res = app_dir.join("resources");
+    let i18n = res.join("ion-dist").join("i18n");
+    LANGUAGES
+        .iter()
+        .flat_map(|l| {
+            let f = format!("{l}.json");
+            [res.join(&f), i18n.join(&f), i18n.join("statsig").join(&f)]
+        })
+        .filter(|p| p.is_file())
+        .collect()
+}
+
+/// 上游的备份目录。
+pub fn backup_root(app_dir: &Path) -> PathBuf {
+    app_dir.join("resources").join(BACKUP_DIR)
+}
+
+/// 最早那一套备份。上游按时间戳（`20260925-063045`）给每一套命名，最早的是改之前的原版 ——
+/// 上游卸载的第一步也是拿它还原。
+fn oldest_set(root: &Path) -> Option<PathBuf> {
+    let mut sets: Vec<PathBuf> = std::fs::read_dir(root)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    sets.sort();
+    sets.into_iter().next()
+}
+
+/// 一套备份里的每个文件，相对 `resources\` 的路径。遇到链接就不认 —— 面板不跟着链接去写别处。
+fn backup_files(set: &Path) -> Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    let mut stack = vec![set.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(&dir)? {
+            let e = e?;
+            let kind = e.file_type()?;
+            if kind.is_symlink() {
+                return Err(GateError::Other(format!(
+                    "上游的备份里有链接（{}），面板不跟",
+                    e.path().display()
+                )));
+            }
+            if kind.is_dir() {
+                stack.push(e.path());
+            } else if kind.is_file() {
+                let rel = e
+                    .path()
+                    .strip_prefix(set)
+                    .map_err(|_| GateError::Other("上游的备份路径读不懂".into()))?
+                    .to_path_buf();
+                out.push(rel);
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// **纯函数**：这一套备份能不能自动还原 —— 只收 `ion-dist\` 下的前端文件（上游安全模式只改这些）。
+/// 出现 `app.asar`、`claude.exe` 或别处的文件，说明用过上游改程序文件的模式，面板不碰。空的一套也算能（没什么要还原）。
+pub fn restorable(rels: &[PathBuf]) -> bool {
+    rels.iter().all(|r| {
+        let mut parts = r.components();
+        matches!(parts.next(), Some(std::path::Component::Normal(first)) if first.eq_ignore_ascii_case("ion-dist"))
+            && parts.all(|c| matches!(c, std::path::Component::Normal(_)))
+            && r.components().count() > 1
+    })
+}
+
+/// 按大小先看一遍（不读内容）：备份里的原版跟现在的文件大小对不上、或者现在不在的，有几个。
+/// 只给界面预先说「要不要关 Claude」用；真换之前逐字节再核（[`differing`]）。
+fn quick_changed(resources: &Path, set: &Path, rels: &[PathBuf]) -> u32 {
+    rels.iter()
+        .filter(|r| {
+            match (
+                std::fs::metadata(set.join(r)),
+                std::fs::metadata(resources.join(r)),
+            ) {
+                (Ok(b), Ok(c)) => b.len() != c.len(),
+                _ => true,
+            }
+        })
+        .count() as u32
+}
+
+/// 逐字节比：备份里跟现在不一样（或现在不在）的那些。
+fn differing(resources: &Path, set: &Path, rels: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    for r in rels {
+        let original = std::fs::read(set.join(r))?;
+        match std::fs::read(resources.join(r)) {
+            Ok(now) if now == original => {}
+            Ok(_) => out.push(r.clone()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => out.push(r.clone()),
+            Err(e) => {
+                return Err(GateError::Other(format!(
+                    "读不了 {}：{e}",
+                    resources.join(r).display()
+                )))
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 目录里所有文件加起来多大（字节）。读不了的不算。
+fn dir_bytes(dir: &Path) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            match e.file_type() {
+                Ok(t) if t.is_dir() => stack.push(e.path()),
+                Ok(t) if t.is_file() => total += e.metadata().map(|m| m.len()).unwrap_or(0),
+                _ => {}
+            }
+        }
+    }
+    total
+}
+
+/// **纯函数**：一个 `app-*` 算不算汉化留下的。有上游的备份就算（那个目录名只有上游会建）；
+/// 只有中文文件、没有备份时，要面板自己记过「汉化了」才算 —— 以后 Claude 自己带了中文也长这样，
+/// 别把它当残留删了。
+pub fn counts_as_leftover(has_backup: bool, zh_files: u32, applied: bool) -> bool {
+    has_backup || (zh_files > 0 && applied)
+}
+
+/// 清一个 `app-*` 的结果：给界面的几句话，与是不是全清干净了。
+#[derive(Debug, Clone, Default)]
+pub struct AppClean {
+    pub lines: Vec<String>,
+    pub ok: bool,
+}
+
+/// 清一个 `app-<版本>`：把上游改过的前端文件逐字换回备份里的原版 → 删上游放的中文文件 → 删上游的备份。
+///
+/// `may_write`：能不能往这一版里写（Claude **现在用的**那一版要它关着，编排层先关好再传 `true`）。
+/// 任何一步不对就停在那一步，**备份留着**（它是唯一的原版）。
+pub fn clean_app(app_dir: &Path, version: &str, may_write: bool) -> AppClean {
+    let mut out = AppClean::default();
+    let resources = app_dir.join("resources");
+    let root = backup_root(app_dir);
+    let zh = zh_files(app_dir);
+    if !root.is_dir() {
+        if !zh.is_empty() {
+            out.lines.push(format!(
+                "Claude {version}：还有 {} 个上游放的中文文件，但上游的备份不在了，它改过的前端文件还不回原样 —— \
+                 到 Claude 官网重新下载安装包覆盖安装（会换回全部原版文件）。",
+                zh.len()
+            ));
+            return out;
+        }
+        out.ok = true;
+        return out;
+    }
+    if let Some(set) = oldest_set(&root) {
+        let rels = match backup_files(&set) {
+            Ok(r) => r,
+            Err(e) => {
+                out.lines.push(format!("Claude {version}：{e}"));
+                return out;
+            }
+        };
+        if !restorable(&rels) {
+            out.lines.push(format!(
+                "Claude {version}：上游的备份里有程序文件（app.asar / claude.exe 之类），说明用过上游改程序文件的模式 —— \
+                 面板不碰，到 Claude 官网重新下载安装包覆盖安装最稳。"
+            ));
+            return out;
+        }
+        let diff = match differing(&resources, &set, &rels) {
+            Ok(d) => d,
+            Err(e) => {
+                out.lines.push(format!("Claude {version}：{e}"));
+                return out;
+            }
+        };
+        if !diff.is_empty() {
+            if !may_write {
+                out.lines.push(format!(
+                    "Claude {version}：有 {} 个前端文件跟原版不一样，而 Claude 开着，这次没换。关掉 Claude 桌面端再点一次清理。",
+                    diff.len()
+                ));
+                return out;
+            }
+            for r in &diff {
+                let written = std::fs::read(set.join(r))
+                    .map_err(GateError::from)
+                    .and_then(|body| crate::config_io::replace(&resources.join(r), Some(&body)));
+                if let Err(e) = written {
+                    out.lines.push(format!(
+                        "Claude {version}：换不回 {}（{e}）。备份留着，到 Claude 官网重新下载安装包覆盖安装最稳。",
+                        r.display()
+                    ));
+                    return out;
+                }
+            }
+            match differing(&resources, &set, &diff) {
+                Ok(left) if left.is_empty() => out.lines.push(format!(
+                    "Claude {version}：{} 个前端文件换回了原版（上游改过的，也包括它卸载时删多了的）。",
+                    diff.len()
+                )),
+                Ok(left) => {
+                    out.lines.push(format!(
+                        "Claude {version}：写回之后仍有 {} 个文件跟原版对不上，备份留着。到 Claude 官网重新下载安装包覆盖安装最稳。",
+                        left.len()
+                    ));
+                    return out;
+                }
+                Err(e) => {
+                    out.lines.push(format!("Claude {version}：{e}"));
+                    return out;
+                }
+            }
+        }
+    }
+    if !zh.is_empty() {
+        if !may_write {
+            out.lines.push(format!(
+                "Claude {version}：还有 {} 个上游放的中文文件，而 Claude 开着，这次没删。关掉 Claude 桌面端再点一次清理。",
+                zh.len()
+            ));
+            return out;
+        }
+        for f in &zh {
+            if let Err(e) = std::fs::remove_file(f) {
+                out.lines
+                    .push(format!("Claude {version}：删不掉 {}（{e}）。", f.display()));
+                return out;
+            }
+        }
+        out.lines.push(format!(
+            "Claude {version}：删掉了 {} 个上游放的中文文件。",
+            zh.len()
+        ));
+    }
+    let mb = dir_bytes(&root).div_ceil(1 << 20);
+    match std::fs::remove_dir_all(&root) {
+        Ok(()) => out.lines.push(format!(
+            "Claude {version}：删掉了上游留下的备份（{mb} MB）。"
+        )),
+        Err(e) => {
+            out.lines.push(format!(
+                "Claude {version}：删不掉上游留下的备份 {}（{e}）。",
+                root.display()
+            ));
+            return out;
+        }
+    }
+    out.ok = true;
+    out
+}
+
+// ---------------------------------------------------------------- 上游建的 Claude-3p
+
+/// **纯函数**：`Claude-3p` 是不是上游建的那种 —— 目录里只有一个 `config.json`，它只写了一个字符串 `locale`。
+/// 使用者自己用过第三方 API 模式的话，那里是一整份资料，一样都不碰。
+pub fn is_upstream_3p(entries: &[String], config: Option<&str>) -> bool {
+    entries.len() == 1
+        && entries[0].eq_ignore_ascii_case("config.json")
+        && config
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok())
+            .and_then(|v| {
+                v.as_object()
+                    .map(|o| o.len() == 1 && o.get("locale").is_some_and(|l| l.is_string()))
+            })
+            .unwrap_or(false)
+}
+
+/// 上游建的 `%APPDATA%\Claude-3p`（形状见 [`is_upstream_3p`]）。不是那个形状就是 `None`。
+fn stray_3p_dir() -> Option<PathBuf> {
+    let dir = crate::accounts::AccountRoots::current()
+        .appdata?
+        .join("Claude-3p");
+    let entries: Vec<String> = std::fs::read_dir(&dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    let config = std::fs::read_to_string(dir.join("config.json")).ok();
+    is_upstream_3p(&entries, config.as_deref()).then_some(dir)
+}
+
+/// 删上游建的 `Claude-3p`：删之前再核一次形状，只删那一个文件、再删**空**目录 ——
+/// 这期间多出任何东西，目录就删不掉，那就不删。
+pub fn remove_stray_3p() -> Result<Option<PathBuf>> {
+    let Some(dir) = stray_3p_dir() else {
+        return Ok(None);
+    };
+    std::fs::remove_file(dir.join("config.json"))
+        .and_then(|_| std::fs::remove_dir(&dir))
+        .map_err(|e| GateError::Other(format!("删不掉 {}：{e}", dir.display())))?;
+    Ok(Some(dir))
+}
+
+// ---------------------------------------------------------------- 给界面的「还剩什么」
+
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
-pub struct ClaudeZhStatus {
-    pub install: ClaudeZhInstall,
-    pub claude_version: Option<String>,
-    pub app_dir: Option<String>,
-    pub state: ClaudeZhState,
-    /// 一句能照着做的话。
-    pub detail: String,
-    pub files_present: bool,
-    pub profiles: Vec<ClaudeZhProfile>,
-    /// 本机那份上游副本。
-    pub package_tag: Option<String>,
-    pub package_commit: Option<String>,
-    /// 最近一次查到的上游最新版。`None` = 还没查过。
-    pub latest_tag: Option<String>,
-    pub latest_checked_at: Option<String>,
-    /// 本机已有一版、而上游最新版跟它不一样（而且没被停用）。一版都没下过时是 `false`。
-    pub update_available: bool,
-    pub blocked: Vec<String>,
-    pub applied_tag: Option<String>,
-    pub applied_claude: Option<String>,
-    pub applied_at: Option<String>,
-    /// Claude 桌面端开着几个进程。`None` = 查不到（**不是「没有」**）。编排层填。
-    pub desktop_running: Option<u32>,
-    pub upstream: String,
+pub struct ClaudeZhApp {
+    pub version: String,
+    pub dir: String,
+    /// 这一版是不是 Claude 现在用的那一版（往它里面写要 Claude 关着）。
+    pub current: bool,
+    /// 上游放的中文文件还在几个。
+    pub zh_files: u32,
+    /// 上游的备份（`resources\.zh-cn-backups`）多大（MB，向上取整）。没有备份是 `None`。
+    pub backup_mb: Option<u32>,
+    /// 备份里的原版跟现在的文件大小对不上（或现在不在）的有几个 —— 清理时逐字节再核、换回原版。
+    pub changed: u32,
+    /// 能不能自动还原：备份里只有前端文件（`ion-dist\`）才行。
+    pub restorable: bool,
 }
 
-/// 只读本机：安装目录里的文件、各份资料的 locale、插件自己的记录。**不联网、不起进程**
-/// （MSIX 那一档由调用方另查后传进来）。
-pub fn status(msix: Option<String>) -> ClaudeZhStatus {
+#[derive(Debug, Clone, Default, Serialize, TS)]
+#[ts(export)]
+pub struct ClaudeZhLeftovers {
+    /// 一样都没剩。账户页那颗「清理汉化残留」只在它是 `false` 时出现。
+    pub empty: bool,
+    pub apps: Vec<ClaudeZhApp>,
+    /// 界面语言还是中文、而且是汉化留下的资料（写回汉化之前的值，没记就写 en-US）。
+    pub zh_profiles: Vec<ClaudeZhProfile>,
+    /// 上游建的 `%APPDATA%\Claude-3p`：里面只有一个只写了 `locale` 的 `config.json`。
+    pub stray_3p: Option<String>,
+    /// 那版插件下载过的上游副本（目录）。
+    pub panel_copy: Option<String>,
+    /// 那版插件的记录文件。
+    pub state_file: Option<String>,
+    /// 清理要先关 Claude 桌面端：要往**现在用的那一版**里换回原版文件 / 删中文文件时才要。
+    pub needs_close: bool,
+    /// Claude 桌面端开着几个进程（编排层填；`None` = 查不到，**不是「没有」**）。
+    pub desktop_running: Option<u32>,
+}
+
+/// 还剩什么。**只读**：Claude 各个 `app-*` 目录、各份资料的界面语言、`Claude-3p`、面板自己的目录。
+/// 不联网、不起进程（桌面端开没开由编排层另查后填进去）。
+pub fn leftovers() -> ClaudeZhLeftovers {
     let state = load_state();
-    let package = current_package(&state);
-    let target = target();
-    let profiles: Vec<ClaudeZhProfile> = profile_dirs()
-        .iter()
-        .map(|d| ClaudeZhProfile {
-            dir: d.display().to_string(),
-            locale: profile_locale(d),
+    let state_file = state_path()
+        .is_file()
+        .then(|| state_path().display().to_string());
+    let panel_copy = packages_root()
+        .is_dir()
+        .then(|| packages_root().display().to_string());
+    let applied = state.desired || state.applied_tag.is_some();
+
+    let mut apps = Vec::new();
+    if let Some(local) = dirs::data_local_dir() {
+        for (i, (version, dir)) in inventory::desktop_app_dirs(&local).into_iter().enumerate() {
+            let zh = zh_files(&dir).len() as u32;
+            let root = backup_root(&dir);
+            let has_backup = root.is_dir();
+            if !counts_as_leftover(has_backup, zh, applied) {
+                continue;
+            }
+            let (backup_mb, changed, can_restore) = if has_backup {
+                let mb = u32::try_from(dir_bytes(&root).div_ceil(1 << 20)).unwrap_or(u32::MAX);
+                match oldest_set(&root) {
+                    None => (Some(mb), 0, true),
+                    Some(set) => match backup_files(&set) {
+                        Ok(rels) => (
+                            Some(mb),
+                            quick_changed(&dir.join("resources"), &set, &rels),
+                            restorable(&rels),
+                        ),
+                        Err(_) => (Some(mb), 0, false),
+                    },
+                }
+            } else {
+                (None, 0, false)
+            };
+            apps.push(ClaudeZhApp {
+                version,
+                dir: dir.display().to_string(),
+                current: i == 0,
+                zh_files: zh,
+                backup_mb,
+                changed,
+                restorable: can_restore,
+            });
+        }
+    }
+    let patched = !apps.is_empty();
+
+    let zh_profiles: Vec<ClaudeZhProfile> = profile_dirs()
+        .into_iter()
+        .filter_map(|d| {
+            let locale = profile_locale(&d)?;
+            if !is_zh(&locale) {
+                return None;
+            }
+            let recorded = state
+                .previous_locales
+                .contains_key(&real_dir(&d).display().to_string());
+            (patched || applied || recorded).then(|| ClaudeZhProfile {
+                dir: d.display().to_string(),
+                locale: Some(locale),
+            })
         })
         .collect();
-    let active_locale = dirs::config_dir()
-        .map(|a| a.join("Claude"))
-        .and_then(|d| profile_locale(&d));
-    let package_tag = package.as_ref().map(|p| p.tag.clone());
-    // 「有新版」只在本机已经有一版时才说 —— 一版都没下过时点「一键汉化」本来就取最新版，
-    // 那时说「有新版」会让人以为要先点「更新」。
-    let update_available = match (&state.latest_tag, &package_tag) {
-        (Some(latest), Some(have)) => latest != have && !state.blocked.contains(latest),
-        _ => false,
-    };
-    let (install, claude_version, app_dir, files_present) = match (&target, msix) {
-        (Some((v, dir)), _) => (
-            ClaudeZhInstall::Squirrel,
-            Some(v.clone()),
-            Some(dir.display().to_string()),
-            zh_files_present(dir),
-        ),
-        (None, Some(v)) => (ClaudeZhInstall::Msix, Some(v), None, false),
-        (None, None) => (ClaudeZhInstall::Missing, None, None, false),
-    };
-    let (state_kind, detail) = match install {
-        ClaudeZhInstall::Missing => (
-            ClaudeZhState::Unsupported,
-            "没检测到 Claude 桌面端。先到「软件」页装好，再回来汉化。".to_string(),
-        ),
-        ClaudeZhInstall::Msix => (
-            ClaudeZhState::Unsupported,
-            "这是 MSIX 方式装的 Claude 桌面端：上游要以管理员接管 WindowsApps 目录的权限才改得了，面板不做。要汉化请换成官网安装包（Squirrel 装法），或者自己按上游 README 操作。".to_string(),
-        ),
-        ClaudeZhInstall::Squirrel if files_present && active_locale.as_deref() == Some(LANGUAGE) => (
-            ClaudeZhState::On,
-            format!("已汉化：这一版 Claude（{}）上的中文文件在，当前资料的界面语言是 {LANGUAGE}。", claude_version.as_deref().unwrap_or("?")),
-        ),
-        ClaudeZhInstall::Squirrel if files_present => (
-            ClaudeZhState::Partial,
-            format!(
-                "中文文件在，但当前资料的界面语言是 {}。点「一键汉化」补上，或者在 Claude 的设置里自己选。",
-                active_locale.as_deref().unwrap_or("未知")
-            ),
-        ),
-        ClaudeZhInstall::Squirrel if state.desired => (
-            ClaudeZhState::NeedsReapply,
-            format!(
-                "Claude 已经更新到 {}（上次汉化的是 {}），更新会换一个新目录，汉化随之没了。点一下重新应用。",
-                claude_version.as_deref().unwrap_or("?"),
-                state.applied_claude.as_deref().unwrap_or("旧版")
-            ),
-        ),
-        ClaudeZhInstall::Squirrel => (
-            ClaudeZhState::Off,
-            "还没汉化。点「一键汉化」：下载上游、关掉 Claude 桌面端、跑上游的安全模式、核验。".to_string(),
-        ),
-    };
-    ClaudeZhStatus {
-        install,
-        claude_version,
-        app_dir,
-        state: state_kind,
-        detail,
-        files_present,
-        profiles,
-        package_tag,
-        package_commit: package.as_ref().and(state.commit.clone()),
-        latest_tag: state.latest_tag.clone(),
-        latest_checked_at: state.latest_checked_at.clone(),
-        update_available,
-        blocked: state.blocked.clone(),
-        applied_tag: state.applied_tag.clone(),
-        applied_claude: state.applied_claude.clone(),
-        applied_at: state.applied_at.clone(),
-        desktop_running: None,
-        upstream: upstream_url(),
-    }
-}
 
-/// 扩展中心列表里那一行。
-pub fn plugin_status() -> PluginStatus {
-    let s = status(None);
-    let checks = vec![
-        DependencyCheck::new(
-            "Claude 桌面端",
-            s.install == ClaudeZhInstall::Squirrel,
-            match (s.install, &s.claude_version) {
-                (ClaudeZhInstall::Squirrel, Some(v)) => {
-                    format!("{v}（Squirrel 装法，位置表 install::inventory）")
-                }
-                _ => "没检测到 Squirrel 装法的 Claude 桌面端（MSIX 装的面板不做）".to_string(),
-            },
-        ),
-        DependencyCheck::new(
-            "上游副本",
-            s.package_tag.is_some(),
-            match &s.package_tag {
-                Some(t) => format!(
-                    "{UPSTREAM_REPO} {t}{}（许可证 MIT，已核）",
-                    s.package_commit
-                        .as_deref()
-                        .map(|c| format!(" · 提交 {}", &c[..c.len().min(8)]))
-                        .unwrap_or_default()
-                ),
-                None => "还没下载。点「一键汉化」会先从上游 Release 取".to_string(),
-            },
-        ),
-    ];
-    PluginStatus {
-        id: PLUGIN_ID,
-        name: PLUGIN_NAME,
-        state: match s.state {
-            ClaudeZhState::Unsupported => PluginState::Missing,
-            ClaudeZhState::On => PluginState::Running,
-            ClaudeZhState::NeedsReapply | ClaudeZhState::Partial => PluginState::Broken,
-            ClaudeZhState::Off => PluginState::Ready,
-        },
-        detail: s.detail,
-        checks,
+    // `Claude-3p` 只在确实汉化过（有残留、有记录、有面板副本）时才看 —— 单凭形状不删别人的目录。
+    let stray_3p = (patched || state_file.is_some() || panel_copy.is_some())
+        .then(stray_3p_dir)
+        .flatten()
+        .map(|d| d.display().to_string());
+    let needs_close = apps
+        .iter()
+        .any(|a| a.current && (a.zh_files > 0 || a.changed > 0));
+    let empty = apps.is_empty()
+        && zh_profiles.is_empty()
+        && stray_3p.is_none()
+        && panel_copy.is_none()
+        && state_file.is_none();
+    ClaudeZhLeftovers {
+        empty,
+        apps,
+        zh_profiles,
+        stray_3p,
+        panel_copy,
+        state_file,
+        needs_close,
+        desktop_running: None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 上游 1.4.8 `install_windows.ps1` 的 `param(...)` 原样。
-    const PARAMS_148: &str = r#"param(
-    [switch]$Interactive,
-    [switch]$SkipAsarPatch,
-    [ValidateSet("safe", "official")]
-    [string]$PatchMode = "safe",
-
-    [Parameter(Position = 0)]
-    [ValidateSet("install", "uninstall", "disable-updates", "enable-updates", "sync-skills", "unsync-skills", "frida-launch")]
-    [string]$Action = "install",
-
-    [Parameter(Position = 1)]
-    [ValidateSet("zh-CN", "zh-TW", "zh-HK")]
-    [string]$Language = "zh-CN",
-
-    [string]$OriginalUserSid = "",
-    [string]$OriginalUserProfile = "",
-    [string]$OriginalAppData = "",
-    [string]$OriginalLocalAppData = ""
-)
-
-$ErrorActionPreference = "Stop"
-"#;
-
-    #[test]
-    fn the_latest_tag_comes_from_the_redirect_and_nothing_else() {
-        assert_eq!(
-            tag_from_location("https://github.com/javaht/claude-desktop-zh-cn/releases/tag/1.4.8")
-                .as_deref(),
-            Some("1.4.8")
-        );
-        // 别的仓库、别的域、http、奇怪的标签：一律不认。
-        for bad in [
-            "https://github.com/someone/else/releases/tag/1.4.8",
-            "https://evil.example/javaht/claude-desktop-zh-cn/releases/tag/1.4.8",
-            "http://github.com/javaht/claude-desktop-zh-cn/releases/tag/1.4.8",
-            "https://github.com/javaht/claude-desktop-zh-cn/releases",
-            "https://github.com/javaht/claude-desktop-zh-cn/releases/tag/..%2F..",
-            "https://github.com/javaht/claude-desktop-zh-cn/releases/tag/-rm",
-            "not a url",
-        ] {
-            assert_eq!(tag_from_location(bad), None, "{bad}");
-        }
-    }
-
-    #[test]
-    fn only_what_safe_mode_needs_is_selected_and_experimental_never_is() {
-        let names = [
-            "claude-desktop-zh-cn-1.4.8/",
-            "claude-desktop-zh-cn-1.4.8/LICENSE",
-            "claude-desktop-zh-cn-1.4.8/README.md",
-            "claude-desktop-zh-cn-1.4.8/install-windows.bat",
-            "claude-desktop-zh-cn-1.4.8/install-mac.command",
-            "claude-desktop-zh-cn-1.4.8/docs/images/wechat-group.png",
-            "claude-desktop-zh-cn-1.4.8/resources/frontend-zh-CN.json",
-            "claude-desktop-zh-cn-1.4.8/resources/Localizable.strings",
-            "claude-desktop-zh-cn-1.4.8/scripts/install_windows.ps1",
-            "claude-desktop-zh-cn-1.4.8/scripts/patch_claude_zh_cn.py",
-            "claude-desktop-zh-cn-1.4.8/scripts/experimental/frida_cdp_gate_win.js",
-            "claude-desktop-zh-cn-1.4.8/scripts/experimental/run_frida_zh_win.ps1",
-            "claude-desktop-zh-cn-1.4.8/scripts/experimental/frida-zh-resident-ctl.ps1",
-            "claude-desktop-zh-cn-1.4.8/tests/test_shortcut_repair.py",
-        ];
-        let picked: Vec<String> = select_entries(&names)
-            .unwrap()
-            .into_iter()
-            .map(|(_, rel)| rel)
-            .collect();
-        assert_eq!(
-            picked,
-            [
-                "LICENSE",
-                "README.md",
-                "resources/frontend-zh-CN.json",
-                "scripts/install_windows.ps1"
-            ]
-        );
-        assert!(!picked.iter().any(|p| p.contains("experimental")));
-    }
-
-    #[test]
-    fn an_archive_without_the_script_or_license_is_refused() {
-        assert!(select_entries(&["r-1/LICENSE", "r-1/resources/a.json"]).is_err());
-        assert!(select_entries(&["r-1/scripts/install_windows.ps1"]).is_err());
-        // 不在同一个顶层目录下 = 不是 GitHub 源码归档的样子。
-        assert!(select_entries(&[
-            "r-1/LICENSE",
-            "r-1/scripts/install_windows.ps1",
-            "other/x.json"
-        ])
-        .is_err());
-    }
-
-    #[test]
-    fn unsafe_paths_inside_the_archive_are_refused() {
-        for bad in [
-            "r-1/resources/../../x.json",
-            "r-1/resources/CON.json",
-            "r-1/scripts/a:b.ps1",
-            "r-1/resources/a\\b.json",
-        ] {
-            let names = ["r-1/LICENSE", "r-1/scripts/install_windows.ps1", bad];
-            assert!(select_entries(&names).is_err(), "{bad}");
-        }
-    }
-
-    #[test]
-    fn the_mit_text_is_recognised_and_other_licenses_are_not() {
-        let mit = "MIT License\n\nCopyright (c) 2025 javaht\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction...\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED...";
-        assert!(license_is_mit(mit));
-        assert!(!license_is_mit(
-            "GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\n..."
-        ));
-        assert!(!license_is_mit("All rights reserved."));
-    }
-
-    #[test]
-    fn the_real_148_parameters_are_understood() {
-        let caps = script_caps(PARAMS_148).unwrap();
-        assert!(caps.skip_asar_patch);
-    }
-
-    /// 上游改了接口（没有 safe、没有 uninstall、没有 ValidateSet）就不用这一版。
-    #[test]
-    fn a_script_that_changed_its_interface_is_refused() {
-        let no_safe = PARAMS_148.replace(r#""safe", "official""#, r#""official""#);
-        assert!(script_caps(&no_safe).is_err());
-        let no_uninstall = PARAMS_148.replace(r#""uninstall", "#, "");
-        assert!(script_caps(&no_uninstall).is_err());
-        let no_set = PARAMS_148.replace(r#"[ValidateSet("safe", "official")]"#, "");
-        assert!(script_caps(&no_set).is_err());
-        assert!(script_caps("Write-Host hi").is_err());
-        // 没有 -SkipAsarPatch 也行，只是少一道保险。
-        let no_skip = PARAMS_148.replace("[switch]$SkipAsarPatch,", "");
-        assert_eq!(
-            script_caps(&no_skip).unwrap(),
-            ScriptCaps {
-                skip_asar_patch: false
-            }
-        );
-    }
-
-    /// ⛔ 这条测试就是合规边界本身：不管哪个动作、哪种能力，拼出来的参数里
-    /// 都不许出现 official 模式、Frida、关自动更新、同步 skills、交互模式。
-    #[test]
-    fn the_arguments_can_never_ask_for_anything_but_safe_mode() {
-        let script =
-            Path::new(r"C:\QB\plugins\claude-desktop-zh-cn\1.4.8\scripts\install_windows.ps1");
-        for action in [Action::Install, Action::Uninstall] {
-            for caps in [
-                ScriptCaps {
-                    skip_asar_patch: true,
-                },
-                ScriptCaps {
-                    skip_asar_patch: false,
-                },
-            ] {
-                let args = script_args(action, caps, script);
-                let joined = args.join(" ").to_ascii_lowercase();
-                for banned in [
-                    "official",
-                    "frida",
-                    "disable-updates",
-                    "enable-updates",
-                    "sync-skills",
-                    "-interactive",
-                    "bypass",
-                ] {
-                    assert!(!joined.contains(banned), "{banned} 出现在 {joined}");
-                }
-                let at = args.iter().position(|a| a == "-PatchMode").unwrap();
-                assert_eq!(args[at + 1], "safe");
-                assert_eq!(
-                    args[args.iter().position(|a| a == "-File").unwrap() + 1],
-                    script.display().to_string()
-                );
-                assert!(args.contains(&action.arg().to_string()));
-                assert_eq!(
-                    caps.skip_asar_patch,
-                    args.contains(&"-SkipAsarPatch".to_string())
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn the_app_dir_the_script_touched_is_read_from_its_output() {
-        let lines = vec![
-            "=== Claude Desktop Windows 简体中文 补丁 ===".to_string(),
-            "  app: C:\\Users\\demo\\AppData\\Local\\AnthropicClaude\\app-2.9939.2".to_string(),
-            "  resources: C:\\Users\\demo\\AppData\\Local\\AnthropicClaude\\app-2.9939.2\\resources"
-                .to_string(),
-        ];
-        let got = reported_app_dir(&lines).unwrap();
-        assert!(same_dir(
-            &got,
-            Path::new(r"c:\users\demo\appdata\local\anthropicclaude\app-2.9939.2\")
-        ));
-        assert_eq!(reported_app_dir(&["nothing here".to_string()]), None);
-    }
 
     /// Claude 的 config.json 是 tab 缩进、里面有令牌缓存。只改 locale 那一个值的字节。
     const CONFIG: &str = "{\n\t\"updaterLastSeenVersion\": \"2.9939.2\",\n\t\"locale\": \"en-US\",\n\t\"oauth:tokenCache\": \"v10abc\\\"def{}[]\",\n\t\"nested\": {\n\t\t\"locale\": \"fr-FR\",\n\t\t\"list\": [1, \"}\", {\"a\": null}]\n\t},\n\t\"flag\": true\n}";
@@ -1294,22 +789,186 @@ $ErrorActionPreference = "Stop"
         }
     }
 
+    /// 测试用的假 `app-<版本>`，建在系统临时目录里（不碰真实的 Claude 与面板状态）。
+    struct FakeApp {
+        dir: PathBuf,
+    }
+
+    impl FakeApp {
+        fn new(tag: &str) -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("qb-claude-zh-{tag}-{}", crate::config_io::id()));
+            std::fs::create_dir_all(dir.join("resources")).unwrap();
+            Self { dir }
+        }
+        fn put(&self, rel: &str, body: &str) -> PathBuf {
+            let p = self.dir.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, body).unwrap();
+            p
+        }
+        fn read(&self, rel: &str) -> Option<String> {
+            std::fs::read_to_string(self.dir.join(rel)).ok()
+        }
+    }
+
+    impl Drop for FakeApp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    const JS: &str = r"resources\ion-dist\assets\v1\c8ff922bb-BXg55ahQ.js";
+    const JS_BACKUP: &str =
+        r"resources\.zh-cn-backups\20260925-063045\ion-dist\assets\v1\c8ff922bb-BXg55ahQ.js";
+
     #[test]
-    fn tags_are_restricted_to_safe_characters() {
-        for ok in ["1.4.8", "v1.0.0", "2026.09.24-rc1"] {
-            assert!(valid_tag(ok), "{ok}");
-        }
-        for bad in [
-            "",
-            "..",
-            ".hidden",
-            "-x",
-            "a/b",
-            "a b",
-            "1.4.8%2F",
-            &"9".repeat(65),
-        ] {
-            assert!(!valid_tag(bad), "{bad}");
-        }
+    fn the_three_languages_are_found_in_all_three_places() {
+        let app = FakeApp::new("files");
+        assert!(zh_files(&app.dir).is_empty());
+        app.put(r"resources\zh-CN.json", "{}");
+        app.put(r"resources\ion-dist\i18n\zh-TW.json", "{}");
+        app.put(r"resources\ion-dist\i18n\statsig\zh-HK.json", "{}");
+        // 官方的语言文件不算。
+        app.put(r"resources\ion-dist\i18n\ja-JP.json", "{}");
+        assert_eq!(zh_files(&app.dir).len(), 3);
+    }
+
+    #[test]
+    fn only_frontend_backups_are_restored_automatically() {
+        let p = |s: &str| PathBuf::from(s);
+        assert!(restorable(&[
+            p(r"ion-dist\assets\v1\a.js"),
+            p(r"ion-dist\i18n\en-US.json")
+        ]));
+        assert!(restorable(&[]), "空的一套：没什么要还原");
+        // 上游改程序文件的模式留下的备份：面板不碰。
+        assert!(!restorable(&[p(r"ion-dist\assets\v1\a.js"), p("app.asar")]));
+        assert!(!restorable(&[p(r"..\claude.exe")]));
+        assert!(!restorable(&[p("ion-dist")]), "只有目录名、没有文件");
+    }
+
+    #[test]
+    fn a_leftover_needs_the_upstream_backup_or_our_own_record() {
+        assert!(counts_as_leftover(true, 0, false), "有备份就算");
+        assert!(counts_as_leftover(false, 3, true), "面板记过汉化了");
+        // 没有备份也没有记录：那几个中文文件不是这里来的（将来 Claude 自带中文也长这样）。
+        assert!(!counts_as_leftover(false, 3, false));
+        assert!(!counts_as_leftover(false, 0, true));
+    }
+
+    #[test]
+    fn an_upstream_3p_folder_is_only_a_locale_config() {
+        let one = ["config.json".to_string()];
+        assert!(is_upstream_3p(
+            &one,
+            Some("{\n    \"locale\":  \"en-US\"\n}")
+        ));
+        // 使用者自己用过第三方 API 模式：一整份资料，不碰。
+        let many = ["config.json".to_string(), "Local Storage".to_string()];
+        assert!(!is_upstream_3p(&many, Some("{\"locale\":\"en-US\"}")));
+        assert!(!is_upstream_3p(
+            &one,
+            Some("{\"locale\":\"en-US\",\"oauth:tokenCache\":\"x\"}")
+        ));
+        assert!(!is_upstream_3p(&one, Some("{\"locale\":1}")));
+        assert!(!is_upstream_3p(&one, Some("not json")));
+        assert!(!is_upstream_3p(&one, None));
+        assert!(!is_upstream_3p(&[], None));
+    }
+
+    /// 本机 09-25 的形状：上游卸载删多了一处，现在的文件比备份里的原版短；中文文件已经删了。
+    #[test]
+    fn cleaning_puts_the_original_back_and_drops_the_backup() {
+        let app = FakeApp::new("clean");
+        app.put(JS, "[\"en-US\",\"id-ID\"]");
+        app.put(JS_BACKUP, "[\"en-US\",\"id-ID\",\"zh-CN\"]");
+        app.put(
+            r"resources\.zh-cn-backups\20260925-063045\ion-dist\assets\v1\same.js",
+            "same",
+        );
+        app.put(r"resources\ion-dist\assets\v1\same.js", "same");
+        // 更晚的一套不是原版，不拿它还原。
+        app.put(
+            r"resources\.zh-cn-backups\20260925-070000\ion-dist\assets\v1\c8ff922bb-BXg55ahQ.js",
+            "patched",
+        );
+        let done = clean_app(&app.dir, "2.9939.2", true);
+        assert!(done.ok, "{:?}", done.lines);
+        assert_eq!(
+            app.read(JS).as_deref(),
+            Some("[\"en-US\",\"id-ID\",\"zh-CN\"]")
+        );
+        assert_eq!(
+            app.read(r"resources\ion-dist\assets\v1\same.js").as_deref(),
+            Some("same")
+        );
+        assert!(!backup_root(&app.dir).exists());
+        assert!(done
+            .lines
+            .iter()
+            .any(|l| l.contains("1 个前端文件换回了原版")));
+    }
+
+    #[test]
+    fn cleaning_removes_the_chinese_files_after_restoring() {
+        let app = FakeApp::new("zh");
+        app.put(JS, "patched");
+        app.put(JS_BACKUP, "original");
+        let zh = app.put(r"resources\zh-CN.json", "{}");
+        let done = clean_app(&app.dir, "2.9939.2", true);
+        assert!(done.ok, "{:?}", done.lines);
+        assert_eq!(app.read(JS).as_deref(), Some("original"));
+        assert!(!zh.exists());
+        assert!(!backup_root(&app.dir).exists());
+    }
+
+    /// 现在用的那一版、Claude 开着：一个字节都不写，备份留着。
+    #[test]
+    fn a_running_current_version_is_not_written() {
+        let app = FakeApp::new("running");
+        app.put(JS, "patched");
+        app.put(JS_BACKUP, "original");
+        let zh = app.put(r"resources\zh-CN.json", "{}");
+        let done = clean_app(&app.dir, "2.9939.2", false);
+        assert!(!done.ok);
+        assert_eq!(app.read(JS).as_deref(), Some("patched"));
+        assert!(zh.exists());
+        assert!(backup_root(&app.dir).exists());
+        assert!(done.lines[0].contains("关掉 Claude 桌面端再点一次清理"));
+    }
+
+    /// 什么都没改过（或者早就还原好了）：只删备份，Claude 开着也行。
+    #[test]
+    fn an_untouched_version_only_loses_the_backup() {
+        let app = FakeApp::new("untouched");
+        app.put(JS, "original");
+        app.put(JS_BACKUP, "original");
+        let done = clean_app(&app.dir, "2.9939.2", false);
+        assert!(done.ok, "{:?}", done.lines);
+        assert_eq!(app.read(JS).as_deref(), Some("original"));
+        assert!(!backup_root(&app.dir).exists());
+    }
+
+    #[test]
+    fn a_backup_with_program_files_is_left_for_a_reinstall() {
+        let app = FakeApp::new("official");
+        app.put(JS, "patched");
+        app.put(JS_BACKUP, "original");
+        app.put(r"resources\.zh-cn-backups\20260925-063045\app.asar", "asar");
+        let done = clean_app(&app.dir, "2.9939.2", true);
+        assert!(!done.ok);
+        assert_eq!(app.read(JS).as_deref(), Some("patched"));
+        assert!(backup_root(&app.dir).exists());
+        assert!(done.lines[0].contains("官网重新下载安装包"));
+    }
+
+    #[test]
+    fn chinese_files_without_a_backup_are_left_for_a_reinstall() {
+        let app = FakeApp::new("nobackup");
+        let zh = app.put(r"resources\zh-CN.json", "{}");
+        let done = clean_app(&app.dir, "2.9939.2", true);
+        assert!(!done.ok);
+        assert!(zh.exists(), "拿不回原版的时候，只删一半只会更乱");
     }
 }

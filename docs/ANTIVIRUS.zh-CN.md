@@ -86,7 +86,7 @@ regkey: HKCU\...\CurrentVersion\Uninstall\QB Gate
 | PE 版本资源     | `InternalName` / `OriginalFilename` / `LegalCopyright` **全是空的**，`CompanyName` 只有 `qbgate` | `CompanyName` = `smithtaylor7748-ops`、`LegalCopyright` 补全（见下面那条限制） |
 | 应用清单        | 只有一个 Common-Controls 依赖，**没有 `requestedExecutionLevel`**                                | `asInvoker` + `supportedOS`（Win7–11）+ PerMonitorV2 DPI + UTF-8 代码页        |
 | PowerShell 提权 | `-Verb RunAs` + `-WindowStyle Hidden` + **`-EncodedCommand`** 三件凑齐（权重最高的组合之一）     | 去掉 base64，改 `-Command`                                                     |
-| 开机行为        | **每次启动**都枚举使用者桌面、按名字搬走文件                                                     | 落 marker，一台机器只做一次                                                    |
+| 开机行为        | **每次启动**都枚举使用者桌面、按名字搬走文件                                                     | 落 marker，一台机器只做一次；2026-09-27 起整段删掉，面板不再碰桌面             |
 | 编译选项        | `strip = true`（连符号表一起剥）                                                                 | `strip = "debuginfo"`                                                          |
 
 **做不到的一项**（0.29.0 构建后实测回读确认）：`InternalName` 与 `OriginalFilename`

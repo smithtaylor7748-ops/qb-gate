@@ -41,16 +41,11 @@ export type {
 
 export const stationApi = {
   /**
-   * 启动本机路由。重复调不会换端口。
+   * 本机路由现在的状态。
    *
-   * `client` 只影响回来的 `current_route` 显示哪一个软件的上游 ——
-   * 三个软件共用同一个监听端口，不是一个软件一个路由。
+   * 路由没有单独的启停按钮：`launch` 起客户端时顺带拉起它，面板退出时它跟着停。
+   * 原来的 `station_router_start` / `station_router_stop` 两条命令一直没有界面，2026-09-27 删了。
    */
-  routerStart: (client: Client, port?: number) =>
-    call<RouterStatus>("station_router_start", { client, port: port ?? null }),
-  /** 停掉本机路由。已经在飞的请求会跑完。 */
-  routerStop: (client: Client) =>
-    call<RouterStatus>("station_router_stop", { client }),
   routerStatus: (client: Client) =>
     call<RouterStatus>("station_router_status", { client }),
 
@@ -199,25 +194,6 @@ export const stationApi = {
 };
 
 /**
- * 一条线路上有哪些分组可选 —— 「站点 → 分组」那一级。
- *
- * 一条线路就是「站点 + 分组」，所以分组列表是从线路池里推出来的，
- * 不是另拉一个接口。
- */
-export function groupsOf(routes: Route[], stationId: string): Route[] {
-  return routes
-    .filter((r) => r.station_id === stationId)
-    .sort((a, b) => a.group.localeCompare(b.group));
-}
-
-/** 线路池里出现过的站点，去重后按名字排。 */
-export function stationsOf(routes: Route[]): string[] {
-  return [...new Set(routes.map((r) => r.station_id))].sort((a, b) =>
-    a.localeCompare(b),
-  );
-}
-
-/**
  * New API 的倍率为 1 时每百万 token 多少美元（站内额度）。
  *
  * 跟 Rust 侧 `pricing::NEW_API_USD_PER_MTOK` 是同一个数，出处是 New API 源码
@@ -278,11 +254,6 @@ export function topupOf(p?: { topup_per_usd: number | null } | null): number {
  * 跟 `route::RATE_TOLERANCE` 同一个宽度。
  */
 export const OUTPUT_MARKUP_TOLERANCE = 0.05;
-
-/** 一条线路在界面上叫什么：站点 · 分组。 */
-export function routeLabel(r: Route): string {
-  return r.group ? `${r.station_id} · ${r.group}` : r.station_id;
-}
 
 /** `Route::make_id` 用的单元分隔符。写成 fromCharCode 是因为字面量控制字符
  *  会被编辑器和管线吃掉，而 `""` 写法在几处工具链里各被转义一次。 */

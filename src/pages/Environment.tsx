@@ -69,7 +69,7 @@ import {
 } from "../lib/store";
 import { SIDE_KEY, type Side } from "../lib/side";
 import { useNavigate } from "react-router-dom";
-import { endTask, resetTask, useTask, type TaskState } from "../lib/tasks";
+import { endTask, resetTask, useTask } from "../lib/tasks";
 import { antigravityApi, PRODUCT_LABEL } from "../lib/antigravity";
 import type { AntigravityProduct } from "../lib/generated/AntigravityProduct";
 
@@ -94,11 +94,9 @@ import {
   Collapsible,
   ConfirmDialog,
   ExternalLink,
-  LogView,
   Modal,
   PathField,
   Pill,
-  ProgressBar,
   Row,
   TextField,
   useToast,
@@ -116,6 +114,9 @@ import {
   ManagedDirControl,
   VersionHistoryBlock,
 } from "./managed/ManagedPanel";
+import { Col, TaskBlock } from "./softwareParts";
+import SillyTavernCard from "../features/tavern/SillyTavernCard";
+import BridgeSection from "../features/tavern/bridge/BridgeSection";
 
 const CHROME_PAGE = "https://www.google.com/chrome/";
 const CODEX_STORE_PAGE = "https://apps.microsoft.com/detail/9plm9xgg6vks";
@@ -154,37 +155,6 @@ function SwPill({ sw, prefix }: { sw: Software | undefined; prefix?: string }) {
 }
 
 /**
- * 长任务的进度条 + 日志。
- *
- * ⛔ **要画在按下去的那张卡里。** 0.28.0 之前 `install` 这个任务的进度块只渲染在
- * 第一张卡（Claude Code），而 Codex CLI 与 Claude 桌面端的「安装」按钮走的是同一个
- * 任务名 —— 点的是第三张卡，进度条出现在页面最上面那张卡里，按钮那一带一动不动。
- * 所以共用任务名的几张卡要用 `show` 指明「这一次是谁在跑」。
- */
-function TaskBlock({
-  task,
-  show = true,
-  label = "安装进度",
-}: {
-  task: TaskState;
-  show?: boolean;
-  label?: string;
-}) {
-  if (!show || (!task.running && task.log.length === 0)) return null;
-  return (
-    <div className="mt-3">
-      <ProgressBar
-        value={task.total > 0 ? (task.step / task.total) * 100 : undefined}
-        tone={task.error ? "danger" : "accent"}
-        label={label}
-      />
-      <p className="notice mt-1">{task.phase}</p>
-      <LogView lines={task.log} follow={task.running} />
-    </div>
-  );
-}
-
-/**
  * 「卸载提示词」按钮 + 它下面那句说明。
  *
  * ⛔ 一份就够。0.28.0 之前 Chrome 那一列自己抄了一份 `UninstallCol`，
@@ -213,18 +183,6 @@ function PromptButton({
         给别的 AI 用，兜面板够不到的地方：WSL 发行版、其它 Windows 用户账户。
       </p>
     </div>
-  );
-}
-
-/** 卡内一栏。三栏之间用左边框分隔，窄屏时自然堆叠。 */
-function Col({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <section className="min-w-0 border-line px-1 py-2 lg:border-l lg:px-4 lg:first:border-l-0 lg:first:pl-0">
-      <span className="notice mb-2 block font-mono uppercase tracking-wide">
-        {label}
-      </span>
-      {children}
-    </section>
   );
 }
 
@@ -877,6 +835,8 @@ export default function Environment() {
         <TaskBlock task={installTask} show={installOwner === "claude-code"} />
         <TaskBlock task={upgradeTask} label="升级进度" />
         <ExternalsBlock disabled={!!busy} />
+        {/* 酒馆的 Claude 桥（你自己的 bridge.py 驱动官方 claude）：2026-09-29 第三轮从账户页的弹窗搬来。 */}
+        <BridgeSection provider="claude" />
       </Card>
 
       {/* ------------------------------------------------------ Codex */}
@@ -941,6 +901,8 @@ export default function Environment() {
           />
         </div>
         <TaskBlock task={installTask} show={installOwner === "codex"} />
+        {/* 酒馆的 GPT 桥（面板内置，每条请求起一次 codex exec）：2026-09-29 第三轮从账户页的弹窗搬来。 */}
+        <BridgeSection provider="gpt" />
       </Card>
 
       {/* ------------------------------------------- Codex 桌面端（0.28.0） */}
@@ -1224,8 +1186,9 @@ export default function Environment() {
 
           <Col label="账户与汉化">
             <p className="notice">
-              启动、关闭、汉化 / 自动审批 / 高危拦截、酒馆的 Gemini 桥接都在
-              「官方账户 · 反重力」那一侧。反重力<strong>没有中转路径</strong>
+              启动、关闭、汉化 / 自动审批 / 高危拦截、起酒馆（走 Gemini
+              桥接）都在「官方账户 · 反重力」那一侧；那条桥的设置在下面 Gemini
+              CLI 卡的最下面。反重力<strong>没有中转路径</strong>
               （API 端点写死在客户端里、只认 Google 登录），中转站页不会列它。
             </p>
             <Button
@@ -1301,7 +1264,15 @@ export default function Environment() {
           </Col>
         </div>
         <TaskBlock task={geminiTask} />
+        {/* 酒馆的 Gemini 桥（面板内置，每条请求起一次它的无交互模式）：2026-09-29 第三轮从账户页的弹窗搬来。 */}
+        <BridgeSection provider="gemini" />
       </Card>
+
+      {/* ---------------------------------------- SillyTavern（酒馆，2026-09-29） */}
+      {/* 酒馆从扩展中心搬过来、变成面板的内置功能。第三轮对调之后这张卡只管「软件」：
+          下载安装 / 更新 / 指定版本 / 卸载、位置与端口。用酒馆（控制台、角色卡、世界书、扩展、
+          备份与回收站）在账户页「酒馆」磁贴右上角的弹窗里；三条桥的设置在上面三张 CLI 卡的最下面。 */}
+      <SillyTavernCard />
 
       {/* ------------------------------------------------------ Chrome */}
       <Card

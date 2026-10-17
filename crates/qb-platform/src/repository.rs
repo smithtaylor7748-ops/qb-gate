@@ -379,25 +379,6 @@ COMMIT;"
         self.set_meta("launch-plans", &serde_json::to_string(&data.plans)?)?;
         Ok(())
     }
-    /// 仍然被某个环境的「回滚配置」指着的恢复记录 ID。
-    ///
-    /// 这些 journal 一条都不能按保留期删掉 —— 删了「回滚配置」按钮就会
-    /// 报文件不存在，而使用者完全看不出是保留期干的。
-    pub fn referenced_operations(&self) -> Result<std::collections::BTreeSet<String>> {
-        let rows: Vec<String> = self
-            .conn
-            .prepare("SELECT value FROM metadata WHERE key LIKE 'environment-undo:%'")
-            .map_err(sql)?
-            .query_map([], |r| r.get(0))
-            .map_err(sql)?
-            .collect::<std::result::Result<_, _>>()
-            .map_err(sql)?;
-        Ok(rows
-            .iter()
-            .filter_map(|v| serde_json::from_str::<serde_json::Value>(v).ok())
-            .filter_map(|v| v["operation"].as_str().map(String::from))
-            .collect())
-    }
 
     pub fn plans(&self) -> Result<Vec<crate::domain::LaunchPlan>> {
         self.meta("launch-plans")?

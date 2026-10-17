@@ -198,17 +198,29 @@ pub fn is_desktop_runtime_copy(p: &Path) -> bool {
 /// 并排留下几个旧的 `app-*`（本机实测三个），存根起的是最大那个。没有 `AnthropicClaude`
 /// （没装、或者是 MSIX 装的）→ `None`。
 ///
-/// 软件页的版本号、Claude 汉化插件要改的目录都从这里拿 —— 位置表只有一张。
+/// 软件页的版本号从这里拿 —— 位置表只有一张。
 pub fn desktop_app_dir(local: &Path) -> Option<(String, PathBuf)> {
-    std::fs::read_dir(local.join("AnthropicClaude"))
-        .ok()?
+    desktop_app_dirs(local).into_iter().next()
+}
+
+/// Squirrel 装法下并排留着的**所有** `app-<版本>` 目录，新到旧（第一项就是 [`desktop_app_dir`]）。
+///
+/// 清 Claude 汉化残留（2026-09-27）要看每一个：上游只改当时最新的那个，Claude 自己更新之后，
+/// 改过的那一版会作为旧目录留下来，上游的备份也跟着留在里面。
+pub fn desktop_app_dirs(local: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(rd) = std::fs::read_dir(local.join("AnthropicClaude")) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, PathBuf)> = rd
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_dir())
         .filter_map(|e| {
             let name = e.file_name().into_string().ok()?;
             Some((name.strip_prefix("app-")?.to_string(), e.path()))
         })
-        .max_by_key(|(v, _)| version_key(v))
+        .collect();
+    out.sort_by_key(|(v, _)| std::cmp::Reverse(version_key(v)));
+    out
 }
 
 /// 这个目录是不是一个 Electron 应用（桌面端就是）。
@@ -799,6 +811,23 @@ mod tests {
             &dir,
             &local.join("AnthropicClaude").join("app-2.9939.2")
         ));
+    }
+
+    /// 清汉化残留要看并排留着的每一个 `app-*`：新到旧、按数字比，同名文件不算。
+    #[test]
+    fn every_side_by_side_app_folder_is_listed_newest_first() {
+        let t = Tree::new("desktop-apps");
+        let local = t.base.join("local");
+        assert!(desktop_app_dirs(&local).is_empty());
+        for v in ["app-1.9.0", "app-2.9939.1", "app-2.9939.2", "app-2.7032.0"] {
+            std::fs::create_dir_all(local.join("AnthropicClaude").join(v)).unwrap();
+        }
+        t.file(r"local\AnthropicClaude\app-9.9.9");
+        let versions: Vec<String> = desktop_app_dirs(&local)
+            .into_iter()
+            .map(|(v, _)| v)
+            .collect();
+        assert_eq!(versions, ["2.9939.2", "2.9939.1", "2.7032.0", "1.9.0"]);
     }
 
     #[test]

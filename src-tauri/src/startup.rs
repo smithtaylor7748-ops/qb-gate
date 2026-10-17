@@ -45,11 +45,11 @@ pub fn initialize(app: &tauri::AppHandle) -> crate::readiness::Status {
         db.prune_history()?;
         // 硬盘上的恢复记录也有保留期：每一条里都封着改动前的配置全文（DPAPI
         // 加密），只写不清的话既占地方，也让一份旧 Key 副本永远躺在硬盘上。
-        // 仍被某个环境「回滚配置」指着的那些一条都不动。
+        // （原来被环境「回滚配置」指着的那些不动；那个功能 2026-09-27 删了。）
         let cutoff = std::time::SystemTime::now()
             .checked_sub(RETENTION)
             .unwrap_or(std::time::UNIX_EPOCH);
-        for removed in config_io::retain(&files_root(), cutoff, &db.referenced_operations()?)?
+        for removed in config_io::retain(&files_root(), cutoff)?
             .into_iter()
             .chain(crate::accounts::retain_switches(cutoff)?)
         {

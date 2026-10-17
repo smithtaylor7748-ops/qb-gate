@@ -73,7 +73,10 @@
 - 本项目**不分发、不镜像、不修改** Claude、Claude Code、Codex、Google Chrome 或
   SillyTavern 的任何二进制或源代码。安装一律走官方渠道（官方下载源、GitHub 上的
   官方发布页、winget）；Claude Code 与 Codex 另外核对官方给出的 SHA-256 与数字签名，
-  核对不过就不装。
+  核对不过就不装。SillyTavern（2026-09-29 起软件页可以下载安装）取的是它官方 GitHub 上
+  那个发布标签的源码包，原样解压；**官方不公布这个包的哈希**，面板只把算出来的 SHA-256
+  记进日志留痕，不当作校验依据 —— 能依靠的只有「只从 `github.com` / `codeload.github.com` /
+  `raw.githubusercontent.com` 下、只走 https」。
 
 ---
 
@@ -342,22 +345,23 @@ Codex 账户槽位的配置（没有槽位才是默认 `~/.codex`；退出时恢
 | **⚠ 浏览器出站锁**                                               | 给指定浏览器加 Windows 防火墙出站规则，物理网卡直连一律拦掉                                                                                                                                                                                                                                                 | 可逆（面板里撤销）。**规则不随面板退出消失** —— 面板关了、甚至卸载了它还在，浏览器可能因此上不了网                                                                                                                                                                                                             |
 | **系统代理修改**                                                 | 在你点了「修」之后改系统代理设置，改前记录原值                                                                                                                                                                                                                                                              | 可逆（回滚到原值）。**改错会当场断网**，影响整机所有跟随系统代理的程序                                                                                                                                                                                                                                         |
 | **浏览器策略**                                                   | 为当前用户写入 Chrome 的 WebRTC、安全 DNS 策略                                                                                                                                                                                                                                                              | 可逆（面板里撤销）                                                                                                                                                                                                                                                                                             |
-| **启动时对齐**（时区、区域格式默认开启；显示语言默认关闭）       | 每次启动面板时，按出口 IP 归属地调整系统时区、区域格式、显示语言                                                                                                                                                                                                                                            | 可逆（设置里关闭，「高级维护」里可恢复时区）。改时区要管理员权限；显示语言要装语言包并注销后生效                                                                                                                                                                                                               |
-| **停用旧启动脚本**                                               | **每台机器只做一次**（v0.29.0 改；此前是每次启动都做）：把桌面上五个固定名称的旧版启动脚本（如 `ClaudeIpGate.cmd`）移进数据目录下的备份文件夹，并落一个标记文件。                                                                                                                                           | 可逆（从备份文件夹搬回）。删掉数据目录下的 `legacy-launchers-migrated` 会让它下次启动再扫一次桌面                                                                                                                                                                                                              |
+| **启动时对齐**（时区、区域格式默认开启；显示语言默认关闭）       | 每次启动面板时，按出口 IP 归属地调整系统时区、区域格式、显示语言                                                                                                                                                                                                                                            | 可逆（设置里关闭；时区切之前的原值记在面板的审计日志里，按它在 Windows 设置里改回）。改时区要管理员权限；显示语言要装语言包并注销后生效                                                                                                                                                                        |
 | **配置快照恢复、中转环境配置**                                   | 覆盖或合并写入客户端的配置文件                                                                                                                                                                                                                                                                              | 写入前会备份，但请自行确认备份完整                                                                                                                                                                                                                                                                             |
 | **账户迁移**                                                     | 复制历史账户目录到新的槽位布局                                                                                                                                                                                                                                                                              | 会先备份，但请自行确认备份完整                                                                                                                                                                                                                                                                                 |
-| **扩展（酒馆、MCP、Skills）**                                    | 写入所选环境的配置；按你的操作启动第三方程序（桥接、SillyTavern、MCP 服务等）                                                                                                                                                                                                                               | 可卸载；第三方程序做了什么，由其自身负责                                                                                                                                                                                                                                                                       |
+| **扩展（MCP、Skills）与酒馆**                                    | 扩展：写入所选环境的配置。酒馆（2026-09-29 起是面板的内置功能，不在扩展中心）：按你的操作启动第三方程序（桥接、SillyTavern）                                                                                                                                                                                | 可卸载 / 可停止；第三方程序做了什么，由其自身负责                                                                                                                                                                                                                                                              |
+| **下载安装 / 更新 / 卸载 SillyTavern**（2026-09-29，软件页）     | 在你点击并确认后：先停掉面板起的那份酒馆（连同三条桥）；从 SillyTavern 官方 GitHub 下那个标签的源码包、原样解压到托管目录（默认 `%LOCALAPPDATA%\ClaudeIpGate\apps\sillytavern`），跑一次 `npm install` 装它的依赖，再把酒馆配置指过去。勾了「导入」就先把你那份酒馆的 `data\`、`config.yaml`、`plugins\` 与全局扩展里你自己加的**复制**过去（源目录不动）。更新把数据复制到新版、旧版整份留在同级的 `sillytavern.previous`（只留一份，下次更新会删掉更早那份）。卸载先把数据复制备份到 `%LOCALAPPDATA%\ClaudeIpGate\tavern-uninstall\<时间>`，再删面板装的那份与旧版。勾了「先用 winget 装 Node.js LTS」才会装 Node.js（官方包，会弹 UAC） | 下载的是官方包、不改它，但**官方不公布它的哈希**，见第 1 节。更新与卸载**只碰面板装的那一份**（目录里有面板写的标记），你自己的酒馆面板只起、只停、只读。卸载删掉的程序文件不可恢复，数据以备份为准；更新会替换 `Start.bat`（恢复成官方原样）。npm 装了什么由 npm 与 SillyTavern 的依赖负责 |
+| **SillyTavern 卡的换版本、角色卡 / 世界书 / 扩展、回收站**（2026-09-29 第二轮，软件页） | 在你点击并确认后：把面板装的那份换成你挑的任一正式版（可以更旧，同上一行的流程），或跟留着的那一版整份对调（「换回」）；把你挑的 PNG 角色卡 / 世界书 JSON **复制**进酒馆的数据目录（同名不覆盖）；把角色卡（可以连同聊天）/ 世界书 / 扩展目录**挪进**面板的回收站、或原样挪回；跑本机的 `git` 检查、快进更新、克隆扩展 | 换成更旧的版本时，新版可能已经把数据改成旧版读不懂的样子（确认框里写着；原来那份整份留在 `sillytavern.previous`）。回收站里的东西「清空」之后不可恢复。扩展是能在酒馆页面里运行任意脚本的第三方代码，装哪个仓库由你决定、后果由你负责；面板只做 `git clone` / `pull --ff-only`，不审查它的内容。不改卡和世界书的内容，也不改酒馆的 `settings.json` |
 | **酒馆的 GPT 桥接**（v0.25.0，内置）                             | 在你点击后，于 `127.0.0.1` 起一个 OpenAI 兼容端点，每个请求驱动一次官方 Codex CLI 的 `codex exec`（用你当前激活的 GPT 槽位登录）；写一个密钥文件与一个空的运行目录到本程序的数据目录                                                                                                                        | 可停止；默认不落会话文件（`--ephemeral`）。它联网的是官方 Codex CLI 自己，见第 8 节                                                                                                                                                                                                                            |
 | **启动 / 关闭反重力**（v0.26.0）                                 | 起之前先**关掉正在跑的同一个程序**（它是单实例），归门禁时先验出口 IP；之后由面板托管（面板退出它一起退出）。「关闭」会结束 Hub / IDE 及其语言服务器                                                                                                                                                        | 未保存内容丢失。登录资料在它自己那里（Hub：Windows 凭据管理器；IDE：它自己的用户数据目录），面板不碰                                                                                                                                                                                                           |
 | **反重力 IDE 的登录槽位**（v0.30.0）                             | 「新建」在本程序数据目录下建一个空的 IDE 用户数据目录（只复制你默认资料里的 `User\settings.json` 与 `keybindings.json`），「启动」用 VS Code 的公开开关 `--user-data-dir` 把 IDE 指到它；你在 IDE 自己的窗口里登录。「切换」只改本程序记的激活槽位。**Hub 没有槽位**（它的令牌在 Windows 凭据管理器）       | 可逆：移除只把目录挪进归档。新槽位是一份全新的 IDE（设置以外的状态从头来）；平时面板只问它状态库里令牌那一行的长度；只有你点这个账户的额度刷新图标时才读令牌、过期了在内存里换新（不写回、不复制，见下面「反重力账户与 Hub 的联网额度」）                                                                                                                                                                       |
 | **反重力的汉化与审批引擎**（v0.26.0，内置）                      | 在你点「附加」（或从面板起 Hub 后按设置自动）之后，连上反重力 Hub **自己开着**的 Chrome DevTools 调试端口，往它的页面里注入一段脚本：按字典替换界面文字；**自动点掉审批卡**（按你选的选项档：仅本次 / 对话内 / 项目内 / 全局）；命中高危规则的命令不点并记日志。脚本、字典、规则取自 EasyAntigravity（MIT） | 可停止；页面里的脚本随下次刷新消失，不改反重力任何文件。**自动审批等于替你放行智能体要执行的命令**——它只拦你规则里写了的那些，规则默认九条，其余一律放行；请自行评估后再开                                                                                                                                     |
-| **Claude 桌面端中文界面**（2026-09-25，插件 claude-desktop-zh-cn） | 在你点「一键汉化」并确认后：先验出口 IP，再**关掉 Claude 桌面端（包括它 Code 页里正在跑的会话）**；从社区项目 `javaht/claude-desktop-zh-cn`（MIT）的 GitHub Release 取那一版的源码归档，只解出 Windows 安全模式用得到的脚本与翻译（放在本程序数据目录下，它仓库里的 Frida 实验脚本一个字节都不落盘），用系统自带的 Windows PowerShell 运行它的 `install zh-CN -PatchMode safe`：往 Claude 安装目录（`%LOCALAPPDATA%\AnthropicClaude\app-<版本>\resources`）放三份翻译文件、**改前端 JS（`ion-dist\assets\v1\*.js`）里的语言列表与硬编码英文**（改前它自己备份到同目录的 `.zh-cn-backups`）、把 `%APPDATA%\Claude\config.json` 与 `%APPDATA%\Claude-3p\config.json` 里的 `locale` 设成 zh-CN（后者不存在时它会建）；上游脚本最后会自己重启一次 Claude，面板随即把它关掉。之后面板把其余 Claude 账户资料（`%APPDATA%\Claude-<名字>\config.json`）的 `locale` 也设成 zh-CN —— 只改这一个值的字节，里面的登录令牌缓存一个字节不碰。改前改后面板自己比对 `app.asar` 与 `claude.exe` 的 SHA-256 和签名状态 | 可逆：「恢复英文」跑上游自己的卸载（从它的备份还原前端文件、删掉翻译），面板再把各份资料的 `locale` 写回汉化之前的值。**这是非官方修改**：Anthropic 不提供中文界面，也不支持这样改；Claude 一自动更新就会换一个新目录，汉化随之没了、要重新应用；在线的 claude.ai 页面（对话等）仍是英文。面板**永远不调用**上游另外两种模式（改 `app.asar` 并重写 `Claude.exe` 的完整性哈希；用 Frida 在内存里绕过 Claude「带调试开关就拒绝启动」的保护）—— 那是绕过保护措施，Anthropic 消费者条款明文不许；比对发现 `app.asar` / `claude.exe` 被动过，面板立刻还原并停用那一版上游。只支持官网安装包装的 Claude（MSIX 版要管理员接管 WindowsApps 的权限，面板不做） |
-| **GPT 的中文界面**（2026-09-25）                                 | 在你点「设为中文」后，在每个 GPT 槽位与默认那一份（`CODEX_HOME`，没设就是 `~\.codex`）的 `config.toml` 里写一行 `[desktop] localeOverride = "zh-CN"` —— 跟你在 GPT「设置 → General → Language」里选中文写下的是同一行；面板起的 GPT 开着时先关掉它（正在跑的任务会停）、改完按当前槽位重开；以后新建的槽位预写这一行。别处起的 GPT 开着时默认那一份这次不改 | 可逆：「恢复默认」只删面板写的 zh-CN，你在 GPT 里自己选的别的语言不动。不碰程序文件、不碰 `auth.json`、不动 `config.toml` 里别的任何一项。OpenAI 按账户 / 机器放开中文界面（远端开关），没放开时设了照样是英文 —— 面板不碰那个开关。中转环境的 GPT 不跟着改 |
+| **清理 Claude 汉化残留**（2026-09-27；0.25.4–0.25.5 的「Claude 桌面端中文界面」已撤掉） | 只在检测到那一版留下的东西时出现。在你点「清理」并确认后：要往 Claude 现在用的那一版里写时，先**关掉 Claude 桌面端（包括它 Code 页里正在跑的会话）**；用社区项目 `javaht/claude-desktop-zh-cn` 自己留在 Claude 安装目录里的备份（`%LOCALAPPDATA%\AnthropicClaude\app-<版本>\resources\.zh-cn-backups` 里最早那一套），把它改过的前端文件（`ion-dist\` 下）逐字换回原版，删掉它放的中文翻译文件和那份备份；把仍是中文的 Claude 账户资料（`%APPDATA%\Claude-<名字>\config.json`）的 `locale` 写回汉化之前的值（没记下就写 en-US）—— 只改这一个值的字节，里面的登录令牌缓存一个字节不碰；删掉它建的 `%APPDATA%\Claude-3p`（只在里面只有一个只写了 `locale` 的 `config.json` 时）；删掉本程序当时下载的上游副本与记录。**不联网、不运行上游的脚本、不碰 `app.asar` 与 `claude.exe`** | 不可逆，但删的只是汉化留下的东西，换回的是 Claude 自己的原版文件。备份里有程序文件、或者备份不在了，就不自动还原，请到 Claude 官网重新下载安装包覆盖安装。**Claude 汉化为什么撤掉**：官方账户下 Claude 的窗口是在线的 claude.ai，它没有中文，每次打开都会把桌面端的界面语言改回英文；能把语言锁住的办法都要改 Claude 的程序文件、绕过它的保护措施，Anthropic 消费者条款明文不许，本程序不做 |
+| **GPT 的中文界面**（2026-09-25）                                 | 在你点「设为中文」后，在每个 GPT 槽位与默认那一份（`CODEX_HOME`，没设就是 `~\.codex`）的 `config.toml` 里写一行 `[desktop] localeOverride = "zh-CN"` —— 跟你在 GPT「设置 → General → Language」里选中文写下的是同一行；GPT 自己把某一份写坏了（同一张表写了两遍，它因此读不到那一份里的任何桌面设置）时，先把重复的那一段并掉（不改任何值，同一个键两处的值不一样就不动）。要写的那几份里面板起的 GPT 开着时先关掉它（正在跑的任务会停）、改完按当前槽位重开；以后新建的槽位预写这一行。别处起的 GPT 开着时默认那一份这次不改 | 可逆：「恢复默认」只删面板写的 zh-CN，你在 GPT 里自己选的别的语言不动。不碰程序文件、不碰 `auth.json`；`config.toml` 里别的任何一项的值都不改。OpenAI 按账户 / 机器放开中文界面（远端开关），没放开时设了照样是英文 —— 面板不碰那个开关。中转环境的 GPT 不跟着改 |
 | **关闭反重力 Hub 的自动检查更新**（v0.26.0，可选）               | 在你点击后，往它的 `%APPDATA%\Antigravity\app_storage.json` 并入一个键 `autoCheckForUpdates`                                                                                                                                                                                                                | 可逆（再点一次）。重启 Hub 生效                                                                                                                                                                                                                                                                                |
 | **GPT 的内部额度**（2026-09-23 起只手动）                        | 在你点 GPT 账户行右侧的刷新图标时，用**那一个** Codex 槽位的官方 access token 请求 `https://chatgpt.com/backend-api/wham/usage`，取回 5 小时 / 7 天窗口、剩余百分比与重置时间。打开页面不查，没有定时器。访问令牌已经到点时**不发请求、也不替官方客户端换新**（OpenAI 的刷新令牌每换一次就轮换，面板换了会让桌面端手里那份作废、被登出），只提示你打开一次桌面端让它自己换新；服务端拒绝了这份登录（401）时，那一行改显示「登录已失效」 | 只读；令牌只在内存请求作用域存在；不自动换号、不参与路由，读不出来不显示 0 |
 | **Gemini CLI 的内部额度**（2026-09-23 起只手动）                 | 在你点反重力用量卡上 Gemini CLI 那一格的「刷新」时，用当前账户 CLI 那一半的令牌请求 Code Assist `loadCodeAssist` / `retrieveUserQuota`，取回逐模型剩余比例与重置时间。**访问令牌过期时（它只有一小时），用同一份里的刷新令牌向 `oauth2.googleapis.com` 换一张新的**（2026-09-23 起），换新要带的客户端标识从你本机装的 Gemini CLI 包里读出来（面板自己不内置）；Google 说刷新令牌作废了时，账户行上 CLI 那一半改显示「登录已失效」 | 只读，令牌不落盘；换来的访问令牌**只放内存**，不写回 `oauth_creds.json`（Google 的刷新令牌换新之后不作废，CLI 手里那份照样能用）；接口改版或 401/403 时显示原因，不伪造额度。这同样是在用 Gemini CLI 客户端的身份跟 Google 说话，是否符合你与 Google 之间的条款由你自行判断 |
 | **反重力账户与 Hub 的联网额度**（2026-09-23，可关）              | 在你点反重力账户行右侧的刷新图标（或用量卡上 Hub 那一格的「刷新」）时，读取**官方客户端存在本机的令牌**（IDE 槽位的状态库 / Hub 在凭据管理器里那一条），向 Google 发三个只读请求：`v1internal:loadCodeAssist`（档位、AI 积分）、`v1internal:retrieveUserQuotaSummary`（Claude / Gemini 两组 × 5 小时 / 每周额度；免费档 Google 不给这一份时再问 `v1internal:fetchAvailableModels`）。**访问令牌过期时，面板用同一份里的刷新令牌向 `oauth2.googleapis.com` 换一张新的**，换新要带的客户端标识从你本机装的反重力里读出来（面板自己不内置）。请求形状照官方 IDE（`User-Agent` 报 `antigravity/<本机 IDE 版本>`） | 只读，不发任何会改账户状态的调用（例如「登记档位」的 `onboardUser`）；换来的访问令牌**只放内存**，不写回 IDE、不写回凭据管理器、不进日志。面板这样做就是在用反重力客户端的身份跟 Google 说话 —— 这一点是否符合你与 Google 之间的条款，由你自行判断。读不出来时界面如实说原因，不显示猜出来的数；关掉开关 `antigravity_hub_quota` 就不再联网 |
-| **Claude 桥的设置与调用日志**（v0.32.0）                         | 在你打开酒馆插件页时，向**你自己那份 `bridge.py`** 的本机回环端口读 / 写它自己的设置与调用日志（`/api/settings`、`/api/telemetry`）                                                                                                                                                                         | 只连 `127.0.0.1`，不出本机。改的是 `bridge.py` 自己的 `settings.json`；「清空调用日志」**不可逆**，点之前会弹确认框。面板**不分发** `bridge.py`                                                                                                                                                                |
+| **Claude 桥的设置与调用日志**（v0.32.0；2026-09-29 起在「官方账户 · Claude」酒馆磁贴右上角的设置里） | 在你打开那个设置弹窗时，向**你自己那份 `bridge.py`** 的本机回环端口读 / 写它自己的设置与调用日志（`/health`、`/api/settings`、`/api/telemetry`）；点某一条的「展开」时读那一条的全文（`/api/telemetry?id=`，**里面是你的聊天内容**），只在本机显示 | 只连 `127.0.0.1`，不出本机，全文不落盘、不进日志。改的是 `bridge.py` 自己的 `settings.json`；「清空调用日志」**不可逆**，点之前会弹确认框。面板**不分发** `bridge.py` |
 | **酒馆的 Gemini 桥接**（v0.26.0，内置）                          | 在你点击后，于 `127.0.0.1` 起一个 OpenAI 兼容端点，每个请求起一次**官方 Gemini CLI** 的无交互模式（用你当前激活的 Gemini CLI 槽位登录，`GEMINI_CLI_HOME` 指向槽位）；写一个密钥文件与一个空的运行目录到本程序的数据目录                                                                                     | 可停止。它联网的是官方 Gemini CLI 自己；**它驱动的不是反重力本体**，见第 8 节                                                                                                                                                                                                                                  |
 | **Gemini CLI 槽位登录 / 安装**（v0.26.0，安装部分 v0.29.0 改写） | 「登录」打开一个 Gemini CLI 的交互窗口让它自己走 Google 登录；「安装」在后台跑 `npm install -g @google/gemini-cli` 并把输出显示在软件页的进度条里（原来是弹一个命令窗口，而那个窗口里 npm 从来没跑起来过）                                                                                                  | 面板不分发 Gemini CLI；它写下的凭据文件平时只看在不在，只有你点额度的「刷新」时才读（见上一行）；npm 装了什么由 npm 与该包负责                                                                                                                                                                                                                                   |
 | **安装 / 更新反重力**（v0.29.0）                                 | 在你点击并确认后：先**关掉正在跑的那一份**（它是单实例，开着装不上），然后 A 路 `winget install` 官方包、没成则从 Google 自己的下载域（`storage.googleapis.com` / `edgedl.me.gvt1.com` / `dl.google.com`）取官方安装器，**核对 Authenticode 签名主体含 Google** 之后静默运行它；装完把执行锁加回去          | 未保存内容丢失。**面板不分发、不托管、不镜像 Google 的安装包** —— 装的就是你自己去官网点下载得到的同一个文件，安装行为由 Google 的安装器负责。官网不公布安装包哈希，所以校验靠「只从 Google 的域下载」加「必须验出 Google 签名」；读不出签名就不装                                                             |
@@ -407,6 +411,10 @@ Gemini CLI 是 `node` 跑的脚本，同样锁不住；反重力自动更新装�
 | 安装、升级 Claude Code                                     | `downloads.claude.ai`；兜底为官方安装脚本 `claude.ai/install.ps1`        |
 | 安装、升级 Codex                                           | `api.github.com`、`github.com`（openai/codex 的官方发布页）              |
 | 安装 Claude 桌面端、Chrome                                 | 由 Windows 的 `winget` 联网下载                                          |
+| 软件页 SillyTavern 卡的「检查新版本」、下载安装、更新（2026-09-29 起） | `github.com`（`SillyTavern/SillyTavern` 的「最新发布」跳转与源码包，源码包实际由 `codeload.github.com` 发出）、`raw.githubusercontent.com`（那个标签的 `package.json`，看它要多新的 Node.js）；装 / 更新时 `npm install` 按你本机 npm 的配置联网拉它的依赖（默认 `registry.npmjs.org`） |
+| 安装 Node.js（只在你勾了「先用 winget 装 Node.js LTS」时）  | 由 Windows 的 `winget` 联网下载官方包 `OpenJS.NodeJS.LTS`                |
+| SillyTavern 卡「版本」分页：列出最近的正式版、指定版本、换成某一版（2026-09-29 起） | `github.com`（`SillyTavern/SillyTavern` 发布页自带的 `releases.atom`，不走 `api.github.com`）；指定的那个标签的 `package.json` 与源码包，同上一行。「换回留着的那一版」不联网 |
+| SillyTavern 卡「扩展」分页的检查更新、更新、从地址安装（2026-09-29 起） | 本机的 `git` 按扩展自己记着的远端地址（`git fetch` / `git pull --ff-only`），或你填的 https 仓库地址（`git clone --depth 1`）联网；**只在你点了之后**，要账号密码的仓库直接失败，不弹窗 |
 | 中转站连接诊断、站点检验（内测）                           | 你自己填写的中转站地址（**可能产生费用**）                               |
 | 导入 Skills                                                | `github.com`、`raw.githubusercontent.com` 与你填写的仓库                 |
 | MCP 连接测试                                               | 你导入的 MCP 服务，或运行你导入的命令                                    |
@@ -415,8 +423,6 @@ Gemini CLI 是 `node` 跑的脚本，同样锁不住；反重力自动更新装�
 | 反重力用量卡上 Gemini CLI 那一格的「刷新」                 | `cloudcode-pa.googleapis.com`（携带 CLI 那一半的访问令牌）；访问令牌过期时先到 `oauth2.googleapis.com` 换新 |
 | 反重力账户行的额度刷新图标、用量卡上 Hub 那一格的「刷新」  | `daily-cloudcode-pa.googleapis.com`（按 GCP 条款管的账户是 `cloudcode-pa.googleapis.com`）；访问令牌过期时先到 `oauth2.googleapis.com` 换新 |
 | 设置页的「检查更新」（0.25.3 起）                          | 同上表的 `update.json`                                                   |
-| Claude 桌面端中文界面：打开「汉化」弹窗或它的插件页、点「检查更新」（2026-09-25 起） | `github.com` 上 `javaht/claude-desktop-zh-cn` 的 `releases/latest`（只读它跳到哪个标签；**不走 `api.github.com`**，不带任何账户信息） |
-| Claude 桌面端中文界面：「一键汉化」「更新并重新应用」「恢复英文」（本机没有上游副本时） | 那一版的源码归档（`github.com` 跳到 `codeload.github.com`），不带任何账户信息。上游脚本自己问 GitHub 有没有新版的那一下被面板关掉了（`CLAUDE_ZH_SKIP_UPDATE_CHECK=1`） |
 | 更新弹窗里的「一键更新」（0.25.3 起）                      | `github.com` 上本项目那一版 Release 的 `SHA256SUMS.txt` 与安装包。**核对 SHA-256 一致才安装**；安装时面板会退出，它启动的桌面端、对话、酒馆一起关闭 |
 
 其他外部网址（IPQualityScore、ippure.com、Scamalytics、IPRoyal、各厂商控制台、官方文档、
@@ -440,6 +446,18 @@ Gemini CLI 是 `node` 跑的脚本，同样锁不住；反重力自动更新装�
   不解析数据库、不解密 Cookie、不读取登录态、不外传。介意的话请不要使用这些功能。
 - **酒馆自动定位**：按目录扫描本机磁盘，找桥接与 SillyTavern 的特征文件；
   有深度、数量与时间上限，不碰网络盘。
+- **软件页的 SillyTavern 卡**（2026-09-29）：读酒馆目录里的 `package.json`（版本、要求的 Node.js 版本）、
+  `config.yaml` 顶层的 `port` 一行（只读，不改它），起一次 `node --version` 与 `winget --version`。
+  导入、更新、卸载时会**复制**你酒馆的 `data\`（里面有你的聊天记录、角色卡、世界书、设置与
+  `secrets.json` 里的 API 密钥）到新装的那份或本机的备份目录 —— 都在本机，不上传。
+  同一天稍后这张卡还加了：读 `data\default-user` 下的角色卡（PNG 里的卡数据、酒馆自己生成的缩略图）、世界书、
+  聊天目录的文件数、第三方扩展的 `manifest.json` 与 `.git` 里的分支 / 提交 / 远端（远端地址里的账号密码显示前抹掉）、
+  酒馆 `settings.json` 里停用了哪些扩展（只读，不改）；「挪进回收站」把那张卡（可以连同它的聊天）/ 那本世界书 /
+  那个扩展目录**挪到** `%LOCALAPPDATA%\ClaudeIpGate\tavern-trash`，「放回去」原样挪回，「清空回收站」才从磁盘上删掉；
+  「换回留着的那一版」时带着现在的数据过去，会先把留着那份自己的数据复制到 `%LOCALAPPDATA%\ClaudeIpGate\tavern-rollback`。
+- **酒馆的控制台**（2026-09-29）：面板起酒馆时把它的输出写进 `%LOCALAPPDATA%\ClaudeIpGate\plugins\sillytavern-console.log`
+  （上一次的留成 `.prev.log`，只留一份），「控制台」分页读它。**SillyTavern 会把部分请求内容打到控制台上，所以这个文件里可能有你的聊天内容**；
+  它只在本机、不上传、不进审计，停了酒馆可以直接删。Claude 那条桥（你自己的 `bridge.py`）的输出不收。
 - **反重力**（v0.26.0）：读它的 `%APPDATA%\Antigravity\DevToolsActivePort`（调试端口）、
   `app_storage.json`（只看「自动检查更新」那个键）、`logs\language_server.log`（只看有没有
   「Auth succeeded」这一行，作为**零凭证**的登录态信号）。
@@ -490,8 +508,10 @@ Gemini CLI 是 `node` 跑的脚本，同样锁不住；反重力自动更新装�
 
 - 第三方开源来源与许可逐条列在 [`ATTRIBUTION.md`](ATTRIBUTION.md)：
   抄了代码的、只用了公开接口的、看过但未采用的，分开说明。
-- **SillyTavern 采用 AGPLv3。本项目不分发它，也不分发 Claude 那条桥接脚本 `bridge.py`。**
-  面板只在你已自行安装的前提下启动它们。
+- **SillyTavern 采用 AGPLv3。本项目不分发它（安装包里没有它的一个文件），也不分发 Claude 那条桥接脚本 `bridge.py`。**
+  软件页的「下载安装」（2026-09-29 起）是**替你**从 SillyTavern 官方 GitHub 取回那个发布标签的源码包、
+  原样解压，用你本机的 Node.js 把它当作独立程序运行 —— 面板不改它、不重新打包、不镜像，跟你自己去它的
+  发布页下载解压得到的是同一份。`bridge.py` 仍只在你已自行安装的前提下启动。
   **若你自行分发这些组件，AGPLv3 的义务由你自己承担。**
   Claude 桥接涉及第三方前端如何使用凭证发起请求，**其合规性取决于该桥接脚本的具体实现，
   不在本项目的审阅范围内，使用者需自行对照相应服务条款确认。**
@@ -533,13 +553,12 @@ Gemini CLI 是 `node` 跑的脚本，同样锁不住；反重力自动更新装�
   且属于修改官方程序。本项目不做这件事，需要的人请自行使用 EasyAntigravity 并自负其风险。
   引擎通过反重力 Hub 自己开着的 Chrome DevTools 调试端口工作 —— 那是它的设计，不是本项目打开的；
   同一台机器上任何程序都能连上那个端口，这一点与本项目无关但你应当知道。
-- **Claude 桌面端中文界面**（2026-09-25）用的是社区项目 `javaht/claude-desktop-zh-cn`（MIT）：
-  **本项目不内置、不分发它的任何文件**，在你点击后从它的 GitHub Release 取、只调用它 Windows 脚本的
-  安全模式；每一版下载后都重核它的许可证仍是 MIT，不是就不用。**它不是 Anthropic 的产品，也未经
-  Anthropic 审阅**；安全模式改的是 Claude 安装目录里的前端界面文字，Anthropic 的条款没有条目明文禁止，
-  但它是非官方修改、不受支持。上游另外两种模式（重写 `Claude.exe` 完整性哈希、Frida 内存补丁）
-  属于绕过保护措施，本项目永远不调用，改前改后的哈希与签名比对就是为了守住这一条。
-  **是否汉化、是否符合你与 Anthropic 之间的条款，由你自行判断并承担后果**（见第 4、11 节）。
+- **「Claude 桌面端中文界面」已撤掉**（0.25.4–0.25.5 接过社区项目 `javaht/claude-desktop-zh-cn`（MIT）的
+  安全模式，2026-09-27 撤）：官方账户下 Claude 的窗口是在线的 claude.ai，它没有中文，每次打开都会把
+  桌面端的界面语言改回英文，只改本机文件的安全模式必然不生效；能把语言锁住的上游另外两种模式（重写
+  `Claude.exe` 完整性哈希、Frida 内存补丁）属于绕过保护措施，本项目永远不做。现在只剩一次性的「清理汉化残留」：
+  它**不运行上游的任何脚本、不联网**，只用上游自己留在 Claude 安装目录里的备份把文件换回原版、再删掉它留下的东西
+  （上游自己的卸载会把 Claude 原版文件里本来就有的 `zh-CN` 也删掉，所以不用它）。
   GPT 的中文界面不涉及第三方：写的是 GPT 自己的设置项。
 - **MCP 服务与 Skills 是第三方代码。** 扩展中心的收录不是安全认证；安装、运行之前
   请自行检查来源与内容，它们做了什么由其作者负责。
@@ -643,6 +662,17 @@ no trademark license, affiliation or endorsement.
   and defaults to `--ephemeral`. OpenAI has published no explicit rule allowing or forbidding
   third-party front-ends that use a ChatGPT sign-in through the official CLI (checked
   2026-09-20); whether this combination complies with your terms with OpenAI is your call.
+- **SillyTavern is a built-in feature since 2026-09-29, but it is not bundled.** The Software page can,
+  when you click and confirm, download the tagged source archive from SillyTavern's official GitHub,
+  unpack it unmodified, run `npm install`, and point the tavern settings at it; with "import" ticked it
+  **copies** (never moves) your existing tavern's `data\` and `config.yaml`. Upstream publishes no hash for
+  that archive, so the computed SHA-256 is only logged. Updates and uninstalls touch only the copy the panel
+  installed (uninstall backs your data up first). Node.js is installed via `winget` only if you tick that box.
+  Since a second round on 2026-09-29 the card can also switch the panel's copy to any tagged release (downgrades included, the
+  previous copy is kept whole and can be swapped back), import PNG character cards and lorebooks (never
+  overwriting), move cards / lorebooks / extensions into a panel-side trash you can restore from, and run your
+  local `git` to check, fast-forward or clone SillyTavern extensions — all only after you click. The panel writes
+  the tavern's console output to a local log file that may contain your chat content; it is never uploaded.
 - **Relay stations (including smart scheduling) are an internal beta: visible in the UI
   but not yet usable.** The project provides, sells and endorses no relay service. Using
   third-party relays may breach model providers' terms. The relay feature includes a

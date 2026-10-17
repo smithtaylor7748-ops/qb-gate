@@ -1,26 +1,5 @@
 [
   {
-    "id": "sillytavern",
-    "name": "SillyTavern",
-    "description": "接入已有酒馆安装，管理桥接、运行状态、角色卡与备份。一份酒馆两条桥：Claude 走你自己的 bridge.py，GPT 走面板内置的桥接（驱动官方 codex exec）。",
-    "kind": "application",
-    "source": "https://github.com/SillyTavern/SillyTavern",
-    "version": "integration-1",
-    "license": "AGPL-3.0 (external application)",
-    "clients": [
-      "claude-code",
-      "codex"
-    ],
-    "install_method": "connect",
-    "configuration": "{}",
-    "dependencies": [
-      "SillyTavern",
-      "Python（Claude 桥接用）",
-      "Claude Code（Claude 桥接用）",
-      "Codex CLI（GPT 桥接用）"
-    ]
-  },
-  {
     "id": "codex-egress",
     "name": "Codex 出站与换出口（ccodex 引擎）",
     "description": "接入本机已安装的 ccodex-sleep-state：代理 / 订阅 / 机场出站，以及实验性的「换出口凑 292」。独立第三方程序，本面板只负责启停与接入；核心不内置代理。",
@@ -111,40 +90,6 @@
     ]
   },
   {
-    "id": "template-claude",
-    "name": "Claude Code 中转环境",
-    "description": "预览配置后，为 Claude Code 创建独立的 API 使用环境。",
-    "kind": "template",
-    "source": "QB Gate",
-    "version": "1",
-    "license": "AGPL-3.0-only",
-    "clients": [
-      "claude-code"
-    ],
-    "install_method": "environment-template",
-    "configuration": "{\"client\":\"claude-code\",\"auth_style\":\"env_key\"}",
-    "dependencies": [
-      "服务商和 API 凭证"
-    ]
-  },
-  {
-    "id": "template-codex",
-    "name": "Codex 中转环境",
-    "description": "创建独立 CODEX_HOME，使用 Responses 协议与 API 认证。",
-    "kind": "template",
-    "source": "QB Gate",
-    "version": "1",
-    "license": "AGPL-3.0-only",
-    "clients": [
-      "codex"
-    ],
-    "install_method": "environment-template",
-    "configuration": "{\"client\":\"codex\",\"wire_api\":\"responses\",\"auth_style\":\"env_key\"}",
-    "dependencies": [
-      "服务商和 API 凭证"
-    ]
-  },
-  {
     "id": "antigravity-ui",
     "name": "反重力 · 汉化与审批",
     "description": "通过反重力 Hub 自己开着的 Chrome DevTools 协议，往它的页面里注入 EasyAntigravity 的脚本：界面汉化、审批卡自动点选、高危命令拦截。不起 Hub、不改它任何文件、不碰凭据；不做它的「免 TUN 代理」。",
@@ -159,24 +104,6 @@
     "configuration": "{}",
     "dependencies": [
       "反重力 Hub（官网安装，位置表自动认出）"
-    ]
-  },
-  {
-    "id": "claude-desktop-zh-cn",
-    "name": "Claude 桌面端 · 中文界面",
-    "description": "Claude 桌面端没有中文界面。这里接入社区项目 claude-desktop-zh-cn：运行时从它的 GitHub Release 取（打开时查新版，点了才下载），只调用它的安全模式——放翻译文件、改前端界面文字、设界面语言。不碰 app.asar 与 Claude.exe，改前改后核哈希与签名，动了就自动还原。非官方修改，Claude 一更新就要重新应用。",
-    "kind": "application",
-    "source": "https://github.com/javaht/claude-desktop-zh-cn",
-    "version": "follow-upstream",
-    "license": "MIT (external project, fetched from its GitHub Releases at runtime; only its safe mode is invoked)",
-    "clients": [
-      "claude-desktop"
-    ],
-    "install_method": "builtin",
-    "configuration": "{}",
-    "dependencies": [
-      "Claude 桌面端（官网安装包，位置表自动认出）",
-      "Windows PowerShell 5.1（系统自带）"
     ]
   }
 ]

@@ -149,6 +149,10 @@ pub struct Environment {
     pub via_router: bool,
 }
 
+/// 一次长操作的进度记录（`operations` 表）。
+///
+/// 原来还有 `can_cancel`：界面上的「取消」按钮早就没了，取消机制 2026-09-27 删掉，
+/// 老数据里那一栏反序列化时直接忽略。
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct Operation {
     pub id: String,
@@ -158,37 +162,22 @@ pub struct Operation {
     pub progress: u32,
     pub status: String,
     pub detail: String,
-    pub can_cancel: bool,
     pub started_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct ProbeCheck {
-    pub name: String,
-    pub status: String,
-    pub detail: String,
-    pub elapsed_ms: u32,
-}
+// 原来这里还有 `ProbeCheck` / `ProbeReport`：「服务商与环境」旧页草稿诊断的结果。
+// 那一页和 `qb_app::diagnostics` 2026-09-27 一起删了；库里 `diagnostics` 表的老行留着不读。
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct ProbeReport {
-    pub id: String,
-    pub environment_id: Option<String>,
-    pub revision: u32,
-    pub checked_at: String,
-    pub checks: Vec<ProbeCheck>,
-    pub models: Vec<String>,
-    pub evidence: Vec<String>,
-    pub request_export: String,
-}
-
+/// 扩展的类别。
+///
+/// 原来还有 `Template`（「中转环境模板」：建直连站点的旧式环境、建完跳进「服务商与环境」旧页）。
+/// 它只在内置目录里出现过、不产生安装记录，2026-09-27 连同那两条目录项一起删了。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum ExtensionKind {
     Application,
     Mcp,
     Skill,
-    Template,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -255,7 +244,6 @@ pub fn export_types(path: &std::path::Path) -> std::result::Result<(), ts_rs::Ex
     LaunchContext::export_all_to(path)?;
     Session::export_all_to(path)?;
     Workspace::export_all_to(path)?;
-    ProbeReport::export_all_to(path)?;
     ExtensionManifest::export_all_to(path)?;
     ExtensionInstallation::export_all_to(path)
 }

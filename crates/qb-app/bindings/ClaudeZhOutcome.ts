@@ -5,18 +5,14 @@
  */
 export type ClaudeZhOutcome = { 
 /**
- * 核验全过。
+ * 清完之后复查，一样都没剩。
  */
 ok: boolean, 
 /**
- * 逐条核验结果与做了什么。
+ * 逐条做了什么。
  */
 lines: Array<string>, 
 /**
- * 核验发现越线，已自动还原并停用了那一版上游。
+ * 为了往现在用的那一版里写，先关了 Claude 桌面端。
  */
-restored: boolean, 
-/**
- * 用的是上游哪一版。
- */
-tag: string | null, };
+closed_claude: boolean, };

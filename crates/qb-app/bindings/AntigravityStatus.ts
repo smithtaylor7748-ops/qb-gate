@@ -10,10 +10,6 @@ export type AntigravityStatus = { hub: ProductStatus, ide: ProductStatus,
  */
 under_gate: boolean, 
 /**
- * Hub 的「自动检查更新」。`None` = 读不到（还没起过）。
- */
-auto_update: boolean | null, 
-/**
  * 语言服务器日志里见没见过「Auth succeeded」。`None` = 没日志。**零凭证信号。**
  */
 login_seen: boolean | null, 

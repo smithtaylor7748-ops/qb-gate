@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   ArrowRight,
   Blocks,
   Download,
-  FileCode2,
   FolderInput,
   Plug,
   Search,
@@ -30,22 +29,21 @@ import {
 } from "../lib/workspace";
 import CodexEgressPanel from "../plugins/CodexEgressPanel";
 import AntigravityPanel from "../plugins/AntigravityPanel";
-import ClaudeZhPanel from "../plugins/ClaudeZhPanel";
-import TavernPanel from "../plugins/TavernPanel";
 
 const KIND_ICON = {
   application: Blocks,
   mcp: Plug,
   skill: Sparkles,
-  template: FileCode2,
 };
-/** 目录里默认露出来的。其余的装过才显示，见下面 `list` 的注释。 */
-const SURFACED = new Set([
-  "sillytavern",
-  "codex-egress",
-  "antigravity-ui",
-  "claude-desktop-zh-cn",
-]);
+/**
+ * 目录里默认露出来的。其余的装过才显示，见下面 `list` 的注释。
+ *
+ * 原来第一个是酒馆（`sillytavern`）。2026-09-29 使用者：「扩展页的酒馆删掉好了，酒馆变成本项目的
+ * 功能之一」—— 现在酒馆本体（下载 / 更新 / 指定版本 / 卸载、位置）在软件页的 SillyTavern 卡，
+ * 三条桥的设置在软件页三张 CLI 卡的最下面，用酒馆（控制台、角色卡、世界书、扩展、备份与回收站）在
+ * 三个账户页酒馆磁贴右上角的「酒馆」弹窗里（同一天第三轮对调过）。目录里那一条也删了（`extensions::RETIRED`）。
+ */
+const SURFACED = new Set(["codex-egress", "antigravity-ui"]);
 
 export default function ExtensionCenter() {
   const { id } = useParams();
@@ -62,14 +60,13 @@ export default function ExtensionCenter() {
     [],
   );
   const selected = catalog.data?.find((m) => m.id === id);
-  // 目录里七条，这台机器上真正在用的只有酒馆。其余六条（两个 MCP、两个 Skill、
-  // 两个中转环境模板）都是「装了也没人开」的陈列品，而中转环境模板还跟中转站
-  // 那边的新建环境完全重复。
+  // 精选目录里默认只露出三个应用。两个 MCP、两个 Skill 是「装了也没人开」的陈列品，
+  // 装过的照常显示（下面的 `installed` 放行）—— 谁要是已经装过某一条，
+  // 升级不该让它从界面上凭空消失，所以这几条留在 `extension-catalog.json` 里、只在前端收起。
   //
-  // ⚠ 收敛**只能在前端做**：`extension-catalog.json` 被 `include_str!` 编进
-  // Rust，三条单测硬依赖那几个具体 id，删 JSON 会直接让 `cargo test` 红。
-  // 已装的仍然照常显示（下面的 `installed` 放行）—— 谁要是已经装过某一条，
-  // 这次升级不该让它从界面上凭空消失。
+  // 原来还有两个「中转环境模板」：建的是直连站点的旧式环境、建完跳进已经退休的
+  // 「服务商与环境」旧页，跟中转站页的添加线路完全重复。2026-09-27 连同 `template`
+  // 这一类一起删了 —— 模板不产生安装记录，删掉不会让谁已有的东西消失。
   const installations = workspace.data?.installations ?? [];
   const list = (catalog.data ?? []).filter(
     (m) =>
@@ -325,7 +322,6 @@ function ExtensionDetail({ manifest: m }: { manifest: ExtensionManifest }) {
   const workspace = useWorkspace();
   const accounts = useResource("accounts", R.accounts);
   const action = useAction();
-  const navigate = useNavigate();
   const Icon = KIND_ICON[m.kind];
   const [target, setTarget] = useSession(
     "extension.target." + m.id,
@@ -339,10 +335,6 @@ function ExtensionDetail({ manifest: m }: { manifest: ExtensionManifest }) {
   const [preview, setPreview] = useState<InstallPreview | null>(null);
   const [check, setCheck] = useState("");
   const [removeId, setRemoveId] = useState<string | null>(null);
-  const [providerId, setProviderId] = useState("");
-  const [credentialId, setCredentialId] = useState("");
-  const [environmentName, setEnvironmentName] = useState(m.name);
-  const [model, setModel] = useState("");
   const targets = [
     { value: "official|claude-code|", label: "官方 · Claude Code 默认环境" },
     { value: "official|codex|", label: "官方 · Codex" },
@@ -384,143 +376,17 @@ function ExtensionDetail({ manifest: m }: { manifest: ExtensionManifest }) {
       </header>
       <div className="qb-extension-layout">
         <section className="qb-detail">
-          <h2>
-            {m.kind === "application"
-              ? "接入与运行"
-              : m.kind === "template"
-                ? "创建使用环境"
-                : "安装到你的环境"}
-          </h2>
+          <h2>{m.kind === "application" ? "接入与运行" : "安装到你的环境"}</h2>
           {m.kind === "application" ? (
-            <>
-              {/* 「接入已配置的本地安装」接的是酒馆（`extensions::connect_application` 只认
-                  SillyTavern）。别的插件页上放着它，点下去接进来的也是酒馆 —— 只在酒馆页显示。 */}
-              {m.id === "sillytavern" && (
-                <Button
-                  disabled={!!action.pending}
-                  onClick={() =>
-                    void action.run(
-                      "connect",
-                      workspaceApi.connectApplication,
-                      "已有应用已接入扩展中心",
-                    )
-                  }
-                >
-                  接入已配置的本地安装
-                </Button>
-              )}
-              {m.id === "codex-egress" ? (
-                <CodexEgressPanel />
-              ) : m.id === "antigravity-ui" ? (
-                <AntigravityPanel />
-              ) : m.id === "claude-desktop-zh-cn" ? (
-                <ClaudeZhPanel />
-              ) : (
-                <TavernPanel />
-              )}
-            </>
-          ) : m.kind === "template" ? (
-            <div className="qb-form">
-              <label className="qb-field">
-                <span>服务商</span>
-                <select
-                  value={providerId}
-                  onChange={(e) => {
-                    setProviderId(e.target.value);
-                    setCredentialId("");
-                  }}
-                >
-                  <option value="">选择服务商</option>
-                  {workspace.data?.providers.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="qb-field">
-                <span>API 凭证</span>
-                <select
-                  value={credentialId}
-                  onChange={(e) => setCredentialId(e.target.value)}
-                >
-                  <option value="">选择凭证</option>
-                  {workspace.data?.credentials
-                    .filter((c) => c.provider_id === providerId)
-                    .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.label}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <label className="qb-field">
-                <span>环境名称</span>
-                <input
-                  value={environmentName}
-                  onChange={(e) => setEnvironmentName(e.target.value)}
-                />
-              </label>
-              <label className="qb-field">
-                <span>模型</span>
-                <input
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                />
-              </label>
-              <pre className="qb-code-preview">
-                {JSON.stringify(
-                  {
-                    client: m.clients[0],
-                    credential: "所选凭证",
-                    model,
-                    configuration: "独立环境目录",
-                  },
-                  null,
-                  2,
-                )}
-              </pre>
-              <Button
-                variant="primary"
-                disabled={!providerId || !credentialId}
-                loading={!!action.pending}
-                onClick={() =>
-                  void action
-                    .run(
-                      "template",
-                      () =>
-                        workspaceApi.saveEnvironment({
-                          id: "",
-                          name: environmentName,
-                          client: m.clients[0],
-                          provider_id: providerId,
-                          credential_id: credentialId,
-                          model,
-                          small_model: "",
-                          wire_api: "responses",
-                          auth_style: "env_key",
-                          revision: 0,
-                          applied_revision: null,
-                          config_dir: "",
-                          config_state: "saved",
-                          // 模板建的是直连那家服务商的环境，不走本机路由。
-                          via_router: false,
-                        }),
-                      "独立环境已创建",
-                    )
-                    .then((e) => {
-                      if (e)
-                        navigate(`/relays/${providerId}?environment=${e.id}`);
-                    })
-                }
-              >
-                创建独立环境
-              </Button>
-              <Link to="/relays/new" className="qb-text-link">
-                还没有服务商？先添加
-                <ArrowRight size={14} />
-              </Link>
-            </div>
+            m.id === "codex-egress" ? (
+              <CodexEgressPanel />
+            ) : m.id === "antigravity-ui" ? (
+              <AntigravityPanel />
+            ) : (
+              // 目录里只剩这两个应用；认不出的应用（手改过的目录、将来新加的）不许
+              // 落到别人的面板上 —— 原来这里的兜底是酒馆页，点进去看到的是另一个东西。
+              <p className="notice">这个应用在面板里没有详情页。</p>
+            )
           ) : (
             <div className="qb-form">
               <label className="qb-field">
@@ -727,7 +593,7 @@ function ExtensionDetail({ manifest: m }: { manifest: ExtensionManifest }) {
                   <li key={d}>{d}</li>
                 ))}
               </ul>
-              <Link className="qb-text-link" to="/environment/software">
+              <Link className="qb-text-link" to="/software">
                 管理软件依赖
                 <ArrowRight size={14} />
               </Link>

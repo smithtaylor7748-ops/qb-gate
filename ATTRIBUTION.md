@@ -27,8 +27,10 @@ MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件
 
 - 仓库：https://github.com/farion1231/cc-switch
 - 许可：**MIT**，Copyright (c) Jason Young
-- 用在：`crates/qb-relay/src/relay/`（`mod.rs` · `store.rs` · `presets.rs`），
-  以及 v0.17.0 起的 `src/features/station/`（`RouteDialog.tsx` · `ConfigPane.tsx`）
+- 用在：`crates/qb-relay/src/relay/`（`mod.rs` · `presets.rs`），
+  以及 v0.17.0 起的 `src/features/station/`（`RouteDialog.tsx` · `ConfigPane.tsx`）。
+  原来的 `store.rs`（`relay.json` 那一代供应商目录）与「从当前配置导入」2026-09-27 删了，
+  下表里对应的那一行留着作记录。
 
 参考的是「多供应商 + 一键切换 + 直接写进 CLI 自己的配置文件」这套产品形态，
 以及原子写（临时文件 + 改名）与自动备份的做法。代码为独立实现，未复制。
@@ -40,7 +42,7 @@ MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 三个应用各一份供应商列表                                | 切一个不影响另一个，`RelayTarget` 就是照这个分的                                                                                                                                                                                                                               |
 | Codex 侧按 `wire_api` 分 responses / chat 两类预设      | 这个分法是对的，照做                                                                                                                                                                                                                                                           |
-| 「从当前配置导入」与编辑当前启用项时的回填              | `relay_import_live`                                                                                                                                                                                                                                                            |
+| 「从当前配置导入」与编辑当前启用项时的回填              | `relay_import_live`（已删：2026-09-27 随 `relay.json` 那一代目录一起去掉，代码里不再有这一处）                                                                                                                                                                                 |
 | Codex 写 `config.toml` + `auth.json` 两个文件的配置形态 | 端点结构参照其公开文档                                                                                                                                                                                                                                                         |
 | **复合主键分区**（应用 + 供应商各一条）                 | `Route::make_id` 从两段变三段：`软件 + U+001F + 站点 + U+001F + 分组`。v0.16.0 之前少了软件那一段，在 Codex 底下加的线路会把 Claude Code 同名那条原地覆盖                                                                                                                      |
 | **per-app 当前上游**                                    | `ClientRouter` 按 `Client` 分别记 current / pending。共用一份的话，在 Codex 里切上游会把 Claude Code 的一起切掉                                                                                                                                                                |
@@ -446,46 +448,33 @@ GPT **不换**（OpenAI 的刷新令牌会轮换，面板一换桌面端就被�
 turn-state 识别**互斥**（0.24.7 起两者都改同一份 `config.toml`，命令层守卫）。
 对外定位见 [DISCLAIMER.md](DISCLAIMER.md) §5.3 末尾。
 
-### claude-desktop-zh-cn —— Claude 桌面端中文界面，**运行时取、只调用安全模式**（2026-09-25）
+### claude-desktop-zh-cn —— Claude 桌面端中文界面：**0.25.4–0.25.5 接入过，2026-09-27 撤掉**
 
 - 仓库：https://github.com/javaht/claude-desktop-zh-cn（社区项目，作者 javaht）
 - 许可：**MIT**（仓库根 `LICENSE`，2026-09-25 核过：`Copyright (c) 2025 javaht` + MIT 原文）。
-  没有第三方二进制；仓库里 `scripts/experimental/` 是它的 Frida 实验脚本（见下）。
-- 用在：扩展中心的「Claude 桌面端 · 中文界面」条目与账户页「汉化」按钮
-  （`crates/qb-extensions/src/plugins/claude_zh.rs`、`crates/qb-app/src/usecase/claude_zh_ops.rs`、
-  `src/features/zh/ClaudeZh.tsx`），`install_method: builtin`。
+- 当时怎么用的：运行时从它的 GitHub Release 取源码归档，只解出 Windows 安全模式用得到的文件，用 Windows PowerShell
+  **原样运行它自己的脚本**（`install zh-CN -PatchMode safe` / `uninstall`）；本项目不内置、不分发它的任何文件，
+  也没有抄它的代码。它的 `-PatchMode official`（改 `app.asar` 并重写 `Claude.exe` 内嵌的完整性哈希）与
+  `frida-launch` / `scripts/experimental/`（Frida 内存补丁）属于绕过 Claude 的保护措施（Anthropic 消费者条款 §3），
+  从来没有调用过，那些文件也从没落盘。
 
-**本项目不内置、不分发它的任何文件，也不抄它的代码。** 使用者点「一键汉化」时，面板从它的 GitHub
-Release（`releases/latest` 跳到的那个标签）取那一版的源码归档，只解出 Windows 安全模式用得到的
-`LICENSE`、`README.md`、`resources/*.json`、`scripts/` 下的 PowerShell（**不含 `scripts/experimental/`**），
-放在本程序数据目录下，然后用 Windows PowerShell **原样运行它自己的脚本**。跟接入 SillyTavern、
-ccodex-sleep-state 同一类：它是独立的第三方程序，本项目只负责取、核、起、验。
-使用者要的是「上游以后的更新都跟得上」—— 上游平均一周一版，Claude 一改前端结构它就跟着改脚本；
-照着抄一份进来，那些修复就永远流不进来。
+**为什么撤**：官方账户下 Claude 的主窗口是在线的 `https://claude.ai`，而安全模式只改本机的前端文件；在线页每次加载
+都把它自己的语言（claude.ai 没有中文，于是是 en-US）推给桌面端，主进程随即切回英文、改写 `config.json` 的 `locale`。
+在官方账户下它必然不生效，而能锁住语言的只有上面那两种绕过保护措施的模式。
 
-- **每一版都重核**：`LICENSE` 仍是 MIT 原文（不是就不用、保留旧版）；它脚本的 `param(...)` 里
-  `PatchMode` 仍列着 `safe`、`Action` 仍列着 `install` / `uninstall`（接口变了就不用，不闭眼塞参数）。
-  归档注释里 GitHub 写的提交号记下来，审计里有。
-- **只调用两个动作、一种模式**：`install zh-CN -PatchMode safe`（有 `-SkipAsarPatch` 就一并传）与
-  `uninstall`。参数只由 `claude_zh::script_args` 拼，单测钉着拼不出别的。
-- **没用它的什么、为什么**：
-  - **`-PatchMode official`**：改 `app.asar`，再重写 `Claude.exe` 内嵌的 asar 完整性哈希（签名变
-    `HashMismatch`）—— 绕过防篡改，Anthropic 消费者条款 §3 明文不许（"bypassing any of our systems
-    or protective measures"）；
-  - **`frida-launch` 与 `scripts/experimental/`**：Frida 在内存里改掉 Claude「带调试开关就拒绝启动」
-    的闸门与完整性值 —— 同上，而且是往官方进程里注入；这些文件一个字节都不落盘；
-  - **`disable-updates` / `sync-skills`**：跟汉化无关（关 Claude 自动更新、同步 CC Switch 的 skills）；
-  - 它自己问 `api.github.com` 有没有新版的那一下：面板用 `CLAUDE_ZH_SKIP_UPDATE_CHECK=1` 关掉，
-    查新版由面板在打开弹窗时做（只问 `github.com` 的跳转）。
-- **不信它，只信文件**：每次应用 / 还原前后，面板自己算 `app.asar` 与 `claude.exe` 的 SHA-256、
-  读 Authenticode 状态；变了就立刻跑它的 `uninstall` 还原、把那一版记进黑名单。
+**现在还剩什么**：账户页一次性的「清理汉化残留」（`crates/qb-extensions/src/plugins/claude_zh.rs`、
+`crates/qb-app/src/usecase/claude_zh_ops.rs`、`src/features/zh/ClaudeZhCleanup.tsx`）。它**不运行、不下载**
+上游的任何东西，只用上游留在 Claude 安装目录里的备份（`resources\.zh-cn-backups`，里面是 Claude 自己的原版文件）
+把它改过的前端文件逐字换回去，再删掉它放的中文文件、那份备份、它建的 `Claude-3p`（只有一个只写了 `locale` 的
+`config.json` 时）与本程序当时下载的副本。不用上游自己的 `uninstall`：它「移除 zh-CN 语言注册」那一步按字符串删
+`"zh-CN"`，把 Claude 原版文件里本来就有的那几处也删了（本机 2.9939.2 上 3 个前端文件因此跟原版对不上）。
 
-反重力那套 CDP 注入（上面 EasyAntigravity 一节）**没有**搬到 Claude 上：Claude 桌面端见到
-`--remote-debugging-port` 就拒绝启动（2.9939.2 字符串核过），绕过它就是上面第二条。
+扩展中心的条目（`crates/qb-extensions/extension-catalog.json`）已删。反重力那套 CDP 注入从来没有搬到 Claude 上：
+Claude 桌面端见到 `--remote-debugging-port` 就拒绝启动，绕过它就是上面那一类。
 
 **GPT 的中文界面不涉及任何第三方**：写的是 Codex 桌面端自己的设置项 `[desktop] localeOverride`
-（在它「设置 → General → Language」里选中文写下的同一行；键名与位置是本机旧配置备份与 openai/codex#23815
-里看到的，面板没有读它的程序文件）。
+（在它「设置 → General → Language」里选中文写下的同一行；2026-09-27 对着 26.924 的 `app.asar` 核过键路径是
+`desktop.<键>`、`zh` 规范成 `zh-CN`，只为核对行为事实，没有取用它的任何代码）。
 
 ---
 
@@ -518,18 +507,48 @@ Tailwind 在这里只负责生成间距、字号、圆角这些工具类。
 
 ## 作为独立程序启动，没有链接也没有改源码
 
-### SillyTavern — 酒馆插件
+### SillyTavern — 酒馆（2026-09-29 起是面板的内置功能）
 
 - 仓库：https://github.com/SillyTavern/SillyTavern
 - 许可：**AGPL-3.0**
-- 用在：`crates/qb-extensions/src/plugins/sillytavern.rs`
+- 用在：`crates/qb-extensions/src/plugins/sillytavern.rs`（起停与就绪判定）、
+  `crates/qb-install/src/install/{sillytavern, sillytavern_setup}.rs`（软件页的下载安装 / 更新 / 卸载）
 
-**QB Gate 没有复制、修改或链接 SillyTavern 的任何代码。** 插件做的事情是：
+**QB Gate 没有复制、修改或链接 SillyTavern 的任何代码，安装包里也没有它的一个文件。** 面板做的事情是：
 以独立进程启动它自带的启动脚本、轮询端口判断就绪、需要时按 PID 停止，
 以及读写它的数据目录做备份恢复。这属于「把它当成一个外部程序来用」，
 不构成 AGPL 意义上的衍生作品，因此 QB Gate 本身的许可不受其影响
 （本项目自身为 AGPL-3.0-only，另提供商业授权；两者都不因这层调用而受牵连 ——
 关键在于 SillyTavern 始终是**独立程序**，既不捆绑也不链接，见下面两条线）。
+
+**2026-09-29：软件页可以下载安装它。** 在使用者点击并确认后，面板从上面那个官方仓库取
+「最新正式版」的标签（读 `releases/latest` 的跳转，不走 `api.github.com`）、下那个标签的源码包
+（`archive/refs/tags/<tag>.zip`）原样解压、跑一次它自己的 `npm install`，再把酒馆配置指过去。
+这跟使用者自己去发布页下载解压是同一份东西：**不打包进安装包、不镜像、不改它的文件**
+（更新时把使用者的 `data\`、`config.yaml` 复制进新版，那是使用者自己的数据；`Start.bat` 保持官方原样）。
+所以它仍是「使用者机器上的一个独立程序」，上面的结论不变；我们也没有向任何人**传递**
+（convey）SillyTavern —— 下载发生在使用者自己的机器上、从 SillyTavern 自己的发布页。
+导入数据、更新迁移数据的做法照的是它自己仓库里的 `Update-Instructions.txt`（只复制 `data\` 与
+`config.yaml`，「不要整份拷 `public\`」），只转述做法，没有复制那份文件。
+
+**2026-09-29（同一天第二轮）：软件页那张卡加了控制台、角色卡 / 世界书 / 扩展、回收站、指定版本与换回。** 为此读过 SillyTavern 1.19.0 的
+`src/endpoints/extensions.js`（扩展装在 `data\<用户>\extensions` 与 `public\scripts\extensions\third-party` 两处、更新前怎么判落后）、
+`src/server-startup.js` / `src/server-main.js`（启动时打印的原话，控制台据此认「端口被占」等）、角色卡在 PNG 里的存法（`ccv3` / `chara`
+文本块，base64 的 JSON）、发布页 `releases.atom` 的形状 —— **只核事实**（路径、句子、格式），一行没抄。面板对它的数据只做
+「列出、导入（复制）、挪进面板的回收站、放回去」，扩展的更新 / 安装是在使用者点了之后跑本机的 git（`clone` / `pull --ff-only`），
+跟使用者自己在它的扩展管理里点「更新」是同一件事。这些都不改变上面「独立程序」的结论。
+
+同一天对照过三个第三方启动器（**只借了思路，代码是自己写的**）：
+
+- **al01cn/sillyTavern-launcher** — https://github.com/al01cn/sillyTavern-launcher（**MIT**，Tauri v2 + Rust）。
+  借的思路：把酒馆的输出接回面板显示、从报错里认出常见问题给提示、角色卡 / 世界书 / 扩展分开管理、版本列表。
+  没照搬的：它直接删文件（这里先进回收站）、版本列表走 `api.github.com`（这里读发布页 Atom）、按端口 `kill -9`（这里不碰别人起的进程）。
+  MIT 允许直接复制，本项目仍选择自己写 —— 跟面板现有的进程托管、回收站、确认框的规矩对不上。
+- **SillyTavern/SillyTavern-Launcher** — https://github.com/SillyTavern/SillyTavern-Launcher（**MIT**，官方的批处理启动器）。
+  看了备份 / 恢复、切分支的做法；面板装的那份不是 git 仓库，切分支不适用。
+- **LingyeSoul/SillyTavernLauncher** — https://github.com/LingyeSoul/SillyTavernLauncher（⛔ **AGPL-3.0**）。
+  只看了功能清单（ANSI 彩色日志、历史版本切换）。**一行代码都没看、没抄**：别人的 AGPL 代码进来会堵死商业授权那一档
+  （见 CLAUDE.md「抄代码之前先看 license」）。
 
 **但有两条线要自己守住：**
 
@@ -626,7 +645,10 @@ QB Gate 自身的 GitHub Releases 更新在仓库创建和签名公钥配置前�
 - 仓库：https://github.com/zxc123aa/cc-proxy-detector
 - 许可：MIT
 
-原版是 Python，这里是 Rust 重写（`relay/backend.rs`）。抄的是判定思路：
+原版是 Python，这里原来是 Rust 重写（`relay/backend.rs`），抄的是判定思路。
+
+⚠ **2026-09-27 起代码里已经没有这一块**：它唯一的调用方是「服务商与环境」旧页的连接诊断
+（`qb_app::diagnostics`），那一页连同诊断一起删了。下表留着作记录：
 
 | 参考点                                                        | 说明                                                                                                                      |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
@@ -667,7 +689,7 @@ v0.11.0 只是把这个判定**写到界面上**，让使用者看得见 zh-TW �
 | 参考点               | 本项目怎么做的                                                                                                                                   |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 主模型与小模型分开配 | `ProviderMeta.small_fast_model` → `ANTHROPIC_SMALL_FAST_MODEL`。很多中转站两档不是同一个名字，只配主模型时后台请求会报一个跟你正在做的事无关的错 |
-| Base URL 智能推断    | `relay::probe::normalize_base_url`，把粘进来的完整端点归一成 base。归一放在 `upsert` 里而不是表单里 —— 手填、预设、导入三条路都经过它            |
+| Base URL 智能推断    | `qb_platform::endpoint::normalize_base_url`（经 `endpoint_base`），把粘进来的完整端点归一成 base。归一放在保存站点那一步（`workspace::provider_save`）而不是表单里 —— 中转站添加线路的每条路都经过它 |
 
 ⛔ **不采纳「本地路由模式」**（起 localhost 代理热切换目标）——
 内置代理，与 DISCLAIMER 第 107 行冲突。
@@ -897,7 +919,7 @@ v0.12.0 的重构里带进来一份 3,310 行的订阅指引组件（`src/subscr
 引用的都是公开网页（官方价目、App Store 商店页、帮助中心、媒体报道、arXiv 论文、GitHub issue），
 只转述事实与数字，不复制原文段落。
 
-SillyTavern 是外部 AGPL-3.0 应用。QB Gate 接入用户已有安装，不捆绑应用本体；本项目按 AGPL-3.0-only 发布，并另行提供商业授权。
+SillyTavern 是外部 AGPL-3.0 应用。QB Gate 接入用户已有的安装，或者（2026-09-29 起）在使用者点击后从它的官方 GitHub 发布页替他下载安装一份，都不捆绑应用本体；本项目按 AGPL-3.0-only 发布，并另行提供商业授权。
 
 [docs/dependencies.json](docs/dependencies.json) 记录依赖名称、版本、来源和许可声明；[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) 包含可获得的原始版权及许可文本，并随安装包提供。缺少随包许可文件时的补充文本固定到上游提交，记录于 docs/license-supplements.json。构建和测试依赖也一并列出。
 

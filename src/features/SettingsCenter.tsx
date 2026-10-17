@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, NavLink, useParams } from "react-router-dom";
+import { NavLink, useParams } from "react-router-dom";
 import {
   Archive,
   Plus,
@@ -19,7 +19,7 @@ import { R } from "../lib/resources";
 import { useResource, useSession } from "../lib/store";
 import { useAction, useWorkspace } from "../lib/workspace";
 import { Button, ExternalLink, Modal } from "../ui";
-import LegacySettings from "../pages/Settings";
+import { ManagedDirControl } from "../pages/managed/ManagedPanel";
 import packageInfo from "../../package.json";
 
 export default function SettingsCenter() {
@@ -53,8 +53,10 @@ export default function SettingsCenter() {
       ) : section === "help" ? (
         <Help />
       ) : section === "advanced" ? (
+        // 原来这里还有一张「恢复系统时区」：它只认旧时区卡记下的原值，而启动对齐从来不记，
+        // 点了永远提示「已恢复」、其实什么都没动（2026-09-27 删了）。时区的原值在审计日志里。
         <section className="qb-legacy-detail">
-          <LegacySettings />
+          <ManagedDirControl />
         </section>
       ) : (
         <General />
@@ -157,9 +159,10 @@ function General() {
         ] as Toggle[]
       ).map(row)}
       <UpdateLine />
+      {/* 原来这句指向「环境与门禁」那一页 —— 那页早就没有了（地址会被送回首页）。 */}
       <p className="qb-help-note">
-        IP
-        白名单、国家规则与会话门禁集中在“环境与门禁”。安装目录迁移位于“高级维护”。
+        IP 白名单、国家规则与会话内门禁在「官方账户」页：点评分栏里的「IP
+        锁」或旁边那排门禁读数。安装目录迁移在「高级维护」。
       </p>
       <div className="qb-about">
         <strong>QB Gate {packageInfo.version}</strong>
@@ -408,14 +411,6 @@ function Help() {
       <p className="qb-muted">
         官方账户、中转站与扩展的本地管理工具。门禁根据定期检测结果控制受管进程；执行锁不会冻结已加载进程的网络请求。
       </p>
-      <h3 className="qb-subheading">重新走一遍新手引导</h3>
-      <p className="qb-muted">
-        加白名单 → 实测出口 IP → 清理或安装 → 建槽位 →
-        启动。已经做过的步骤可以直接跳过。
-      </p>
-      <div className="qb-link-list">
-        <Link to="/onboarding">打开新手引导</Link>
-      </div>
       <h3 className="qb-subheading">项目与许可</h3>
       <div className="qb-link-list">
         <ExternalLink href="https://github.com/smithtaylor7748-ops/qb-gate">

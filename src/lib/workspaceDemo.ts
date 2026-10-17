@@ -75,17 +75,6 @@ export async function demoWorkspaceCall(
 ): Promise<unknown> {
   if (command === "workspace_state") return structuredClone(state);
   if (command === "extension_catalog") return catalog;
-  if (command === "diagnostic_history") return [];
-  if (command === "workspace_references") return [];
-  if (command === "environment_preview")
-    return [
-      {
-        path: state.environments[0].config_dir + "\\settings.json",
-        before: "{}",
-        after:
-          '{\n  "env": { "ANTHROPIC_BASE_URL": "https://relay.example.com" }\n}',
-      },
-    ];
   if (command === "extension_preview")
     return {
       destination: "C:\\Users\\demo\\.claude\\skills",

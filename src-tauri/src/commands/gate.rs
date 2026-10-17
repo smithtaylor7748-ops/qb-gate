@@ -52,9 +52,10 @@ pub async fn gate_lock_all(state: tauri::State<'_, AppState>) -> Result<usize> {
 
 /// 应急解锁：无条件摘掉所有 Deny ACE，**不验 IP**。
 ///
-/// 这是故意留的逃生口。门禁的正常入口 `gate_open` 要求出口 IP 在白名单里，
-/// 可是「白名单是空的」「查不到公网 IP」「填错了 IP」这几种情况都会让它
-/// 永远过不了 —— 那时候 claude.exe 是锁着的，用户就被自己的工具关在门外。
+/// 这是故意留的逃生口。门禁的正常入口（启动时的 `gate::open_authorized`、
+/// 「重新放行」）要求出口 IP 在白名单里，可是「白名单是空的」「查不到公网 IP」
+/// 「填错了 IP」这几种情况都会让它永远过不了 —— 那时候 claude.exe 是锁着的，
+/// 用户就被自己的工具关在门外。
 ///
 /// 安全上不吃亏：能点这个按钮的人本来就能改白名单文件、也能自己改 ACL。
 /// 门禁防的是「跑起来之后出口 IP 悄悄变了」，不是防本机管理员。
@@ -67,28 +68,12 @@ pub async fn gate_unlock_all(state: tauri::State<'_, AppState>) -> Result<usize>
     Ok(n)
 }
 
-#[tauri::command]
-pub async fn gate_open(holder: String, state: tauri::State<'_, AppState>) -> Result<()> {
-    let _guard = operations::exclusive().await?;
-    gate::open_authorized(&holder, &state.gate).await
-}
-
-#[tauri::command]
-pub async fn gate_release(state: tauri::State<'_, AppState>) -> Result<()> {
-    let paused = gate::pause(&state.gate);
-    let _guard = operations::exclusive().await?;
-    gate::finish_pause(
-        paused,
-        usecase::gate_ops::stop_managed(&state.gate, false).await,
-    )?;
-    Ok(())
-}
-
 /// 「重新放行」：验一次出口 IP，过了就把门重新打开。
 ///
-/// 托盘菜单和总览横幅都走这条。它跟 `gate_open` 的唯一区别是**不需要调用方
-/// 说出 holder** —— 沿用上一次的那个，因为使用者点它的场景永远是
-/// 「门被面板自己关上了，我要把它开回来」。
+/// 托盘菜单和总览横幅都走这条。**不需要调用方说出 holder** —— 沿用上一次的那个，
+/// 因为使用者点它的场景永远是「门被面板自己关上了，我要把它开回来」。
+/// （原来还有一条要说出 holder 的 `gate_open` 和一条收租约的 `gate_release`，
+/// 界面早就不调了，2026-09-27 删掉。）
 ///
 /// 它**不启动任何进程**，只恢复租约。
 #[tauri::command]
@@ -105,11 +90,6 @@ pub async fn gate_reopen(
 #[tauri::command]
 pub fn gate_clean_stale() -> Vec<(std::path::PathBuf, bool)> {
     gate::clean_stale_copies()
-}
-
-#[tauri::command]
-pub fn allowlist_read() -> Result<Vec<String>> {
-    gate::allowlist::read()
 }
 
 /// 手改白名单。

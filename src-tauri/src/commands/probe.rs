@@ -72,12 +72,6 @@ pub async fn probe_ip_lookup(ip: String) -> Result<probe::ip_lookup::IpLookupRep
 }
 
 #[tauri::command]
-pub async fn probe_purity() -> Result<probe::verdict::PanelVerdict> {
-    let info = probe::ip::ip_info().await?;
-    Ok(probe::verdict::evaluate(&info))
-}
-
-#[tauri::command]
 pub async fn probe_dns(app: tauri::AppHandle) -> Result<probe::dns::DnsReport> {
     // 10 个探针域名各报一次，界面上那条进度条才动得起来。
     let rep = Reporter::new(app, events::TASK_DNS_PROBE, 10);

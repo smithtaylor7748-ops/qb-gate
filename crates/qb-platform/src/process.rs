@@ -44,6 +44,54 @@ pub fn hidden_tokio(cmd: tokio::process::Command) -> tokio::process::Command {
     cmd
 }
 
+// ---------------------------------------------------------------- 控制台输出的解码
+
+/// 子进程写进日志文件的一行字节 → 文字（2026-09-29，酒馆的控制台）。
+///
+/// 先按 UTF-8（node / npm 写的都是）；**不是合法的 UTF-8** 就按系统的 OEM 代码页解 ——
+/// `cmd` 自己的报错走它，中文 Windows 上是 GBK。实例：没装 Node.js 时 `Start.bat` 的第一句
+/// 「'npm' 不是内部或外部命令」，按 UTF-8 有损解码是一串替换字符，而这恰恰是最要紧的那一句。
+/// OEM 也解不出来才退回有损 UTF-8。
+pub fn decode_console_bytes(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => oem_decode(bytes).unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned()),
+    }
+}
+
+#[cfg(windows)]
+fn oem_decode(bytes: &[u8]) -> Option<String> {
+    use windows::Win32::Globalization::{
+        MultiByteToWideChar, CP_OEMCP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS,
+    };
+    if bytes.is_empty() || bytes.len() > i32::MAX as usize {
+        return None;
+    }
+    unsafe {
+        let n = MultiByteToWideChar(CP_OEMCP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0), bytes, None);
+        if n <= 0 {
+            return None;
+        }
+        let mut wide = vec![0u16; n as usize];
+        let m = MultiByteToWideChar(
+            CP_OEMCP,
+            MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0),
+            bytes,
+            Some(&mut wide),
+        );
+        if m <= 0 {
+            return None;
+        }
+        wide.truncate(m as usize);
+        Some(String::from_utf16_lossy(&wide))
+    }
+}
+
+#[cfg(not(windows))]
+fn oem_decode(_: &[u8]) -> Option<String> {
+    None
+}
+
 // ---------------------------------------------------------------- Job
 
 /// 一个 `KILL_ON_JOB_CLOSE` 的 Job 对象：最后一个句柄一关（包括面板进程退出），
@@ -214,6 +262,32 @@ mod tests {
         let s = ps_utf8("# 说明\nGet-NetAdapter");
         let last = s.lines().last().unwrap_or_default();
         assert_eq!(last, "Get-NetAdapter", "前奏把脚本吞进注释里了：{s}");
+    }
+
+    /// node / npm 写的 UTF-8 原样通过，一个字节都不换。
+    #[test]
+    fn utf8_console_output_passes_through_untouched() {
+        let line = "SillyTavern is listening on IPv4: 127.0.0.1:8000 · 酒馆";
+        assert_eq!(decode_console_bytes(line.as_bytes()), line);
+        assert_eq!(decode_console_bytes(b""), "");
+    }
+
+    /// cmd 自己的报错走 OEM 代码页（中文 Windows 上是 GBK）：不是合法 UTF-8 的那一行不许变成一串替换字符。
+    /// 具体解成什么取决于这台机器的代码页，这里只钉「ASCII 部分原样、不出现 U+FFFD」。
+    #[cfg(windows)]
+    #[test]
+    fn a_line_that_is_not_utf8_is_read_in_the_oem_code_page() {
+        // 系统设了「使用 Unicode UTF-8 提供全球语言支持」的机器上 OEM 代码页就是 UTF-8，
+        // 那时 cmd 写出来的本来就是 UTF-8，这条没什么可测的。
+        if unsafe { windows::Win32::Globalization::GetOEMCP() } == 65001 {
+            return;
+        }
+        // GBK 的「不是」。
+        let bytes = b"'npm' \xb2\xbb\xca\xc7";
+        let text = decode_console_bytes(bytes);
+        assert!(text.starts_with("'npm' "), "{text}");
+        assert!(!text.contains('\u{fffd}'), "{text}");
+        assert!(text.chars().count() > "'npm' ".len(), "{text}");
     }
 
     /// 前奏永远包在 try/catch 里：有控制台的场合它本来就多余，

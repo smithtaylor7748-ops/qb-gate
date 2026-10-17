@@ -73,8 +73,6 @@ pub struct AntigravityStatus {
     pub ide: ProductStatus,
     /// 归不归门禁管（设置里存的是反义的 `antigravity_outside_gate`）。
     pub under_gate: bool,
-    /// Hub 的「自动检查更新」。`None` = 读不到（还没起过）。
-    pub auto_update: Option<bool>,
     /// 语言服务器日志里见没见过「Auth succeeded」。`None` = 没日志。**零凭证信号。**
     pub login_seen: Option<bool>,
     /// Hub 登没登录（凭据管理器里那条 `gemini:antigravity` 在不在）。**不读内容。**
@@ -180,7 +178,6 @@ pub fn status() -> Result<AntigravityStatus> {
         hub: product_status(Product::Hub, &sessions),
         ide: product_status(Product::Ide, &sessions),
         under_gate: crate::settings::antigravity_under_gate(),
-        auto_update: antigravity::auto_update_enabled(&roaming),
         login_seen: antigravity::login_seen_in_log(&roaming),
         hub_logged_in: hub_logged_in(),
         hub_identity,
@@ -278,12 +275,6 @@ pub fn ide_attach(into: &str, from: &str) -> Result<()> {
     crate::audit::write(&format!(
         "反重力账户 {from} 并入 {into}（只改索引，没搬目录）"
     ));
-    Ok(())
-}
-
-pub fn ide_rename(id: &str, label: &str) -> Result<()> {
-    account::rename(&account::root(), id, label)?;
-    crate::audit::write(&format!("反重力账户 {id} 改名为「{label}」"));
     Ok(())
 }
 
@@ -453,16 +444,6 @@ pub async fn close(product: Product, gate: &GateState) -> Result<usize> {
         let _ = crate::plugins::antigravity_ui::stop();
     }
     crate::workspace::close_antigravity_for_launch(product, gate, |_| {}).await
-}
-
-pub fn set_auto_update(enabled: bool) -> Result<()> {
-    let roaming = dirs::config_dir().unwrap_or_default();
-    antigravity::set_auto_update(&roaming, enabled)?;
-    crate::audit::write(&format!(
-        "反重力 Hub 的自动检查更新已{}（app_storage.json 并入一个键，重启 Hub 生效）",
-        if enabled { "打开" } else { "关闭" }
-    ));
-    Ok(())
 }
 
 // ------------------------------------------------------------------ 账户的 Gemini CLI 那一半

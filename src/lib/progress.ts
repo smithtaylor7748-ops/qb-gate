@@ -14,7 +14,7 @@ import { R } from "./resources";
 import { put, useResource } from "./store";
 import type { StepId } from "./steps";
 
-const EMPTY: Progress = { steps: {}, completed_once: false };
+const EMPTY: Progress = { steps: {} };
 
 /** 当前进度。没读到就给一份空的，调用方不用处理 undefined。 */
 export function useProgress(): Progress {

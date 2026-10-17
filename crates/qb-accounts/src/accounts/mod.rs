@@ -22,12 +22,10 @@
 //!
 //! # v0.8.0：凭证只留一份
 //!
-//! 旧的迁移是**复制**：`ClaudeTavernBridge\claude-profile-*` 与
-//! `ClaudeIpGate\claude-profile-*` 各有一份相同的 refresh token，
-//! 酒馆桥接指着 NEW1、面板指着 main —— 两个账户同时「激活」，而且两边都用起来之后
-//! 一边刷新就可能让另一份作废。[`sync_bridge`] 把它们合成一份：
-//! 桥接那边换成指向面板槽位的联结点，原目录改名留底（不删），
-//! 桥接的「当前」跟面板统一。
+//! 酒馆桥接不再有自己的一份槽位：它的「当前」联结点跟面板指向**同一个**槽位目录，
+//! 切换时一起换（[`switch_in`]）。早先从旧脚本迁过来的机器上两边各有一份凭证，
+//! 那时有个 `sync_bridge` 把它们合成一份；账户页早就不在列槽位时跑它了，
+//! 2026-09-27 连同 `AccountsReport.sync` 一起删掉。
 //!
 //! # 四条政策边界
 //!
@@ -37,9 +35,6 @@
 //!   2. 切换只能由人在界面上手动触发，没有定时器、没有 watchdog、没有自动调用点
 //!   3. 任意时刻只有一个账户激活
 //!   4. 所有账户必须是使用者本人拥有的
-//!
-//! [`sync_bridge`] 会在列槽位时顺手跑，它**不切换账户**：只把桥接对齐到面板
-//! 已经选定的那一个（第 3 条），面板这边的「当前」一个字不动。
 //!
 //! # 判断上的两个坑，合并了就出事
 //!
@@ -345,51 +340,6 @@ fn junction_target(link: &Path) -> Option<PathBuf> {
     std::fs::read_link(link).ok()
 }
 
-/// 把一个即将被 `mklink /J` 占用的路径腾出来。
-///
-/// **不能用 `Path::exists()` 判断。** `exists()` 会跟着联结点走到目标去，
-/// 目标目录一旦被删掉（换过槽位名、手动清理过），悬空的联结点上
-/// `exists()` 就回 false —— 于是「先摘掉旧联结点」这一步被整个跳过，
-/// 紧接着 `mklink` 撞上「已存在同名文件」而失败。表现是**这个槽位从此
-/// 再也切不过去**，而报错文案完全看不出根因。用 `symlink_metadata`
-/// 才是在问路径本身，不是问它指向谁。
-///
-/// 三种情况必须分开，合并了就出事：
-///   * 重解析点 —— `remove_dir` 摘壳，不会碰到目标里的内容
-///   * 真目录 —— **改名备份，绝不递归删**，那底下是用户的凭证。
-///     备份名是 `<原名>-backup-<时间戳>`：面板那边会被当成一个槽位列出来，
-///     桌面端那边的副本仍在上锁清单里（`inventory` 扫 `Claude-*`）——
-///     换成别的名字，里面的 `claude.exe` 副本就成了没人锁的漏网之鱼
-///   * 什么都没有 —— 什么都不做
-///
-/// 改了名就回一句说明，由调用方写进日志 —— 单测会调到这里，不能自己写日志。
-fn clear_link(path: &Path) -> Result<Option<String>> {
-    let Ok(meta) = std::fs::symlink_metadata(path) else {
-        return Ok(None);
-    };
-    if is_reparse_point(&meta) {
-        std::fs::remove_dir(path)?;
-        Ok(None)
-    } else if meta.is_dir() {
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        let backup = path.with_file_name(format!("{name}-backup-{}", crate::config_io::id()));
-        std::fs::rename(path, &backup)?;
-        Ok(Some(format!(
-            "{} 是真目录不是联结点，已改名备份到 {}",
-            path.display(),
-            backup.display()
-        )))
-    } else {
-        // 同名的普通文件。这里本来就该是个目录，删掉是安全的。
-        std::fs::remove_file(path)?;
-        Ok(None)
-    }
-}
-
 /// 建一个目录联结点。
 #[cfg(windows)]
 fn make_junction(link: &Path, target: &Path) -> Result<()> {
@@ -426,17 +376,6 @@ fn make_junction(link: &Path, target: &Path) -> Result<()> {
 #[cfg(not(windows))]
 fn make_junction(_link: &Path, _target: &Path) -> Result<()> {
     Err(GateError::Other("仅 Windows 支持".into()))
-}
-
-/// 让 `link` 指向 `target`。原来是什么都先腾掉（见 [`clear_link`]）。
-fn repoint(link: &Path, target: &Path, notes: &mut Vec<String>) -> Result<()> {
-    if junction_target(link).is_some_and(|t| crate::install::inventory::same_path(&t, target)) {
-        return Ok(());
-    }
-    if let Some(n) = clear_link(link)? {
-        notes.push(n);
-    }
-    make_junction(link, target)
 }
 
 // ---------------------------------------------------------------- 读状态
@@ -965,237 +904,6 @@ fn log_outcome(label: &str, out: &SwitchOutcome) {
     ));
 }
 
-// ---------------------------------------------------------------- 合并
-
-#[derive(Debug, Clone, Default, Serialize, TS)]
-#[ts(export)]
-pub struct SyncReport {
-    /// 这次真的做了的事。空 = 本来就是一份，什么都没动。
-    pub done: Vec<String>,
-    /// 没做成的（通常是桥接正在用那个目录），下次列槽位时会再试。
-    pub failed: Vec<String>,
-}
-
-/// 凭证文件的修改时间。拿来判断哪一份是「活的」——
-/// 客户端刷新 token 时会重写这个文件，更新的那份才带着服务端还认的 refresh token。
-fn cred_mtime(dir: &Path) -> Option<std::time::SystemTime> {
-    std::fs::metadata(dir.join(".credentials.json"))
-        .and_then(|m| m.modified())
-        .ok()
-}
-
-/// 用 `src` 替换 `dst`，`dst` 原来那份改名成 `backup` 留底。
-///
-/// 三步都可能失败，每一步失败都要退回原状 —— 最坏的结局是槽位里一份凭证都没有：
-/// 先拷到临时文件（失败了什么都没动），再把旧的挪去留底，最后把临时文件放上去
-/// （失败了把留底挪回来）。
-fn replace_keeping_backup(src: &Path, dst: &Path, backup: &Path) -> std::io::Result<()> {
-    let tmp = dst.with_extension("merge-tmp");
-    std::fs::copy(src, &tmp)?;
-    if let Err(e) = std::fs::rename(dst, backup) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-    if let Err(e) = std::fs::rename(&tmp, dst) {
-        let _ = std::fs::rename(backup, dst);
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-    Ok(())
-}
-
-/// 把酒馆桥接那边的槽位跟面板合成一份。**幂等**，列槽位时每次都跑，
-/// 已经是一份的时候只做几次 `metadata` 就返回。
-///
-/// 对桥接数据目录下每个 `claude-profile-<标签>`：
-///
-/// * 已经是联结点 —— 不动；
-/// * 面板这边没有同名槽位 —— **整个搬过来**（同一个卷上是改名，不是复制），原处留联结点；
-/// * 两边都有 —— 以凭证更新的那一份为准：桥接那份更新，就把它的凭证拷给面板
-///   （面板那份改名留底）；然后桥接那边的目录改名成 `superseded-claude-profile-<标签>-<时间>`
-///   留底（**不删**），原处换成指向面板槽位的联结点。
-///
-/// 最后把桥接的「当前」（`ClaudeTavernBridge\claude-profile`）对齐到面板的当前槽位。
-/// 面板这边一个都没激活、而桥接原来指着某个标签时，反过来让面板接上它 ——
-/// 那是一个从旧脚本迁过来的使用者原本的状态，不是面板替他选的账户。
-///
-/// 旧的桥接是单账户布局（`claude-profile` 本身是个真目录）时，先把它认成一个槽位。
-pub fn sync_bridge(r: &AccountRoots) -> SyncReport {
-    let mut rep = SyncReport::default();
-    let Some(b) = &r.bridge else {
-        return rep;
-    };
-    if let Err(e) = std::fs::create_dir_all(&r.panel) {
-        rep.failed.push(format!("建不了面板的槽位目录：{e}"));
-        return rep;
-    }
-    let stamp = crate::config_io::id().to_string();
-    let bridge_link = b.join(LINK);
-
-    // 桥接原来认的「当前」。联结点指向的目录名优先，其次是旧脚本写的 active-profile.txt。
-    let bridge_active: Option<String> = junction_target(&bridge_link)
-        .and_then(|t| t.file_name().map(|n| n.to_string_lossy().to_string()))
-        .and_then(|n| n.strip_prefix(PREFIX).map(String::from))
-        .or_else(|| {
-            std::fs::read_to_string(b.join("active-profile.txt"))
-                .ok()
-                .map(|s| s.trim().to_string())
-        })
-        .filter(|l| validate_label(l).is_ok());
-
-    // ---- 0. 单账户老布局：claude-profile 本身是个真目录
-    if let Ok(m) = std::fs::symlink_metadata(&bridge_link) {
-        if !is_reparse_point(&m) && m.is_dir() {
-            let label = bridge_active
-                .clone()
-                .filter(|l| {
-                    std::fs::symlink_metadata(b.join(format!("{PREFIX}{l}"))).is_err()
-                        && std::fs::symlink_metadata(r.slot_dir(l)).is_err()
-                })
-                .unwrap_or_else(|| format!("tavern-{stamp}"));
-            match std::fs::rename(&bridge_link, b.join(format!("{PREFIX}{label}"))) {
-                Ok(()) => rep
-                    .done
-                    .push(format!("酒馆桥接的单账户目录已认作槽位 {label}")),
-                Err(e) => rep
-                    .failed
-                    .push(format!("酒馆桥接的 claude-profile 改不了名：{e}")),
-            }
-        }
-    }
-
-    // ---- 1. 逐个槽位合并
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(b)
-        .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).collect())
-        .unwrap_or_default();
-    entries.sort();
-    for bpath in entries {
-        let Some(label) = bpath
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .and_then(|n| n.strip_prefix(PREFIX).map(String::from))
-        else {
-            continue;
-        };
-        if validate_label(&label).is_err() {
-            continue;
-        }
-        let Ok(meta) = std::fs::symlink_metadata(&bpath) else {
-            continue;
-        };
-        if is_reparse_point(&meta) || !meta.is_dir() {
-            continue;
-        }
-        let ppath = r.slot_dir(&label);
-
-        if std::fs::symlink_metadata(&ppath).is_err() {
-            match std::fs::rename(&bpath, &ppath).and_then(|_| {
-                make_junction(&bpath, &ppath).map_err(|e| std::io::Error::other(e.to_string()))
-            }) {
-                Ok(()) => rep
-                    .done
-                    .push(format!("酒馆桥接的槽位 {label} 已搬进面板，原处留了联结点")),
-                Err(e) => rep.failed.push(format!(
-                    "槽位 {label} 搬不过来（多半是酒馆桥接正在用）：{e}"
-                )),
-            }
-            continue;
-        }
-
-        // 两边都有。桥接那份的凭证更新，说明搬家之后是它在刷新 —— 它才是活的那份。
-        if let (Some(bt), Some(pt)) = (cred_mtime(&bpath), cred_mtime(&ppath)) {
-            if bt > pt {
-                let pc = ppath.join(".credentials.json");
-                let keep = ppath.join(format!(".credentials.json.before-merge-{stamp}"));
-                if let Err(e) = replace_keeping_backup(&bpath.join(".credentials.json"), &pc, &keep)
-                {
-                    rep.failed.push(format!(
-                        "槽位 {label}：酒馆桥接那份凭证更新，但拷不过来：{e}"
-                    ));
-                    continue;
-                }
-                let bj = bpath.join(".claude.json");
-                if bj.is_file() {
-                    let _ = std::fs::copy(&bj, ppath.join(".claude.json"));
-                }
-                rep.done.push(format!(
-                    "槽位 {label}：酒馆桥接那份凭证更新，已用它替换面板那份（面板原来的留底为 {}）",
-                    keep.display()
-                ));
-            }
-        } else if cred_mtime(&bpath).is_some() && cred_mtime(&ppath).is_none() {
-            // 面板这份根本没登录过，桥接那份登录着 —— 同样以桥接为准。
-            if std::fs::copy(
-                bpath.join(".credentials.json"),
-                ppath.join(".credentials.json"),
-            )
-            .is_ok()
-            {
-                rep.done.push(format!(
-                    "槽位 {label}：面板这份没登录过，已拷入酒馆桥接那份的凭证"
-                ));
-            }
-        }
-
-        let superseded = b.join(format!("superseded-{PREFIX}{label}-{stamp}"));
-        match std::fs::rename(&bpath, &superseded).and_then(|_| {
-            make_junction(&bpath, &ppath).map_err(|e| std::io::Error::other(e.to_string()))
-        }) {
-            Ok(()) => rep.done.push(format!(
-                "槽位 {label} 合成了一份：酒馆桥接那边改指向面板的槽位，原目录留底为 {}",
-                superseded.display()
-            )),
-            Err(e) => rep.failed.push(format!(
-                "槽位 {label} 合并不了（多半是酒馆桥接正在用）：{e}"
-            )),
-        }
-    }
-
-    // ---- 2. 桥接的「当前」对齐面板
-    let mut notes = Vec::new();
-    match active_slot_dir(r) {
-        Some(active) => {
-            let was = junction_target(&bridge_link);
-            if !was
-                .as_deref()
-                .is_some_and(|w| crate::install::inventory::same_path(w, &active))
-            {
-                let label = active_label(r).unwrap_or_default();
-                match repoint(&bridge_link, &active, &mut notes) {
-                    Ok(()) => {
-                        let _ = std::fs::write(b.join("active-profile.txt"), &label);
-                        rep.done.push(match bridge_active.as_deref() {
-                            Some(old) if old != label => format!(
-                                "酒馆桥接原来用的是 {old}，已跟面板统一到 {label} —— 任意时刻只有一个账户激活"
-                            ),
-                            _ => format!("酒馆桥接已指向面板的当前槽位 {label}"),
-                        });
-                    }
-                    Err(e) => rep.failed.push(format!("酒馆桥接的当前槽位对不齐：{e}")),
-                }
-            }
-        }
-        None => {
-            // 面板一个都没激活：接上桥接原来的那个（它现在应当已经在面板这边了）。
-            if let Some(l) = bridge_active.filter(|l| r.slot_dir(l).is_dir()) {
-                let dir = r.slot_dir(&l);
-                let ok = repoint(&r.link(), &dir, &mut notes)
-                    .and_then(|_| repoint(&bridge_link, &dir, &mut notes));
-                match ok {
-                    Ok(()) => rep
-                        .done
-                        .push(format!("面板接上了酒馆桥接原来的当前槽位 {l}")),
-                    Err(e) => rep
-                        .failed
-                        .push(format!("接不上酒馆桥接原来的当前槽位 {l}：{e}")),
-                }
-            }
-        }
-    }
-    rep.done.extend(notes);
-    rep
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1703,142 +1411,6 @@ mod tests {
         assert!(create_slot(&m.roots, "work").is_err(), "重名要报错");
         assert!(create_slot(&m.roots, "a:b").is_err());
     }
-
-    #[cfg(windows)]
-    #[test]
-    fn duplicated_credentials_are_merged_into_one_copy() {
-        // 本机实况：两边各一份相同的凭证（复制时保留了修改时间，两份的 mtime 一模一样），
-        // 桥接指着 NEW1，面板指着 main。
-        let m = Machine::new("merge", true);
-        let b = m.bridge();
-        let t0 = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
-        for l in ["main", "NEW1"] {
-            let pd = m.slot(l, Some("same"));
-            let bd = b.join(format!("{PREFIX}{l}"));
-            std::fs::create_dir_all(&bd).unwrap();
-            std::fs::write(bd.join(".credentials.json"), "same").unwrap();
-            for d in [&pd, &bd] {
-                std::fs::File::options()
-                    .write(true)
-                    .open(d.join(".credentials.json"))
-                    .unwrap()
-                    .set_modified(t0)
-                    .unwrap();
-            }
-        }
-        make_junction(&b.join(LINK), &b.join(format!("{PREFIX}NEW1"))).unwrap();
-        switch_in(&m.roots, "main", DesktopMode::Keep).unwrap();
-        // switch_in 顺手把桥接也对齐了；还原成「桥接指着 NEW1」的原状再测 sync。
-        make_junction_force(&b.join(LINK), &b.join(format!("{PREFIX}NEW1")));
-
-        let rep = sync_bridge(&m.roots);
-        assert!(rep.failed.is_empty(), "{:?}", rep.failed);
-        for l in ["main", "NEW1"] {
-            // 桥接那边成了指向面板槽位的联结点。
-            assert!(
-                points_at(&b.join(format!("{PREFIX}{l}")), &m.roots.slot_dir(l)),
-                "{l}"
-            );
-        }
-        // 桥接的当前跟面板统一。
-        assert!(points_at(&b.join(LINK), &m.roots.slot_dir("main")));
-        assert!(
-            rep.done
-                .iter()
-                .any(|d| d.contains("NEW1") && d.contains("main")),
-            "{:?}",
-            rep.done
-        );
-        // 原目录留底，不删。
-        let kept = std::fs::read_dir(&b)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with("superseded-"))
-            .count();
-        assert_eq!(kept, 2);
-        // 两份一样新：面板那份原样留着，不该有「用桥接替换」这回事。
-        assert!(
-            !rep.done.iter().any(|d| d.contains("替换")),
-            "{:?}",
-            rep.done
-        );
-        assert!(!m
-            .roots
-            .slot_dir("main")
-            .read_dir()
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .any(|e| e.file_name().to_string_lossy().contains("before-merge")));
-
-        // 幂等：再跑一次什么都不做。
-        let again = sync_bridge(&m.roots);
-        assert!(
-            again.done.is_empty() && again.failed.is_empty(),
-            "{again:?}"
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn the_fresher_credential_wins_the_merge() {
-        let m = Machine::new("fresher", true);
-        let b = m.bridge();
-        let p = m.slot("main", Some("old"));
-        let bd = b.join(format!("{PREFIX}main"));
-        std::fs::create_dir_all(&bd).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(1100));
-        std::fs::write(bd.join(".credentials.json"), "new").unwrap();
-
-        let rep = sync_bridge(&m.roots);
-        assert!(rep.failed.is_empty(), "{:?}", rep.failed);
-        assert_eq!(
-            std::fs::read_to_string(p.join(".credentials.json")).unwrap(),
-            "new"
-        );
-        // 面板原来那份留底。
-        let backups = std::fs::read_dir(&p)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with(".credentials.json.before-merge-")
-            })
-            .count();
-        assert_eq!(backups, 1);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn a_bridge_only_slot_is_moved_not_copied() {
-        let m = Machine::new("move", true);
-        let b = m.bridge();
-        let bd = b.join(format!("{PREFIX}solo"));
-        std::fs::create_dir_all(&bd).unwrap();
-        std::fs::write(bd.join(".credentials.json"), "x").unwrap();
-        std::fs::write(b.join("active-profile.txt"), "solo").unwrap();
-
-        let rep = sync_bridge(&m.roots);
-        assert!(rep.failed.is_empty(), "{:?}", rep.failed);
-        assert!(m.roots.slot_dir("solo").join(".credentials.json").is_file());
-        assert!(points_at(&bd, &m.roots.slot_dir("solo")), "原处要留联结点");
-        // 面板原来一个都没激活：接上桥接原来的当前槽位。
-        assert_eq!(active_label(&m.roots).as_deref(), Some("solo"));
-    }
-
-    #[test]
-    fn no_bridge_means_nothing_to_sync() {
-        let m = Machine::new("nobridge", false);
-        let rep = sync_bridge(&m.roots);
-        assert!(rep.done.is_empty() && rep.failed.is_empty());
-    }
-
-    /// 测试专用：不管原来是什么，强行让 link 指向 target。
-    #[cfg(windows)]
-    fn make_junction_force(link: &Path, target: &Path) {
-        let _ = clear_link(link);
-        make_junction(link, target).unwrap();
-    }
 }
 
 /// 账户页要的一整份现状。
@@ -1861,7 +1433,6 @@ pub struct AccountsReport {
     pub caveat: String,
     /// 套餐是怎么读出来的 —— 界面上要如实说明，不能让人以为是查了接口。
     pub plan_caveat: String,
-    pub sync: SyncReport,
     pub desktop: DesktopState,
     /// 本机有酒馆桥接的数据目录 —— 有的话切换会一起切它。
     pub bridge_present: bool,
@@ -1869,8 +1440,8 @@ pub struct AccountsReport {
     pub slots_error: Option<String>,
 }
 
-/// 列一次账户现状。`sync` 由调用方决定要不要先跑一轮合并。
-pub fn report(roots: &AccountRoots, sync: SyncReport) -> AccountsReport {
+/// 列一次账户现状。
+pub fn report(roots: &AccountRoots) -> AccountsReport {
     let (slots, slots_error) = match slots_checked(roots) {
         Ok(s) => (s, None),
         Err(e) => (Vec::new(), Some(e.to_string())),
@@ -1879,7 +1450,6 @@ pub fn report(roots: &AccountRoots, sync: SyncReport) -> AccountsReport {
         slots,
         caveat: EXPIRY_CAVEAT.into(),
         plan_caveat: PLAN_CAVEAT.into(),
-        sync,
         desktop: desktop_state(roots),
         bridge_present: roots.bridge.is_some(),
         slots_error,

@@ -366,6 +366,18 @@ pub fn node_exe() -> Option<PathBuf> {
     None
 }
 
+/// `node --version` 的输出（`v24.14.1`）。起一次进程；起不来或者没输出就是 `None`。
+///
+/// 给托管 SillyTavern 判断 Node 够不够新（它的 `package.json` 写着 `engines.node`）。
+pub fn node_version(node: &Path) -> Option<String> {
+    let out = crate::process::hidden_std(std::process::Command::new(node))
+        .arg("--version")
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && s.starts_with('v')).then_some(s)
+}
+
 /// Gemini CLI 装没装（给软件页）。版本读**包目录**的 `package.json`，不起进程。
 ///
 /// 版本原来是从入口往上数两层取的（`dist\index.js` → `dist` → 包目录）。入口一旦不在

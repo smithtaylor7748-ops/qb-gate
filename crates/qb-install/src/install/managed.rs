@@ -515,9 +515,17 @@ pub fn parse_codex_release(json: &str, asset: &str) -> Result<Release> {
 /// 那样单独给那一个客户端加根证书，不要给整个 workspace 开
 /// `rustls-tls-native-roots`（坑 7.52）。
 pub fn http() -> Result<reqwest::Client> {
+    http_with(reqwest::redirect::Policy::default())
+}
+
+/// 同 [`http`]，只是跳转怎么跟由调用方定（2026-09-29，托管 SillyTavern）：
+/// 取「最新版」要**不跟**跳转、自己读 `Location`；下载只许跳到认得的几个域名。
+/// 超时与 User-Agent 仍只在这一处写。
+pub fn http_with(redirect: reqwest::redirect::Policy) -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(20))
         .user_agent(concat!("QB Gate/", env!("CARGO_PKG_VERSION")))
+        .redirect(redirect)
         .build()
         .map_err(|e| GateError::Other(format!("建不了网络客户端：{e}")))
 }
@@ -575,10 +583,24 @@ pub async fn download(
     rep: &dyn ProgressSink,
     step: u32,
 ) -> Result<String> {
+    download_with(&http()?, url, dest, size_hint, None, rep, step).await
+}
+
+/// 同 [`download`]，客户端由调用方给（跳转规矩不同），并且可以设**大小上限**：
+/// 声明的长度或者实际收到的超过 `max` 就停、删掉半截文件。
+/// 不知道总长的下载（GitHub 的源码包不带 `Content-Length`）每 5 MB 报一次收到多少。
+pub async fn download_with(
+    c: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+    size_hint: Option<u64>,
+    max: Option<u64>,
+    rep: &dyn ProgressSink,
+    step: u32,
+) -> Result<String> {
     use sha2::{Digest, Sha256};
     use std::io::Write;
 
-    let c = http()?;
     let mut resp = c
         .get(url)
         .send()
@@ -586,10 +608,20 @@ pub async fn download(
         .and_then(|r| r.error_for_status())
         .map_err(|e| GateError::Other(format!("下载 {url} 失败：{e}")))?;
     let total = resp.content_length().or(size_hint);
+    if let (Some(t), Some(m)) = (total, max) {
+        if t > m {
+            return Err(GateError::Other(format!(
+                "要下载的文件有 {} MB，超过上限 {} MB，没有下载",
+                t >> 20,
+                m >> 20
+            )));
+        }
+    }
     let mut file = std::fs::File::create(dest)?;
     let mut hasher = Sha256::new();
     let mut got: u64 = 0;
     let mut last_pct: i64 = -1;
+    let mut last_mb: u64 = 0;
     loop {
         let chunk = tokio::time::timeout(std::time::Duration::from_secs(60), resp.chunk())
             .await
@@ -599,6 +631,14 @@ pub async fn download(
         file.write_all(&chunk)?;
         hasher.update(&chunk);
         got += chunk.len() as u64;
+        if let Some(m) = max.filter(|m| got > *m) {
+            drop(file);
+            let _ = std::fs::remove_file(dest);
+            return Err(GateError::Other(format!(
+                "下载超过上限 {} MB 还没结束，已停止并删掉半截文件",
+                m >> 20
+            )));
+        }
         if let Some(t) = total.filter(|t| *t > 0) {
             let pct = (got * 100 / t) as i64;
             if pct >= last_pct + 5 {
@@ -608,6 +648,9 @@ pub async fn download(
                     &format!("下载中 {pct}%（{} / {} MB）", got >> 20, t >> 20),
                 );
             }
+        } else if got >> 20 >= last_mb + 5 {
+            last_mb = got >> 20;
+            rep.phase(step, &format!("下载中，已收到 {last_mb} MB"));
         }
     }
     file.flush()?;

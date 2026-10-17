@@ -163,7 +163,7 @@ pub async fn align_on_start() -> Result<Vec<String>> {
     if let Some(tz) = &plan.set_timezone {
         // `apply_timezone` 收的是 IANA 名，自己再映射一次。
         let zone = facts.target_zone.clone().unwrap_or_default();
-        match crate::sysenv::apply_timezone(&zone, false) {
+        match crate::sysenv::apply_timezone(&zone) {
             Ok(_) => log.push(format!("系统时区已切到 {tz}。")),
             // 切时区要管理员权限，拿不到就是拿不到 —— 如实说，别静默。
             Err(e) => log.push(format!("系统时区没切成：{e}")),

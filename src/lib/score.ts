@@ -20,11 +20,10 @@
  *    算成满分则更糟 —— 那是在替一个没做过的检测打包票。
  *    未检测的项**从分子分母里一起去掉**，并在界面上明说少了几项。
  *
- * 2. **纯净度取人工判定，不取 `probe_purity`。**
- *    `verdict.rs` 把 `native` 写死成 `Unknown`（公开接口就是没这个字段），
- *    所以 `PanelVerdict.passed` 结构上永远是 `false`。真值在
- *    `progress.steps['purity']` 里 —— 那是用户自己去 IPQS / ippure 核对后
- *    记下的结论。
+ * 2. **纯净度取人工判定。** 面板自判不了：「原生 IP」那一项公开接口不给，
+ *    原来那条自判命令（`probe_purity`）结构上永远判不过，2026-09-27 删了。
+ *    真值在 `progress.steps['purity']` 里 —— 那是用户自己去 IPQS / ippure
+ *    核对后记下的结论。
  */
 
 import type {

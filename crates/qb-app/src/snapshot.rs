@@ -21,6 +21,10 @@ fn tracked_files() -> Vec<(&'static str, PathBuf)> {
 /// 运行期也再没人读（唯一读它的是 `repository::migrate()`，而那有
 /// `legacy-v1` 哨兵挡着、恢复快照也清不掉那个哨兵，所以永不重跑）。
 /// 继续备份它只会让一份冻结的 DPAPI 密文在每个快照目录里再复制一遍。
+///
+/// **`profiles.json` 也不在了**（2026-09-27）：统一档案连同 `qb_app::profile` 一起删了，
+/// 运行期没人读写它，理由同上（唯一读它的也是 `repository::migrate()`）。老快照里带着它
+/// 不要紧 —— 恢复只认这张表里的名字，表外的文件跳过。
 fn tracked_for(account: Option<&str>) -> Vec<(&'static str, PathBuf)> {
     let home = dirs::home_dir().unwrap_or_default();
     let state = crate::paths::state_dir();
@@ -35,7 +39,6 @@ fn tracked_for(account: Option<&str>) -> Vec<(&'static str, PathBuf)> {
         ("allowlist.txt", state.join("allowlist.txt")),
         ("settings.json", state.join("settings.json")),
         ("progress.json", state.join("progress.json")),
-        ("profiles.json", state.join("profiles.json")),
     ]
 }
 

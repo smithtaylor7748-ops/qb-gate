@@ -1,3 +1,11 @@
+//! 工作区：服务商 · 凭证 · 会话，官方目录迁移，以及扩展中心。
+//!
+//! ⛔ 2026-09-27 删掉了一批只有「服务商与环境」旧页在用、或者从来没有界面的命令：
+//! 环境的保存 / 预览 / 应用 / 回滚、中转配置导出导入、引用检查与删除、草稿诊断
+//! （`diagnostic_run` / `diagnostic_history`）、启动方案、放弃会话记录、取消操作。
+//! 中转站页的站点与 Key 走 `provider_save` / `credential_save`，环境由本机路由自己建
+//! （`workspace::router_environment`）。加回来之前先想清楚界面上谁调它 ——
+//! `tests/architecture.rs` 的 `every_registered_command_is_called_by_the_frontend` 盯着。
 use crate::{domain::*, error::Result, events, operations, workspace};
 
 #[tauri::command]
@@ -22,44 +30,6 @@ pub async fn credential_save(
     let c = workspace::credential_save(credential, &action, key.as_deref())?;
     operations::changed(&events::ui(&app), "credential", &c.id);
     Ok(c)
-}
-#[tauri::command]
-pub async fn environment_save(
-    app: tauri::AppHandle,
-    environment: Environment,
-) -> Result<Environment> {
-    let _guard = operations::exclusive_soon().await?;
-    let e = workspace::environment_save(environment)?;
-    operations::changed(&events::ui(&app), "environment", &e.id);
-    Ok(e)
-}
-#[tauri::command]
-pub fn environment_preview(id: String) -> Result<Vec<workspace::ConfigPreview>> {
-    workspace::preview(&id)
-}
-#[tauri::command]
-pub async fn environment_apply(
-    app: tauri::AppHandle,
-    id: String,
-    fingerprint: String,
-) -> Result<Environment> {
-    let _guard = operations::exclusive_soon().await?;
-    let mut task = operations::Run::start(events::sink(&app), "应用配置", &id)?;
-    task.phase("校验并提交配置", 40)?;
-    let result = task.finish(workspace::apply_reviewed(&id, Some(&fingerprint)));
-    operations::changed(&events::ui(&app), "environment", &id);
-    result
-}
-#[tauri::command]
-pub fn workspace_references(kind: String, id: String) -> Result<Vec<String>> {
-    workspace::references(&kind, &id)
-}
-#[tauri::command]
-pub async fn workspace_remove(app: tauri::AppHandle, kind: String, id: String) -> Result<()> {
-    let _guard = operations::exclusive_soon().await?;
-    workspace::remove(&kind, &id)?;
-    operations::changed(&events::ui(&app), &kind, &id);
-    Ok(())
 }
 #[tauri::command]
 pub async fn session_launch(
@@ -103,43 +73,6 @@ pub async fn session_stop(
     result
 }
 
-/// 放弃一条核验不了的会话记录。见 `sessions::forget` —— 只删记录，不动进程。
-#[tauri::command]
-pub async fn session_forget(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, crate::AppState>,
-    id: String,
-) -> Result<()> {
-    let _guard = operations::exclusive_soon().await?;
-    let result = (|| {
-        crate::sessions::forget(&id)?;
-        crate::gate::release_holder(&state.gate, &id)
-    })();
-    operations::changed(&events::ui(&app), "session", &id);
-    result
-}
-
-#[tauri::command]
-pub async fn diagnostic_run(
-    app: tauri::AppHandle,
-    request: crate::diagnostics::ProbeRequest,
-) -> Result<ProbeReport> {
-    let mut task = operations::Run::start(
-        events::sink(&app),
-        "中转诊断",
-        request.environment_id.as_deref().unwrap_or("draft"),
-    )?;
-    task.phase("验证连接与协议", 20)?;
-    let cancel = task.cancellable()?;
-    let result = operations::interruptible(cancel, crate::diagnostics::run(request)).await;
-    let result = task.finish(result);
-    operations::changed(&events::ui(&app), "diagnostic", "");
-    result
-}
-#[tauri::command]
-pub fn diagnostic_history() -> Result<Vec<ProbeReport>> {
-    crate::repository::Repository::open()?.list("diagnostics")
-}
 #[tauri::command]
 pub fn extension_catalog() -> Result<Vec<ExtensionManifest>> {
     crate::extensions::catalog()
@@ -201,28 +134,8 @@ pub async fn extension_check(
 ) -> Result<crate::extensions::McpCheck> {
     let mut task =
         operations::Run::start(events::sink(&app), "MCP 连接测试", &request.extension_id)?;
-    let cancel = task.cancellable()?;
-    let result = operations::interruptible(cancel, crate::extensions::check_mcp(request)).await;
+    let result = crate::extensions::check_mcp(request).await;
     task.finish(result)
-}
-
-#[tauri::command]
-pub async fn environment_rollback(app: tauri::AppHandle, id: String) -> Result<Environment> {
-    let _guard = operations::exclusive_soon().await?;
-    let e = workspace::rollback_environment(&id)?;
-    operations::changed(&events::ui(&app), "environment", &id);
-    Ok(e)
-}
-#[tauri::command]
-pub fn relay_export() -> Result<workspace::RelayExport> {
-    workspace::export_relays()
-}
-#[tauri::command]
-pub async fn relay_import(app: tauri::AppHandle, bundle: workspace::RelayExport) -> Result<usize> {
-    let _guard = operations::exclusive_soon().await?;
-    let n = workspace::import_relays(bundle)?;
-    operations::changed(&events::ui(&app), "environment", "");
-    Ok(n)
 }
 
 /// 切 Claude 账户的确认框报数用：跟 `app::clear_for_switch` 真去关的是**同一个范围**
@@ -272,34 +185,6 @@ pub async fn official_configuration_migrate(
     operations::changed(&events::ui(&app), "environment", "");
     Ok(result)
 }
-#[tauri::command]
-pub async fn launch_plan_save(app: tauri::AppHandle, plan: LaunchPlan) -> Result<LaunchPlan> {
-    let _guard = operations::exclusive_soon().await?;
-    let p = workspace::save_plan(plan)?;
-    operations::changed(&events::ui(&app), "plan", &p.id);
-    Ok(p)
-}
-#[tauri::command]
-pub async fn launch_plan_remove(app: tauri::AppHandle, id: String) -> Result<()> {
-    let _guard = operations::exclusive_soon().await?;
-    workspace::remove_plan(&id)?;
-    operations::changed(&events::ui(&app), "plan", &id);
-    Ok(())
-}
 
-#[tauri::command]
-pub async fn extension_connect_application(app: tauri::AppHandle) -> Result<ExtensionInstallation> {
-    let _guard = operations::exclusive_soon().await?;
-    let i = crate::extensions::connect_application()?;
-    operations::changed(&events::ui(&app), "installation", &i.id);
-    Ok(i)
-}
-
-/// 取消一个标记了可取消的操作。
-///
-/// 壳在这里、本体在 `operations::cancel`：平台层不挂 `#[tauri::command]`，
-/// 挂了它就跟 Tauri 绑死、搬不进 `qb-platform`。
-#[tauri::command]
-pub fn operation_cancel(id: String) -> Result<()> {
-    operations::cancel(&id)
-}
+// 原来这里有 `extension_connect_application`（扩展中心酒馆页那颗「接入已配置的本地安装」）。
+// 2026-09-29 酒馆变成面板的内置功能、从扩展中心撤掉，它跟着删了 —— 见 `extensions::RETIRED`。

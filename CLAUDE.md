@@ -131,11 +131,21 @@ cargo fmt --all -- --check
 cargo deny check
 ```
 
-**这两组就是 CI 跑的那一套**，别只跑前两条就以为绿了 —— `test:ui`（2026-09-25 是 163 个响应式/
-主题组合 + 17 个交互流程）和 `cargo deny`（advisories / bans / licenses / sources）
+**这两组就是 CI 跑的那一套**，别只跑前两条就以为绿了 —— `test:ui`（2026-09-27 是 151 个响应式/
+主题组合 + 18 个交互流程；撤掉 Claude 汉化那一页少了 12 个组合，清废弃页面多了一个「删掉的页面回不来」；
+2026-09-29 酒馆变成内置功能之后是 139 + 20：扩展中心酒馆页那条路由的 12 个组合没了，多了「三家设置按账户页分开」
+「软件页 SillyTavern 卡」两个流程；**同一天第二轮（酒馆前端重构）之后是 139 + 23，0.25.6 就是这个数**：多了版本分页、控制台、角色卡 / 世界书 / 扩展三个流程）
+和 `cargo deny`（advisories / bans / licenses / sources）
 各自抓过别处抓不到的东西。`cargo test --workspace` 的通过数**只许涨不许跌**
 （0.29.0 是 **1081**，0.30.0 是 **1106**，0.31.0 是 **1110**，0.32.0 是 **1154**，
-0.25.1 是 **1204**，0.25.2 是 **1268**，0.25.3 是 **1288**，0.25.4 是 **1334**，0.25.5 是 **1360**）。
+0.25.1 是 **1204**，0.25.2 是 **1268**，0.25.3 是 **1288**，0.25.4 是 **1334**，0.25.5 是 **1360**，
+0.25.6 是 **1396**（这一版攒了四轮：2026-09-27 撤 Claude 汉化之后是 1366，**清废弃页面之后是 1317**，
+2026-09-29 酒馆变成内置功能之后是 1342，同一天第二轮酒馆前端重构之后是 1396））。
+⚠ **1366 → 1317 是这条规矩唯一的例外，而且每一条都对得上**：删掉 53 条、新加 4 条，净跌 49。删掉的全是
+**被删掉的代码自己的测试** —— 旧中转站目录 `store.rs` 11、真实后端判定 `backend.rs` 7、纯净度自判 5、酒馆桥接旧槽位合并 4、
+统一档案 4、草稿诊断 3、Hub 自动更新 2、桌面旧启动脚本搬家 2、进度计数 2、取消操作 / 回滚配置 / 两个「已取消」错误分类 /
+测延迟 / 托盘旧菜单 id 各 1，外加 ts-rs 给 7 个被删的导出类型自动生成的 7 条；新加的 4 条是两条命令护栏、纯净度原文与门槛一致、
+老 `progress.json` 读得进来。**别拿这个当先例**：删功能时测试跟着走是对的，删测试来让某个还在的功能「过」永远是错的。
 
 ⛔ **跑完这十项不要接着出安装包** —— 先问「出包还是有别的需求」，见本文件开头那一节。
 
@@ -486,7 +496,8 @@ GPL 聚合而非衍生，商业档才不受影响。它接管的是**当前激�
 ### 酒馆的 GPT 桥接只驱动官方 CLI（0.25.0，使用者定的）
 
 使用者要 GPT 也能酒馆聊天，并且**并进插件商店里现有的酒馆插件、由面板自带桥接**
-（Claude 那条桥仍是他自己的 `bridge.py`，面板不分发）。代码在
+（Claude 那条桥仍是他自己的 `bridge.py`，面板不分发）。2026-09-29 起酒馆不在扩展中心了，是面板的内置功能
+（见下面「酒馆是内置功能」一节）；桥接这几条约束不变。代码在
 `crates/qb-app/src/gpt_bridge.rs`（127.0.0.1 上的 OpenAI 兼容端点，每个请求起一次
 `codex exec`）；插件侧 `plugins::sillytavern` 拆成「起 Claude 桥接」「起酒馆」两段，
 `plugin_start(backend)` 按后端选路，酒馆两条桥共用。
@@ -507,6 +518,11 @@ GPT 那条按 `LaunchTarget::Codex.gated()` 决定验不验 IP —— 移出门�
 政策线如实写：Anthropic 明文禁止第三方中转订阅凭证，OpenAI 对此**没有**公开明确条款 ——
 所以桥接只能长成「本机酒馆调本机 CLI」这个形状，DISCLAIMER 写明由使用者自行判断。
 
+⛔ **拼提示词时只把开头那段 system 提进「系统设定」**（`frame_with_prompt`，GPT / Gemini 共用；2026-09-26）。
+对话开始之后酒馆插进来的 system —— 作者注释、按深度注入的世界书、预设贴在最后的字数 / 格式要求 ——
+**留在它原来的位置**。原来是全部提到最前面：离回复最近的那条要求被挪到几千字之外，字数与格式就不灵了（坑 7.99）。
+使用者那份 `bridge.py` 一直是这么做的，别把这里改回「system 一律置顶」；单测钉着顺序。
+
 ⛔ **等酒馆就绪的窗口别再调小**（0.31.0）。SillyTavern 自带的 `Start.bat` **每次都先跑一遍
 `npm install`** 再 `node server.js`：本机实测（依赖全热）从起进程到 `GET /` 回 200 要 **47.2 秒**，
 冷启动更久。窗口曾经是 60 秒，超时走回滚**把这次起的酒馆杀掉** —— 于是每点一次「起 GPT 酒馆」
@@ -515,17 +531,40 @@ GPT 那条按 `LaunchTarget::Codex.gated()` 决定验不验 IP —— 移出门�
 进程活着就留着，如实说「可能还在装依赖，起来之后再点一次会直接复用」。
 健康检查一律 `.no_proxy()` —— reqwest 默认读 `HTTP_PROXY`，会把对 `127.0.0.1` 的探测送去代理。
 
-**三条桥的端口与模型全由面板管**（0.31.0，使用者定的）：入口是酒馆磁贴
-**右上角**那颗小按钮（`Tile` 的 `corner`，磁贴本身是 `<button>`，角标只能是兄弟节点）。
-「还缺什么」两处共用 `lib/tavernReady.ts` 的纯函数，各写一份迟早会互相矛盾。
+**三条桥的设置全由面板管，在软件页各自那张 CLI 卡的最下面**（0.31.0 起由面板管）。2026-09-29 使用者先要
+「将酒馆插件的设置页写入本项目的控制面板内，而不是用打开本地链接的形式，三种不同的厂商按账户页分开」—— 当天放进了三个账户页
+酒馆磁贴右上角的弹窗；同一天第三轮他说「错了错了，1弹窗太小，2这个应该在软件页面，软件页面的应该在这个官方账户弹窗页面」，
+于是对调，挂哪张卡是问他时选的「分别挂到各自的软件卡下」：Claude → Claude Code 卡、GPT → Codex CLI 卡、Gemini → Gemini CLI 卡，
+每张卡最下面一段「酒馆 · X 桥接设置」（`src/features/tavern/bridge/BridgeSection.tsx`），**只装这一家那条桥的全部设置**。
+「还缺什么」共用 `lib/tavernReady.ts` 的纯函数，各写一份迟早会互相矛盾；账户页的酒馆磁贴在「还没配好」时按 `tavernBodyMissing`
+分路 —— 缺酒馆本体（目录、启动脚本、Node.js）去软件页的 SillyTavern 卡，缺桥（bridge.py、CLI、槽位）去软件页这一家那一段
+（`/software?focus=bridge-<家>`，自动展开并滚过去）。
 
-⛔ **那个弹窗是一个组件，不是一段内联 JSX**（0.32.0）。
-0.31.0 它写在 `AntigravityBand.tsx` 里、靠那个文件的局部 state 驱动 ——
-于是**只有反重力页开得了它**，而 Claude / GPT 两页的酒馆磁贴上没有入口，
-可那两条桥的端口与模型恰恰也在这里改。现在它是
-`src/features/tavern/BridgeSettings.tsx`，**三个账户页的酒馆磁贴 + 插件详情页四处共用**。
-插件页里那三处重复的端口 / 模型输入框删了 —— 同一个字段两处各放一份，
-迟早出现一个没保存、另一个显示旧值的局面（坑 7.58 那种「同一块屏幕上两句矛盾的话」）。
+⛔ **账户页酒馆磁贴右上角那颗小按钮开的是「酒馆」弹窗 —— 酒馆本身的控制面板**（2026-09-29 第三轮）。
+三个账户页开的是**同一个**组件 `src/features/tavern/TavernPanel.tsx`（酒馆只有一份，`provider` 只决定底部那颗「这一家桥接设置」去哪）：
+`Modal size="full"`（几乎占满窗口、**高度固定**，切分页不跳 —— 使用者嫌原来那个「太小」），分页 概览 · 控制台 · 角色卡 · 世界书 · 扩展 ·
+备份与回收站（`card/` 下各一个组件，**只挂当前那一页**；关着的弹窗什么都不渲染、什么都不读），底部钉住「停止酒馆」（代价常驻：停的是
+整个酒馆和三条桥）与去软件页的「下载与版本」「这一家桥接设置」。角标（`Tile` 的 `corner`，磁贴本身是 `<button>`，角标只能是兄弟节点）
+的可访问名是「酒馆面板」—— 旁边那格磁贴自己叫「酒馆」，同名的两颗按钮读屏分不开。
+由来：0.31.0 那个角标开的是写在 `AntigravityBand.tsx` 里的一段内联 JSX（只有反重力页开得了）；0.32.0 抽成 `BridgeSettings.tsx`（桥接设置）；
+第三轮换成现在这个，`BridgeSettings.tsx` 删了。**「三家并排」（`provider="all"`）那种形态删了**，扩展中心的酒馆页也删了（见「酒馆是内置功能」一节）。
+
+⛔ **软件页那三段默认收起，展开了才挂正文**（`BridgeSection`；没用 `ui/Collapsible` —— 它把正文渲染成 `hidden`，等于每次进软件页都去探
+bridge.py、读消息监控、读额度，而人多半是来装软件的）。标题行里**不放 `.pill`**（`test:ui`「Pill 与版本行说同一件事」读整张卡的全部 `.pill`）。
+展开之后按 `provider` 分给 `bridge/ClaudeBridge.tsx`（bridge.py 自己那两个本机网页的全部内容，`bridge/claude/` 下四段）或 `bridge/CliBridge.tsx`
+（GPT / Gemini 那条内置桥的全部设置，差异全在 `bridge/cli/meta.ts` 那张表里，额度卡两家共用一份 `bridge/cli/Quota.tsx`）。
+名字与地址（`BRIDGE_TITLE` / `BRIDGE_CARD` / `bridgeHref`）在 `bridge/where.ts`：快速跳转、「酒馆」弹窗、三个账户页只引它，**不引 `BridgeSection`** ——
+后者会把整套桥接界面拖进首页那一包，而软件页是按需加载的。
+⛔ **桥接设置里不做分页**：`test:ui` 查「每一段只有自己那条桥的字段、别家的一项都不许出现」，分页会让那条检查只看得到当前那一页；
+长的那份（Claude）用钉在顶上的一排「跳到」（`bridge/SectionNav.tsx`）。
+两条别改回去：
+
+- **一家的字段只在一处。** 同一个字段两处各放一份，迟早出现一个没保存、另一个显示旧值的局面
+  （坑 7.58 那种「同一块屏幕上两句矛盾的话」）。三家共用的酒馆端口在软件页的 SillyTavern 卡上，「酒馆」弹窗底部只读地提一句；
+  `test:ui` 查「酒馆」弹窗的六页里一个桥接字段都没有。
+- ⛔ **同一份 `TavernConfig` 有三处在改**（软件页 SillyTavern 卡：路径与酒馆端口；Claude Code 卡那一段：bridge.py 目录与端口；
+  Codex CLI / Gemini CLI 卡那一段：各自的端口、模型、提示词……）：**每处只存自己那几个字段**（`features/tavern/saveTavernConfig.ts`
+  先读最新一份再覆盖本处的键）。拿整份旧草稿去存会把别处刚改好的值盖回去，而且没有任何报错。
 
 ### Claude 桥的设置页与监控页收进面板（0.32.0，使用者定的）
 
@@ -536,7 +575,13 @@ HTML 页（`GET /settings` 与 `GET /monitor`），由他本机那份 SillyTaver
 那个 iframe 指着没人听的 5001，弹 `ERR_CONNECTION_REFUSED`（坑 7.66）。
 
 现在面板直接调它的 HTTP 接口（`plugins::tavern_bridge_api`），七个旋钮与调用日志
-做成原生界面（`src/plugins/ClaudeBridgePanel.tsx`）。三条硬要求：
+做成原生界面。2026-09-29 起它们在「官方账户 · Claude」酒馆磁贴右上角那个弹窗里
+（`src/features/tavern/bridge/ClaudeBridge.tsx` + `bridge/claude/`；原来的 `src/plugins/ClaudeBridgePanel.tsx` 连同扩展中心的酒馆页删了），
+并补齐了原来只有那两个网页才有的两样：**SDK 会话**（`/health` 的 `sdk_sessions.sessions`）与**逐条「展开输入 / 输出」**
+（`/api/telemetry?id=`，只在点展开时读，里面是使用者的聊天内容，只在本机显示、不落盘不进日志）。
+使用者本机那份酒馆扩展 `claude-tavern-bridge`（**仓库外、面板不分发**）同一天改成只报三条桥在不在、指路到面板，
+不再嵌 `127.0.0.1:5001/settings`、没有「独立打开」（按聊天分会话的请求头照旧；改前备份
+`*.before-panel-settings-20260929.bak`）。别人机器上的那份扩展（或者根本没有）不受影响 —— 面板不依赖它。四条硬要求：
 
 1. **一律 `.no_proxy()`。** 坑 7.64 就是 `tavern_healthy` 漏了这一句。
 2. **鉴权只在真要发请求那一刻读 `bridge-token.txt`**，不进 status / 日志 / 事件。
@@ -544,13 +589,120 @@ HTML 页（`GET /settings` 与 `GET /monitor`），由他本机那份 SillyTaver
    甚至根本没有。连不上 / 404 / 字段缺，一律如实说「这份桥接没有这个接口」或
    「Claude 桥接没在跑」，**不许把空表显示成 0 条**（§7.17）。
    错误文案要**能照着做**：连不上 = 去起酒馆，404 = 升级 bridge.py，401 = 密钥对不上。
+4. ⛔ **字段名照 `bridge.py` 的源码和录下来的真实回复写，不照想象写**（2026-09-26，坑 7.98）。
+   0.32.0 的调用日志解析器读的是一套从没存在过的字段名（`at` / `input` / `output` / `elapsed_ms` / `countable`），
+   单测拿同一套想象出来的形状喂、全绿，而消息监控每一行都是「输入 0 · 输出 0」。现在单测里放的是对着本机
+   正在跑的 2.4.0 录下来的一页（`started_at`、`input_chars` / `output_chars`、`usage`、`cache`、`prefix.state`、
+   `duration_ms`；命中率是**百分数**）。读不到的数是 `None`，界面显示「—」。
+
+「系统提示词模式」那一格**只写事实，不写推荐**（2026-09-26）。抓过 `claude -p` 按桥的原样参数真正发出去的请求：
+`append` 时使用者的规则排在 Claude Code 自带的编程助手提示词后面（那段里有「回答要简短」「结尾一两句总结」），
+`replace` 只发身份一行 + 使用者的规则。原来写「append（推荐）」，对写长篇的角色扮演是反的；选哪个是使用者的事。
+抓包做法（导入 `bridge.py` 自己的拼命令函数、空的临时配置目录、假 API Key、只绑回环的假端点）记在 DESIGN-NOTES。
 
 模型那 13 个、effort 那 5 档是按 `bridge.py` 2.4.0 抄的**快照**，而
 **桥当前用着的那个值永远算合法选项**（`with_current`）—— 不然上游加一个新模型时，
 一打开设置就把人家的模型悄悄换成列表里的第一个。保存被拒就把桥回的原话照搬到界面上。
 
 ⚠ 改这七项里任何一项，`bridge.py` 都会 `cancel_active(retire=True)` 退掉当前那条 SDK 会话 ——
-代价常驻在保存按钮旁边，不放悬停提示。路径 / 资产 / 备份仍在插件详情页。
+代价常驻在保存按钮旁边，不放悬停提示。bridge.py 的目录与端口在同一个弹窗的「连接」一段；
+酒馆本体的路径 / 资产 / 备份在软件页的 SillyTavern 卡。
+
+## ⛔ 酒馆是内置功能：软件页托管 SillyTavern（2026-09-29，使用者定的）
+
+使用者：「扩展页的酒馆删掉好了，酒馆变成本项目的功能之一，然后软件页也增加下载酒馆的功能，然后被本项目接管」。
+问他时定了：三家共用的酒馆本体放软件页一张卡；托管做到**安装 + 检查新版 / 更新 + 卸载**；他现有那份
+（git 克隆装的 1.18.0，在另一块盘上）**装托管版时把数据复制过来、原来那份不动**；没有 Node.js 时确认框里给
+「先用 winget 装 Node.js LTS」的勾选。
+
+| 在哪 | 管什么 |
+|---|---|
+| 三个账户页的酒馆磁贴 | 起酒馆（按厂商起那条桥）；右上角是这一家的桥接设置（上面那两节） |
+| 软件页「SillyTavern（酒馆）」卡（`src/features/tavern/SillyTavernCard.tsx` 外壳 + `card/` 下的分页） | 2026-09-29 第二轮起分页：概览（运行、三家去哪起、依赖、位置与端口）· 版本（下载安装 / 检查新版 / 更新 / 指定版本 / 换回 / 卸载，确认框在 `card/SetupDialogs.tsx`）· 控制台 · 角色卡 · 世界书 · 扩展 · 备份与回收站（资产盘点、备份恢复、回收站） |
+| `crates/qb-install/src/install/sillytavern.rs` | **位置表只有这一张**：托管目录 `<托管根>\sillytavern`、同级的 `.previous` / `.staging` / `.work`、标记 `.qb-managed.json` |
+| `crates/qb-install/src/install/sillytavern_setup.rs` | 取最新版、下载、解压、导入、npm、就位与回滚、卸载（纯函数都有单测） |
+| 扩展中心 | **没有酒馆了**。目录条目删了；老库里那行 `application-sillytavern`（原来「接入已配置的本地安装」写的）行不删、不列出来（`extensions::RETIRED`），「接入」那条命令连同按钮删了 |
+
+九条要守住的，动任何一条同步改 [DISCLAIMER.md](DISCLAIMER.md) 第 1 / 6 / 7 / 8 节与 [ATTRIBUTION.md](ATTRIBUTION.md) 的 SillyTavern 那一节：
+
+1. **只从 SillyTavern 官方 GitHub 取。** 最新版读 `github.com/SillyTavern/SillyTavern/releases/latest` 的 302 跳转
+   （**不走 `api.github.com`**，同「应用自己的更新」的理由）；那个标签的 `package.json` 从 `raw.githubusercontent.com` 读
+   （看它要多新的 Node）；源码包是 `archive/refs/tags/<tag>.zip`。只收 https，跳转只许落在
+   `github.com` / `codeload.github.com` / `raw.githubusercontent.com`（`allowed_url`），源码包有大小上限。
+2. **不打包、不镜像、不改包**：安装包里没有它的一个文件；解出来的原样放着（`Start.bat` 保持官方原样）。
+   ⛔ **官方不公布源码包的哈希**：算出来的 SHA-256 **只记日志与标记**，不作判据（同反重力直下那条）；别编一个「预期哈希」常量。
+3. **解压用 `managed::unzip`（.NET 的 `ZipFile`，它拒绝解到目标目录外面）**，不为此加 Rust 依赖；顶层必须正好一个目录、
+   而且 `looks_like_sillytavern`（有 `server.js`、`package.json` 的 name 含 sillytavern），不然不装。
+4. ⛔ **更新与卸载只碰带标记的那份**（`sillytavern::is_managed`）。使用者自己的酒馆（git 克隆的、解压的）面板只起、只停、只读；
+   目标目录里有东西又没有标记就不往里装（`check_target`）。
+5. **导入、迁移只复制，不搬**（`import_plan` + `copy_plan`）：`data\`、`config.yaml`、`plugins\` 与全局扩展里使用者自己加的
+   （上游占位 `.gitkeep` / `plugins\package.json` 不算）；**绝不整份拷 `public\`、不拷 `node_modules`**（照它自己的 `Update-Instructions.txt`）；
+   跳过符号链接与目录联结。导入的源比要装的新版还新就不导（`check_import_version`）。
+6. **更新只留一份旧版**：删掉更早的 `.previous` → 现役改名 `.previous` → 暂存改名现役（`swap_in`），第二步失败把现役放回去；
+   两边都放不回去时两份都留着、如实说在哪。卸载**先复制备份到 `state_dir\tavern-uninstall\<时间>`、核过备份再删**。
+7. **Node.js 只在使用者勾了之后才用 winget 装**（`OpenJS.NodeJS.LTS`，参数照反重力 A 路）；够不够按它 `package.json` 的
+   `engines.node` 判（`node_satisfies` 只认 `>=` / `^` / `N.x`，认不出就不下判断）。确认框里 Node 不够又没勾就不让点。
+8. ⛔ **npm 不经 shell**：`node <node 目录>\node_modules\npm\bin\npm-cli.js install --prefix <暂存> …`（参数照它自带 `Start.bat` 那一行），
+   PATH 前置 node 所在目录 —— 刚用 winget 装上的 Node 不在面板进程那份旧 PATH 里。起酒馆时同样把 node 目录前置到 PATH（`node_path_env`）。
+   只有 node 旁边找不到 npm-cli.js（Scoop 之类的垫片）才退回 `cmd /c npm`（见「别把 shell 当启动目标」）。
+9. **装 / 更新 / 卸载 / 导入之前先停面板起的那份酒馆（连同三条桥）**，命令层拿 `operations::exclusive()`，停酒馆的
+   `stop_tavern_all` **不拿锁**；酒馆端口上有一份不是面板起的在跑（`foreign_tavern_running`）就不更新、不卸载、不导入 ——
+   面板不替使用者关别人起的进程。代价（下载、几分钟 npm、会先停酒馆、卸载前备份到哪）常驻在确认框里。
+
+⚠ **换托管根不搬它**（`managed::migrate_files` 只搬 `App::ALL`）；酒馆配置记的是绝对路径，老位置照旧能用。
+⚠ **联网只在点了之后**：打开确认框、点「检查新版本」才问 GitHub，没有定时器。
+GitHub 改了跳转或源码包布局、界面开始报「认不出」时先跑（会联网，只读，不跑 npm、不写配置）：
+
+```powershell
+cargo run -p qb-install --example sillytavern-release -- latest
+```
+
+```powershell
+cargo run -p qb-install --example sillytavern-release -- download --to <一个空的短路径目录>
+```
+
+### 酒馆卡的控制台、角色卡 / 世界书 / 扩展、回收站、指定版本与换回（2026-09-29 第二轮，使用者选的）
+
+使用者：「这次我们来优化他，前端请你进行完全重构，并且搜索 GitHub 上的开源项目，优化他的功能」；位置不变（「直接做这个基础上改」），
+问他时选了三组：实时控制台日志、角色卡 / 世界书 / 扩展管理、版本回退与指定版本。对照过的项目与许可在 ATTRIBUTION（MIT 的只借思路，
+AGPL 的只看思路，SillyTavern 源码只核事实）。代码：`plugins::tavern_console`、`plugins::tavern_library`、`sillytavern_setup::{releases, release,
+check_switch, swap_with_previous}`、`qb-platform::sessions::OwnedProgram::launch_logged`、`qb-platform::process::decode_console_bytes`。
+
+**控制台**（动了同步改 DISCLAIMER 的本机数据那一节）：
+
+1. **只收面板自己起的那份酒馆**，输出**追加**进 `state_dir\plugins\sillytavern-console.log`（stdin 接 `NUL`）。⛔ 继承只放这两个句柄
+   （`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`）—— `bInheritHandles` 一开、不收窄，面板里任何可继承的句柄都跟进子进程。
+2. **每次起新的一份就轮换**（`.prev.log` 只留一份）；「这是哪一次」认旁边 `run` 文件里的随机 id，⛔ **不拿文件的创建时间**
+   （Windows 的文件隧道会让 15 秒内删了又建的同名文件继承旧的创建时间）。
+3. ⛔ **bridge.py 的输出不收**：它是使用者自己的脚本，打印什么面板说不准，收进来可能就是把它的密钥落了盘（「鉴权只在真要发请求那一刻读」那条）。
+4. **报错提示只认真的会打印的句子**（`tavern_console::RULES`，照 SillyTavern 1.19.0 源码与 npm / cmd 的实际输出写），认不出不猜。
+   「Warning: failed to start server on IPv6」**不算错**：面板默认关本机 IPv6，那一句每次都有。
+5. 界面按偏移量读本机文件，不联网；分页不在前台不读。报错文案里指的是「软件页 SillyTavern 卡的「控制台」」，别再写「它自己的窗口」—— 那个窗口不存在。
+
+**角色卡 / 世界书 / 扩展**：
+
+1. ⛔ **删除 = 挪进面板的回收站**（`state_dir\tavern-trash`，`tavern_library::Trash`），能原样放回（原处有同名的不覆盖）；只有「清空」真删。
+   别照 al01cn 那样直接删 —— 角色卡连着几百段聊天。
+2. **只认酒馆自己的格式、导入不覆盖**：卡 = 带 `ccv3` / `chara` 文本块的 PNG，世界书 = 顶层有 `entries` 的 JSON；同名加 ` (2)`。
+   别家格式说清楚为什么没进来、请在酒馆里导入 —— 面板不替它转格式。**不改卡与世界书的内容**（`tavern_assets` 那条没变）。
+3. ⛔ **扩展的 git 操作不拿 `operations::exclusive()`**：克隆可能要几分钟，看门狗每 5 秒要那把锁巡检。它们之间用 `tavern_library::git_lock` 排队。
+   只在点了之后跑、不经 shell、`GIT_TERMINAL_PROMPT=0`；更新只 `pull --ff-only`（本地改过就不动）；远端地址里的账号密码抹掉再显示（`redact_url`）；
+   从地址安装只收 https、克隆下来没有 `manifest.json` 就删掉那份刚克隆的。
+4. **不写酒馆的 `settings.json`**：扩展「停用」只读出来显示。
+5. 导入、挪进回收站对「你自己的那份」酒馆也能做（数据是使用者的、动作是他点的、删除先进回收站）；**程序文件**的更新、换版本、卸载仍只对面板装的那份（上面第 4 条）。
+
+**指定版本与换回**：
+
+1. **版本清单读发布页的 Atom**（`RELEASES_FEED`，`github.com` 本站、`allowed_url` 放行），⛔ 不走 `api.github.com`；HTML 更新说明转纯文本，不保留任何标签。
+2. `check_switch`：没指定版本只许往新了换；**指定了可以往旧了换（降级）**，同一版不换。降级的代价（新版可能改过数据格式）常驻在确认框里。
+3. **「换回」是整份目录对调**（`swap_with_previous`），不下载、不跑 npm；两种数据选法都不删任何一份数据（带现在的数据过去时，
+   留着那份自己的数据先备份到 `state_dir\tavern-rollback\<时间>`）。任何一步改名失败都尽力放回原样，放不回去就两份都留着、照实说在哪。
+
+GitHub 的发布页 Atom 改了形状、界面报「一个版本都认不出来」时先跑（只读、联网一次）：
+
+```powershell
+cargo run -p qb-install --example sillytavern-release -- releases
+```
 
 ### 反重力（Google Antigravity，0.26.0，使用者定的）
 
@@ -752,71 +904,90 @@ HTML 页（`GET /settings` 与 `GET /monitor`），由他本机那份 SillyTaver
 
 ---
 
-## ⛔ 一键汉化：Claude 只接上游安全模式，GPT 只写它自己的设置项（2026-09-25，使用者定的）
+## ⛔ 一键汉化：只剩 GPT（写它自己的设置项）；Claude 汉化撤掉了（2026-09-27，使用者定的）
 
-使用者：「gpt 虽然有中文，但默认不是，加一个一键汉化按钮自动设置中文」「claude 没有中文，以插件的形式装载
-javaht/claude-desktop-zh-cn，确保这个开源项目后续的更新可以匹配，插件商店可以同步这个开源项目的更新」
-「确保以上两个改动符合两个厂商的使用政策」。问他时定了四件：**Claude 只接上游安全模式 + 事后核验**；
-**打开汉化弹窗或插件页时查上游新版**（没有定时器、启动时不查）；**Claude 自己更新后按钮变「需重新应用」，
-点一下补上**（不改启动流程）；**GPT 改全部槽位 + 默认那一份 + 以后新建的槽位**。
+2026-09-25 使用者要了两件：「gpt 虽然有中文，但默认不是，加一个一键汉化按钮自动设置中文」「claude 没有中文，以插件的
+形式装载 javaht/claude-desktop-zh-cn……还有一键汉化按钮」，并要「确保以上两个改动符合两个厂商的使用政策」。
+09-27 使用者报「claude 和 GPT 的汉化功能没有正常生效」，查下来是两回事（证据链在 DESIGN-NOTES「0.25.6（2026-09-27）」）：
+**Claude 在官方账户下必然不生效**，问他时选了**撤掉**；GPT 的做法没错，是面板从来没真正写进去过（审计日志与操作记录里
+一次「GPT 界面设为中文」都没有），而 09-26 那版修法写出来的文件 GPT 仍然读不了 —— 修好了。
 
 ### GPT（`usecase::codex_locale`）
 
 1. **只写 `CODEX_HOME\config.toml` 里 `[desktop]` 表的 `localeOverride`** —— 跟在 GPT「设置 → General →
-   Language」里选中文写下的是同一行（toml_edit 增量改，别的一个字不动；`auth.json` 零接触）。
+   Language」里选中文写下的是同一行（toml_edit 增量改；`auth.json` 零接触）。
    ⛔ 不改 ChatGPT.exe / app.asar、不注入翻译 —— OpenAI 使用条款不许 modify 它的服务。
-2. ⛔ **不碰 `enable_i18n`。** OpenAI 用这个远端开关按账户 / 机器放中文界面（openai/codex#19239）：
-   没放开时设了照样是英文。界面如实说，不提供任何绕过（条款：不得 circumvent restrictions）。
-3. 面板起的 GPT 开着 → 先 `close_ours`（确认框写明任务会停）→ 写 → 命令层按当前槽位重开（那里挂看门狗）；
-   别处起的那份不关（2026-09-23 那条），它开着时默认那一份这次不改、如实说；出站插件在跑时拒绝（它整份接管
-   `config.toml`）。**中转环境不碰**（受环境哈希追踪，改了会被判「外部修改」）。
-4. 「恢复默认」**只删值为 `zh-CN` 的那一行** —— 使用者在 GPT 里自己选的别的语言不是我们的残留。
-5. `settings.gpt_ui_zh` 记的是使用者的选择（新槽位按它预写，`codex_accounts::create`），**只经
+2. ⛔ **不碰 `enable_i18n`。** OpenAI 用这个远端开关按账户 / 机器放中文界面（openai/codex#19239；26.924 的渲染层
+   默认按「关」处理）：没放开时设了照样是英文。界面如实说，不提供任何绕过（条款：不得 circumvent restrictions）。
+3. ⛔ **GPT 读 `config.toml` 用的是严格解析器：同一张表重复定义一次，整份桌面设置它一项都读不到**（26.924 的
+   `app.asar`：「Failed to load desktop settings from config.toml」→ 当成空表）。GPT 自己会写出这种文件（09-26 本机
+   slot 3：重复的 `[desktop]` 与 `[mcp_servers.node_repl.env]`，CRLF）。所以「设为中文」先过 `repair_duplicate_tables`
+   （使用者 09-27 选的「修好再写」）—— 这是「`config.toml` 别的一项都不动」的**唯一例外**：
+   - 只修「同一个表头出现多次」：让 toml_edit 指出重复的是哪一行（认表头的是解析器，多行数组里的 `[` 骗不到它），
+     后面那段的键并进第一段，同键同值丢掉，**同键不同值就不修**；
+   - 修完用严格解析器再读一遍，「并之前每个值在哪」对「并之后每个值在哪」逐项比，一项对不上就不修；
+   - 纯 CRLF 的文件修完还是 CRLF；「恢复默认」时一份写坏了、里面又没有面板设的中文的文件**不去修**（不是面板弄坏的）；
+   - ⛔ 别退回 09-26 那种「只合并 `[desktop]`」的文本补丁：别的表还重复着，写出来 GPT 照样读不了，面板却报成功（坑 7.101）。
+4. **成功还是失败按数说**（`CodexLocaleOutcome` 的 `changed` / `already` / `repaired` / `skipped` / `default_busy`，
+   前端 `gptZhResult`），⛔ 别再对中文日志行跑正则。写完每份用严格解析器回读，值不对就算「没改成」。
+5. GPT 只在启动时读这一项（运行中改它不重读；在它自己的设置里选中文才是立刻生效 —— 界面上把这条路告诉使用者）。
+   所以**先空跑一遍算出哪几份真要写**，一份都不用写就谁都不关；要写的那几个槽位里面板起的那份先关
+   （`close_official`，确认框写明任务会停）→ 写 → 没有外部窗口时命令层按当前槽位重开（那里挂看门狗）。
+   别处起的那份不关（2026-09-23 那条），它开着时默认那一份这次不改、如实说，也不自动重开面板槽位（免得旁边凭空多一个
+   窗口）；出站插件在跑时拒绝（它整份接管 `config.toml`）。**中转环境不碰**（受环境哈希追踪，改了会被判「外部修改」）。
+6. 「恢复默认」**只删值为 `zh-CN` 的那一行** —— 使用者在 GPT 里自己选的别的语言不是我们的残留。
+7. `settings.gpt_ui_zh` 记的是使用者的选择（新槽位按它预写，`codex_accounts::create` → `seed`），**只经
    `codex_locale_set` 改**：`settings_save` 原样保留旧值。
 
-### Claude（插件 `claude-desktop-zh-cn`：`plugins::claude_zh` + `usecase::claude_zh_ops`）
+诊断（只读：不写任何文件、不关不起 GPT、不联网，配置里别的内容一个字都不打印）：
 
-上游 Windows 脚本五个动作、两种补丁模式，面板只碰两个动作、一种模式：
+```powershell
+cargo run -p qb-app --example codex-locale -- check
+```
 
-| 上游 | 面板 |
-| --- | --- |
-| `install zh-CN -PatchMode safe`：放三份翻译 JSON、改 `ion-dist\assets\v1\*.js` 的语言白名单与硬编码英文、写 `config.json` 的 `locale`、最后自己重启 Claude | ✅ 一键汉化 |
-| `uninstall`：从它自己的 `.zh-cn-backups` 还原、删翻译、locale 设回 `en-US` | ✅ 恢复英文 |
-| `-PatchMode official`：改 `app.asar` 并**重写 `Claude.exe` 内嵌的完整性哈希**（签名变 `HashMismatch`） | ⛔ 绕过防篡改 = Anthropic 消费者条款 §3「bypassing … protective measures」 |
-| `frida-launch` / `scripts\experimental\`：Frida 在内存里改掉「带调试开关就拒绝启动」的闸门 | ⛔ 同上；这些文件一个字节都不落盘（`zipread` 先列目录、挑好再解） |
-| `disable-updates` / `sync-skills` | ⛔ 跟汉化无关 |
+逐份说 GPT 读不读得了、能不能修、设的是什么、GPT 上次运行时用的是什么（`computer-use\config.json` 的 `locale`；
+26.924 里它是「`localeOverride` 有就用它，没有就用系统界面语言」）。设的是 zh-CN、上次运行也是 zh-CN，界面仍是英文
+= OpenAI 没放开 `enable_i18n`，面板管不了。
 
-八条要守住的：
+### ⛔ Claude 汉化撤掉了，别加回来（`plugins::claude_zh` + `usecase::claude_zh_ops` 只剩清理残留）
 
-1. **参数只由 `claude_zh::script_args` 拼，动作只有 `Action::{Install, Uninstall}`。** 测试
-   `the_arguments_can_never_ask_for_anything_but_safe_mode` 钉着拼不出 official / frida / 关更新 / 同步 skills
-   （改坏它会红，2026-09-25 实测过）。`-ExecutionPolicy RemoteSigned`，不用 `Bypass`（少一个杀软信号）。
-2. **不信上游，只信文件**：每次应用 / 还原前后算 `app.asar`、`claude.exe` 的 SHA-256 并读 Authenticode
-   **状态**（`signature::status_of`；`signer_of` 只给主体，`HashMismatch` 的文件照样报 Anthropic）。
-   变了 → 立刻跑上游 `uninstall`、那一版进黑名单、界面标红。基线读不出来就**不做**。
-3. ⛔ **反重力那套 CDP 注入不许搬到 Claude 上**：Claude 桌面端见到 `--remote-debugging-port` 就拒绝启动
-   （2.9939.2 字符串核过），给它加调试开关或绕过那道检查就是上表第四行。
-4. **门禁先判**（`gate::judge_now`，只判不解锁）：上游脚本最后会用 `app-*\claude.exe` 自己重启 Claude，
-   那份按规矩不能加 Deny；IP 不合格就不做。它起来之后面板等它出现、按证据关掉（`close_desktop_for_relay`）
-   —— 那份不归面板管、没有租约。重开走现有的「Claude 桌面端」磁贴与强制确认框。
-5. **查新版只在打开汉化弹窗 / 插件页、或点「检查更新」时**，只问 `github.com/<上游>/releases/latest` 的跳转，
-   ⛔ **不走 `api.github.com`**（同 self_update）。上游脚本自己问 GitHub 的那一下用
-   `CLAUDE_ZH_SKIP_UPDATE_CHECK=1` 关掉。上游仓库地址是常量，不收使用者输入。
-6. **每一版下载后重核**：`LICENSE` 仍是 MIT 原文、脚本 `param(...)` 里仍有 `safe` / `install` / `uninstall` /
-   `zh-CN`（`script_caps`，能力探测不假设）；不对就不用、留着旧版。下载「只下、只核」在内存里做
-   （`fetch_verified`），核完才落盘（`install_package`，暂存目录整份写完再换名）。
-7. **只做位置表认得的 Squirrel 装法**（`inventory::desktop_app_dir`，`detect::claude_desktop` 也用它）。
-   MSIX 要 UAC 接管 WindowsApps 的 ACL，面板不做、如实说。
-8. **别的账户资料也设 zh-CN**：上游只改 `%APPDATA%\Claude`（联结点指着的当前账户）。面板把其余
-   `Claude-<名字>\config.json` 的 `locale` 也设上 —— `set_top_level_string` **只改那一个值的字节**
-   （里面有 `oauth:tokenCache`，整份解析再序列化会重排键、等于把令牌读出来写回去）。改之前的值按
-   **真实目录**（联结点解开）记在 `state_dir\claude-zh\state.json`，恢复英文时写回。
+0.25.4–0.25.5 接过 `javaht/claude-desktop-zh-cn`（MIT）Windows 脚本的安全模式。09-25 本机跑了两次、两次「核验通过」，
+界面照旧是英文，使用者看二十来秒就点了「恢复英文」。根因（2.9939.2 的 `app.asar` 与 `ion-dist` 里核过）：
 
-诊断：`cargo run -p qb-app --example claude-zh -- check`（只查、只下、只核，**不跑上游脚本、不写本机任何东西**）。
-上游改了归档结构、换了许可证、改了脚本参数时先跑它。
+- **官方账户（claude.ai 登录）下，Claude 主窗口是在线的 `https://claude.ai`**：官方模式的 `getMainWindowUrl()` 返回它，
+  只有第三方 API 模式才是本地的 `app://localhost`（上游安全模式改的就是那份 `ion-dist`）；
+- 在线页每次加载都调 `window.electronIntl.requestLocaleChange(它自己的语言)`，claude.ai 没有中文 → 推回 en-US →
+  主进程 `qit()` 切回英文，**还把 `config.json` 的 `locale` 改写掉** —— 连菜单都保不住；
+- 能锁住语言的只有上游另外两种模式（改 `app.asar` 并重写 `Claude.exe` 的完整性哈希 / Frida 内存补丁），
+  都是绕过 Claude 的防篡改（Anthropic 消费者条款 §3「bypassing … protective measures」），面板永远不做。
+  ⛔ 反重力那套 CDP 注入同样不许搬过来：Claude 见到 `--remote-debugging-port` 就拒绝启动，绕过那道检查就是上面那一类。
 
-⚠ **调试时别在真机上点 Claude 的「一键汉化」/「恢复英文」**：它会关掉 Claude 桌面端，Code 页里跑着的会话
-也在里面 —— 你正在那里面干活的话就是把自己关了（同「启动 桌面端」那条）。
+问使用者时给了「保留、改成如实说明」与「撤掉」两条，**他选了撤掉**：账户页入口、扩展中心条目、下载 / 查新版 / 应用全删，
+只留一次性的**「清理汉化残留」**（Claude 启动卡标题栏，只在有残留时出现，清完就没了）。五条要守住的：
+
+1. ⛔ **清理不跑上游的卸载脚本。** 上游 `uninstall` 第三步「移除 zh-CN 语言注册」按字符串删 `"zh-CN"`，把 Claude
+   **原版**文件里本来就有的那几处也删了：本机 09-25 之后 3 个前端文件跟上游备份对不上，而备份跟旧版 2.9939.1 里同名
+   （文件名带内容哈希）的文件逐字一致 —— 备份才是原版。清理直接用上游自己留下的备份（`resources\.zh-cn-backups`
+   里最早那一套，上游卸载的第一步用的也是它）逐字换回去，再删中文文件与备份（`claude_zh::clean_app`）。
+   不起 PowerShell、不联网、不重启 Claude。
+2. **只写备份里列着的前端文件（`ion-dist\` 下，`restorable`）**；备份里有 `app.asar` / `claude.exe` 之类（用过上游改程序文件
+   的模式），或者根本没有备份，就不自动还原，如实让使用者到官网重装。任何一步对不上就停在那一步，**备份留着**（它是唯一的原版）。
+3. **认残留要有证据**（`counts_as_leftover`）：有上游的备份目录，或者面板记过「汉化了」；只有中文文件、两样都没有的不算 ——
+   以后 Claude 自带中文也长那样。`Claude-3p` 只在里面只有一个只写了 `locale` 的 `config.json`（上游建的，`is_upstream_3p`）
+   时才删，删之前再核一次形状，只删那一个文件、再删**空**目录。
+4. **要往 Claude 现在用的那一版里写才关 Claude**（`needs_close`，确认框写明）；只删备份、写回资料语言这类不关 ——
+   使用者多半正在 Claude 的 Code 页里干活。关不干净就停（`close_desktop_for_relay`）。
+5. 资料的界面语言写回汉化之前的值（`claude-zh\state.json` 的 `previous_locales`，按真实目录记），没记就 en-US；
+   `set_top_level_string` **只改那一个值的字节**（`config.json` 里有 `oauth:tokenCache`）。有一份没写回，那份记录就先留着。
+
+诊断（只读：一样都不删、不关 Claude、不联网）：
+
+```powershell
+cargo run -p qb-app --example claude-zh -- leftovers
+```
+
+⚠ **调试时别在真机上点「清理汉化残留」**：要换回原版文件时它会关掉 Claude 桌面端，Code 页里跑着的会话也在里面 ——
+你正在那里面干活的话就是把自己关了（同「启动 桌面端」那条）。
 
 ---
 
@@ -1071,7 +1242,7 @@ Electron 里注 JS、扫 Chrome 的 Cookies、改防火墙与代理），删不�
 Rust 侧是一个 Cargo workspace：`qb-foundation`(L0) → `qb-contract` → `qb-platform`
 → 九个领域 crate → `qb-app`(编排) → `src-tauri`(命令/托盘/装配)。
 
-`src-tauri/tests/architecture.rs` 里有十二条测试钉着它，其中五条是硬规矩：
+`src-tauri/tests/architecture.rs` 里有十四条测试，其中五条是分层的硬规矩（另有两条管 IPC 命令，见下一节）：
 
 | 测试                                                          | 它不许发生什么                                                                                                                                                                                                                  |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1087,6 +1258,30 @@ Rust 侧是一个 Cargo workspace：`qb-foundation`(L0) → `qb-contract` → `q
 
 新增 crate 要在 `LAYERS` 里给它一个层号 —— 忘了加会直接报错，这是故意的：
 「这个 crate 在哪一层」是必须当场想清楚的事，不是可以以后再说的事。
+
+---
+
+## ⛔ 注册的命令两边都得有人：删界面入口就连命令一起删（2026-09-27）
+
+使用者发现「旧前端页面和旧后端代码依旧保留在项目内，使用者在某些情况下可以进入这些废弃页面」。
+查下来：「服务商与环境」旧页、新手引导、中转环境模板早就不在侧栏里，可快速跳转、扩展页、设置页还在往那些地址上送人；
+后端挂着三十多条界面一次都不调的命令，其中三条只回一句「旧版混合配置入口已停用」。没有任何东西拦着这类残留长出来。
+现在有两道，各守一半，**别删**：
+
+| 测试 | 它不许发生什么 |
+|---|---|
+| `architecture.rs` 的 `every_registered_command_is_called_by_the_frontend` | `generate_handler!` 里有一条命令，前端业务代码里一次都没提到它的名字；或者前端 `call("x")` 调了一条没注册的命令（写错一个字母 = 「点了没反应」） |
+| `src/lib/apiUsage.test.ts` | `api` / `workspaceApi` / `stationApi` / `codexApi` / `antigravityApi` 里有一个成员没人调 —— 上一条只证明「名字被提到过」，包装本身就提到了 |
+
+所以：
+
+- **删一个界面入口，就顺着调用链把包装、命令、只有它在用的后端函数一起删。** 只删按钮、留着命令，下一个人会以为它还有人用；
+  只留页面、删掉入口，它照样从快速跳转、深链接、别的页面的链接走得进去（2026-09-27 就是这么发现的）。
+- **只在 Rust 里调的函数别挂 `#[tauri::command]`**（例：`station_refresh_prices` 由启动任务直接调，不是命令）。
+- 按名字动态调的包装（GPT 页的 `codexApi[ask.action]`）写进 `apiUsage.test.ts` 的豁免，并写明调用点 —— 那条测试会核对调用点还在。
+- 页面删了，路由也删：认不出的地址由 `Shell` 末尾那条 `*` 送回首页，**别再为旧地址单独开一条重定向**（桌面应用没有书签）。
+- ⛔ 删功能**不动数据形状**：数据库表、`DataBackup`、`repository::migrate()` 照旧能读老数据；类型上删字段靠 serde 忽略未知字段，
+  必要时加一条「老数据照样读得进来」的测试（`progress.rs` 那条就是）。
 
 ---
 
@@ -1139,7 +1334,11 @@ dark 轮拍成「浅色」。`docs/screenshots/*-dark.png` 从来就不是深色
 组件样式里直接写 hex，它照样拦不住。所以：
 
 - 别的样式表、组件、新页面**一律引用变量**，不另起色值；
-- 中转站草图（V24）用的是**合并前的旧配色**，照草图做页面时**不要从草图里抄 hex**。
+- 中转站草图（V24）用的是**合并前的旧配色**，照草图做页面时**不要从草图里抄 hex**；
+- ⛔ **引用的变量名得真的存在**（2026-09-29）。没定义的 `var(--x)` 浏览器不报错，那条声明在计算时作废：
+  桥接弹窗里 `--line` / `--line-soft` / `--surface-1` / `--text-1` 四个名字从没定义过，边框与底色一直没显示，
+  账户页酒馆磁贴右上角那颗设置按钮是透明的；侧栏子项悬停用的 `--hover` 也是。`src/styles/tokens.test.ts` 现在查
+  「所有样式里的 `var(--x)` 都在某处定义过」—— 红了先去 `tokens.css` 找对的名字，别往里补一个同义的新令牌。
 
 ---
 

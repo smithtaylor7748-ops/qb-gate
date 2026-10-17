@@ -1,10 +1,10 @@
-//! 引导进度。
+//! 五项检查的进度记录（`progress.json`）。
 //!
-//! 侧栏那五个菜单**本身就是引导步骤**，没有单独的「新手引导」页。
-//! 导航是自由的 —— 随便点，只标状态；每行右侧标风险度。
+//! 最早侧栏那五个菜单本身就是引导步骤，后来有过一页「新手引导」；两样都没了
+//! （新手引导 2026-09-27 删掉）。现在真正被界面读的只有 `purity` —— 综合评分里
+//! 纯净度那一项的人工判定；其余几步照常记、照常读得进来。
 //!
-//! 强制跳过必须留痕：总览上要能看见「你跳过了 N 项」，
-//! 否则跳过就成了静默的坑，出问题时没人记得哪一步没做。
+//! 五个 id 是使用者机器上已有数据的 key，**不许改名**（见 [`STEP_IDS`]）。
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -26,7 +26,7 @@ pub enum StepState {
     Skipped,
 }
 
-/// 风险度，渲染在侧栏每一行的右侧。
+/// 风险度。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "lowercase")]
@@ -43,7 +43,7 @@ pub enum Risk {
 pub struct StepRecord {
     pub state: StepState,
     pub risk: Risk,
-    /// 一句话说明，直接显示在侧栏 tooltip 与总览里。
+    /// 一句话说明（审计留痕用，界面上纯净度那一项会显示它）。
     pub detail: String,
     pub updated_at: Option<String>,
 }
@@ -59,38 +59,13 @@ impl Default for StepRecord {
     }
 }
 
+/// 原来还有 `completed_once`（「引导走完一轮，侧栏序号换成状态灯」）和两个计数
+/// （「你跳过了 N 项」）。侧栏向导与新手引导都没了，没人读，2026-09-27 删掉；
+/// 老文件里的 `completed_once` 读的时候直接忽略。
 #[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
 #[ts(export)]
 pub struct Progress {
     pub steps: BTreeMap<String, StepRecord>,
-    /// 引导是否已整体走完一轮。走完后侧栏序号换成状态灯。
-    #[serde(default)]
-    pub completed_once: bool,
-}
-
-impl Progress {
-    pub fn skipped_count(&self) -> usize {
-        self.steps
-            .values()
-            .filter(|r| r.state == StepState::Skipped)
-            .count()
-    }
-
-    pub fn done_count(&self) -> usize {
-        self.steps
-            .values()
-            .filter(|r| matches!(r.state, StepState::Passed | StepState::Skipped))
-            .count()
-    }
-
-    /// 所有步骤都不再是 Pending 时，算走完一轮。
-    pub fn recompute_completion(&mut self) {
-        self.completed_once = STEP_IDS.iter().all(|id| {
-            self.steps
-                .get(*id)
-                .is_some_and(|r| r.state != StepState::Pending)
-        });
-    }
 }
 
 fn path() -> PathBuf {
@@ -128,7 +103,6 @@ pub fn set(id: &str, state: StepState, risk: Risk, detail: impl Into<String>) ->
             updated_at: Some(chrono::Local::now().format("%Y-%m-%d %H:%M").to_string()),
         },
     );
-    p.recompute_completion();
     save(&p);
     p
 }
@@ -137,35 +111,12 @@ pub fn set(id: &str, state: StepState, risk: Risk, detail: impl Into<String>) ->
 mod tests {
     use super::*;
 
-    fn rec(state: StepState) -> StepRecord {
-        StepRecord {
-            state,
-            risk: Risk::Low,
-            detail: String::new(),
-            updated_at: None,
-        }
-    }
-
+    /// 老版本写的 `progress.json` 还带着 `completed_once`，照样读得进来、步骤一条不丢。
     #[test]
-    fn skipped_is_counted_separately_from_pending() {
-        let mut p = Progress::default();
-        p.steps.insert("purity".into(), rec(StepState::Skipped));
-        p.steps.insert("dns".into(), rec(StepState::Pending));
-        assert_eq!(p.skipped_count(), 1);
-        assert_eq!(p.done_count(), 1);
-    }
-
-    #[test]
-    fn completion_needs_every_step_touched() {
-        let mut p = Progress::default();
-        for id in STEP_IDS.iter().take(4) {
-            p.steps.insert((*id).into(), rec(StepState::Passed));
-        }
-        p.recompute_completion();
-        assert!(!p.completed_once, "还剩一步没碰就不算走完");
-
-        p.steps.insert(STEP_IDS[4].into(), rec(StepState::Skipped));
-        p.recompute_completion();
-        assert!(p.completed_once, "跳过也算「碰过」");
+    fn an_old_file_with_completed_once_still_loads() {
+        let old = r#"{"steps":{"purity":{"state":"passed","risk":"low","detail":"x","updated_at":null}},"completed_once":true}"#;
+        let p: Progress = serde_json::from_str(old).unwrap();
+        assert_eq!(p.steps["purity"].state, StepState::Passed);
+        assert!(STEP_IDS.contains(&"purity"));
     }
 }

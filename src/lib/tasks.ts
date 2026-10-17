@@ -43,7 +43,8 @@ export type TaskName =
   | "install-antigravity"
   | "install-gemini-cli"
   | "self-update"
-  | "claude-zh";
+  | "claude-zh"
+  | "install-sillytavern";
 
 export interface TaskState {
   running: boolean;
@@ -69,11 +70,7 @@ const IDLE: TaskState = {
 const states = new Map<string, TaskState>();
 const listeners = new Map<string, Set<() => void>>();
 
-let snapshot: Array<[string, TaskState]> = [];
-const allListeners = new Set<() => void>();
 function notify(task: string): void {
-  snapshot = Array.from(states);
-  allListeners.forEach((fn) => fn());
   listeners.get(task)?.forEach((l) => l());
 }
 
@@ -158,18 +155,4 @@ export function useTask(task: TaskName): TaskState {
 
   const getSnapshot = useCallback(() => stateOf(task), [task]);
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-}
-
-export function useAllTasks() {
-  return useSyncExternalStore(
-    useCallback((fn: () => void) => {
-      ensureListening();
-      allListeners.add(fn);
-      return () => {
-        allListeners.delete(fn);
-      };
-    }, []),
-    () => snapshot,
-    () => snapshot,
-  );
 }

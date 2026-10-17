@@ -5,7 +5,7 @@ use crate::{
     error::{GateError, Result},
     repository::Repository,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
@@ -26,7 +26,10 @@ pub fn snapshot() -> Result<Workspace> {
             c.masked = "需要重新填写".into();
         }
     }
-    let mut installations = db.list::<ExtensionInstallation>("installations")?;
+    // 撤掉的扩展（2026-09-29 的酒馆）的老安装行：行留在库里，不列出来。
+    let mut installations = crate::extensions::visible_installations(
+        db.list::<ExtensionInstallation>("installations")?,
+    );
     for i in &mut installations {
         i.state =
             crate::extensions::installation_state(&db, i).unwrap_or_else(|_| "unverified".into());
@@ -245,8 +248,8 @@ pub const ROUTER_PROVIDER_ID: &str = "qb-router";
 /// # 为什么是自动建而不是让使用者先去建一个
 ///
 /// 这个环境里没有一个字段是使用者能自由选的:base_url 是路由的地址、
-/// Key 由路由替换、协议由软件决定。让使用者先去「服务商与环境」那页
-/// 手配一遍,配错了还起不来 —— 而正确答案只有一个。
+/// Key 由路由替换、协议由软件决定。让使用者先手配一遍,配错了还起不来
+/// —— 而正确答案只有一个。(手配环境的「服务商与环境」旧页 2026-09-27 已经删了。)
 ///
 /// 会保留的是**使用者后来改过的部分**:已经存在就只补齐那几个非填不可的
 /// 字段(见下面那几行),名字、模型、工作目录一律不动。
@@ -628,149 +631,8 @@ pub fn official_migrate(client: Client, id: &str, fingerprint: &str) -> Result<S
         env.name
     ))
 }
-pub fn save_plan(mut plan: LaunchPlan) -> Result<LaunchPlan> {
-    if plan.name.trim().is_empty() {
-        return Err(GateError::Other("请输入启动方案名称".into()));
-    }
-    if plan.identity_kind == IdentityKind::Relay {
-        reject_if_no_relay_path(plan.client)?;
-        let e: Environment = Repository::open()?.get("environments", &plan.identity_id)?;
-        if e.client != plan.client {
-            return Err(GateError::Other("启动方案客户端与环境不匹配".into()));
-        }
-    } else if !plan.identity_id.is_empty() {
-        crate::accounts::validate_label(&plan.identity_id)?;
-    }
-    if !plan.working_dir.is_empty() && !Path::new(&plan.working_dir).is_dir() {
-        return Err(GateError::Other("工作目录不存在".into()));
-    }
-    let db = Repository::open()?;
-    let mut plans = db.plans()?;
-    if plan.id.is_empty() {
-        plan.id = config_io::id();
-    }
-    plans.retain(|p| p.id != plan.id);
-    plans.insert(0, plan.clone());
-    db.set_meta("launch-plans", &serde_json::to_string(&plans)?)?;
-    Ok(plan)
-}
-pub fn remove_plan(id: &str) -> Result<()> {
-    let db = Repository::open()?;
-    let mut plans = db.plans()?;
-    plans.retain(|p| p.id != id);
-    db.set_meta("launch-plans", &serde_json::to_string(&plans)?)
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct RelayExport {
-    pub schema: u32,
-    pub providers: Vec<Provider>,
-    pub credentials: Vec<Credential>,
-    pub environments: Vec<Environment>,
-}
-pub fn export_relays() -> Result<RelayExport> {
-    let db = Repository::open()?;
-    let mut credentials = db.list::<Credential>("credentials")?;
-    for c in &mut credentials {
-        c.masked = String::new();
-        c.available = false;
-    }
-    let mut environments = db.list::<Environment>("environments")?;
-    for e in &mut environments {
-        e.config_dir = String::new();
-        e.applied_revision = None;
-        e.config_state = "saved".into();
-    }
-    Ok(RelayExport {
-        schema: 1,
-        providers: db.list("providers")?,
-        credentials,
-        environments,
-    })
-}
-pub fn import_relays(bundle: RelayExport) -> Result<usize> {
-    if bundle.schema != 1
-        || bundle.providers.len() > 500
-        || bundle.credentials.len() > 2000
-        || bundle.environments.len() > 2000
-    {
-        return Err(GateError::Other("导入格式或条目数量无效".into()));
-    }
-    let db = Repository::open()?;
-    db.transaction(|| {
-        let mut providers = BTreeMap::new();
-        let mut credentials = BTreeMap::new();
-        for mut p in bundle.providers {
-            p.base_url = crate::endpoint::endpoint_base(&p.base_url)?;
-            if p.name.trim().is_empty() {
-                return Err(GateError::Other("服务商名称不能为空".into()));
-            }
-            let old = p.id.clone();
-            p.id = config_io::id();
-            p.revision = 1;
-            if providers.insert(old, p.id.clone()).is_some() {
-                return Err(GateError::Other("重复的服务商 ID".into()));
-            }
-            db.put("providers", &p.id, &p)?;
-        }
-        for mut c in bundle.credentials {
-            let old = c.id.clone();
-            c.id = config_io::id();
-            c.provider_id = providers
-                .get(&c.provider_id)
-                .ok_or_else(|| GateError::Other("凭证引用的服务商不存在".into()))?
-                .clone();
-            c.available = false;
-            c.masked = String::new();
-            c.revision = 1;
-            if credentials.insert(old, c.id.clone()).is_some() {
-                return Err(GateError::Other("重复的凭证 ID".into()));
-            }
-            db.set_credential(&c, "")?;
-        }
-        let count = bundle.environments.len();
-        for mut e in bundle.environments {
-            if e.client == Client::ClaudeDesktop
-                || e.name.trim().is_empty()
-                || !["responses", "chat"].contains(&e.wire_api.as_str())
-                || !["env_key", "bearer_token", "none"].contains(&e.auth_style.as_str())
-            {
-                return Err(GateError::Other("导入的环境字段无效".into()));
-            }
-            e.id = config_io::id();
-            e.provider_id = providers
-                .get(&e.provider_id)
-                .ok_or_else(|| GateError::Other("环境引用的服务商不存在".into()))?
-                .clone();
-            e.credential_id = e
-                .credential_id
-                .map(|id| {
-                    credentials
-                        .get(&id)
-                        .cloned()
-                        .ok_or_else(|| GateError::Other("环境引用的凭证不存在".into()))
-                })
-                .transpose()?;
-            e.config_dir = crate::config_io::environment_dir(&db.root, &e.id)?
-                .display()
-                .to_string();
-            e.revision = 1;
-            e.applied_revision = None;
-            e.config_state = "saved".into();
-            db.set_environment(&e)?;
-        }
-        Ok(count)
-    })
-}
-
 fn meta(p: &Provider, e: &Environment) -> crate::relay::ProviderMeta {
     crate::relay::ProviderMeta {
-        id: e.id.clone(),
-        target: if e.client == Client::Codex {
-            crate::relay::RelayTarget::Codex
-        } else {
-            crate::relay::RelayTarget::ClaudeCode
-        },
         slug: "qb_relay".into(),
         name: p.name.clone(),
         base_url: p.base_url.clone(),
@@ -786,11 +648,6 @@ fn meta(p: &Provider, e: &Environment) -> crate::relay::ProviderMeta {
             "none" => crate::relay::AuthStyle::None,
             _ => crate::relay::AuthStyle::EnvKey,
         },
-        note: None,
-        website: None,
-        icon: None,
-        sort: 0,
-        created_at: String::new(),
     }
 }
 
@@ -986,11 +843,6 @@ pub struct ConfigPreview {
     pub after: String,
     pub fingerprint: String,
 }
-pub fn preview(id: &str) -> Result<Vec<ConfigPreview>> {
-    let db = Repository::open()?;
-    let e: Environment = db.get("environments", id)?;
-    Ok(previews(configuration_files(&db, &e)?, e.revision))
-}
 fn redacted_text(bytes: &Option<Vec<u8>>) -> String {
     let text = String::from_utf8_lossy(bytes.as_deref().unwrap_or_default());
     text.lines()
@@ -1013,22 +865,19 @@ fn redacted_text(bytes: &Option<Vec<u8>>) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+/// 把环境的配置写进它的隔离目录。现在只有本机路由那几个环境走这里（中转站页启动时）。
+///
+/// 原来还有「预览 → 核对指纹 → 应用」和「回滚到上一次应用」两条，都只在「服务商与环境」
+/// 旧页上有入口；2026-09-27 连同那一页删了，这里也不再记回滚用的 `environment-undo:*` /
+/// `applied-environment:*`。老数据里剩下的那几条没人读，恢复快照时 `Repository::restore_data` 会清掉。
 pub fn apply(id: &str) -> Result<Environment> {
-    apply_reviewed(id, None)
-}
-pub fn apply_reviewed(id: &str, fingerprint: Option<&str>) -> Result<Environment> {
     let db = Repository::open()?;
-    apply_in(&db, id, fingerprint)
+    apply_in(&db, id)
 }
 
-fn apply_in(db: &Repository, id: &str, fingerprint: Option<&str>) -> Result<Environment> {
+fn apply_in(db: &Repository, id: &str) -> Result<Environment> {
     let mut e: Environment = db.get("environments", id)?;
     let edits = configuration_files(db, &e)?;
-    if fingerprint.is_some_and(|f| f != config_io::fingerprint(&edits, e.revision)) {
-        return Err(GateError::Other(
-            "环境或配置在预览后发生变化，请重新预览".into(),
-        ));
-    }
     let hashes: BTreeMap<String, String> = edits
         .iter()
         .filter_map(|e| {
@@ -1040,124 +889,19 @@ fn apply_in(db: &Repository, id: &str, fingerprint: Option<&str>) -> Result<Envi
             })
         })
         .collect();
-    let previous = db.meta(&format!("applied-environment:{id}"))?;
     e.applied_revision = Some(e.revision);
     e.config_state = "applied".into();
-    crate::repository::commit_database(db, edits, |operation| {
+    crate::repository::commit_database(db, edits, |_| {
         db.conn
             .execute(
                 "UPDATE environments SET hashes=?1 WHERE id=?2",
                 rusqlite::params![serde_json::to_string(&hashes)?, id],
             )
             .map_err(|e| GateError::Database(e.to_string()))?;
-        db.set_environment(&e)?;
-        db.set_meta(
-            &format!("environment-undo:{id}"),
-            &serde_json::to_string(
-                &serde_json::json!({"operation":operation,"previous":previous}),
-            )?,
-        )?;
-        db.set_meta(
-            &format!("applied-environment:{id}"),
-            &serde_json::to_string(&e)?,
-        )
+        db.set_environment(&e)
     })?;
     Ok(e)
 }
-pub fn rollback_environment(id: &str) -> Result<Environment> {
-    rollback_environment_in(&Repository::open()?, id)
-}
-fn rollback_environment_in(db: &Repository, id: &str) -> Result<Environment> {
-    let data: serde_json::Value = serde_json::from_str(
-        &db.meta(&format!("environment-undo:{id}"))?
-            .ok_or_else(|| GateError::Other("此环境还没有可以回滚的配置".into()))?,
-    )?;
-    let edits = config_io::inverse(
-        &db.root.join("operations/files"),
-        data["operation"].as_str().unwrap_or_default(),
-    )
-    .map_err(|e| {
-        // 装 MCP 会改写同一个 config.toml / .claude.json，于是这条回滚记录里
-        // 记的「应用后的哈希」就对不上了，`inverse` 只会说「已被外部修改」。
-        // 数据没坏，行为也是对的（宁可不动），但使用者看不出所以然 ——
-        // 他并没有手改过任何文件。把真正的原因补上。
-        let bound: Vec<String> = db
-            .list::<ExtensionInstallation>("installations")
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|i| i.environment_id == id && i.identity_kind == IdentityKind::Relay)
-            .map(|i| i.extension_id)
-            .collect();
-        if bound.is_empty() {
-            e
-        } else {
-            GateError::Other(format!(
-                "{e}。此环境在上次应用之后装过扩展（{}），它们改写了同一个配置文件，所以这条回滚记录已经不适用。先卸载这些扩展，或者重新预览并应用一次配置。",
-                bound.join("、")
-            ))
-        }
-    })?;
-    let current: Environment = db.get("environments", id)?;
-    let applied_before = db.meta(&format!("applied-environment:{id}"))?;
-    let mut restored: Environment = if let Some(previous) = data["previous"].as_str() {
-        serde_json::from_str(previous)?
-    } else {
-        current.clone()
-    };
-    restored.revision = current.revision + 1;
-    restored.applied_revision = if data["previous"].is_string() {
-        Some(restored.revision)
-    } else {
-        None
-    };
-    restored.config_state = if restored.applied_revision.is_some() {
-        "applied"
-    } else {
-        "saved"
-    }
-    .into();
-    let hashes: BTreeMap<String, String> = edits
-        .iter()
-        .filter_map(|e| {
-            e.body.as_ref().map(|b| {
-                (
-                    e.path.file_name().unwrap().to_string_lossy().to_string(),
-                    hex::encode(Sha256::digest(b)),
-                )
-            })
-        })
-        .collect();
-    crate::repository::commit_database(db, edits, |operation| {
-        db.set_environment(&restored)?;
-        db.conn
-            .execute(
-                "UPDATE environments SET hashes=?1 WHERE id=?2",
-                rusqlite::params![serde_json::to_string(&hashes)?, id],
-            )
-            .map_err(|e| GateError::Database(e.to_string()))?;
-        if restored.applied_revision.is_some() {
-            db.set_meta(
-                &format!("applied-environment:{id}"),
-                &serde_json::to_string(&restored)?,
-            )?;
-        } else {
-            db.conn
-                .execute(
-                    "DELETE FROM metadata WHERE key=?1",
-                    [format!("applied-environment:{id}")],
-                )
-                .map_err(|e| GateError::Database(e.to_string()))?;
-        }
-        db.set_meta(
-            &format!("environment-undo:{id}"),
-            &serde_json::to_string(
-                &serde_json::json!({"operation":operation,"previous":applied_before}),
-            )?,
-        )
-    })?;
-    Ok(restored)
-}
-
 fn configuration_state(db: &Repository, e: &Environment) -> Result<String> {
     let hashes: String = db
         .conn
@@ -1197,92 +941,6 @@ fn configuration_state(db: &Repository, e: &Environment) -> Result<String> {
         "saved"
     }
     .into())
-}
-
-pub fn references(kind: &str, id: &str) -> Result<Vec<String>> {
-    let db = Repository::open()?;
-    let mut refs = Vec::new();
-    for e in db.list::<Environment>("environments")? {
-        if (kind == "providers" && e.provider_id == id)
-            || (kind == "credentials" && e.credential_id.as_deref() == Some(id))
-        {
-            refs.push(format!("使用环境：{}", e.name));
-        }
-    }
-    if kind == "providers" {
-        for c in db
-            .list::<Credential>("credentials")?
-            .into_iter()
-            .filter(|c| c.provider_id == id)
-        {
-            refs.push(format!("API 凭证：{}", c.label));
-        }
-    }
-    if kind == "environments" {
-        for plan in db
-            .plans()?
-            .into_iter()
-            .filter(|p| p.identity_kind == IdentityKind::Relay && p.identity_id == id)
-        {
-            refs.push(format!("启动方案：{}", plan.name));
-        }
-        for s in db.list::<Session>("sessions")?.into_iter().filter(|s| {
-            s.context.identity_kind == IdentityKind::Relay
-                && s.context.identity_id == id
-                && ["running", "unverified"].contains(&s.state.as_str())
-        }) {
-            refs.push(format!("运行会话：{}", s.id));
-        }
-        for i in db
-            .list::<ExtensionInstallation>("installations")?
-            .into_iter()
-            .filter(|i| i.environment_id == id && i.identity_kind == IdentityKind::Relay)
-        {
-            refs.push(format!("已绑定扩展：{}", i.extension_id));
-        }
-    }
-    Ok(refs)
-}
-pub fn remove(kind: &str, id: &str) -> Result<()> {
-    if !["providers", "credentials", "environments"].contains(&kind) {
-        return Err(GateError::Other("不能删除此类记录".into()));
-    }
-    let refs = references(kind, id)?;
-    if !refs.is_empty() {
-        return Err(GateError::Other(format!(
-            "请先解除引用：{}",
-            refs.join("；")
-        )));
-    }
-    let db = Repository::open()?;
-    if kind != "environments" {
-        return db.remove(kind, id);
-    }
-    // 隔离目录和这两条元数据都是面板自己的东西，记录删了就该一起收 ——
-    // 留着的话：目录里那份 settings.json / config.toml 成了没人认领的残留，
-    // `environment-undo:<id>` 还指着一条 journal，而那条 journal 里
-    // 封着改动前的配置全文（含 Key 的密文），保留期也清不掉它。
-    let dir = crate::config_io::environment_dir(&db.root, id)?;
-    db.transaction(|| {
-        db.remove(kind, id)?;
-        for key in ["environment-undo", "applied-environment"]
-            .into_iter()
-            .chain((kind == "providers").then_some("station-billing"))
-        {
-            db.conn
-                .execute("DELETE FROM metadata WHERE key=?1", [format!("{key}:{id}")])
-                .map_err(|e| GateError::Database(e.to_string()))?;
-        }
-        Ok(())
-    })?;
-    // 目录删不掉只记一笔，不让整个删除失败：记录已经提交了，此时报错会让
-    // 使用者以为环境还在，而剩一个没人引用的空目录是无害残留。
-    if dir.is_dir() {
-        if let Err(e) = std::fs::remove_dir_all(&dir) {
-            crate::audit::write(&format!("环境 {id} 的隔离目录未能删除：{e}"));
-        }
-    }
-    Ok(())
 }
 
 /// 以中转打开桌面端之前，把正在跑的桌面端关干净。返回关掉时它有几个进程。
@@ -1535,9 +1193,11 @@ pub async fn launch(
             return Err(GateError::Other("客户端与中转环境不匹配".into()));
         }
         let state = configuration_state(&db, &stored)?;
+        // 直连站点的环境（`via_router == false`）只有旧版「服务商与环境」页建得出来，
+        // 那一页连同「预览 / 应用」已经删了（2026-09-27），界面上也没有入口再起它们。
         if state == "external" && !stored.via_router {
             return Err(GateError::Other(
-                "配置已被外部修改，请预览差异并重新应用后启动".into(),
+                "这个直连环境的配置已被外部修改。它是旧版「服务商与环境」页建的，那一页已经删了：请到中转站页添加线路，从那里启动".into(),
             ));
         }
         let e = if state == "applied" && !stored.via_router {
@@ -1811,7 +1471,7 @@ mod tests {
         }
     }
 
-    /// 反重力没有中转路径：建环境、走本机路由、存中转启动方案三处入口都要拒绝，
+    /// 反重力没有中转路径：建环境、走本机路由这些入口都要拒绝，
     /// 拒绝的话里要说清是「端点写死在客户端里」——不是「暂不支持」。
     #[test]
     fn antigravity_has_no_relay_environment() {
@@ -1992,84 +1652,6 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn repeated_environment_rollback_tracks_applied_configuration_not_unsaved_draft() {
-        let root = std::env::temp_dir().join(config_io::id());
-        let db = Repository::open_in(&root).unwrap();
-        let provider = Provider {
-            id: "provider".into(),
-            name: "Fixture".into(),
-            base_url: "https://example.invalid".into(),
-            website: String::new(),
-            note: String::new(),
-            tags: vec![],
-            favorite: false,
-            revision: 1,
-            topup_per_usd: None,
-        };
-        db.put("providers", &provider.id, &provider).unwrap();
-        let mut environment = Environment {
-            id: "environment".into(),
-            name: "Fixture".into(),
-            client: Client::Codex,
-            provider_id: provider.id,
-            credential_id: None,
-            model: "model-a".into(),
-            small_model: String::new(),
-            wire_api: "responses".into(),
-            auth_style: "none".into(),
-            revision: 1,
-            applied_revision: Some(1),
-            config_dir: String::new(),
-            config_state: "applied".into(),
-            via_router: false,
-        };
-        db.set_environment(&environment).unwrap();
-        let first = serde_json::to_string(&environment).unwrap();
-        let path = crate::config_io::environment_dir(&root, &environment.id)
-            .unwrap()
-            .join("config.toml");
-        config_io::replace(&path, Some(b"model='model-a'\n")).unwrap();
-        environment.model = "model-b".into();
-        environment.revision = 2;
-        environment.applied_revision = Some(2);
-        db.set_environment(&environment).unwrap();
-        let second = serde_json::to_string(&environment).unwrap();
-        crate::repository::commit_database(
-            &db,
-            vec![Edit {
-                path: path.clone(),
-                expected: Some(b"model='model-a'\n".to_vec()),
-                body: Some(b"model='model-b'\n".to_vec()),
-            }],
-            |operation| {
-                db.set_meta("applied-environment:environment", &second)?;
-                db.set_meta(
-                    "environment-undo:environment",
-                    &serde_json::json!({"operation":operation,"previous":first}).to_string(),
-                )
-            },
-        )
-        .unwrap();
-        environment.model = "unsaved-model-c".into();
-        environment.revision = 3;
-        db.set_environment(&environment).unwrap();
-        assert_eq!(
-            rollback_environment_in(&db, "environment").unwrap().model,
-            "model-a"
-        );
-        assert_eq!(
-            rollback_environment_in(&db, "environment").unwrap().model,
-            "model-b"
-        );
-        assert!(std::fs::read_to_string(&path).unwrap().contains("model-b"));
-        assert_eq!(
-            rollback_environment_in(&db, "environment").unwrap().model,
-            "model-a"
-        );
-        drop(db);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
     fn router_reapply_preserves_client_changes_and_accepts_all_three_config_files() {
         let root = std::env::temp_dir().join(config_io::id());
         let db = Repository::open_in(&root).unwrap();
@@ -2105,7 +1687,7 @@ mod tests {
                 via_router: true,
             };
             db.set_environment(&env).unwrap();
-            let applied = apply_in(&db, &id, None).unwrap();
+            let applied = apply_in(&db, &id).unwrap();
             assert_eq!(configuration_state(&db, &applied).unwrap(), "applied");
             let name = match client {
                 Client::ClaudeCode => "settings.json",
@@ -2124,7 +1706,7 @@ mod tests {
             };
             std::fs::write(&path, edited).unwrap();
             assert_eq!(configuration_state(&db, &applied).unwrap(), "external");
-            let reapplied = apply_in(&db, &id, None).unwrap();
+            let reapplied = apply_in(&db, &id).unwrap();
             assert_eq!(configuration_state(&db, &reapplied).unwrap(), "applied");
             let after = std::fs::read_to_string(&path).unwrap();
             assert!(after.contains(if client == Client::Codex {
@@ -2138,7 +1720,7 @@ mod tests {
                 let saved = std::fs::read_to_string(&auth).unwrap();
                 assert!(saved.contains(crate::local_router::ROUTER_KEY));
                 std::fs::write(&auth, r#"{"tokens":{"access_token":"fixture-oauth"}}"#).unwrap();
-                assert!(apply_in(&db, &id, None)
+                assert!(apply_in(&db, &id)
                     .unwrap_err()
                     .to_string()
                     .contains("OAuth"));

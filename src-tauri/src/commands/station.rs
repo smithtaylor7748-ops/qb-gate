@@ -139,17 +139,14 @@ fn load_upstreams(state: &AppState) -> Result<usize> {
     Ok(n)
 }
 
-/// 启动本机路由。已经起着就原样返回 —— **重复点不该换端口**,
+/// 拉起本机路由。已经起着就原样返回 —— **重复调不该换端口**,
 /// 客户端那头的地址是照着上一次写进去的。
 ///
-/// `client` 是界面现在停在哪个分页 —— **只影响回给前端的 `current_route`
-/// 显示哪一个**,不影响路由本身:三个软件共用同一个监听端口。
-#[tauri::command]
-pub async fn station_router_start(
-    app: tauri::AppHandle,
-    port: Option<u16>,
-    client: Client,
-) -> Result<RouterStatus> {
+/// 不是命令:路由只在 `station_launch` / 开启识别时顺带拉起,面板退出时跟着停。
+/// 原来的 `station_router_start` / `station_router_stop` 两条命令一直没有界面,
+/// 2026-09-27 删了,只留这个助手。`client` 只影响回来的 `current_route` 显示哪一个,
+/// 不影响路由本身:三个软件共用同一个监听端口。
+async fn ensure_router(app: &tauri::AppHandle, client: Client) -> Result<RouterStatus> {
     use tauri::Manager;
     let state = app.state::<AppState>();
     if state.station_addr.lock().ok().and_then(|a| *a).is_some() {
@@ -165,7 +162,7 @@ pub async fn station_router_start(
         .unwrap_or_else(|_| reqwest::Client::new());
     let handle = local_router::serve(
         RouterConfig {
-            port: port.unwrap_or(local_router::DEFAULT_PORT),
+            port: local_router::DEFAULT_PORT,
         },
         shared,
         http,
@@ -178,20 +175,6 @@ pub async fn station_router_start(
         *h = Some(handle);
     }
     Ok(status_of(&state, client))
-}
-
-/// 停掉本机路由。已经在飞的请求会跑完。
-#[tauri::command]
-pub fn station_router_stop(state: State<'_, AppState>, client: Client) -> RouterStatus {
-    if let Ok(mut h) = state.station_router.lock() {
-        if let Some(handle) = h.take() {
-            handle.stop();
-        }
-    }
-    if let Ok(mut a) = state.station_addr.lock() {
-        *a = None;
-    }
-    status_of(&state, client)
 }
 
 #[tauri::command]
@@ -272,7 +255,7 @@ pub async fn station_turnstate_enable(
         s.arm_official_codex();
     }
     load_upstreams(&state)?;
-    station_router_start(app.clone(), None, client).await?;
+    ensure_router(&app, client).await?;
     // 官方 base **不带 `/v1`**：官方端点是 `.../backend-api/codex/responses`，
     // `client_base_url(Codex, …)` 给的 `http://127.0.0.1:15721/codex` 正好对上。
     let base = local_router::client_base_url(client, local_router::DEFAULT_PORT);
@@ -397,7 +380,7 @@ pub async fn station_launch(
     let route: Route = db.get("station_routes", &selected_id)?;
     station_ops::source(&db, &route)?;
     load_upstreams(&state)?;
-    station_router_start(app.clone(), None, client).await?;
+    ensure_router(&app, client).await?;
     crate::sessions::refresh()?;
     if let Some(session) = crate::sessions::list().into_iter().find(|s| {
         s.state == "running"
@@ -968,10 +951,9 @@ pub async fn station_billing_save(
 
 // ------------------------------------------------------------------ 官方价目
 
-/// 价目现在是什么状况。界面要照实写出来 ——
-/// 使用者看到的「真实倍率」是拿哪一份价算的，不该靠猜。
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
+/// 这次启动抓价的结果。只进审计日志（`lib.rs` 的启动任务），不过 IPC ——
+/// 原来还有一条只读的 `station_prices` 命令，界面从来没调过，2026-09-27 删了。
+#[derive(Debug, Clone)]
 pub struct PriceStatusView {
     /// 这次启动抓到了几个模型的价。0 = 全用内置快照。
     pub live_models: u32,
@@ -995,12 +977,11 @@ pub(crate) fn stored_prices() -> Vec<qb_station::station::pricing::FetchedPrice>
         .unwrap_or_default()
 }
 
-/// 抓一轮官方价并存下来。**面板启动时跑一次。**
+/// 抓一轮官方价并存下来。**面板启动时跑一次**（`lib.rs` 的 setup 直接调，不是命令）。
 ///
-/// ⛔ 抓失败不报错：继续用内置快照，把原因放进 `problems` 让界面照实说。
+/// ⛔ 抓失败不报错：继续用内置快照，把原因放进 `problems` 写进审计日志。
 /// 一次失败的抓取绝不清空已有的价 —— 价被清空之后所有「真实倍率」
 /// 一起变成「不知道」，而界面上看起来只是「都没检验过」。
-#[tauri::command]
 pub async fn station_refresh_prices() -> Result<PriceStatusView> {
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let (fetched, problems) = station_ops::fetch_prices(&reqwest::Client::new(), &today).await;
@@ -1019,18 +1000,6 @@ pub async fn station_refresh_prices() -> Result<PriceStatusView> {
         fetched_at: kept.first().map(|f| f.fetched_at.clone()),
         problems,
     })
-}
-
-/// 现在用的是哪一份价（不抓，只读）。
-#[tauri::command]
-pub fn station_prices() -> PriceStatusView {
-    let kept = stored_prices();
-    PriceStatusView {
-        live_models: kept.len() as u32,
-        builtin_models: qb_station::station::pricing::TABLE.len() as u32,
-        fetched_at: kept.first().map(|f| f.fetched_at.clone()),
-        problems: Vec::new(),
-    }
 }
 
 // ------------------------------------------------------------ 健康度与排序

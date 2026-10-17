@@ -20,7 +20,7 @@ import {
   useNavigate,
 } from "react-router-dom";
 import { ArrowRight, Command, Search } from "lucide-react";
-import { LEGACY_REDIRECTS, NAV, RELAY_BASE } from "../lib/routes";
+import { NAV, RELAY_BASE } from "../lib/routes";
 import { api } from "../lib/api";
 import { R } from "../lib/resources";
 import {
@@ -48,23 +48,38 @@ import AccountDialogs from "../pages/accounts/AccountDialogs";
 import Accounts from "./Accounts";
 import SecuritySheet from "./security/SecuritySheet";
 import UpdateDialog from "./UpdateDialog";
+import {
+  BRIDGE_CARD,
+  bridgeHref,
+  type BridgeProvider,
+} from "./tavern/bridge/where";
+
+/** 快速跳转里三条桥的名字（「酒馆桥接 · Claude」）。 */
+const BRIDGE_SEARCH: Record<BridgeProvider, string> = {
+  claude: "Claude",
+  gpt: "GPT",
+  gemini: "Gemini",
+};
 
 // 首屏只需要仪表盘（「/」）和两个全局小窗，其余六页各拆一个 chunk。
 // 不是点进去才下：模块一加载就排一个空闲回调把它们全部预取进来 ——
 // 首屏不用解析它们，点进去时也不用再等。
+//
+// ⛔ 这张表就是全部页面（2026-09-27）。新手引导（`/onboarding`）和中转站底下那套
+// 「服务商 / 凭证 / 环境」旧页（`/relays/<id>`）都删了：前者的五步首页和软件页早就覆盖，
+// 后者被中转站页的添加线路弹窗取代之后只剩深链接进得去，而快速跳转和扩展页正好在发深链接。
+// 加页面就加在这里、给它一个侧栏入口或一个看得见的按钮；别留「有路由没入口」的页。
 const PAGES = {
-  onboarding: () => import("./Onboarding"),
   // 0.32.0：用量明细。**不进 NAV** —— 只从三张用量卡的页脚按钮进来。
   usage: () => import("./Usage"),
-  relays: () => import("./RelayCenter"),
+  relays: () => import("./station/StationCenter"),
   extensions: () => import("./ExtensionCenter"),
   software: () => import("./Software"),
   subscription: () => import("./subscription/Subscription"),
   settings: () => import("./SettingsCenter"),
 };
-const Onboarding = lazy(PAGES.onboarding);
 const Usage = lazy(PAGES.usage);
-const RelayCenter = lazy(PAGES.relays);
+const StationCenter = lazy(PAGES.relays);
 const ExtensionCenter = lazy(PAGES.extensions);
 const Software = lazy(PAGES.software);
 const Subscription = lazy(PAGES.subscription);
@@ -287,6 +302,22 @@ function Layout() {
       detail: n.hint,
       path: n.path,
     })),
+    // 酒馆 2026-09-29 起是面板的内置功能、不在扩展目录里了 —— 不补这几条，搜「酒馆」什么都搜不到。
+    // 第三轮对调之后：酒馆本体（下载与版本）在软件页的 SillyTavern 卡；三条桥的设置在软件页各自那张
+    // CLI 卡的最下面；用酒馆（控制台、角色卡……）在账户页「酒馆」磁贴右上角的弹窗里（弹窗没有地址，只写在说明里）。
+    {
+      key: "feature:sillytavern",
+      label: "酒馆 SillyTavern",
+      detail:
+        "软件 · 下载安装、版本、位置与端口（控制台、角色卡、世界书、扩展在账户页「酒馆」磁贴右上角）",
+      path: "/software?focus=sillytavern",
+    },
+    ...(["claude", "gpt", "gemini"] as const).map((p) => ({
+      key: "feature:bridge-" + p,
+      label: `酒馆桥接 · ${BRIDGE_SEARCH[p]}`,
+      detail: `软件 · ${BRIDGE_CARD[p]} 卡最下面`,
+      path: bridgeHref(p),
+    })),
     ...(accounts.data?.slots ?? []).map((a) => ({
       key: "claude:" + a.label,
       label: slotName(a.email, a.label),
@@ -301,17 +332,14 @@ function Layout() {
       path: "/",
       side: s.side,
     })),
+    // 站点只落到中转站页本身。原来带着 id 进 `/relays/<id>`，落地的是已经退休的
+    // 「服务商与环境」旧页；使用环境那一类也删了 —— 新页里没有「环境」这一层，
+    // 本机路由那几个环境是面板自己建的，不是给人挑的。
     ...(workspace.data?.providers ?? []).map((p) => ({
       key: "provider:" + p.id,
       label: p.name,
-      detail: "中转服务商",
-      path: RELAY_BASE + "/" + p.id,
-    })),
-    ...(workspace.data?.environments ?? []).map((e) => ({
-      key: "env:" + e.id,
-      label: e.name,
-      detail: "中转使用环境",
-      path: RELAY_BASE + "/" + e.provider_id + "?environment=" + e.id,
+      detail: "中转站点",
+      path: RELAY_BASE,
     })),
   ].filter((r) =>
     (r.label + r.detail).toLowerCase().includes(search.toLowerCase()),
@@ -464,9 +492,8 @@ function Layout() {
                   <RecoveryGuard>
                     <Routes>
                       <Route path="/" element={<Accounts />} />
-                      <Route path="/onboarding" element={<Onboarding />} />
                       <Route path="/usage" element={<Usage />} />
-                      <Route path="/relays/:id?" element={<RelayCenter />} />
+                      <Route path="/relays" element={<StationCenter />} />
                       <Route
                         path="/extensions/:id?"
                         element={<ExtensionCenter />}
@@ -477,15 +504,8 @@ function Layout() {
                         path="/settings/:section?"
                         element={<SettingsCenter />}
                       />
-                      {/* 旧路径。托盘写死了 emit("workspace://navigate", "/relays")，
-                        书签和旧截图脚本也还指着这些地址。 */}
-                      {LEGACY_REDIRECTS.map(([from, to]) => (
-                        <Route
-                          key={from}
-                          path={from + "/*"}
-                          element={<Navigate to={to} replace />}
-                        />
-                      ))}
+                      {/* 其余一律回首页，包括已经删掉的旧页面地址（`/onboarding`、
+                          `/relays/<id>`、`/environment/*` 这一类）。 */}
                       <Route path="*" element={<Navigate to="/" replace />} />
                     </Routes>
                   </RecoveryGuard>

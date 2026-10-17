@@ -262,38 +262,8 @@ pub fn commit_inner(
     Ok(operation)
 }
 
-/// Build the inverse of a verified committed write, without overriding external changes.
-pub fn inverse(root: &Path, operation: &str) -> Result<Vec<Edit>> {
-    if operation.is_empty()
-        || !operation
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-    {
-        return Err(GateError::Other("恢复记录 ID 无效".into()));
-    }
-    let j: Journal =
-        serde_json::from_slice(&std::fs::read(root.join(format!("{operation}.json")))?)?;
-    if j.status != "committed" {
-        return Err(GateError::Other("该配置记录尚未完成提交".into()));
-    }
-    j.edits
-        .iter()
-        .map(|saved| {
-            let now = read_optional(&saved.path)?;
-            if digest(&now) != saved.next_hash {
-                return Err(GateError::Other(format!(
-                    "{} 已被外部修改，请先处理差异",
-                    saved.path.display()
-                )));
-            }
-            Ok(Edit {
-                path: saved.path.clone(),
-                expected: now,
-                body: original(saved)?,
-            })
-        })
-        .collect()
-}
+// 原来这里有 `inverse(root, operation)`：把一条已提交的记录反推成回滚用的改动。
+// 唯一的调用方是环境的「回滚配置」，那个功能连同「服务商与环境」旧页 2026-09-27 删了。
 fn original(saved: &SavedEdit) -> Result<Option<Vec<u8>>> {
     saved
         .original
@@ -422,19 +392,16 @@ fn recover_one(p: &Path) -> Result<bool> {
 /// 而 `recover` 每次启动都要把它们全读一遍 —— 也是保留期问题：
 /// 一份 API Key 的旧副本不该在硬盘上躺一辈子。
 ///
-/// 三类一条都不删，缺一不可：
+/// 两类一条都不删：
 ///
 /// * `prepared` —— 还没结清，归 [`recover`] 管；
-/// * `protected` 里的 —— 那是某个环境**当前**的回滚记录（`environment-undo:*`
-///   指着它），删了「回滚配置」按钮就报文件不存在；
 /// * 还没到保留期的。
 ///
 /// 读不出来的也留着：宁可占地方，也不删掉可能还需要的记录。
-pub fn retain(
-    root: &Path,
-    cutoff: std::time::SystemTime,
-    protected: &std::collections::BTreeSet<String>,
-) -> Result<Vec<String>> {
+///
+/// 原来还有第三类「被某个环境的回滚记录（`environment-undo:*`）指着的」，
+/// 那是给「回滚配置」按钮留的；那个功能 2026-09-27 删了，老记录照常按保留期清。
+pub fn retain(root: &Path, cutoff: std::time::SystemTime) -> Result<Vec<String>> {
     if !root.exists() {
         return Ok(Vec::new());
     }
@@ -442,14 +409,6 @@ pub fn retain(
     for e in std::fs::read_dir(root)? {
         let p = e?.path();
         if p.extension().and_then(|s| s.to_str()) != Some("json") {
-            continue;
-        }
-        let stem = p
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        if protected.contains(&stem) {
             continue;
         }
         let Ok(bytes) = std::fs::read(&p) else {
@@ -625,17 +584,15 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&a).unwrap(), "theirs");
         std::fs::remove_dir_all(p).unwrap();
     }
-    /// 保留期不许碰三类记录：还没结清的、还被环境回滚指着的、没到期的。
+    /// 保留期不许碰两类记录：还没结清的、没到期的。
     ///
-    /// 中间那条最要紧：`environment-undo:<id>` 指着的那一条是这个环境**当前**
-    /// 的回滚记录。按保留期删掉的话，「回滚配置」按钮会报文件不存在，
-    /// 而使用者完全看不出是保留期干的。
+    /// （原来还有「被环境回滚指着的」一类，回滚功能 2026-09-27 删了。）
     #[test]
-    fn retention_spares_unsettled_referenced_and_fresh_records() {
+    fn retention_spares_unsettled_and_fresh_records() {
         let p = fixture();
         let root = p.join("journal");
         let mut ops = Vec::new();
-        for name in ["settled", "referenced", "unsettled"] {
+        for name in ["settled", "also-settled", "unsettled"] {
             let file = p.join(name);
             ops.push(commit_in(&root, vec![Edit::text(file, "x".into()).unwrap()]).unwrap());
         }
@@ -644,22 +601,21 @@ mod tests {
         let mut journal: Journal = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         journal.status = "prepared".into();
         replace(&path, Some(&serde_json::to_vec(&journal).unwrap())).unwrap();
-        let protected = std::collections::BTreeSet::from([ops[1].clone()]);
 
         // 还没到期：一条都不删。
         let fresh = std::time::SystemTime::UNIX_EPOCH;
-        assert!(retain(&root, fresh, &protected).unwrap().is_empty());
+        assert!(retain(&root, fresh).unwrap().is_empty());
 
-        // 全部到期：只有第一条该走。
+        // 全部到期：结清了的两条都该走，prepared 那条留着。
         let expired = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
-        let removed = retain(&root, expired, &protected).unwrap();
-        assert_eq!(removed.len(), 1);
-        assert!(removed[0].contains(&ops[0]));
+        let mut removed = retain(&root, expired).unwrap();
+        removed.sort();
+        assert_eq!(removed.len(), 2);
+        assert!(removed.iter().any(|r| r.contains(&ops[0])));
+        assert!(removed.iter().any(|r| r.contains(&ops[1])));
         assert!(!root.join(format!("{}.json", ops[0])).exists());
-        assert!(root.join(format!("{}.json", ops[1])).is_file());
+        assert!(!root.join(format!("{}.json", ops[1])).exists());
         assert!(root.join(format!("{}.json", ops[2])).is_file());
-        // 被指着的那条还能反推出回滚变更 —— 保留期没把它废掉。
-        assert!(inverse(&root, &ops[1]).is_ok());
         std::fs::remove_dir_all(p).unwrap();
     }
     #[test]

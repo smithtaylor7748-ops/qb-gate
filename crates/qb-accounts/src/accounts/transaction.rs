@@ -23,6 +23,10 @@ struct Journal {
     steps: Vec<Step>,
     pointer: Option<PointerFile>,
 }
+/// 问的是路径本身，不是它指向谁。**别换成 `Path::exists()`**：悬空的联结点上 `exists()`
+/// 回 false，「先摘掉旧联结点」会被整个跳过，`mklink` 接着撞上同名而失败 —— 那个槽位从此
+/// 再也切不过去，报错文案还看不出根因（坑 7.18）。这段话原来写在 `mod.rs` 的 `clear_link` 上，
+/// 那个函数只有已删掉的 `sync_bridge` 在用，2026-09-27 挪到这里。
 fn metadata(path: &Path) -> Result<Option<std::fs::Metadata>> {
     match std::fs::symlink_metadata(path) {
         Ok(m) => Ok(Some(m)),

@@ -1,7 +1,9 @@
 //! 系统时区与显示语言对齐。
 //!
-//! 用户拍板的档位：默认**退出时还原**，同时保留「不还原」选项并标注建议 ——
-//! 专机长期跑 Claude 时，时区保持一致比来回切更稳。
+//! 切换由「设置 › 启动时对齐」在面板启动时做（`usecase::locale_ops`），**不还原**：
+//! 专机长期跑 Claude 时，时区保持一致比来回切更稳。切之前的原值写进审计日志。
+//! （早先那张时区卡的「退出时还原」与手动「恢复时区」2026-09-27 删了 ——
+//! 启动对齐从来不记还原点，那颗按钮点了什么都不做。）
 //!
 //! 切时区和 IPv6 网卡绑定需要管理员权限。
 //!
@@ -16,15 +18,6 @@ pub mod locale;
 pub mod proxy;
 
 use crate::error::{GateError, Result};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TzState {
-    /// 切换前的 Windows 时区 ID，用于还原。
-    pub original: String,
-    pub applied: String,
-    pub restore_on_exit: bool,
-}
 
 /// IANA -> Windows 时区 ID。
 ///
@@ -84,8 +77,10 @@ pub fn current_windows_tz() -> Result<String> {
 }
 
 /// 按 IP 归属的 IANA 时区切换系统时区。需要管理员权限。
+///
+/// 已经是目标时区就什么都不做。切了的话，原值只写进审计日志（「系统时区 A -> B」）。
 #[cfg(windows)]
-pub fn apply_timezone(iana: &str, restore_on_exit: bool) -> Result<TzState> {
+pub fn apply_timezone(iana: &str) -> Result<()> {
     let target = iana_to_windows(iana).ok_or_else(|| {
         GateError::Other(format!(
             "没有 {iana} 对应的 Windows 时区，请在设置里手动选择，不要让程序猜"
@@ -93,11 +88,7 @@ pub fn apply_timezone(iana: &str, restore_on_exit: bool) -> Result<TzState> {
     })?;
     let original = current_windows_tz()?;
     if original == target {
-        return Ok(TzState {
-            original,
-            applied: target.to_string(),
-            restore_on_exit,
-        });
+        return Ok(());
     }
     let out = crate::process::hidden_std(std::process::Command::new("tzutil"))
         .args(["/s", target])
@@ -109,32 +100,12 @@ pub fn apply_timezone(iana: &str, restore_on_exit: bool) -> Result<TzState> {
         )));
     }
     crate::audit::write(&format!("系统时区 {original} -> {target}"));
-    Ok(TzState {
-        original,
-        applied: target.to_string(),
-        restore_on_exit,
-    })
+    Ok(())
 }
 
 #[cfg(not(windows))]
-pub fn apply_timezone(_iana: &str, _restore_on_exit: bool) -> Result<TzState> {
+pub fn apply_timezone(_iana: &str) -> Result<()> {
     Err(GateError::Other("仅 Windows 支持".into()))
-}
-
-#[cfg(windows)]
-pub fn restore_timezone(st: &TzState) -> Result<()> {
-    let out = crate::process::hidden_std(std::process::Command::new("tzutil"))
-        .args(["/s", &st.original])
-        .output()?;
-    if out.status.success() {
-        crate::audit::write(&format!("系统时区已还原为 {}", st.original));
-    }
-    Ok(())
-}
-
-#[cfg(not(windows))]
-pub fn restore_timezone(_st: &TzState) -> Result<()> {
-    Ok(())
 }
 
 #[cfg(test)]

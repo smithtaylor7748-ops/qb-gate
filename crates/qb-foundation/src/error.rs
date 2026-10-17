@@ -2,10 +2,10 @@ pub use qb_contract::error_kind::ErrorKind;
 
 use serde::Serialize;
 
+/// 原来还有一个 `Cancelled`（使用者点了「取消操作」）。取消按钮和 `operation_cancel`
+/// 早就没有界面了，2026-09-27 连同 `operations` 里那套取消机制一起删掉。
 #[derive(Debug, thiserror::Error)]
 pub enum GateError {
-    #[error("操作已由用户取消")]
-    Cancelled,
     #[error("IO 失败: {0}")]
     Io(#[from] std::io::Error),
 
@@ -56,7 +56,6 @@ impl GateError {
     /// 一个没有分类的错误在前端就是 `other`，跟没分类之前一样没用。
     pub fn kind(&self) -> ErrorKind {
         match self {
-            GateError::Cancelled => ErrorKind::Cancelled,
             GateError::Io(_) => ErrorKind::Io,
             GateError::Http(_) => ErrorKind::Http,
             GateError::Json(_) => ErrorKind::Json,
@@ -121,12 +120,5 @@ mod tests {
         let e = GateError::Database("UNIQUE constraint failed".into());
         assert_eq!(e.kind(), ErrorKind::Database);
         assert_ne!(e.kind(), ErrorKind::Other);
-    }
-
-    #[test]
-    fn a_user_cancellation_serializes_as_cancelled_not_other() {
-        // 界面据此决定「弹红色报错」还是「静静收场」。
-        let v = serde_json::to_value(GateError::Cancelled).unwrap();
-        assert_eq!(v["kind"], "cancelled");
     }
 }

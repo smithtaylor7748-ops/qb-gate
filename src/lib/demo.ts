@@ -1,4 +1,5 @@
 import { demoWorkspaceCall } from "./workspaceDemo";
+import { makeTavernFixtures } from "./demoTavern";
 import packageInfo from "../../package.json";
 import {
   demoCodexSummary,
@@ -13,8 +14,9 @@ import type { AntigravityStatus } from "./generated/AntigravityStatus";
 import type { AntigravityAccount } from "./generated/AntigravityAccount";
 import type { AntigravityIdentity } from "./generated/AntigravityIdentity";
 import type { AntigravityUsage } from "./generated/AntigravityUsage";
+import type { ClaudeZhLeftovers } from "./generated/ClaudeZhLeftovers";
 import type { ClaudeZhOutcome } from "./generated/ClaudeZhOutcome";
-import type { ClaudeZhStatus } from "./generated/ClaudeZhStatus";
+import type { CodexLocaleOutcome } from "./generated/CodexLocaleOutcome";
 import type { CodexLocaleStatus } from "./generated/CodexLocaleStatus";
 /**
  * 演示数据 —— 只给截图和界面预览用。
@@ -65,12 +67,8 @@ import type {
   ManagedExternal,
   ManagedStatus,
   NetAdapter,
-  OfficialCatalogStatus,
-  PanelVerdict,
   PluginStatus,
   Preset,
-  Profile,
-  ProfileStore,
   Progress,
   ProxyState,
   PurityCriteria,
@@ -78,7 +76,10 @@ import type {
   SnapshotEntry,
   SoftwareReport,
   TavernConfig,
+  TavernRelease,
+  TavernSetupStatus,
   TavernSurvey,
+  TavernUninstalled,
   TokenUsage,
   TraceReport,
   UpdateStatus,
@@ -114,14 +115,6 @@ const ip: IpInfo = {
   fraudScore: 0,
   isResidential: true,
   isBroadcast: false,
-};
-
-const purity: PanelVerdict = {
-  purity: "Pass",
-  residential: "Pass",
-  native: "Pass",
-  passed: true,
-  note: "面板自查只作参考，三项硬指标以 IPQualityScore 与 ippure.com 的结论为准。",
 };
 
 const criteria: PurityCriteria = {
@@ -462,7 +455,6 @@ const accounts: AccountsReport = {
     "剩余天数只读本地时间戳，查不出「被风控下线」。唯一能确认的办法是实际发一次认证请求。",
   planCaveat:
     "套餐读自槽位目录里的 .claude.json（官方客户端写下的档案缓存），不发任何网络请求，可能过期。",
-  sync: { done: [], failed: [] },
   desktop: { managed: true, active: "demo-main" },
   bridgePresent: true,
   slotsError: null,
@@ -510,7 +502,6 @@ const progress: Progress = {
       updated_at: "2026-09-12 09:14",
     },
   },
-  completed_once: true,
 };
 
 const dns: DnsReport = {
@@ -855,31 +846,6 @@ const presets: Preset[] = [
   },
 ];
 
-const profiles: Profile[] = [
-  {
-    id: "demo-profile-1",
-    name: "日常（demo-main + 官方直连）",
-    note: "账户 demo-main，时区跟着出口走",
-    account: "demo-main",
-    relays: {},
-    timezone: "America/New_York",
-    sort: 0,
-    created_at: "2026-09-11 20:31",
-  },
-  {
-    id: "demo-profile-2",
-    name: "中转（demo-alt + 演示中转站）",
-    note: null,
-    account: "demo-alt",
-    relays: { "claude-code": "demo-relay-1", codex: "demo-relay-2" },
-    timezone: null,
-    sort: 1,
-    created_at: "2026-09-11 20:33",
-  },
-];
-
-const profileStore: ProfileStore = { profiles, last_applied: "demo-profile-1" };
-
 const snapshots: SnapshotEntry[] = [
   {
     id: "20260912-090412",
@@ -905,20 +871,44 @@ const plugins: PluginStatus[] = [
     name: "酒馆 SillyTavern",
     state: "ready",
     detail: "依赖齐了。点启动会先验出口 IP，再拉起桥接与酒馆。",
+    // 标签照 `plugins::sillytavern::status_with` 一字不差 —— 账户页按这几个标签分
+    // 「酒馆本体缺东西（去软件页）」与「桥缺东西（开弹窗）」（`lib/tavernReady.ts`）。
     checks: [
-      { label: "SillyTavern 根目录", ok: true, detail: `${HOME}\\SillyTavern` },
       {
-        label: "桥接根目录（含 bridge.py）",
+        label: "桥接项目",
         ok: true,
         detail: `${HOME}\\SillyTavern\\bridge`,
       },
-      { label: "启动脚本", ok: true, detail: "start-sillytavern.cmd" },
+      { label: "SillyTavern", ok: true, detail: `${HOME}\\SillyTavern` },
+      {
+        label: "酒馆启动脚本",
+        ok: true,
+        detail: `${HOME}\\SillyTavern\\start-sillytavern.cmd`,
+      },
+      {
+        label: "Node.js",
+        ok: true,
+        detail: "C:\\Program Files\\nodejs\\node.exe",
+      },
+      {
+        label: "Python 3",
+        ok: true,
+        detail: `${HOME}\\AppData\\Local\\Programs\\Python\\Python312\\python.exe`,
+      },
+      {
+        label: "官方 Claude Code",
+        ok: true,
+        detail: `${HOME}\\.local\\bin\\claude.exe`,
+      },
       {
         label: "官方 Codex CLI（GPT 桥接用）",
         ok: true,
         detail: `${HOME}\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe`,
       },
-      { label: "端口 5001 / 5002 / 8000", ok: true, detail: "都空着" },
+      { label: "Claude 桥接端口 5001", ok: true, detail: "空闲" },
+      { label: "GPT 桥接端口 5002", ok: true, detail: "空闲" },
+      { label: "Gemini 桥接端口 5003", ok: true, detail: "空闲" },
+      { label: "酒馆端口 8000", ok: true, detail: "空闲" },
     ],
   },
   {
@@ -954,103 +944,139 @@ const plugins: PluginStatus[] = [
       { label: "高危规则", ok: true, detail: "9 条启用 / 共 9 条" },
     ],
   },
-  {
-    id: "claude-desktop-zh-cn",
-    name: "Claude 桌面端 · 中文界面",
-    state: "ready",
-    detail:
-      "还没汉化。点「一键汉化」：下载上游、关掉 Claude 桌面端、跑上游的安全模式、核验。",
-    checks: [
-      {
-        label: "Claude 桌面端",
-        ok: true,
-        detail: "2.9939.2（Squirrel 装法，位置表 install::inventory）",
-      },
-      {
-        label: "上游副本",
-        ok: false,
-        detail: "还没下载。点「一键汉化」会先从上游 Release 取",
-      },
-    ],
-  },
 ];
 
 /**
- * Claude 桌面端中文界面的演示（2026-09-25）。点「一键汉化」翻真、「恢复英文」翻假；
- * 「检查更新」之前不知道上游最新版 —— 真实面板也是打开弹窗才问一次。
+ * Claude 汉化残留的演示（2026-09-27：Claude 汉化撤掉了，只剩清理）。
+ *
+ * **默认没有残留** —— 账户页那颗「清理汉化残留」只在有残留时出现，而 README 的截图就是演示模式拍的，
+ * 不该让每张截图都挂着它。`test:ui` 走清理流程之前把 `qb-demo-claude-zh-leftovers` 设成 `1`
+ * 再刷新（演示专用的开关，真实面板不读它）；点「清理」之后回到「没有残留」。
  */
-let claudeZhOn = false;
-let claudeZhLatest: string | null = null;
-const claudeZhStatus = (): ClaudeZhStatus => ({
-  install: "squirrel",
-  claude_version: "2.9939.2",
-  app_dir: `${HOME}\\AppData\\Local\\AnthropicClaude\\app-2.9939.2`,
-  state: claudeZhOn ? "on" : "off",
-  detail: claudeZhOn
-    ? "已汉化：这一版 Claude（2.9939.2）上的中文文件在，当前资料的界面语言是 zh-CN。"
-    : "还没汉化。点「一键汉化」：下载上游、关掉 Claude 桌面端、跑上游的安全模式、核验。",
-  files_present: claudeZhOn,
-  profiles: [
-    {
-      dir: `${HOME}\\AppData\\Roaming\\Claude-个人`,
-      locale: claudeZhOn ? "zh-CN" : "en-US",
-    },
-    {
-      dir: `${HOME}\\AppData\\Roaming\\Claude-工作`,
-      locale: claudeZhOn ? "zh-CN" : "en-US",
-    },
-  ],
-  package_tag: claudeZhOn ? "1.4.8" : null,
-  package_commit: claudeZhOn ? "4bb466d9fedcdd87fc5338f243bd53e28daf211d" : null,
-  latest_tag: claudeZhLatest,
-  latest_checked_at: claudeZhLatest ? "2026-09-25 12:00" : null,
-  // 演示里本机那一版就是上游最新版，没有「有新版」。
-  update_available: false,
-  blocked: [],
-  applied_tag: claudeZhOn ? "1.4.8" : null,
-  applied_claude: claudeZhOn ? "2.9939.2" : null,
-  applied_at: claudeZhOn ? "2026-09-25 12:01" : null,
-  desktop_running: 1,
-  upstream: "https://github.com/javaht/claude-desktop-zh-cn",
-});
-const claudeZhApply = (): ClaudeZhOutcome => {
-  claudeZhOn = true;
-  claudeZhLatest ??= "1.4.8";
+let claudeZhCleaned = false;
+function demoLeftoversOn(): boolean {
+  try {
+    return localStorage.getItem("qb-demo-claude-zh-leftovers") === "1";
+  } catch {
+    return false;
+  }
+}
+const claudeZhLeftovers = (): ClaudeZhLeftovers => {
+  const none: ClaudeZhLeftovers = {
+    empty: true,
+    apps: [],
+    zh_profiles: [],
+    stray_3p: null,
+    panel_copy: null,
+    state_file: null,
+    needs_close: false,
+    desktop_running: 1,
+  };
+  if (claudeZhCleaned || !demoLeftoversOn()) return none;
+  return {
+    ...none,
+    empty: false,
+    apps: [
+      {
+        version: "2.9939.2",
+        dir: `${HOME}\\AppData\\Local\\AnthropicClaude\\app-2.9939.2`,
+        current: true,
+        zh_files: 0,
+        backup_mb: 107,
+        changed: 3,
+        restorable: true,
+      },
+    ],
+    stray_3p: `${HOME}\\AppData\\Roaming\\Claude-3p`,
+    panel_copy: `${HOME}\\AppData\\Local\\ClaudeIpGate\\plugins\\claude-desktop-zh-cn`,
+    state_file: `${HOME}\\AppData\\Local\\ClaudeIpGate\\claude-zh\\state.json`,
+    needs_close: true,
+  };
+};
+const claudeZhCleanup = (): ClaudeZhOutcome => {
+  const had = claudeZhLeftovers();
+  claudeZhCleaned = true;
+  if (had.empty)
+    return { ok: true, closed_claude: false, lines: ["没有残留，不用清。"] };
   return {
     ok: true,
-    restored: false,
-    tag: "1.4.8",
+    closed_claude: true,
     lines: [
-      "app.asar 与 claude.exe 没被动过（哈希一致，签名状态仍是 Valid）。",
-      "这一版 Claude（2.9939.2）上的中文文件在。",
-      `${HOME}\\AppData\\Roaming\\Claude-工作：界面语言设为 zh-CN`,
-      "当前账户资料的界面语言是 zh-CN。",
+      "先关掉了 Claude 桌面端（1 个进程）。",
+      "Claude 2.9939.2：3 个前端文件换回了原版（上游改过的，也包括它卸载时删多了的）。",
+      "Claude 2.9939.2：删掉了上游留下的备份（107 MB）。",
+      `删掉了上游建的 ${HOME}\\AppData\\Roaming\\Claude-3p（里面只有一个写了界面语言的 config.json）。`,
+      `删掉了 ${HOME}\\AppData\\Local\\ClaudeIpGate\\plugins\\claude-desktop-zh-cn。`,
+      `删掉了 ${HOME}\\AppData\\Local\\ClaudeIpGate\\claude-zh\\state.json。`,
     ],
   };
 };
-const claudeZhRestore = (): ClaudeZhOutcome => {
-  claudeZhOn = false;
+/**
+ * 软件页 SillyTavern 卡的演示（2026-09-29）。
+ *
+ * 默认「你自己的那份 1.18.0、Node 够用」—— README 的截图拍的就是这一档。演示专用的两个开关
+ * （真实面板不读它们）：`qb-demo-tavern-no-node` = `1` → 本机没有 Node（安装框里露出 winget 勾选）；
+ * `qb-demo-tavern-managed` = `1` → 一开始就是面板装的 1.18.0（GitHub 上最新 1.18.1，能更新）。
+ * 点「下载安装」/「更新」之后是面板装的 1.18.1，「卸载」回到你自己的那份。
+ */
+let demoTavern: {
+  managed: boolean;
+  version: string;
+  previous: string | null;
+} | null = null;
+function demoFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+function demoTavernState() {
+  return (
+    demoTavern ?? {
+      managed: demoFlag("qb-demo-tavern-managed"),
+      version: "1.18.0",
+      previous: null,
+    }
+  );
+}
+const DEMO_ST_MANAGED = `${HOME}\\AppData\\Local\\ClaudeIpGate\\apps\\sillytavern`;
+const DEMO_ST_LATEST = "1.18.1";
+const tavernSetupStatus = (): TavernSetupStatus => {
+  const st = demoTavernState();
+  const noNode = demoFlag("qb-demo-tavern-no-node");
   return {
-    ok: true,
-    restored: false,
-    tag: "1.4.8",
-    lines: [
-      "这一版 Claude（2.9939.2）上的中文文件已删掉。",
-      `${HOME}\\AppData\\Roaming\\Claude-工作：界面语言写回 en-US`,
-    ],
+    root: st.managed ? DEMO_ST_MANAGED : tavern.sillytavern_root,
+    launcher: st.managed ? `${DEMO_ST_MANAGED}\\Start.bat` : tavern.st_launcher,
+    present: true,
+    version: st.version,
+    node_engine: ">= 20",
+    managed: st.managed
+      ? {
+          version: st.version,
+          tag: st.version,
+          installed_at: "2026-09-29T08:00:00Z",
+          archive_sha256: "0".repeat(64),
+          source: `https://github.com/SillyTavern/SillyTavern/archive/refs/tags/${st.version}.zip`,
+        }
+      : null,
+    managed_dir: DEMO_ST_MANAGED,
+    previous_version: st.previous,
+    node: noNode
+      ? { path: null, version: null }
+      : { path: "C:\\Program Files\\nodejs\\node.exe", version: "v24.14.1" },
+    node_ok: !noNode,
+    winget: true,
+    config_port: 8000,
+    st_port: tavern.st_port,
+    running: false,
+    foreign_running: false,
   };
 };
+
 /** 演示里的出站插件运行态：启动翻真、停止翻假，状态随之变。 */
 let egressRunning = false;
 let egressExe: string | null = null;
-
-const catalog: OfficialCatalogStatus = {
-  configured: false,
-  source: null,
-  signed: false,
-  detail:
-    "官方清单仓库尚未创建，商店保持「仅内置插件」模式，不接受任意下载地址。",
-};
 
 const tavern: TavernConfig = {
   bridge_root: `${HOME}\\SillyTavern\\bridge`,
@@ -1364,7 +1390,6 @@ const antigravityStatus = (): AntigravityStatus => ({
     data_dir: `${HOME}\\.gemini\\antigravity-ide`,
   },
   under_gate: !settings.antigravity_outside_gate,
-  auto_update: true,
   login_seen: true,
   gemini_cli_installed: true,
   hub_logged_in: true,
@@ -2448,10 +2473,6 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     turnstate_team: stationTurnstateTeam,
     turnstate_takeover: stationTurnstateTakeover,
   }),
-  station_router_start: (args) => {
-    stationRouterUp = true;
-    return FIXTURES.station_router_status(args);
-  },
   // 官方 Codex turn-state（实验）。演示数据给一张采到的 292，好看清界面。
   station_turnstate_configure: (args) => {
     stationTurnstateEnabled = Boolean(args?.enabled);
@@ -2496,10 +2517,6 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       },
     },
   ],
-  station_router_stop: (args) => {
-    stationRouterUp = false;
-    return FIXTURES.station_router_status(args);
-  },
   // 切哪个软件的上游，由**这条线自己的 client** 决定 —— 跟真后端同一条规矩。
   // 拿参数里的 client 当依据的话，演示就验不出那个 bug。
   station_select_route: (args) => {
@@ -2670,7 +2687,6 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
           problem: null,
         },
   gate_status: () => gate,
-  allowlist_read: () => gate.allowlist,
   hook_status: () => hook,
   country_presets: () => [
     ["只留美国", ["US"]],
@@ -2726,7 +2742,6 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       is_datacenter: null,
     };
   },
-  probe_purity: () => purity,
   probe_dns: () => dns,
   purity_criteria: () => criteria,
   detect_software: () => software,
@@ -2793,9 +2808,7 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   // 而真后端 (`relay::presets::for_target`) 是过滤了的，演示不该比它宽松。
   relay_presets: (args) =>
     presets.filter((p) => !args?.target || p.target === args.target),
-  tz_current: () => "America/New_York",
   snapshot_list: () => snapshots,
-  profile_list: () => profileStore,
   settings_load: () => settings,
   progress_load: () => structuredClone(progress),
   progress_set: (args) => {
@@ -2841,7 +2854,6 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     targets: kill.targets.filter((t) => t.role !== "antigravity"),
   }),
   plugin_list: () => plugins,
-  plugin_catalog_status: () => catalog,
   tavern_config: () => tavern,
   tavern_gpt_status: () => gptBridge,
   tavern_gpt_token: () => "demo-token-not-a-real-secret",
@@ -2895,13 +2907,8 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     detail: "演示模式：桥接角色扮演测试通过",
     tested_at: new Date().toISOString(),
   }),
-  claude_zh_status: () => claudeZhStatus(),
-  claude_zh_check: () => {
-    claudeZhLatest = "1.4.8";
-    return claudeZhStatus();
-  },
-  claude_zh_apply: () => claudeZhApply(),
-  claude_zh_restore: () => claudeZhRestore(),
+  claude_zh_leftovers: () => claudeZhLeftovers(),
+  claude_zh_cleanup: () => claudeZhCleanup(),
   antigravity_ui_status: () => antigravityUiStatus(),
   antigravity_ui_start: () => {
     antigravityUiRunning = true;
@@ -2938,7 +2945,6 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   // 演示里就是这个状态位。
   antigravity_running: (args) =>
     antigravityLive[String(args?.product)] ? 1 : 0,
-  antigravity_auto_update_set: () => null,
   // 一键安装（0.29.0）：演示里不联网、不装包，只回一句结论。
   antigravity_install: (args) =>
     args?.product === "ide"
@@ -2975,11 +2981,6 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   antigravity_ide_archive: (args) => {
     const i = agAccounts.findIndex((s) => s.id === args?.id);
     if (i >= 0) agAccounts.splice(i, 1);
-    return null;
-  },
-  antigravity_account_rename: (args) => {
-    const s = agAccounts.find((x) => x.id === args?.id);
-    if (s) s.label = String(args?.label);
     return null;
   },
   // 只改索引：把 `from` 那一半挂到 `into` 上，再把 `from` 从清单里去掉。
@@ -3033,8 +3034,73 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     model: "claude-opus-5",
     effort: "max",
     cache_ttl: "1h",
-    sdk_sessions: 1,
+    sdk_sessions: 0,
+    // CLI 模式：没有常驻会话（弹窗里写明「每条消息起一次 claude -p」）。
+    sessions: [],
   }),
+  // 一条调用的全文（2026-09-29，原来只在 bridge.py 自己的监控页上）。全是编的。
+  tavern_bridge_call_detail: (args) => ({
+    system_prompt:
+      "（演示）你是林澈，一名温和但机敏的图书管理员。始终保持角色身份，用中文回应；每轮 340–520 字。",
+    messages: [
+      { role: "user", content: "（演示）你好，今天有什么推荐的书吗？" },
+      {
+        role: "system",
+        content: "（演示）[作者注释] 这一段放慢节奏，多写环境。",
+      },
+    ],
+    output:
+      "（演示）林澈从一排排书架间抬起头，推了推眼镜：「你来得正好，昨天刚到了一批旧版的游记。」" +
+      String(args?.id ?? ""),
+    error: null,
+    raw: null,
+  }),
+  // 软件页 SillyTavern 卡（2026-09-29）。安装 / 更新 / 卸载只改演示里的状态，什么都不下载。
+  tavern_setup_status: () => tavernSetupStatus(),
+  tavern_latest: (): TavernRelease => ({
+    tag: DEMO_ST_LATEST,
+    version: DEMO_ST_LATEST,
+    node_engine: ">= 20",
+    node_ok: !demoFlag("qb-demo-tavern-no-node"),
+    page_url: `https://github.com/SillyTavern/SillyTavern/releases/tag/${DEMO_ST_LATEST}`,
+    archive_url: `https://github.com/SillyTavern/SillyTavern/archive/refs/tags/${DEMO_ST_LATEST}.zip`,
+  }),
+  tavern_install: (args) => {
+    const version = args?.tag ? String(args.tag) : DEMO_ST_LATEST;
+    demoTavern = { managed: true, version, previous: null };
+    return (
+      `演示：SillyTavern ${version} 已装好：${DEMO_ST_MANAGED}` +
+      (args?.importFrom
+        ? `；从 ${String(args.importFrom)} 复制了 1234 个文件（data、config.yaml），原来那份没动`
+        : "")
+    );
+  },
+  tavern_update: (args) => {
+    const was = demoTavernState().version;
+    const version = args?.tag ? String(args.tag) : DEMO_ST_LATEST;
+    if (version === was) throw new Error(`现在就是 ${was}，没有换。`);
+    demoTavern = { managed: true, version, previous: was };
+    return `演示：从 ${was} 换到了 ${version}；原来那份（${was}）整份留在 ${DEMO_ST_MANAGED}.previous`;
+  },
+  // 2026-09-29：软件页 SillyTavern 卡的版本清单；账户页「酒馆」弹窗的控制台、角色卡、世界书、扩展、回收站。
+  ...makeTavernFixtures({
+    home: HOME,
+    get: demoTavernState,
+    set: (s) => {
+      demoTavern = s;
+    },
+    noNode: () => demoFlag("qb-demo-tavern-no-node"),
+    flag: demoFlag,
+  }),
+  tavern_uninstall: (): TavernUninstalled => {
+    demoTavern = { managed: false, version: "1.18.0", previous: null };
+    return {
+      backup: `${HOME}\\AppData\\Local\\ClaudeIpGate\\tavern-uninstall\\20260929-080000`,
+      backed_up: 1234,
+      removed: [DEMO_ST_MANAGED],
+      left: [],
+    };
+  },
   tavern_bridge_settings: () => ({
     settings: {
       priority_prompt: "你是一个演示用的角色。",
@@ -3052,6 +3118,8 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     invocation_modes: ["cli", "agent_sdk"],
   }),
   tavern_bridge_settings_save: () => null,
+  // 数字照 bridge.py 2.4.0 真实会给的量级：输入是系统提示词 + 酒馆消息的字符数，
+  // 回复几百字，输出 token 含思考所以比回复多得多；缓存读的是整段前缀。
   tavern_bridge_telemetry: () => ({
     records: [
       {
@@ -3061,12 +3129,13 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
         mode: "cli",
         model: "claude-opus-5",
         effort: "max",
-        input: 1820,
-        output: 640,
-        cache_read: 41200,
-        cache_write: 0,
+        input_chars: 15626,
+        output_chars: 462,
+        output_tokens: 1720,
+        cache_read: 19387,
+        cache_write: 1902,
         prefix: "append_only",
-        elapsed_ms: 8400,
+        elapsed_ms: 41500,
       },
       {
         id: "demo-2",
@@ -3075,22 +3144,23 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
         mode: "cli",
         model: "claude-opus-5",
         effort: "max",
-        input: 1760,
-        output: 512,
-        cache_read: 39800,
-        cache_write: 2100,
+        input_chars: 14996,
+        output_chars: 513,
+        output_tokens: 3014,
+        cache_read: 0,
+        cache_write: 20480,
         prefix: "first",
-        elapsed_ms: 11200,
+        elapsed_ms: 56400,
       },
     ],
     total: 2,
     offset: 0,
     has_more: false,
-    hit_rate: 0.94,
-    cache_read: 81000,
-    cache_write: 2100,
+    hit_rate: 0.5,
+    cache_read: 19387,
+    cache_write: 22382,
     countable: 2,
-    prefix_reusable: 0.5,
+    prefix_reusable: 1,
   }),
   tavern_bridge_telemetry_clear: () => 2,
   tavern_locate: () => survey,
@@ -3249,26 +3319,36 @@ let codexLaunched: string | null = codexSlots[0].id;
 // 一份**不是面板起的** Codex（开始菜单 / `codex://` 链接 / 别的多开工具，默认资料）。
 // 起槽位、切槽位都不动它（2026-09-23）；只有使用者点「一键关闭」才一起关。
 let codexForeign = true;
-/** GPT 界面语言的演示：`codex_locale_set` 翻它；默认那份只在别处起的那份没开着时才跟着变。 */
+/**
+ * GPT 界面语言的演示：`codex_locale_set` 翻它；默认那份只在别处起的那份没开着时才跟着变。
+ * 第二个槽位一开始是 GPT 自己写坏了的那种（`[desktop]` 写了两遍，它读不到里面任何桌面设置），
+ * 设中文时顺手修掉 —— 演示那一行怎么显示。
+ */
 let codexZh = false;
 let codexZhDefault = false;
+let codexZhBroken = true;
 function codexLocaleStatus(): CodexLocaleStatus {
   return {
     enabled: codexZh,
     homes: [
-      ...codexSlots.map((s) => ({
-        label: `槽位「${s.label}」`,
-        config: `${HOME}\\AppData\\Local\\ClaudeIpGate\\codex-accounts\\${s.id}\\home\\config.toml`,
-        current: codexZh ? "zh-CN" : null,
-        error: null,
-        adopted: codexZh ? "zh-CN" : "en-US",
-        is_default: false,
-      })),
+      ...codexSlots.map((s, i) => {
+        const broken = i === 1 && codexZhBroken;
+        return {
+          label: `槽位「${s.label}」`,
+          config: `${HOME}\\AppData\\Local\\ClaudeIpGate\\codex-accounts\\${s.id}\\home\\config.toml`,
+          current: codexZh && !broken ? "zh-CN" : null,
+          error: null,
+          repair: broken ? "[desktop]" : null,
+          adopted: codexZh ? "zh-CN" : "en-US",
+          is_default: false,
+        };
+      }),
       {
         label: `默认（${HOME}\\.codex，开始菜单起的 GPT 用它）`,
         config: `${HOME}\\.codex\\config.toml`,
         current: codexZhDefault ? "zh-CN" : null,
         error: null,
+        repair: null,
         adopted: "en-US",
         is_default: true,
       },
@@ -3414,22 +3494,33 @@ function codexDemo(cmd: string, args: Record<string, unknown>) {
   if (cmd === "codex_locale_set") {
     const on = !!args.enabled;
     const wasOurs = !!codexLaunched;
+    const repairedNow = on && codexZhBroken;
     codexZh = on;
+    if (on) codexZhBroken = false;
     if (!codexForeign) codexZhDefault = on;
     const lines = [
       ...codexSlots.map(
-        (s) =>
-          `槽位「${s.label}」：${on ? "已设为中文。" : "已撤掉中文，回到 GPT 自己的默认。"}`,
+        (s, i) =>
+          `槽位「${s.label}」：${on ? "已设为中文。" : "已撤掉中文，回到 GPT 自己的默认。"}${
+            repairedNow && i === 1
+              ? "顺手并掉了 GPT 自己写重复的 [desktop]（它原来因此读不到这份里的任何桌面设置），没改任何值。"
+              : ""
+          }`,
       ),
       codexForeign
-        ? `默认（${HOME}\\.codex，开始菜单起的 GPT 用它）：别处起的 GPT 正开着，这一份这次没改（它开着会把改动写回去）。关掉它再点一次。`
+        ? `默认（${HOME}\\.codex，开始菜单起的 GPT 用它）：别处起的 GPT 正开着，这一份这次没改（它只在启动时读这一项，开着改了也不生效）。完全退出它（托盘里也退）再点一次。`
         : `默认（${HOME}\\.codex，开始菜单起的 GPT 用它）：${on ? "已设为中文。" : "已撤掉中文，回到 GPT 自己的默认。"}`,
     ];
-    return {
+    const outcome: CodexLocaleOutcome = {
       changed: codexSlots.length + (codexForeign ? 0 : 1),
+      already: 0,
+      repaired: repairedNow ? 1 : 0,
+      skipped: codexForeign ? 1 : 0,
+      default_busy: codexForeign,
       lines,
       reopened: wasOurs ? "已按当前槽位重新打开 GPT 桌面端。" : null,
     };
+    return outcome;
   }
   // Codex 出站与换出口插件（外部程序）。演示里只翻状态位，不起任何进程。
   if (cmd === "codex_egress_status") {

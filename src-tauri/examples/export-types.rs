@@ -37,7 +37,6 @@ fn main() {
         // 错误分类。前端用它做条件处理 —— 不导出的话那边只能手抄一份，
         // 而手抄的联合类型不会跟着 Rust 的枚举一起变。
         qb_gate_lib::error::ErrorKind::export_all_to(&root)?;
-        qb_gate_lib::diagnostics::ProbeRequest::export_all_to(&root)?;
         qb_gate_lib::workspace::ConfigPreview::export_all_to(&root)?;
         qb_gate_lib::extensions::InstallPreview::export_all_to(&root)?;
         qb_gate_lib::extensions::McpCheck::export_all_to(&root)?;
@@ -55,7 +54,6 @@ fn main() {
         // 全部改成 ts-rs 生成之后，盲区归零。
         qb_gate_lib::probe::ip::IpInfo::export_all_to(&root)?;
         qb_gate_lib::probe::ip_lookup::IpLookupReport::export_all_to(&root)?;
-        qb_gate_lib::probe::verdict::PanelVerdict::export_all_to(&root)?;
         qb_gate_lib::probe::verdict::Check::export_all_to(&root)?;
         qb_gate_lib::probe::dns::Resolver::export_all_to(&root)?;
         qb_gate_lib::probe::dns::DnsReport::export_all_to(&root)?;
@@ -141,16 +139,12 @@ fn main() {
         qb_gate_lib::killswitch::Role::export_all_to(&root)?;
         qb_gate_lib::plugins::DependencyCheck::export_all_to(&root)?;
         qb_gate_lib::plugins::PluginStatus::export_all_to(&root)?;
-        qb_gate_lib::plugins::OfficialCatalogStatus::export_all_to(&root)?;
         qb_gate_lib::plugins::PluginState::export_all_to(&root)?;
         qb_gate_lib::plugins::tavern_assets::AssetItem::export_all_to(&root)?;
         qb_gate_lib::plugins::tavern_assets::CategoryListing::export_all_to(&root)?;
         qb_gate_lib::plugins::tavern_assets::BackupEntry::export_all_to(&root)?;
         qb_gate_lib::snapshot::SnapshotEntry::export_all_to(&root)?;
         qb_gate_lib::snapshot::Manifest::export_all_to(&root)?;
-        qb_gate_lib::profile::Profile::export_all_to(&root)?;
-        qb_gate_lib::profile::ProfileStore::export_all_to(&root)?;
-        qb_gate_lib::profile::ApplyReport::export_all_to(&root)?;
         qb_gate_lib::update::UpdateStatus::export_all_to(&root)?;
         qb_gate_lib::commands::accounts::SwitchReport::export_all_to(&root)?;
         qb_gate_lib::commands::install::MigrateReport::export_all_to(&root)?;
@@ -200,11 +194,10 @@ fn main() {
         qb_app::usecase::antigravity_ops::AntigravityModelUsage::export_all_to(&root)?;
         qb_gate_lib::plugins::codex_egress::EgressConfig::export_all_to(&root)?;
         qb_gate_lib::plugins::codex_egress::EgressInstall::export_all_to(&root)?;
-        // 2026-09-25：一键汉化 —— Claude 桌面端插件（claude-desktop-zh-cn）与 GPT 的界面语言。
-        qb_gate_lib::plugins::claude_zh::ClaudeZhStatus::export_all_to(&root)?;
+        // 2026-09-25：GPT 的界面语言。2026-09-27：Claude 汉化撤掉了，只剩清理残留那几样。
+        qb_gate_lib::plugins::claude_zh::ClaudeZhLeftovers::export_all_to(&root)?;
+        qb_gate_lib::plugins::claude_zh::ClaudeZhApp::export_all_to(&root)?;
         qb_gate_lib::plugins::claude_zh::ClaudeZhProfile::export_all_to(&root)?;
-        qb_gate_lib::plugins::claude_zh::ClaudeZhInstall::export_all_to(&root)?;
-        qb_gate_lib::plugins::claude_zh::ClaudeZhState::export_all_to(&root)?;
         qb_app::usecase::claude_zh_ops::ClaudeZhOutcome::export_all_to(&root)?;
         qb_app::usecase::codex_locale::CodexLocaleStatus::export_all_to(&root)?;
         qb_app::usecase::codex_locale::CodexLocaleHome::export_all_to(&root)?;
@@ -216,9 +209,34 @@ fn main() {
         qb_gate_lib::plugins::tavern_bridge_api::BridgeSettingsView::export_all_to(&root)?;
         qb_gate_lib::plugins::tavern_bridge_api::BridgeCall::export_all_to(&root)?;
         qb_gate_lib::plugins::tavern_bridge_api::BridgeTelemetry::export_all_to(&root)?;
+        // 2026-09-29：SDK 会话与单条全文（原来只在 bridge.py 自己的网页上）。
+        qb_gate_lib::plugins::tavern_bridge_api::BridgeSession::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_bridge_api::BridgeCallDetail::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_bridge_api::BridgeMessage::export_all_to(&root)?;
+        // 软件页托管 SillyTavern（2026-09-29）。
+        qb_gate_lib::plugins::sillytavern::TavernSetupStatus::export_all_to(&root)?;
+        qb_gate_lib::install::sillytavern::Marker::export_all_to(&root)?;
+        qb_gate_lib::install::sillytavern_setup::TavernRelease::export_all_to(&root)?;
+        qb_gate_lib::install::sillytavern_setup::NodeInfo::export_all_to(&root)?;
+        qb_gate_lib::install::sillytavern_setup::TavernUninstalled::export_all_to(&root)?;
         qb_gate_lib::plugins::tavern_locate::TavernEvidence::export_all_to(&root)?;
         qb_gate_lib::plugins::tavern_locate::TavernCandidate::export_all_to(&root)?;
         qb_gate_lib::plugins::tavern_locate::TavernSurvey::export_all_to(&root)?;
+        // 2026-09-29：软件页 SillyTavern 卡的版本清单；账户页「酒馆」弹窗的控制台、角色卡 · 世界书 · 扩展 · 回收站。
+        qb_gate_lib::install::sillytavern_setup::TavernReleaseNote::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_console::ConsoleChunk::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_console::ConsoleHint::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_library::BookEntry::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_library::CharacterCard::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_library::CharacterDetail::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_library::ImportReport::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_library::WorldInfo::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_library::WorldDetail::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_library::ExtensionScope::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_library::TavernExtension::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_library::TavernExtensionList::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_library::ExtensionCheck::export_all_to(&root)?;
+        qb_gate_lib::plugins::tavern_library::TrashEntry::export_all_to(&root)?;
         // 中转站 P1-P4。智能调度那三个是使用者直接勾的东西,
         // 前端必须拿生成的联合类型,手抄一份「便宜/快/稳」迟早跟 Rust 的枚举漂开。
         qb_gate_lib::schedule::Axis::export_all_to(&root)?;
@@ -251,7 +269,6 @@ fn main() {
         qb_gate_lib::commands::station::RouteHealthView::export_all_to(&root)?;
         qb_gate_lib::commands::station::DecisionView::export_all_to(&root)?;
         qb_gate_lib::commands::station::StoredAudit::export_all_to(&root)?;
-        qb_gate_lib::commands::station::PriceStatusView::export_all_to(&root)?;
         qb_gate_lib::station::pricing::PriceBasis::export_all_to(&root)?;
         qb_gate_lib::station::pricing::UnitPrice::export_all_to(&root)?;
         qb_gate_lib::station::pricing::PriceStatus::export_all_to(&root)?;

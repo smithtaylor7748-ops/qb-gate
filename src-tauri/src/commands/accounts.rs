@@ -13,10 +13,7 @@ use crate::{
 
 #[tauri::command]
 pub fn accounts_list() -> accounts::AccountsReport {
-    accounts::report(
-        &accounts::AccountRoots::current(),
-        accounts::SyncReport::default(),
-    )
+    accounts::report(&accounts::AccountRoots::current())
 }
 
 /// 新建一个空槽位。只由界面点击触发。

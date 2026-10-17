@@ -8,9 +8,10 @@ pub mod self_update;
 pub mod upgrade;
 pub mod versions;
 pub mod winget;
-pub mod zipread;
 
 pub mod antigravity;
 pub mod antigravity_setup;
 pub mod codex_desktop;
 pub mod codex_store;
+pub mod sillytavern;
+pub mod sillytavern_setup;

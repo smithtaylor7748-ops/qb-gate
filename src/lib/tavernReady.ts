@@ -3,8 +3,9 @@
  *
  * # 为什么单独放一个模块
  *
- * 挡路的东西有四种，分布在三个不同的页面上：酒馆路径在酒馆插件页、CLI 在软件页、
- * 槽位与登录在官方账户页。界面上原来只有一个会灰掉的按钮加一句 `detail`，
+ * 挡路的东西有四种，分布在两个页面上：酒馆本体与 CLI 在软件页（2026-09-29 起酒馆不在扩展中心了，
+ * 软件页的 SillyTavern 卡能直接下载安装一份），槽位与登录在官方账户页。
+ * 界面上原来只有一个会灰掉的按钮加一句 `detail`，
  * 于是「为什么点不动」这个问题在界面上没有答案 —— 2026-09-21 使用者报的
  * 「GPT 和 Gemini 启动失败」里，Gemini 那条每次都停在「没有激活的 Gemini 槽位」，
  * 而按钮看上去是可以点的。
@@ -30,6 +31,21 @@ export interface BridgeReadiness {
 }
 
 /**
+ * 酒馆**本体**的那几项依赖（`PluginStatus.checks` 的标签，照 `plugins::sillytavern::status_with`）。
+ * 缺的是它们，就该去软件页的 SillyTavern 卡（下载安装、指到自己那份、装 Node.js）；
+ * 缺的是别的（bridge.py、CLI、槽位），就去软件页这一家那张 CLI 卡最下面的「酒馆 · X 桥接设置」
+ * （2026-09-29 第三轮起桥的设置在那里，那里列着缺什么）。
+ */
+export const TAVERN_BODY_CHECKS = ["SillyTavern", "酒馆启动脚本", "Node.js"];
+
+/** 酒馆本体缺东西吗。读不出检查结果（还在加载）不算缺 —— 不猜。 */
+export function tavernBodyMissing(
+  checks: readonly { label: string; ok: boolean }[] | undefined,
+): boolean {
+  return !!checks?.some((c) => TAVERN_BODY_CHECKS.includes(c.label) && !c.ok);
+}
+
+/**
  * 还差什么。空数组 = 可以起了。
  *
  * ⚠ 顺序 = **该先做哪一件**：路径 → CLI → 槽位 → 登录。
@@ -38,10 +54,10 @@ export interface BridgeReadiness {
 export function bridgeBlockers(o: BridgeReadiness): string[] {
   const out: string[] = [];
   if (o.tavernPathsUnset) {
-    // 这句话在三个账户页的桥接设置弹窗和插件页里都会出现 —— 别写「在上面」（弹窗上面什么都没有），
-    // 插件页里那张卡也不叫「设置与定位」，叫「定位」（2026-09-25）。
+    // 这句话出现在软件页 Codex CLI / Gemini CLI 卡最下面的桥接设置里 —— 别写「在上面」「在下面」
+    // （卡片的先后顺序会变）。2026-09-29 起酒馆本体在软件页（扩展中心的酒馆页删了）。
     out.push(
-      "酒馆路径还没配 —— 到酒馆插件页的「定位」里点「自动定位」，或自己填。",
+      "酒馆还没装好 —— 到「软件」页的 SillyTavern 卡下载安装一份，或指到你自己那份。",
     );
   }
   if (!o.cli) out.push(`找不到${o.cliLabel} —— ${o.cliWhere}。`);

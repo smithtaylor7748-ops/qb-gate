@@ -19,12 +19,12 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// 后端错误的分类。与 `qb_foundation::error::GateError` 的变体一一对应。
+///
+/// 原来第一个是 `Cancelled`（使用者点了取消），连同取消机制 2026-09-27 删了。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "kebab-case")]
 #[ts(export)]
 pub enum ErrorKind {
-    /// 使用者自己点的取消。**不是故障** —— 界面上不该弹红色报错。
-    Cancelled,
     /// 读写文件失败。
     Io,
     /// 网络请求失败。
@@ -48,16 +48,6 @@ pub enum ErrorKind {
     Other,
 }
 
-impl ErrorKind {
-    /// 这个错误值不值得在界面上标红。
-    ///
-    /// 只有 `Cancelled` 不值得：使用者自己点的取消不是故障，
-    /// 弹一个红色的「操作已由用户取消」只会让人以为哪里坏了。
-    pub fn is_failure(self) -> bool {
-        self != ErrorKind::Cancelled
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,12 +67,5 @@ mod tests {
             serde_json::to_string(&ErrorKind::Other).unwrap(),
             "\"other\""
         );
-    }
-
-    #[test]
-    fn a_user_cancellation_is_not_a_failure() {
-        assert!(!ErrorKind::Cancelled.is_failure());
-        assert!(ErrorKind::Io.is_failure());
-        assert!(ErrorKind::Other.is_failure());
     }
 }

@@ -647,6 +647,203 @@ fn every_powershell_call_pins_its_output_encoding() {
     );
 }
 
+/// 注册了的 IPC 命令，界面上都得有人提到；界面调的命令，也都得真的注册过。
+///
+/// 2026-09-27 清出来三十来条「注册着、界面一次都不调」的命令：有的是删掉的页面留下的
+/// （「服务商与环境」旧页的预览 / 应用 / 回滚 / 导出导入 / 草稿诊断），有的是界面入口早就没了
+/// （统一档案、取消操作、放弃会话记录、手动切时区、Hub 自动更新开关……），还有三条只回一句「已停用」。
+/// 它们不报错、不占界面，只是一直挂在 IPC 上 —— 前端谁都调得到，而没人记得它们还在。
+///
+/// 两个方向都查：
+///
+/// 1. `generate_handler!` 里的每一条，前端代码里都得出现它的名字（带双引号）；
+/// 2. 前端 `call(…)` / `call<…>(…)` 的每一个命令名，都得在 `generate_handler!` 里 ——
+///    写错一个字母的症状是「点了没反应」，只在运行时报 `command not found`。
+///
+/// 只数前端的业务代码：生成的类型（`src/lib/generated`）、演示夹具（`demo*.ts`、`workspaceDemo.ts`）
+/// 和单测不算 —— 夹具或单测里留着一个命令名，不等于界面在调它。
+///
+/// ⚠ 第 1 条只证明「有人提到」，证明不了「有人调」：`api.ts` 里留着一个没人用的包装，
+/// 名字照样在。那一半由前端的 `src/lib/apiUsage.test.ts` 守着（每个包装都得有调用方）。
+#[test]
+fn every_registered_command_is_called_by_the_frontend() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib = std::fs::read_to_string(manifest.join("src").join("lib.rs")).expect("读 lib.rs");
+    let registered = registered_commands(&lib);
+    assert!(
+        registered.len() > 100,
+        "只解析出 {} 条命令 —— 解析 `generate_handler!` 的那段坏了，这条测试会什么都不查",
+        registered.len()
+    );
+
+    let workspace = manifest.parent().expect("src-tauri 一定有上级目录");
+    let mut sources = Vec::new();
+    collect_frontend(&workspace.join("src"), &mut sources);
+    assert!(
+        sources.len() > 50,
+        "只找到 {} 个前端源文件 —— 扫描的目录不对",
+        sources.len()
+    );
+    let texts: Vec<String> = sources
+        .iter()
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .collect();
+
+    let unused: Vec<&String> = registered
+        .iter()
+        .filter(|c| {
+            let quoted = format!("\"{c}\"");
+            !texts.iter().any(|t| t.contains(&quoted))
+        })
+        .collect();
+    assert!(
+        unused.is_empty(),
+        "这些命令注册在 `generate_handler!` 里，前端却一次都没提到：{unused:?}
+         界面入口删了就把命令一起删；只在 Rust 里调的函数别挂 `#[tauri::command]`。"
+    );
+
+    let mut unknown: BTreeSet<String> = BTreeSet::new();
+    for t in &texts {
+        for name in frontend_calls(t) {
+            if !registered.contains(&name) {
+                unknown.insert(name);
+            }
+        }
+    }
+    assert!(
+        unknown.is_empty(),
+        "前端在调这些命令，`generate_handler!` 里却没有：{unknown:?}"
+    );
+}
+
+/// `tauri::generate_handler![…]` 里每一项的最后一段（`commands::gate::gate_status` → `gate_status`）。
+fn registered_commands(lib: &str) -> BTreeSet<String> {
+    let start = lib
+        .find("generate_handler![")
+        .expect("lib.rs 里找不到 generate_handler!");
+    // 先剥注释再找收尾的 `]` —— 注释里写个 `]` 就会让表提前结束。
+    let body = strip(&lib[start + "generate_handler![".len()..]);
+    let end = body.find(']').expect("generate_handler! 没有收尾");
+    body[..end]
+        .split(',')
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .map(|item| item.rsplit("::").next().unwrap_or(item).trim().to_string())
+        .collect()
+}
+
+/// 前端 `call("x")` / `call<T>("x")` / `call<A<B>>(\n "x"` 里的命令名。
+fn frontend_calls(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(pos) = text[from..].find("call") {
+        let start = from + pos;
+        from = start + "call".len();
+        if start > 0 {
+            let prev = bytes[start - 1];
+            if prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'.' || prev == b'$' {
+                continue;
+            }
+        }
+        let mut j = start + "call".len();
+        if bytes.get(j) == Some(&b'<') {
+            let mut depth = 0usize;
+            while j < bytes.len() {
+                match bytes[j] {
+                    b'<' => depth += 1,
+                    b'>' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            j += 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+        }
+        if bytes.get(j) != Some(&b'(') {
+            continue;
+        }
+        j += 1;
+        while bytes.get(j).is_some_and(|b| b.is_ascii_whitespace()) {
+            j += 1;
+        }
+        if bytes.get(j) != Some(&b'"') {
+            continue;
+        }
+        let rest = &text[j + 1..];
+        let Some(end) = rest.find('"') else {
+            continue;
+        };
+        let name = &rest[..end];
+        if !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
+/// 前端业务代码：`.ts` / `.tsx`，跳过生成的类型、演示夹具与单测。
+fn collect_frontend(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        let name = e.file_name().to_string_lossy().to_string();
+        if p.is_dir() {
+            if name != "generated" {
+                collect_frontend(&p, out);
+            }
+            continue;
+        }
+        let code = name.ends_with(".ts") || name.ends_with(".tsx");
+        let fixture = name.starts_with("demo") || name == "workspaceDemo.ts";
+        let test = name.contains(".test.");
+        if code && !fixture && !test && !name.ends_with(".d.ts") {
+            out.push(p);
+        }
+    }
+}
+
+#[test]
+fn the_command_scanners_read_what_they_claim_to() {
+    let lib = "x\n.invoke_handler(main_window_commands(tauri::generate_handler![\n    startup::startup_status,\n    // 注释里的 commands::fake::ghost 不算\n    commands::gate::gate_status,\n]))";
+    let got = registered_commands(lib);
+    assert_eq!(
+        got,
+        BTreeSet::from(["startup_status".to_string(), "gate_status".to_string()])
+    );
+
+    let ts = r#"
+        a: () => call<GateStatus>("gate_status"),
+        b: () => call<Array<[string, boolean]>>("gate_clean_stale"),
+        c: (x: string) =>
+          call<ConfigPreview[]>(
+            "official_configuration_preview",
+            { x },
+          ),
+        d: () => recall("not_this"),
+        e: () => api.call("nor_this"),
+        f: () => call(cmd),
+    "#;
+    assert_eq!(
+        frontend_calls(ts),
+        vec![
+            "gate_status".to_string(),
+            "gate_clean_stale".to_string(),
+            "official_configuration_preview".to_string(),
+        ]
+    );
+}
+
 // ---------------------------------------------------------------- 实现
 /// 每个 workspace 成员声明了哪些**本项目内部**的依赖。
 ///

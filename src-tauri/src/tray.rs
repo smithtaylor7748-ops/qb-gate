@@ -1,15 +1,16 @@
-//! 系统托盘：不打开主窗口也能看状态、切账户、切中转站。
+//! 系统托盘：不打开主窗口也能看状态、切账户、直接跳到中转站页。
 //!
 //! # 为什么值得做
 //!
-//! 切账户和切中转站是**高频、低风险**的两件事，但现在都要开窗口、找到页面、
-//! 点两下。托盘把它们收成两级菜单，一次点击完成。
+//! 切账户是**高频、低风险**的事，但要开窗口、找到页面、点两下。托盘把它收成
+//! 两级菜单，一次点击完成。（原来还按中转站记录列一串「切到这家」，那一代中转站目录
+//! 早就换成了线路池，现在这一项只是打开中转站页。）
 //!
 //! # 菜单是每次打开前重建的
 //!
-//! 账户槽位和中转站记录随时会变（用户在面板里加了一条、或者凭证过期了）。
+//! 账户槽位随时会变（用户在面板里加了一个、或者凭证过期了）。
 //! Tauri 的托盘菜单是静态对象，**不重建就会显示上一次的内容** ——
-//! 一个显示着已删除供应商的菜单比没有菜单更糟。
+//! 一个显示着已删除账户的菜单比没有菜单更糟。
 //!
 //! # 政策边界
 //!
@@ -23,8 +24,6 @@ use tauri::{
     AppHandle, Manager, Runtime,
 };
 
-#[cfg(test)]
-use crate::relay::RelayTarget;
 use tauri::Emitter;
 
 pub const TRAY_ID: &str = "qbgate";
@@ -288,33 +287,17 @@ fn show_main<R: Runtime>(app: &AppHandle<R>) {
 mod tests {
     use super::*;
 
-    /// 菜单项 id 是拿 `:` 分段解析的，所以**分段本身不能出现在数据里**。
+    /// 菜单项 id 是拿 `:` 分段解析的，所以**分段本身不能出现在固定的那几段里**。
     ///
-    /// 账户标签来自目录名 `claude-profile-<标签>`，中转站 id 是本项目生成的
-    /// `<slug>-<时间戳>` —— 两者都不该含冒号。真出现了的话，分发会落到
-    /// `_ => {}` 那条静默什么都不做，症状是「点了没反应」。
+    /// 账户项是 `acct:<标签>`，标签来自目录名 `claude-profile-<标签>`，也不该含冒号。
+    /// 真出现了的话，分发会落到 `_ => {}` 那条静默什么都不做，症状是「点了没反应」。
+    /// （原来还有 `relay:<工具>:<站点>` 那一族，跟着旧中转站目录一起没了。）
     #[test]
     fn generated_ids_never_contain_the_separator() {
-        for t in RelayTarget::ALL {
-            assert!(!t.as_str().contains(':'), "{}", t.as_str());
-        }
         assert!(!ID_ACCOUNT.contains(':'));
         assert!(!ID_REOPEN.contains(':'));
         assert!(!ID_RELAY.contains(':'));
         assert!(!ID_OPEN.contains(':'));
         assert!(!ID_QUIT.contains(':'));
-    }
-
-    #[test]
-    fn relay_ids_round_trip_through_the_menu_id_format() {
-        // 拼出来的 id 必须能按三段解回去，否则菜单点了没反应。
-        for t in RelayTarget::ALL {
-            let id = format!("{ID_RELAY}:{}:{}", t.as_str(), "packycode-18f2a");
-            let parts: Vec<&str> = id.split(':').collect();
-            assert_eq!(parts.len(), 3, "{id}");
-            assert_eq!(parts[0], ID_RELAY);
-            assert_eq!(parts[1], t.as_str());
-            assert_eq!(parts[2], "packycode-18f2a");
-        }
     }
 }

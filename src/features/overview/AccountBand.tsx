@@ -14,8 +14,10 @@ import {
   Wine,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import BridgeSettings, { BridgeSettingsCorner } from "../tavern/BridgeSettings";
+import TavernPanel, { TavernPanelCorner } from "../tavern/TavernPanel";
+import { bridgeHref } from "../tavern/bridge/where";
 import { useNavigate } from "react-router-dom";
+import { tavernBodyMissing } from "../../lib/tavernReady";
 
 import { api, type LaunchTarget } from "../../lib/api";
 import { workspaceApi, type Client } from "../../lib/workspace";
@@ -24,7 +26,7 @@ import { invalidate, useResource, useSession } from "../../lib/store";
 import { endTask, resetTask, useTask } from "../../lib/tasks";
 import { slotName } from "../../lib/slotName";
 import { Button, Card, ConfirmDialog, Modal, useToast } from "../../ui";
-import ClaudeZh, { claudeZhLabel } from "../zh/ClaudeZh";
+import ClaudeZhCleanup from "../zh/ClaudeZhCleanup";
 
 import {
   needsLogin,
@@ -57,13 +59,13 @@ const LAUNCH_TASK = {
 export default function AccountBand() {
   const toast = useToast();
   const navigate = useNavigate();
-  const [bridgeOpen, setBridgeOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
 
   const accounts = useResource("accounts", R.accounts);
   const plugins = useResource("plugins", R.plugins);
-  // 一键汉化（插件 claude-desktop-zh-cn，2026-09-25）。按钮文字如实显示现状，
-  // 弹窗跟扩展中心的插件详情页是同一个组件。
-  const zh = useResource("claudeZh", R.claudeZh);
+  // Claude 汉化撤掉了（2026-09-27：官方账户下必然被改回英文）。只在检测到 0.25.4–0.25.5
+  // 留下的东西时，标题栏出现一颗「清理汉化残留」；清完就不再出现。
+  const zhLeft = useResource("claudeZhLeftovers", R.claudeZhLeftovers);
   const [zhOpen, setZhOpen] = useState(false);
 
   const codeTask = useTask("launch-claude-code");
@@ -91,7 +93,7 @@ export default function AccountBand() {
   const page = Math.min(pageRaw < 0 ? autoPage : pageRaw, pages - 1);
   const pageSlots = shown.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
 
-  const tavern = plugins.data?.[0];
+  const tavern = plugins.data?.find((p) => p.id === "sillytavern");
   const running = tavern?.state === "running";
   /**
    * 依赖还没配齐这一档（最常见的是三个路径一个都没填）。
@@ -99,9 +101,12 @@ export default function AccountBand() {
    * 这时候这块贴**点了只会失败** —— 而且失败信息里那句
    * 「路径不存在: bridge.py」曾经是使用者看到的全部内容。
    * 一个只能失败的按钮不该照常长着「起桥接与酒馆」的样子：
-   * 改成在点之前就说明白，点下去带他到能填路径的那一页。
+   * 改成在点之前就说明白，点下去带他到能补齐的那一处（2026-09-29 第三轮起都在软件页：
+   * 酒馆本体缺东西去 SillyTavern 卡，缺的是 bridge.py / Python / Claude Code 就去 Claude Code 卡
+   * 最下面的「酒馆 · Claude 桥接设置」，那里列着缺什么、能「自动定位」）。
    */
   const tavernUnready = tavern?.state === "missing";
+  const tavernBodyGone = tavernBodyMissing(tavern?.checks);
 
   // ------------------------------------------------------------ 动作
 
@@ -324,17 +329,18 @@ export default function AccountBand() {
                   <PlayCircle size={14} aria-hidden="true" />
                   启动
                 </h2>
-                {/* 一键汉化的入口放在标题右侧，不占纵向空间（照反重力页「汉化」的先例）。 */}
-                <Button
-                  size="sm"
-                  variant={zh.data?.state === "on" ? "primary" : "default"}
-                  className="turnstate-entry ml-auto"
-                  data-testid="claude-zh-entry"
-                  aria-label={`Claude 桌面端中文界面：${claudeZhLabel(zh.data).text}`}
-                  onClick={() => setZhOpen(true)}
-                >
-                  {claudeZhLabel(zh.data).entry}
-                </Button>
+                {/* 汉化残留的清理入口：只在有残留时出现，放在标题右侧、不占纵向空间。 */}
+                {zhLeft.data && !zhLeft.data.empty && (
+                  <Button
+                    size="sm"
+                    className="turnstate-entry ml-auto"
+                    data-testid="claude-zh-cleanup-entry"
+                    aria-label="清理 Claude 汉化残留（Claude 汉化已撤掉）"
+                    onClick={() => setZhOpen(true)}
+                  >
+                    清理汉化残留
+                  </Button>
+                )}
                 {/* 原来标题右边常驻一句「门禁不过，一个进程都不起」，2026-09-23 使用者删了。
                     代价说明还在磁贴下面那一行（CLAUDE.md 要求代价常驻）。 */}
               </div>
@@ -367,7 +373,9 @@ export default function AccountBand() {
                   name="酒馆"
                   note={
                     tavernUnready
-                      ? "还没配好 · 点开去填路径"
+                      ? tavernBodyGone
+                        ? "酒馆还没装好 · 点开去软件页"
+                        : "还缺东西 · 点开看缺什么"
                       : running
                         ? "运行中 · 再点只打开页面"
                         : // Claude 桥接等 20 秒、酒馆等 180 秒（`sillytavern.rs`），原来写「最长 80 秒」。
@@ -378,11 +386,13 @@ export default function AccountBand() {
                   disabled={!!busy}
                   onClick={
                     tavernUnready
-                      ? () => navigate("/extensions/sillytavern")
+                      ? tavernBodyGone
+                        ? () => navigate("/software?focus=sillytavern")
+                        : () => navigate(bridgeHref("claude"))
                       : launchTavern
                   }
                   corner={
-                    <BridgeSettingsCorner onClick={() => setBridgeOpen(true)} />
+                    <TavernPanelCorner onClick={() => setPanelOpen(true)} />
                   }
                 />
                 <KillBar variant="tile" />
@@ -423,21 +433,22 @@ export default function AccountBand() {
           <strong>没保存的对话会丢</strong>。
         </p>
       </ConfirmDialog>
-      {/* 0.32.0：三条桥的端口与模型 —— 三个账户页共用同一个组件。 */}
-      <BridgeSettings
-        open={bridgeOpen}
+      {/* 酒馆本身的控制面板（2026-09-29 第三轮；三个账户页开的是同一个）。
+          Claude 那条桥的设置在软件页 Claude Code 卡的最下面。 */}
+      <TavernPanel
+        open={panelOpen}
         provider="claude"
-        onClose={() => setBridgeOpen(false)}
+        onClose={() => setPanelOpen(false)}
       />
       <Modal
         open={zhOpen}
         onClose={() => {
           setZhOpen(false);
-          invalidate("claudeZh");
+          invalidate("claudeZhLeftovers");
         }}
-        title="Claude 桌面端 · 中文界面"
+        title="清理 Claude 汉化残留"
       >
-        <ClaudeZh />
+        <ClaudeZhCleanup onDone={() => invalidate("claudeZhLeftovers")} />
       </Modal>
     </>
   );

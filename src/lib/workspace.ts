@@ -6,7 +6,6 @@ import { DEMO_ENABLED } from "./demo";
 import { invalidate, invalidateAutomatic, res, useResource } from "./store";
 import { call } from "./ipc";
 import { toIpcError } from "./ipcError";
-import type { LaunchPlan } from "./generated/LaunchPlan";
 import type { Workspace } from "./generated/Workspace";
 import type { Provider } from "./generated/Provider";
 import type { Credential } from "./generated/Credential";
@@ -17,10 +16,7 @@ import type { IdentityKind } from "./generated/IdentityKind";
 import type { ExtensionManifest } from "./generated/ExtensionManifest";
 import type { ExtensionInstallation } from "./generated/ExtensionInstallation";
 import type { InstallRequest } from "./generated/InstallRequest";
-import type { ProbeReport } from "./generated/ProbeReport";
-import type { ProbeRequest } from "./generated/ProbeRequest";
 export type {
-  LaunchPlan,
   Workspace,
   Provider,
   Credential,
@@ -31,8 +27,6 @@ export type {
   ExtensionManifest,
   ExtensionInstallation,
   InstallRequest,
-  ProbeReport,
-  ProbeRequest,
 };
 
 // `call` 在 `ipc.ts` 里 —— 跟 `api.ts` 用的是同一个（B2）。
@@ -46,37 +40,27 @@ export interface StartupStatus {
   error: string | null;
   blocked: string[];
 }
+/**
+ * ⛔ 这里只放界面真的在调的命令（2026-09-27 清过一遍）。
+ *
+ * 删掉的那一批都是「服务商与环境」旧页和新手引导在用的：环境的预览 / 应用 / 回滚、
+ * 导出导入、引用检查与删除、草稿诊断，外加从来没有界面的启动方案、取消操作、
+ * 放弃会话记录。后端的命令一起删了 —— `src-tauri/tests/architecture.rs` 的
+ * `every_registered_command_is_called_by_the_frontend` 盯着两边对得上。
+ */
 export const workspaceApi = {
-  cancelOperation: (id: string) => call<void>("operation_cancel", { id }),
   startup: () => call<StartupStatus>("startup_status"),
   retryStartup: () => call<StartupStatus>("startup_retry"),
   discardBlockedRecovery: () => call<StartupStatus>("startup_discard_blocked"),
-  savePlan: (plan: LaunchPlan) =>
-    call<LaunchPlan>("launch_plan_save", { plan }),
-  removePlan: (id: string) => call<void>("launch_plan_remove", { id }),
   state: () => call<Workspace>("workspace_state"),
   saveProvider: (provider: Provider) =>
     call<Provider>("provider_save", { provider }),
   saveCredential: (credential: Credential, action: string, key?: string) =>
     call<Credential>("credential_save", { credential, action, key }),
-  saveEnvironment: (environment: Environment) =>
-    call<Environment>("environment_save", { environment }),
-  previewEnvironment: (id: string) =>
-    call<ConfigPreview[]>("environment_preview", { id }),
-  rollbackEnvironment: (id: string) =>
-    call<Environment>("environment_rollback", { id }),
-  exportRelays: () => call<unknown>("relay_export"),
-  importRelays: (bundle: unknown) => call<number>("relay_import", { bundle }),
   officialPreview: (client: Client, id: string) =>
     call<ConfigPreview[]>("official_configuration_preview", { client, id }),
   officialMigrate: (client: Client, id: string, fingerprint: string) =>
     call<string>("official_configuration_migrate", { client, id, fingerprint }),
-  applyEnvironment: (id: string, fingerprint: string) =>
-    call<Environment>("environment_apply", { id, fingerprint }),
-  references: (kind: string, id: string) =>
-    call<string[]>("workspace_references", { kind, id }),
-  remove: (kind: string, id: string) =>
-    call<void>("workspace_remove", { kind, id }),
   launch: (
     client: Client,
     kind: IdentityKind,
@@ -84,10 +68,6 @@ export const workspaceApi = {
     workingDir?: string,
   ) => call<Session>("session_launch", { client, kind, id, workingDir }),
   stop: (id: string) => call<void>("session_stop", { id }),
-  forgetSession: (id: string) => call<void>("session_forget", { id }),
-  diagnose: (request: ProbeRequest) =>
-    call<ProbeReport>("diagnostic_run", { request }),
-  diagnostics: () => call<ProbeReport[]>("diagnostic_history"),
   catalog: () => call<ExtensionManifest[]>("extension_catalog"),
   importSkills: (source: string) =>
     call<ExtensionManifest[]>("extension_import_skills", { source }),
@@ -98,8 +78,8 @@ export const workspaceApi = {
   install: (request: InstallRequest) =>
     call<ExtensionInstallation>("extension_install", { request }),
   uninstall: (id: string) => call<void>("extension_uninstall", { id }),
-  connectApplication: () =>
-    call<ExtensionInstallation>("extension_connect_application"),
+  // 原来这里有 `connectApplication`（扩展中心酒馆页的「接入已配置的本地安装」）。
+  // 2026-09-29 酒馆变成面板的内置功能，那颗按钮连同命令一起删了。
   checkUpdates: () => call<string[]>("extension_check_updates"),
   checkMcp: (request: InstallRequest) =>
     call<{ connected: boolean; tools: string[]; detail: string }>(
@@ -109,10 +89,8 @@ export const workspaceApi = {
 };
 const definition = res(workspaceApi.state, { staleMs: 10_000 });
 const catalog = res(workspaceApi.catalog);
-const diagnostics = res(workspaceApi.diagnostics, { staleMs: 10_000 });
 export const useWorkspace = () => useResource("workspace", definition);
 export const useCatalog = () => useResource("catalog", catalog);
-export const useDiagnostics = () => useResource("diagnostics", diagnostics);
 
 export function useWorkspaceEvents() {
   useEffect(() => {
@@ -167,10 +145,6 @@ export function useAction() {
       return result;
     } catch (e) {
       const err = toIpcError(e);
-      // 使用者自己点的取消不是故障 —— 弹一个红色的「操作已由用户取消」
-      // 只会让人以为哪里坏了。这个分支看的是 `kind`，不是 message 里的中文
-      // （文案会改，而改文案的人不知道这里靠它做判断）。
-      if (err.cancelled) return undefined;
       setError(err.message);
       toast.error(err.message);
       return undefined;
@@ -192,7 +166,6 @@ export const KIND_NAMES = {
   application: "应用集成",
   mcp: "MCP",
   skill: "Skills",
-  template: "配置模板",
 };
 export const STATE_NAMES: Record<string, string> = {
   cancelled: "已取消",

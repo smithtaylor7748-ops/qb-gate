@@ -44,33 +44,15 @@ export const R = {
    */
   accounts: res(() => api.accountsList(), { pollMs: 30_000 }),
   progress: res(() => api.progressLoad()),
-  /**
-   * 官方端点预设。**只收厂商公开文档里的直连地址，一个第三方中转站都不放** ——
-   * 理由写在 `src-tauri/src/relay/presets.rs` 的文件头。
-   *
-   * 两个 target 一起取：新系统的「服务商」这一层没有 target 概念，
-   * target 是每个使用环境自己选的。
-   */
-  presets: res(async () => {
-    const all = [
-      ...(await api.relayPresets("claude-code")),
-      ...(await api.relayPresets("codex")),
-    ];
-    // 按 id 去重：Rust 侧的 id 本来就是全局唯一的（presets.rs 有单测钉着），
-    // 但演示夹具不看 target、两次都回同一批，合起来就重了。
-    return [...new Map(all.map((p) => [p.id, p])).values()];
-  }),
-  tz: res(() => api.tzCurrent()),
   settings: res(() => api.settingsLoad()),
   snapshots: res(() => api.snapshotList()),
-  profiles: res(() => api.profileList()),
 
   plugins: res(() => api.pluginList(), { pollMs: 20_000 }),
   /**
-   * Claude 桌面端中文界面的现状（2026-09-25）。**不联网**（问上游最新版是弹窗里单独那一下）；
-   * 不轮询 —— 它要数一遍桌面端进程。打开页面、点完「汉化」、工作区有变动时刷新。
+   * Claude 汉化还剩什么（2026-09-27，汉化撤掉了）。**不联网**；不轮询 —— 它要数一遍桌面端进程、
+   * 按大小比一遍上游的备份。打开页面、清理完、工作区有变动时刷新。
    */
-  claudeZh: res(() => api.claudeZhStatus()),
+  claudeZhLeftovers: res(() => api.claudeZhLeftovers()),
 
   /**
    * 出口一致性（综合评分第五项）。里面有两轮真实探测（绕过代理 / 跟随代理），
@@ -174,6 +156,21 @@ export const R = {
   tavernConfig: res(() => api.tavernConfig()),
   tavernAssets: res(() => api.tavernAssets()),
   tavernBackups: res(() => api.tavernBackups()),
+  /**
+   * 软件页 SillyTavern 卡（2026-09-29）：装在哪、是不是面板装的、Node 够不够、有没有 winget。
+   * **不联网**（最新版要点「检查新版本」），但要起两次小进程（`node --version`、`winget --version`），
+   * 所以不轮询：打开软件页读一次，装 / 更新 / 卸载 / 改路径之后作废重读。
+   */
+  tavernSetup: res(() => api.tavernSetupStatus()),
+  /**
+   * 账户页「酒馆」弹窗的角色卡 · 世界书 · 扩展 · 回收站（2026-09-29；第三轮之前在软件页的卡上）。
+   * 本机文件、不联网，打开那一页时读一次；导入 / 挪进回收站 / 恢复之后按 `AFTER.tavernLibrary` 作废重读。
+   * 扩展的「检查更新」要联网（git fetch），不在这里，是那一行的按钮。
+   */
+  tavernCharacters: res(() => api.tavernCharacters()),
+  tavernWorlds: res(() => api.tavernWorlds()),
+  tavernExtensions: res(() => api.tavernExtensions()),
+  tavernTrash: res(() => api.tavernTrash()),
 } as const;
 
 /** 破坏性操作之后要作废哪些资源，集中列在这里，免得每个调用点各记一份。 */
@@ -212,6 +209,24 @@ export const AFTER = {
   //
   /** 酒馆启停。 */
   tavern: ["plugins", "gate"] as const,
-  /** 应用档案 / 回滚快照：账户、中转站、门禁、快照列表全都可能变了。 */
-  profile: ["accounts", "gate", "tz", "snapshots", "profiles"] as const,
+  /** 软件页装 / 更新 / 卸载酒馆，或者改了它的位置：路径、依赖、资产全跟着变。 */
+  tavernSetup: [
+    "tavernSetup",
+    "tavernConfig",
+    "plugins",
+    "tavernAssets",
+    "tavernBackups",
+    "gate",
+    "tavernCharacters",
+    "tavernWorlds",
+    "tavernExtensions",
+  ] as const,
+  /** 角色卡 / 世界书 / 扩展进出回收站、导入：清单与资产盘点都变了。 */
+  tavernLibrary: [
+    "tavernCharacters",
+    "tavernWorlds",
+    "tavernExtensions",
+    "tavernTrash",
+    "tavernAssets",
+  ] as const,
 };

@@ -55,11 +55,6 @@ pub fn open(stored: &str) -> Option<String> {
     Some(stored.to_string())
 }
 
-/// 这条记录里的 Key 是加密存的吗？界面上要如实告诉用户。
-pub fn is_sealed(stored: &str) -> bool {
-    stored.starts_with(SEALED)
-}
-
 // ------------------------------------------------------------ Windows
 
 #[cfg(windows)]
@@ -166,7 +161,6 @@ mod tests {
     fn bare_plaintext_is_accepted_for_backward_compat() {
         // 早期版本或用户手改留下的裸明文，读得出来，下次保存会换成密文。
         assert_eq!(open("sk-legacy").as_deref(), Some("sk-legacy"));
-        assert!(!is_sealed("sk-legacy"));
     }
 
     #[test]
@@ -180,7 +174,7 @@ mod tests {
     #[test]
     fn sealed_values_carry_the_marker() {
         let sealed = seal("sk-x").unwrap();
-        assert!(is_sealed(&sealed));
+        assert!(sealed.starts_with(SEALED));
         assert!(sealed.starts_with("dpapi:"));
     }
 }

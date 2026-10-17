@@ -1,16 +1,16 @@
-//! 设置、时区、上手进度、启动，以及中转站预设。
+//! 设置、进度记录、启动，以及中转站预设。
 
 use crate::{
     accounts, audit, domain,
     error::{GateError, Result},
-    events, gate, launch, operations, progress, relay, sessions, settings, sysenv, usecase,
-    workspace, AppState,
+    events, gate, launch, operations, progress, relay, sessions, settings, usecase, workspace,
+    AppState,
 };
 
 /// 验 IP → 解锁 → **真的把进程拉起来** → 挂看门狗。
 ///
-/// `gate_open` 只解锁不启动，所以旧界面上那两个「启动 …」按钮其实一个进程
-/// 都没起过。这条链任何一步失败都会把租约还回去并重新上锁 ——
+/// 原来的 `gate_open` 只解锁不启动，旧界面上那两个「启动 …」按钮其实一个进程
+/// 都没起过（那条命令 2026-09-27 删了）。这条链任何一步失败都会把租约还回去并重新上锁 ——
 /// 门禁不过就一个进程都不起。
 #[tauri::command]
 pub async fn launch_claude(
@@ -169,32 +169,11 @@ pub async fn settings_save(mut next: settings::Settings) -> Result<settings::Set
     Ok(settings::load())
 }
 
-// ------------------------------------------------------------------ 时区
-
-#[tauri::command]
-pub fn tz_current() -> Result<String> {
-    sysenv::current_windows_tz()
-}
-
-#[tauri::command]
-pub fn tz_apply(
-    iana: String,
-    restore_on_exit: bool,
-    state: tauri::State<'_, AppState>,
-) -> Result<sysenv::TzState> {
-    let st = sysenv::apply_timezone(&iana, restore_on_exit)?;
-    *state.tz.lock().unwrap() = Some(st.clone());
-    Ok(st)
-}
-
-#[tauri::command]
-pub fn tz_restore(state: tauri::State<'_, AppState>) -> Result<()> {
-    let st = state.tz.lock().unwrap().clone();
-    match st {
-        Some(st) => sysenv::restore_timezone(&st),
-        None => Ok(()),
-    }
-}
+// 时区：没有命令了（2026-09-27）。切换由「设置 › 启动时对齐」在启动时做
+// （`usecase::locale_ops::align_on_start`），切之前的原值写进审计日志。
+// 原来的 `tz_current` / `tz_apply` / `tz_restore` 是旧软件页那张时区卡留下的：卡早就删了，
+// 「高级维护」里那颗「恢复时区」只认 `tz_apply` 记下的原值，而启动对齐从来不记 ——
+// 点了永远是「系统时区已恢复」，其实一个字都没动。
 
 // ------------------------------------------------------------------ 进度
 

@@ -24,7 +24,9 @@ import { slotName } from "../../lib/slotName";
 import { endTask, resetTask, useTask, type TaskState } from "../../lib/tasks";
 import StationTurnState from "../station/StationTurnState";
 import GptZh, { gptZhOn } from "../zh/GptZh";
-import BridgeSettings, { BridgeSettingsCorner } from "../tavern/BridgeSettings";
+import TavernPanel, { TavernPanelCorner } from "../tavern/TavernPanel";
+import { bridgeHref } from "../tavern/bridge/where";
+import { tavernBodyMissing } from "../../lib/tavernReady";
 import CodexQuotaBars, { type CodexQuotaState } from "./CodexQuotaBars";
 import Tile from "./Tile";
 import { Button, Card, ConfirmDialog, Modal, Pill, useToast } from "../../ui";
@@ -55,6 +57,9 @@ export default function GptBand() {
   const plugins = useResource("plugins", R.plugins);
   const tavern = plugins.data?.find((p) => p.id === "sillytavern");
   const tavernUnready = tavern?.state === "missing";
+  // 都去软件页：酒馆本体缺东西去 SillyTavern 卡；缺 Codex CLI / 槽位就去 Codex CLI 卡最下面的
+  // 「酒馆 · GPT 桥接设置」（那里列着缺什么）。
+  const tavernBodyGone = tavernBodyMissing(tavern?.checks);
   const tavernTask = useTask("tavern-start");
   const [gptBridge, setGptBridge] = useState<{
     running: boolean;
@@ -74,7 +79,7 @@ export default function GptBand() {
     return () => window.clearInterval(timer);
   }, [refreshGptBridge]);
   const [tavernBusy, setTavernBusy] = useState(false);
-  const [bridgeOpen, setBridgeOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
   async function launchTavern() {
     setTavernBusy(true);
     resetTask("tavern-start");
@@ -113,10 +118,12 @@ export default function GptBand() {
         label: string;
         action: "switch" | "launch" | "archive";
         /**
-         * 点的时候实测到的桌面端进程数。0 = 没在跑（那时候 launch 压根不弹框）；
-         * `null` = 查不出来 —— 照弹，但不许编一个数（原来写「还开着（1 个窗口）」，2026-09-25）。
+         * 点的时候实测到的全部桌面端进程数。0 = 没在跑（那时候 launch 直接执行）；
+         * `null` = 查不出来 —— 照弹，但不许编一个数。
          */
         running?: number | null;
+        /** 其中不是 QB Gate 管理的窗口数。它们不会被关，但继续会再开独立资料目录。 */
+        foreign?: number;
       }
     | { action: "close" }
     | null
@@ -331,7 +338,8 @@ export default function GptBand() {
    * 正是 §7.17 那条坑的形状。这里用的是 `codex_desktop_status`：它按官方 Store 包的
    * exe 路径认进程，不按名字 —— 跟启动链自己那套证据同源。
    *
-   * 只数**面板起的**（`ours`）：别处起的那份不会被关，就不该为它弹框。
+   * 现在只要发现**任何** Codex 桌面端窗口都弹确认：别处起的那份不会被关，
+   * 但继续会打开另一个资料目录，必须先让使用者看见这个事实。
    */
   async function requestLaunch(slot: CodexSlot) {
     // 查进程要跑一遍 PowerShell，要一两秒。这期间再点一次，原来会起两次 —— 第二次起之前
@@ -342,14 +350,22 @@ export default function GptBand() {
     setError("");
     try {
       let running: number | null;
+      let foreign = 0;
       try {
         const d = await codexApi.desktop();
-        running = d.processes.filter((p) => p.ours).length;
+        running = d.processes.length;
+        foreign = d.processes.filter((p) => !p.ours).length;
       } catch {
         running = null;
       }
       if (running === null || running > 0) {
-        setAsk({ id: slot.id, label: slot.label, action: "launch", running });
+        setAsk({
+          id: slot.id,
+          label: slot.label,
+          action: "launch",
+          running,
+          foreign,
+        });
         return;
       }
       await runLaunch(slot.id);
@@ -658,13 +674,15 @@ export default function GptBand() {
                   onClick={() => active && void requestLaunch(active)}
                 />
                 {/* 酒馆（GPT 后端）：面板内置桥接驱动官方 codex exec，酒馆与 Claude 那条共用。
-                    路径没配就带去扩展中心填；在跑就只开页面。 */}
+                    还缺东西就带去软件页补；在跑就只开页面。 */}
                 <Tile
                   icon={<Wine size={18} />}
                   name="酒馆"
                   note={
                     tavernUnready
-                      ? "还没配好 · 点开去填路径"
+                      ? tavernBodyGone
+                        ? "酒馆还没装好 · 点开去软件页"
+                        : "还缺东西 · 点开看缺什么"
                       : gptBridge?.running
                         ? "GPT 桥接运行中 · 再点只打开页面"
                         : // 就绪窗口是 180 秒（`sillytavern.rs` 的 ST_READY_ATTEMPTS），原来写「最长 60 秒」。
@@ -676,11 +694,13 @@ export default function GptBand() {
                   testId="gpt-tile-tavern"
                   onClick={
                     tavernUnready
-                      ? () => navigate("/extensions/sillytavern")
+                      ? tavernBodyGone
+                        ? () => navigate("/software?focus=sillytavern")
+                        : () => navigate(bridgeHref("gpt"))
                       : () => void launchTavern()
                   }
                   corner={
-                    <BridgeSettingsCorner onClick={() => setBridgeOpen(true)} />
+                    <TavernPanelCorner onClick={() => setPanelOpen(true)} />
                   }
                 />
                 <Tile
@@ -706,7 +726,7 @@ export default function GptBand() {
                 </p>
               )}
               {/* 注册坏了（Store 更新之后常见）时的一键修复。原来这颗按钮只长在确认框里，
-                  而没有面板起的窗口开着时不弹确认框 —— 正是更新后最常见的那种情形，
+                  而没有桌面端窗口开着时不弹确认框 —— 正是更新后最常见的那种情形，
                   报错写着「点修复」，界面上却找不到它（2026-09-25）。 */}
               {needsReg && !ask && (
                 <p className="notice notice--danger">
@@ -814,7 +834,9 @@ export default function GptBand() {
                   oursRunning
                   ? "关闭桌面端并切换"
                   : "切换"
-                : "关闭旧窗口并打开"
+                : ask?.foreign
+                  ? "仍要打开独立窗口"
+                  : "关闭旧窗口并打开"
         }
         danger
       >
@@ -831,8 +853,10 @@ export default function GptBand() {
                   ? "会先关闭面板起的 Codex 桌面端及其正在运行的任务（开始菜单或别的程序起的不动）。请确认当前工作已经保存，再继续。"
                   : "面板起的 Codex 桌面端没在跑，直接切。"
                 : ask?.running === null
-                  ? "查不出面板起的 Codex 桌面端现在开没开 —— 照样会先关掉它及其正在运行的任务（开始菜单或别的程序起的不动）。请确认当前工作已经保存，再继续。"
-                  : `面板起的 Codex 桌面端还开着（${ask?.running ?? 0} 个窗口），会先关掉它及其正在运行的任务；开始菜单或别的程序起的不动。请确认当前工作已经保存，再继续。`}
+                  ? "查不出 Codex 桌面端现在开没开 —— 继续前仍会按启动流程处理；如果已有外部窗口，可能会出现另一份独立会话。请确认后再继续。"
+                  : ask?.foreign
+                    ? `检测到别处打开的 GPT 窗口（${ask.foreign} 个）。它不会被关闭；继续会为槽位「${askShown}」打开另一份独立会话和对话记录。若不想出现第二个窗口，请取消并先关闭外部 GPT。`
+                    : `面板起的 Codex 桌面端还开着（${ask?.running ?? 0} 个窗口），会先关掉它及其正在运行的任务。请确认当前工作已经保存，再继续。`}
         </p>
         {error && (
           <p role="alert" className="notice notice--danger mt-2">
@@ -850,11 +874,12 @@ export default function GptBand() {
           </Button>
         )}
       </ConfirmDialog>
-      {/* 0.32.0：三条桥的端口与模型 —— 三个账户页共用同一个组件。 */}
-      <BridgeSettings
-        open={bridgeOpen}
+      {/* 酒馆本身的控制面板（2026-09-29 第三轮；三个账户页开的是同一个）。
+          GPT 那条内置桥的设置在软件页 Codex CLI 卡的最下面。 */}
+      <TavernPanel
+        open={panelOpen}
         provider="gpt"
-        onClose={() => setBridgeOpen(false)}
+        onClose={() => setPanelOpen(false)}
       />
     </>
   );

@@ -375,24 +375,6 @@ pub fn select(root: &Path, id: &str) -> Result<()> {
     save(root, &index)
 }
 
-pub fn rename(root: &Path, id: &str, label: &str) -> Result<()> {
-    let label = label.trim();
-    if label.is_empty() || label.chars().count() > 40 || label.chars().any(char::is_control) {
-        return Err(GateError::Other("账户名称需要 1–40 个可见字符".into()));
-    }
-    let mut index = load(root)?;
-    entry_of(&index, id)?;
-    if index.slots.iter().any(|e| e.id != id && e.label == label) {
-        return Err(GateError::Other("已有同名反重力账户".into()));
-    }
-    for s in index.slots.iter_mut() {
-        if s.id == id {
-            s.label = label.into();
-        }
-    }
-    save(root, &index)
-}
-
 /// 把 `from` 那条的两半并进 `into`，然后把 `from` 从清单里去掉。
 ///
 /// ⛔ **只动索引，不删也不搬任何目录** —— 并错了就再建一条指回去。

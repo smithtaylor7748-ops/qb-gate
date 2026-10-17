@@ -29,6 +29,9 @@ rusqlite.workspace = true
 toml_edit.workspace = true
 uuid.workspace = true
 ts-rs.workspace = true
+# 酒馆角色卡（2026-09-29）：卡数据是 PNG 文本块里的 base64；详情里的图也按 data URL 交给界面。
+# 0.22 早就在依赖树里（workspace 已有），不引入新来源。
+base64.workspace = true
 tokio-tungstenite.workspace = true
 futures-util.workspace = true
 

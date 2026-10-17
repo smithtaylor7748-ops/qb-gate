@@ -14,16 +14,11 @@ import type {
   Check,
   Evidence,
   ExternalMethod,
-  InstallKind,
-  KillRole,
   ManagedApp,
-  PluginState,
   PolicyScope,
   PurgeAction,
   PurgeCategory,
   PurgeTarget,
-  Risk,
-  StepState,
   UpgradeAction,
   InstallTarget,
 } from "../lib/api";
@@ -57,24 +52,6 @@ export const TARGET_KIND_HINT: Record<string, string> = {
     "Codex CLI。默认归门禁管；在「IP 锁」弹窗里把 GPT 移出门禁后就不再出现在这里",
 };
 
-/** Claude Code 副本的来源。与 Rust `install::inventory::Kind` 一一对应。 */
-export const INSTALL_KIND_LABEL: Record<InstallKind, string> = {
-  managed: "面板托管",
-  managed_version: "面板版本库",
-  native: "官方安装器",
-  native_version: "安装器版本库",
-  winget: "winget",
-  scoop: "Scoop",
-  programs: "Programs\\Claude",
-  path: "PATH 上的",
-  desktop_managed: "桌面端带的",
-  msix_managed: "MSIX 桌面端带的",
-  npm: "npm",
-  npm_native: "npm 包内",
-  editor: "编辑器扩展",
-  desktop_stub: "桌面端存根",
-};
-
 /** 外部副本的清法。 */
 export const EXTERNAL_METHOD_LABEL: Record<ExternalMethod, string> = {
   npm: "npm 卸载",
@@ -87,13 +64,6 @@ export const EXTERNAL_METHOD_LABEL: Record<ExternalMethod, string> = {
 export const MANAGED_APP_LABEL: Record<ManagedApp, string> = {
   "claude-code": "Claude Code",
   codex: "Codex CLI",
-};
-
-export const KILL_ROLE_LABEL: Record<KillRole, string> = {
-  desktop: "桌面端",
-  code: "Claude Code",
-  bridge: "酒馆桥接",
-  antigravity: "反重力",
 };
 
 export const CHECK_LABEL: Record<Check, string> = {
@@ -121,13 +91,6 @@ export const UPGRADE_ACTION_LABEL: Record<UpgradeAction, string> = {
   would_downgrade: "渠道版本更旧",
   unknown: "判断不了",
   version_unreadable: "读不出版本",
-};
-
-export const PLUGIN_STATE_LABEL: Record<PluginState, string> = {
-  missing: "依赖不齐",
-  ready: "就绪",
-  running: "运行中",
-  broken: "状态异常",
 };
 
 /**
@@ -194,54 +157,20 @@ export const PURGE_ACTION_LABEL: Record<PurgeAction, string> = {
   appx_remove: "卸载 Store 包",
 };
 
-export const LAUNCH_TARGET_LABEL: Record<string, string> = {
-  "claude-code": "Claude Code",
-  "claude-desktop": "Claude 桌面端",
-  codex: "Codex",
-};
-
 export const INSTALL_TARGET_LABEL: Record<InstallTarget, string> = {
   "claude-code": "Claude Code",
   "claude-desktop": "Claude 桌面端",
   codex: "Codex CLI",
 };
 
-export const RISK_LABEL: Record<Risk, string> = {
-  unknown: "未检测",
-  low: "通过",
-  medium: "注意",
-  high: "高危",
-};
-
-export const STEP_STATE_LABEL: Record<StepState, string> = {
-  pending: "未检测",
-  passed: "已通过",
-  failed: "未通过",
-  skipped: "已跳过",
-};
-
 // ---------------------------------------------------------------- 语气
 
 export type Tone = "default" | "ok" | "warn" | "danger" | "accent";
-
-export const RISK_TONE: Record<Risk, Tone> = {
-  unknown: "default",
-  low: "ok",
-  medium: "warn",
-  high: "danger",
-};
 
 export const CHECK_TONE: Record<Check, Tone> = {
   Pass: "ok",
   Fail: "danger",
   Unknown: "default",
-};
-
-export const PLUGIN_STATE_TONE: Record<PluginState, Tone> = {
-  missing: "default",
-  ready: "ok",
-  running: "ok",
-  broken: "danger",
 };
 
 export const UPGRADE_ACTION_TONE: Record<UpgradeAction, Tone> = {

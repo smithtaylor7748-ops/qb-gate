@@ -1,102 +1,697 @@
-/* 酒馆详情页。
-   ⛔ 颜色一律引用 tokens.css 的变量，这里不出现任何 hex。
+/* 酒馆（2026-09-29 第三轮对调之后）：
+   - 账户页「酒馆」磁贴右上角的弹窗（`TavernPanel.tsx`，几乎占满窗口）：概览 · 控制台 · 角色卡 · 世界书 · 扩展 · 备份与回收站；
+   - 软件页的 SillyTavern 卡：摘要、版本、位置与端口、卸载；
+   - 软件页 Claude Code / Codex CLI / Gemini CLI 三张卡最下面的「酒馆 · X 桥接设置」（`bridge-dock`）。
+   原来还有扩展中心酒馆详情页的状态条、端口行、候选分组 —— 那一页 2026-09-29 删了，那几段样式跟着删了。
+   ⛔ 颜色一律引用 tokens.css 的变量，这里不出现任何 hex（引用之前先去 tokens.css 看这个名字**真的存在** ——
+      2026-09-29 搬过来的桥接弹窗样式里有 `--line` / `--line-soft` / `--surface-1` / `--text-1` 四个不存在的名字，
+      那几条边框与底色一直没生效，而没有任何检查会变红）。
    ⛔ 路径要完整显示（`overflow-wrap: anywhere`），不许截断 ——
-      这一页的全部用处就是让人看清自己指的是哪个目录。
-      同时 `npm run test:ui` 在 680px 上断言 .qb-main 不横向溢出。 */
+      这几块的全部用处就是让人看清自己指的是哪个目录。
+      同时 `npm run test:ui` 在 680px 上断言不横向溢出。 */
 
-/* ---------------------------------------------------------- 状态条 */
+/* ---------------------------------------------------------- 卡片：摘要与分页 */
 
-.tv-status {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
+.tv-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.6fr);
+  gap: 1px;
+  overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
+  border-radius: var(--radius-md);
+  background: var(--border);
 }
-.tv-status--accent {
-  border-color: var(--accent-border);
-  background: var(--accent-bg);
-}
-.tv-status--warn {
-  border-color: var(--warn-border);
-  background: var(--warn-bg);
-}
-.tv-status--ok {
-  border-color: var(--ok-border);
-  background: var(--ok-bg);
-}
-
-.tv-dot {
-  width: 8px;
-  height: 8px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--text-3);
-}
-.tv-dot--ok {
-  background: var(--ok);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent);
-}
-.tv-dot--warn {
-  background: var(--warn);
-}
-.tv-dot--danger {
-  background: var(--danger);
-}
-
-.tv-status-text {
+.tv-stat {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
+  padding: 9px 12px;
+  background: var(--surface-2);
 }
-.tv-status-text strong {
-  font-size: 13.5px;
+.tv-stat-label {
+  color: var(--text-3);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.06em;
 }
-.tv-status-text span {
-  color: var(--text-2);
-  font-size: 12px;
+.tv-stat-v {
+  font-size: var(--text-base);
   overflow-wrap: anywhere;
 }
-.tv-status-actions {
+.tv-stat-v--ok {
+  color: var(--ok);
+}
+.tv-stat-v--warn {
+  color: var(--warn);
+}
+.tv-stat-sub {
+  min-height: 1.2em;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+.tv-stat-path {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 900px) {
+  .tv-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .tv-stat--wide {
+    grid-column: 1 / -1;
+  }
+}
+
+.tv-tabs {
   display: flex;
   flex-wrap: wrap;
+  gap: 2px 18px;
+  margin: 14px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+.tv-tabs > button {
+  padding: 8px 0 9px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-sm);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+.tv-tabs > button:hover {
+  color: var(--text);
+}
+.tv-tabs > button[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.tv-tabs > button:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 2px;
+}
+.tv-panel {
+  min-width: 0;
+}
+
+/* 「酒馆」弹窗：分页条钉在正文顶上（控制台、角色卡一长，往下滚时它不走），底部那一行钉在弹窗底上。 */
+.tv-panel-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  margin: 0 0 12px;
+  background: var(--surface);
+}
+/* 弹窗高度是固定的：控制台的日志区跟着撑高，别在一个大窗口里只露 460px。 */
+.modal--full .tv-console {
+  max-height: max(320px, calc(100vh - 340px));
+}
+.tv-panel-foot {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-width: 0;
+}
+.tv-panel-foot-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+/* 软件页 SillyTavern 卡：一句「用酒馆去哪」，然后版本 → 位置与端口 → 卸载。 */
+.tv-card-where {
+  margin: 10px 0 0;
+}
+.tv-card-body {
+  margin-top: 12px;
+}
+
+/* 分页里的一块：小标题 + 内容。两列的分页（概览、版本）在窄屏上堆成一列。 */
+.tv-overview,
+.tv-versions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.tv-data {
+  display: grid;
+  gap: 12px;
+}
+@media (max-width: 900px) {
+  .tv-overview,
+  .tv-versions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.tv-wide {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.tv-block {
+  min-width: 0;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.tv-block--danger {
+  border-color: var(--danger-border);
+}
+.tv-block-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.tv-block-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.tv-block-head .tv-block-title {
+  margin: 0;
+}
+.tv-dirty {
+  color: var(--warn);
+  font-size: var(--text-xs);
+}
+.tv-kept {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* 工具条：左边说明 / 搜索，右边按钮。窄屏整条换行，不顶出去。 */
+.tv-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+.tv-toolbar-end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
   margin-left: auto;
 }
+.tv-search {
+  flex: 1 1 220px;
+  max-width: 360px;
+  min-width: 0;
+}
+.tv-rows {
+  min-width: 0;
+}
+.tv-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.tv-icon-btn:hover {
+  border-color: var(--border);
+  background: var(--surface);
+}
 
-/* ---------------------------------------------------------- 端口 */
+/* ---------------------------------------------------------- 版本 */
 
-.tv-ports {
-  display: flex;
+.tv-releases {
+  display: grid;
   gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tv-release {
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.tv-release-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.tv-release-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.tv-notes {
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tv-manual {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+.tv-manual > :first-child {
+  flex: 0 1 260px;
+  min-width: 0;
+}
+.tv-choice {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.tv-choice-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.tv-choice-row:has(input:checked) {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+.tv-choice-row input {
+  margin-top: 3px;
+}
+
+/* ---------------------------------------------------------- 控制台 */
+
+.tv-seg {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.tv-seg > button {
+  padding: 4px 10px;
+  border: 0;
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-xs);
+}
+.tv-seg > button + button {
+  border-left: 1px solid var(--border);
+}
+.tv-seg > button[aria-pressed="true"] {
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 600;
+}
+.tv-console {
+  max-height: 460px;
+  min-height: 120px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+.tv-console-line {
+  min-height: 1.6em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* SillyTavern 自己打的颜色码（`lib/ansi.ts`）→ 主题里的颜色。 */
+.ansi-default {
+  color: inherit;
+}
+.ansi-red {
+  color: var(--danger);
+}
+.ansi-green {
+  color: var(--ok);
+}
+.ansi-yellow {
+  color: var(--warn);
+}
+.ansi-blue,
+.ansi-cyan,
+.ansi-magenta {
+  color: var(--accent);
+}
+.ansi-gray {
+  color: var(--text-3);
+}
+.ansi-bold {
+  font-weight: 700;
+}
+.tv-hints {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tv-hint {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--warn-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-bg);
+  font-size: var(--text-sm);
+}
+.tv-hint > span {
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+.tv-hint-line {
   color: var(--text-3);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--text-2xs);
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------- 角色卡 */
+
+.tv-char-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr));
+  gap: 8px;
+}
+.tv-char {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.tv-char:hover {
+  border-color: var(--border-strong);
+}
+.tv-char:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 1px;
+}
+.tv-avatar {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 58px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+.tv-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.tv-char-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+.tv-char-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.tv-char-meta {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+.tv-char-problem {
+  color: var(--warn);
+  font-size: var(--text-xs);
+}
+.tv-char-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  color: var(--text-3);
+  font-size: var(--text-2xs);
+}
+.tv-char-foot svg {
+  vertical-align: -1px;
+}
+.tv-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tv-chip {
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--text-2xs);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.tv-chip--soft {
+  border-style: dashed;
+  color: var(--text-3);
+}
+.tv-char-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 14px;
+}
+.tv-char-image {
+  width: 160px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.tv-facts {
+  display: grid;
+  flex: 1 1 240px;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+  font-size: var(--text-sm);
+}
+.tv-facts dt {
+  color: var(--text-3);
+}
+.tv-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.tv-sub {
+  margin: 0 0 4px;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.tv-text {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 导入结果：进来几个、没进来的各为什么。 */
+.tv-import {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+}
+.tv-import--ok {
+  border-left-color: var(--ok);
+  background: var(--ok-bg);
+}
+.tv-import--warn {
+  border-left-color: var(--warn);
+  background: var(--warn-bg);
+}
+.tv-import-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--text-sm);
+}
+.tv-import-skipped {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------- 世界书条目 */
+
+.tv-entries {
+  min-width: 0;
+}
+.tv-entry-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tv-entry {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.tv-entry--off {
+  opacity: 0.65;
+}
+.tv-entry-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+}
+.tv-entry-body {
+  display: -webkit-box;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.tv-entry-body.is-open {
+  display: block;
+  -webkit-line-clamp: unset;
+}
+
+/* ---------------------------------------------------------- 扩展 */
+
+.tv-install {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+.tv-install > :first-child {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.tv-ext-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tv-ext {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.tv-ext-main {
+  display: grid;
+  flex: 1 1 320px;
+  gap: 2px;
+  min-width: 0;
+}
+.tv-ext-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+}
+.tv-ext-main svg {
+  vertical-align: -1px;
+}
+.tv-ext-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
 /* ---------------------------------------------------------- 候选 */
-
-.tv-group + .tv-group {
-  margin-top: 10px;
-}
-.tv-group-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
-  color: var(--text-2);
-  font-size: 12px;
-}
-.tv-group-head::after {
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-  content: "";
-}
 
 .tv-cand {
   display: flex;
@@ -174,4 +769,446 @@
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+}
+
+/* ---------------------------------------------------------- 软件页：三条桥的设置
+   2026-09-29 从 components.css 搬过来（那时在账户页的弹窗里；第三轮挪到软件页各自那张 CLI 卡的最下面）；
+   原来那几段里的 --line / --line-soft / --surface-1 / --text-1 在 tokens.css 里根本不存在
+   （边框、底色一直没生效），搬的时候换成了 --border / --surface / --text。 */
+
+/* 卡片最下面那一段：一行可展开的标题，展开了才挂正文（见 `BridgeSection.tsx`）。
+   不叫 `.bridge-section`：那是 Claude 正文里各段的类名。 */
+.bridge-dock {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.bridge-dock-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 10px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.bridge-dock-toggle:hover .bridge-dock-title {
+  color: var(--accent);
+}
+.bridge-dock-toggle[aria-expanded="true"] .collapsible-chevron {
+  transform: rotate(90deg);
+}
+.bridge-dock-icon {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+.bridge-dock-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+/* 说明占满下一行，跟标题左边对齐（图标两个的宽度）。 */
+.bridge-dock-sub {
+  flex-basis: 100%;
+  min-width: 0;
+  padding-left: 41px;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.bridge-dock-body {
+  min-width: 0;
+  padding-bottom: 4px;
+}
+
+/* 三条桥各自的那一块：状态 · 缺什么 · 端口 / 模型 / 地址。
+   左边那条竖线分「在跑 / 没在跑」—— 三条桥长得一样，光看名字分不出差别。 */
+.bridgelist {
+  display: grid;
+  gap: 8px;
+}
+.bridgelist > section {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-3);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  background: var(--surface-2);
+}
+.bridgelist > section.is-up {
+  border-left-color: var(--ok);
+}
+.bridge-provider {
+  --bridge-accent: var(--text-3);
+  --bridge-tint: var(--surface-2);
+  position: relative;
+  overflow: hidden;
+  border-left-color: var(--bridge-accent) !important;
+  background: linear-gradient(135deg, var(--bridge-tint), var(--surface-2) 44%);
+}
+.bridge-provider--gpt {
+  --bridge-accent: var(--accent);
+  --bridge-tint: var(--accent-bg);
+}
+.bridge-provider--gemini {
+  --bridge-accent: var(--warn);
+  --bridge-tint: var(--warn-bg);
+}
+.bridge-provider.is-up {
+  box-shadow: inset 0 0 0 1px var(--ok-border);
+}
+.bridge-provider-eyebrow {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--bridge-accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+.bridge-provider-summary {
+  margin: 5px 0 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.bridge-provider--gpt .tavern-roleplay-test {
+  border-top-color: var(--accent-border);
+}
+.bridge-provider--gemini .tavern-roleplay-test {
+  border-top-color: var(--warn-border);
+}
+.bridgelist-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+}
+.bridgelist-slot {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.bridgelist-sub {
+  margin: 3px 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+/* 缺什么。顺序 = 该先做哪一件，所以保留列表的编号感（实心点 + 缩进）。 */
+.bridgelist-blockers {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 2px;
+  font-size: var(--text-xs);
+  color: var(--warn);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.bridgelist-fields {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: minmax(96px, 0.5fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+/* 地址那一行横跨两列：Windows 上的本机地址不长，但加上「复制」按钮就挤了。 */
+.bridgelist-url {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.bridgelist-url .mono {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+.bridgelist-dirty {
+  font-size: var(--text-xs);
+  color: var(--warn);
+}
+/* 横跨两列：长路径、多行提示词。 */
+.bridgelist-wide {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+/* Claude 那份是 bridge.py 自己两个本机网页的全部内容，分几段（连接 · 七项 · 会话 · 监控）。 */
+.bridge-claude-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.bridge-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.bridge-section h3 {
+  margin: 0 0 6px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+/* 五个下拉：宽屏排两三列，窄屏一列。 */
+.bridge-knob-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 12px;
+}
+.bridge-call-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.bridge-call-toggle:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+.bridge-call-toggle:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* 展开的那一条跨满整张表；表格窄屏横滚时它钉在左边，宽度跟着可视区走，不跟着表格走。 */
+/* 宽度按表格外层那个横滚容器算（`cqi`）：原来写 `100vw - 120px` 是照弹窗量的，
+   挪到软件页的卡片里之后，侧栏和卡片内边距都不在那 120px 里。 */
+.bridge-claude .qb-acct-tw {
+  container-type: inline-size;
+}
+.bridge-call-detail {
+  position: sticky;
+  left: 0;
+  width: min(1040px, calc(100cqi - 4px));
+  display: grid;
+  gap: 8px;
+  padding: 6px 2px;
+  white-space: normal;
+}
+.bridge-call-detail pre {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+.bridge-call-detail summary {
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+.bridge-call-message {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.bridge-call-role {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.bridge-call-message--reply .bridge-call-role {
+  color: var(--accent);
+}
+.tavern-quota-card {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 10px;
+  background: var(--surface);
+}
+.tavern-quota-head,
+.tavern-roleplay-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tavern-quota-head {
+  font-size: var(--text-sm);
+}
+.tavern-quota-meta {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+.tavern-quota-error {
+  margin: 6px 0 0;
+  color: var(--warn);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+.tavern-quota-grid,
+.tavern-quota-models {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 8px;
+}
+.tavern-quota-models {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+.tavern-quota-window {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 8px;
+  background: var(--surface-2);
+}
+
+.tavern-quota-window .bar {
+  margin-top: 6px;
+  height: 5px;
+}
+.tavern-quota-window small {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-3);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.tavern-quota-card--gpt {
+  border-top-color: var(--accent-border);
+  background: linear-gradient(135deg, var(--accent-bg), var(--surface) 48%);
+}
+.tavern-quota-card--gemini {
+  border-top-color: var(--warn-border);
+  background: linear-gradient(135deg, var(--warn-bg), var(--surface) 48%);
+}
+.tavern-quota-gauge {
+  display: grid;
+  grid-template-columns: minmax(5em, 0.8fr) minmax(70px, 1fr) auto;
+  gap: 5px 8px;
+  align-items: center;
+  width: 100%;
+}
+.tavern-quota-gauge .gauge-name {
+  width: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tavern-quota-gauge .gauge-track {
+  min-width: 70px;
+  max-width: none;
+}
+.tavern-quota-gauge .gauge-pct {
+  min-width: 5em;
+  text-align: right;
+}
+.tavern-quota-gauge .gauge-reset {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tavern-quota-empty {
+  margin: 8px 0 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+.tavern-roleplay-test {
+  margin-top: 10px;
+  border-top: 1px dashed var(--border);
+  padding-top: 9px;
+}
+.tavern-roleplay-head {
+  font-size: var(--text-xs);
+}
+.tavern-roleplay-fixture {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 7px 8px;
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+.tavern-roleplay-reply {
+  margin: 7px 0 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+@media (max-width: 560px) {
+  .bridgelist-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tavern-quota-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Claude 那份的顶上：状态行 + 「跳到」（钉在滚动区顶上，往下滚时不走；展开的那一段滚过去了它才跟着走）。 */
+.bridge-head {
+  position: sticky;
+  top: -1px;
+  z-index: 2;
+  display: grid;
+  gap: 8px;
+  margin: -4px 0 0;
+  padding: 4px 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.bridge-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.bridge-nav > button {
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-xs);
+}
+.bridge-nav > button:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+.bridge-provider .bridge-nav {
+  margin-top: 8px;
+}
+/* 调用日志里没成功的那一行。 */
+.bridge-call--bad td {
+  color: var(--danger);
 }

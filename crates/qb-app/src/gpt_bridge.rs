@@ -444,12 +444,15 @@ pub(crate) struct ChatRequest {
 /// 固定的框架说明。中英各一遍：角色卡多半是中文，模型对英文指令的服从最稳。
 const FRAME_HEADER: &str = "\
 你是一个角色扮演对话中的 assistant。下面依次给出：系统设定（角色卡、世界书、规则），\
-然后是到目前为止的对话记录（JSON 数组，role 为 user / assistant / system）。\
+然后是到目前为止的对话记录（JSON 数组，role 为 user / assistant / system；\
+记录里的 system 条目是酒馆放在那个位置的场景或格式要求，同样要遵守）。\
 请只输出 assistant 的下一条回复正文：不要解释、不要加前缀或标签、不要复述设定、\
 不要执行任何命令、不要读写任何文件、不要调用任何工具、不要提到你在一个终端或代码环境里。\
 \n\nYou are the assistant in a role-play conversation. Below are the system instructions \
 (character card, lore, rules) followed by the conversation so far as a JSON array of \
-{role, content}. Reply with ONLY the assistant's next message body: no explanations, \
+{role, content}; system entries inside the conversation are scene or format instructions \
+placed at that point, and they must be followed too. Reply with ONLY the assistant's next \
+message body: no explanations, \
 no prefixes or labels, no restating the setup, do not run commands, do not read or write files, \
 do not call tools, and never mention being in a terminal or coding environment.\n";
 
@@ -459,14 +462,29 @@ pub fn frame(messages: &[ChatMessage]) -> String {
 }
 
 /// 将厂商面板保存的额外系统提示词加入共享角色扮演框架。
+///
+/// ⛔ **只有开头那一段 system 提进「系统设定」**（角色卡、世界书、规则）。对话开始之后
+/// 酒馆插进来的 system —— 作者注释、按深度注入的世界书、预设里贴在最后的「字数 / 格式」
+/// 要求 —— 留在它原来的位置。原来这里把所有 system 都提到最前面：离回复最近的那条要求
+/// 被挪到几千字之外、排在整段角色卡后面，模型照着前面几百条自己的回复写，字数与格式
+/// 要求就不灵了（2026-09-26）。使用者那份 `bridge.py` 早就只提开头那一段，这里跟它一致。
 pub fn frame_with_prompt(messages: &[ChatMessage], extra_prompt: &str) -> String {
     let mut out = String::from(FRAME_HEADER);
-    let system: Vec<String> = messages
-        .iter()
-        .filter(|m| m.role == "system")
-        .map(ChatMessage::text)
-        .filter(|t| !t.trim().is_empty())
-        .collect();
+    let mut system: Vec<String> = Vec::new();
+    let mut turns: Vec<serde_json::Value> = Vec::new();
+    for m in messages {
+        let text = m.text();
+        if m.role == "system" {
+            if text.trim().is_empty() {
+                continue;
+            }
+            if turns.is_empty() {
+                system.push(text);
+                continue;
+            }
+        }
+        turns.push(serde_json::json!({ "role": m.role, "content": text }));
+    }
     out.push_str("\n===== 系统设定 / SYSTEM =====\n");
     if !extra_prompt.trim().is_empty() {
         out.push_str(extra_prompt.trim());
@@ -481,11 +499,6 @@ pub fn frame_with_prompt(messages: &[ChatMessage], extra_prompt: &str) -> String
         }
     }
     out.push_str("\n===== 对话记录 / CONVERSATION (JSON) =====\n");
-    let turns: Vec<serde_json::Value> = messages
-        .iter()
-        .filter(|m| m.role != "system")
-        .map(|m| serde_json::json!({ "role": m.role, "content": m.text() }))
-        .collect();
     out.push_str(&serde_json::to_string_pretty(&turns).unwrap_or_else(|_| "[]".into()));
     out.push_str("\n\n===== 现在输出 assistant 的下一条回复 / NOW WRITE THE ASSISTANT'S NEXT MESSAGE =====\n");
     out
@@ -862,6 +875,41 @@ not json at all
         let turns: Vec<serde_json::Value> = serde_json::from_str(&p[start..=end]).unwrap();
         assert_eq!(turns.len(), 3);
         assert_eq!(turns[0]["role"], "user");
+    }
+
+    /// 酒馆在对话中间 / 末尾插的 system（作者注释、深度注入、贴尾的字数要求）
+    /// 留在原位，不跟角色卡一起提到最前面。
+    #[test]
+    fn system_text_inside_the_chat_stays_where_the_tavern_put_it() {
+        let messages = vec![
+            msg("system", serde_json::json!("角色卡：林澈。")),
+            msg("system", serde_json::json!("   ")),
+            msg("user", serde_json::json!("你好")),
+            msg("assistant", serde_json::json!("你好呀。")),
+            msg("system", serde_json::json!("[作者注释] 夜里下起了雨。")),
+            msg("user", serde_json::json!("我们去哪？")),
+            msg("system", serde_json::json!("本条回复 340–520 字。")),
+        ];
+        let p = frame_with_prompt(&messages, "");
+        let conv_header = p.find("===== 对话记录").unwrap();
+        // 开头那段照旧在「系统设定」里。
+        assert!(p.find("角色卡：林澈。").unwrap() < conv_header);
+        // 对话开始之后的两条不许出现在「系统设定」里。
+        assert!(!p[..conv_header].contains("作者注释"));
+        assert!(!p[..conv_header].contains("340–520"));
+        let start = p[conv_header..].find('[').unwrap() + conv_header;
+        let end = p.rfind(']').unwrap();
+        let turns: Vec<serde_json::Value> = serde_json::from_str(&p[start..=end]).unwrap();
+        let roles: Vec<&str> = turns.iter().map(|t| t["role"].as_str().unwrap()).collect();
+        assert_eq!(
+            roles,
+            ["user", "assistant", "system", "user", "system"],
+            "顺序要跟酒馆发来的一模一样"
+        );
+        assert_eq!(turns[2]["content"], "[作者注释] 夜里下起了雨。");
+        // 贴尾的字数要求是整份提示词里离「现在输出」最近的一条。
+        assert_eq!(turns[4]["content"], "本条回复 340–520 字。");
+        assert!(!p.contains("\"   \""), "空白 system 不进提示词");
     }
 
     #[test]

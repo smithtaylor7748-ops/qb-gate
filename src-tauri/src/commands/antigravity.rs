@@ -176,15 +176,6 @@ pub async fn antigravity_latest(product: Product) -> Result<String> {
     Ok(setup::resolve(product, Arch::current()).await?.version)
 }
 
-/// Hub 的「自动检查更新」。只并入一个键，重启 Hub 生效。
-#[tauri::command]
-pub async fn antigravity_auto_update_set(enabled: bool) -> Result<()> {
-    let _guard = operations::exclusive_soon().await?;
-    tokio::task::spawn_blocking(move || antigravity_ops::set_auto_update(enabled))
-        .await
-        .map_err(|e| GateError::Other(e.to_string()))?
-}
-
 // ------------------------------------------------------------------ 反重力账户槽位（0.32.0）
 
 /// 新建一个账户槽位：IDE（`--user-data-dir`）与 Gemini CLI（`GEMINI_CLI_HOME`）**两半一起建**。
@@ -230,14 +221,6 @@ pub async fn antigravity_ide_archive(id: String) -> Result<()> {
 pub async fn antigravity_account_attach(into: String, from: String) -> Result<()> {
     let _guard = operations::exclusive().await?;
     tokio::task::spawn_blocking(move || antigravity_ops::ide_attach(&into, &from))
-        .await
-        .map_err(|e| GateError::Other(e.to_string()))?
-}
-
-#[tauri::command]
-pub async fn antigravity_account_rename(id: String, label: String) -> Result<()> {
-    let _guard = operations::exclusive().await?;
-    tokio::task::spawn_blocking(move || antigravity_ops::ide_rename(&id, &label))
         .await
         .map_err(|e| GateError::Other(e.to_string()))?
 }

@@ -22,11 +22,6 @@ export class IpcError extends Error {
     this.name = "IpcError";
     this.kind = kind;
   }
-
-  /** 这是使用者自己点的取消，不是故障 —— 别弹红色报错。 */
-  get cancelled(): boolean {
-    return this.kind === "cancelled";
-  }
 }
 
 /**

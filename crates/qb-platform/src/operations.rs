@@ -60,7 +60,6 @@ impl Run {
             progress: 0,
             status: "running".into(),
             detail: String::new(),
-            can_cancel: false,
             started_at: chrono::Utc::now().to_rfc3339(),
         };
         let run = Self { operation, events };
@@ -83,27 +82,14 @@ impl Run {
         self.persist()
     }
     pub fn finish<T>(&mut self, result: Result<T>) -> Result<T> {
-        self.operation.can_cancel = false;
-        CANCELLATIONS
-            .get_or_init(Default::default)
-            .lock()
-            .unwrap()
-            .remove(&self.operation.id);
-        self.operation.status = if matches!(&result, Err(GateError::Cancelled)) {
-            "cancelled"
-        } else if result.is_ok() {
+        self.operation.status = if result.is_ok() {
             "completed"
         } else {
             "failed"
         }
         .into();
         self.operation.progress = 100;
-        self.operation.phase = match self.operation.status.as_str() {
-            "completed" => "完成",
-            "cancelled" => "已取消",
-            _ => "失败",
-        }
-        .into();
+        self.operation.phase = if result.is_ok() { "完成" } else { "失败" }.into();
         if let Err(e) = &result {
             self.operation.detail = e.to_string();
         }
@@ -113,11 +99,6 @@ impl Run {
 }
 impl Drop for Run {
     fn drop(&mut self) {
-        CANCELLATIONS
-            .get_or_init(Default::default)
-            .lock()
-            .unwrap()
-            .remove(&self.operation.id);
         if self.operation.status == "running" {
             self.operation.status = "interrupted".into();
             self.operation.detail = "操作中断；恢复记录将在下次启动时检查".into();
@@ -126,54 +107,7 @@ impl Drop for Run {
     }
 }
 
-static CANCELLATIONS: OnceLock<
-    std::sync::Mutex<std::collections::BTreeMap<String, tokio::sync::watch::Sender<bool>>>,
-> = OnceLock::new();
-impl Run {
-    pub fn cancellable(&mut self) -> Result<tokio::sync::watch::Receiver<bool>> {
-        let (sender, receiver) = tokio::sync::watch::channel(false);
-        self.operation.can_cancel = true;
-        self.persist()?;
-        CANCELLATIONS
-            .get_or_init(Default::default)
-            .lock()
-            .unwrap()
-            .insert(self.operation.id.clone(), sender);
-        Ok(receiver)
-    }
-}
-/// 取消一个标记了可取消的操作。
-///
-/// `#[tauri::command]` 的那层壳在 `commands.rs` —— 平台层不挂命令宏，
-/// 否则这个模块又跟 Tauri 绑死了。
-pub fn cancel(id: &str) -> Result<()> {
-    let map = CANCELLATIONS.get_or_init(Default::default).lock().unwrap();
-    map.get(id)
-        .ok_or_else(|| GateError::Other("此操作已经结束或处于不可取消阶段".into()))?
-        .send(true)
-        .map_err(|_| GateError::Other("此操作已结束".into()))
-}
-pub async fn interruptible<T>(
-    mut stop: tokio::sync::watch::Receiver<bool>,
-    work: impl std::future::Future<Output = Result<T>>,
-) -> Result<T> {
-    tokio::select! {biased; _=stop.changed()=>Err(GateError::Cancelled),result=work=>result}
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[tokio::test]
-    async fn cancellation_drops_work_before_any_further_side_effect() {
-        let (sender, receiver) = tokio::sync::watch::channel(false);
-        sender.send(true).unwrap();
-        let ran = std::sync::atomic::AtomicBool::new(false);
-        let result = interruptible(receiver, async {
-            ran.store(true, Ordering::SeqCst);
-            Ok(())
-        })
-        .await;
-        assert!(matches!(result, Err(GateError::Cancelled)));
-        assert!(!ran.load(Ordering::SeqCst));
-    }
-}
+// 原来这里还有一套「取消操作」：`Run::cancellable` 发一个 watch 通道、`interruptible`
+// 把工作和取消信号 select 在一起、`cancel(id)` 给命令层的 `operation_cancel` 用。
+// 界面上的「取消」按钮早就没了，命令一直没人调；2026-09-27 连同 `GateError::Cancelled`
+// 一起删掉。要加回来，先有一个看得见的按钮。

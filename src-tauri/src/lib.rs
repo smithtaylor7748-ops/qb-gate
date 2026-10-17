@@ -21,13 +21,13 @@ pub use qb_foundation::{audit, error, paths, sink};
 #[cfg(windows)]
 pub use qb_platform::acl;
 pub use qb_platform::{
-    config_io, endpoint, firewall, legacy, logging, operations, panic_hook, process, progress,
-    readiness, repository, secret, sessions, settings, signature,
+    config_io, endpoint, firewall, logging, operations, panic_hook, process, progress, readiness,
+    repository, secret, sessions, settings, signature,
 };
 
 // 契约层（L0.5）。`crate::domain::*` 在命令层出现几十次，同样原样再导出。
 pub use qb_accounts::{accounts, residue};
-pub use qb_app::{diagnostics, profile, snapshot, usecase, workspace};
+pub use qb_app::{snapshot, usecase, workspace};
 pub use qb_contract::domain;
 pub use qb_extensions::{extensions, plugins};
 pub use qb_install::install;
@@ -111,30 +111,16 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(main_window_commands(tauri::generate_handler![
             startup::startup_status,
-            commands::workspace::operation_cancel,
             startup::startup_retry,
             startup::startup_discard_blocked,
             commands::workspace::official_configuration_preview,
             commands::workspace::official_configuration_migrate,
-            commands::workspace::launch_plan_save,
-            commands::workspace::launch_plan_remove,
             commands::workspace::official_switch_preview,
-            commands::workspace::environment_rollback,
-            commands::workspace::relay_export,
-            commands::workspace::relay_import,
             commands::workspace::workspace_state,
             commands::workspace::provider_save,
             commands::workspace::credential_save,
-            commands::workspace::environment_save,
-            commands::workspace::environment_preview,
-            commands::workspace::environment_apply,
-            commands::workspace::workspace_references,
-            commands::workspace::workspace_remove,
             commands::workspace::session_launch,
             commands::workspace::session_stop,
-            commands::workspace::session_forget,
-            commands::workspace::diagnostic_run,
-            commands::workspace::diagnostic_history,
             commands::workspace::extension_catalog,
             commands::workspace::extension_import_skills,
             commands::workspace::extension_import_mcp,
@@ -142,16 +128,12 @@ pub fn run() {
             commands::workspace::extension_preview,
             commands::workspace::extension_install,
             commands::workspace::extension_uninstall,
-            commands::workspace::extension_connect_application,
             commands::workspace::extension_check,
             commands::gate::gate_status,
             commands::gate::gate_lock_all,
             commands::gate::gate_unlock_all,
             commands::gate::gate_reopen,
-            commands::gate::gate_open,
-            commands::gate::gate_release,
             commands::gate::gate_clean_stale,
-            commands::gate::allowlist_read,
             commands::gate::allowlist_write,
             commands::gate::allowlist_add_current,
             commands::gate::country_presets,
@@ -170,12 +152,9 @@ pub fn run() {
             commands::probe::probe_ip_lookup,
             commands::ipv6::ipv6_status,
             commands::ipv6::ipv6_set,
-            commands::probe::probe_purity,
             commands::probe::probe_dns,
             commands::probe::purity_criteria,
             // 中转站（0.14.0）。启停本机路由、线路池、请求日志、健康度与排序。
-            commands::station::station_router_start,
-            commands::station::station_router_stop,
             commands::station::station_router_status,
             commands::station::station_turnstate_configure,
             commands::station::station_turnstate_status,
@@ -202,8 +181,6 @@ pub fn run() {
             commands::station::station_billing_connect,
             commands::station::station_billing_browser,
             commands::station::station_billing_refresh,
-            commands::station::station_refresh_prices,
-            commands::station::station_prices,
             commands::install::detect_software,
             commands::install::install_probe,
             commands::install::install_run,
@@ -263,15 +240,6 @@ pub fn run() {
             commands::backup::snapshot_create,
             commands::backup::snapshot_restore,
             commands::backup::snapshot_remove,
-            commands::backup::snapshot_dir,
-            commands::backup::profile_list,
-            commands::backup::profile_save,
-            commands::backup::profile_remove,
-            commands::backup::profile_capture,
-            commands::backup::profile_apply,
-            commands::system::tz_current,
-            commands::system::tz_apply,
-            commands::system::tz_restore,
             commands::system::progress_load,
             commands::system::progress_set,
             commands::install::upgrade_plan,
@@ -284,7 +252,6 @@ pub fn run() {
             commands::gate::killswitch_preview,
             commands::gate::killswitch_execute,
             commands::plugins::plugin_list,
-            commands::plugins::plugin_catalog_status,
             commands::plugins::plugin_start,
             commands::plugins::plugin_stop,
             commands::plugins::tavern_gpt_status,
@@ -302,22 +269,18 @@ pub fn run() {
             commands::plugins::antigravity_ui_rules,
             commands::plugins::antigravity_ui_rules_save,
             commands::plugins::antigravity_ui_rules_reset,
-            commands::plugins::claude_zh_status,
-            commands::plugins::claude_zh_check,
-            commands::plugins::claude_zh_apply,
-            commands::plugins::claude_zh_restore,
+            commands::plugins::claude_zh_leftovers,
+            commands::plugins::claude_zh_cleanup,
             commands::antigravity::antigravity_status,
             commands::antigravity::antigravity_running,
             commands::antigravity::antigravity_launch,
             commands::antigravity::antigravity_close,
             commands::antigravity::antigravity_install,
             commands::antigravity::antigravity_latest,
-            commands::antigravity::antigravity_auto_update_set,
             commands::antigravity::antigravity_ide_create,
             commands::antigravity::antigravity_ide_select,
             commands::antigravity::antigravity_ide_archive,
             commands::antigravity::antigravity_account_attach,
-            commands::antigravity::antigravity_account_rename,
             commands::antigravity::antigravity_usage,
             commands::antigravity::antigravity_hub_quota,
             commands::antigravity::antigravity_account_quota,
@@ -336,11 +299,41 @@ pub fn run() {
             commands::plugins::tavern_bridge_settings_save,
             commands::plugins::tavern_bridge_telemetry,
             commands::plugins::tavern_bridge_telemetry_clear,
+            commands::plugins::tavern_bridge_call_detail,
             commands::plugins::tavern_locate,
             commands::plugins::tavern_assets,
             commands::plugins::tavern_backup,
             commands::plugins::tavern_backups,
             commands::plugins::tavern_restore,
+            // 软件页托管 SillyTavern（2026-09-29）。`tavern_latest` 联网，只在使用者点了之后发。
+            commands::plugins::tavern_setup_status,
+            commands::plugins::tavern_latest,
+            commands::plugins::tavern_install,
+            commands::plugins::tavern_update,
+            commands::plugins::tavern_uninstall,
+            // 2026-09-29：软件页 SillyTavern 卡的版本（`tavern_releases` / `tavern_release` 联网，只在点了之后发）；
+            // 账户页「酒馆」弹窗的控制台、角色卡 · 世界书 · 扩展（扩展的检查 / 更新 / 安装跑 git，联网）、回收站。
+            commands::plugins::tavern_releases,
+            commands::plugins::tavern_release,
+            commands::plugins::tavern_swap_previous,
+            commands::plugins::tavern_console,
+            commands::plugins::tavern_characters,
+            commands::plugins::tavern_character_detail,
+            commands::plugins::tavern_character_thumbnail,
+            commands::plugins::tavern_characters_import,
+            commands::plugins::tavern_character_delete,
+            commands::plugins::tavern_worlds,
+            commands::plugins::tavern_world_detail,
+            commands::plugins::tavern_worlds_import,
+            commands::plugins::tavern_world_delete,
+            commands::plugins::tavern_extensions,
+            commands::plugins::tavern_extension_check,
+            commands::plugins::tavern_extension_update,
+            commands::plugins::tavern_extension_install,
+            commands::plugins::tavern_extension_delete,
+            commands::plugins::tavern_trash,
+            commands::plugins::tavern_trash_restore,
+            commands::plugins::tavern_trash_purge,
         ]))
         .setup(|app| {
             use tauri::Manager;
@@ -393,7 +386,6 @@ pub fn run() {
                     }
                 }
             }
-            let _ = legacy::disable_known_launchers();
             // 启动时重建锁，等价于现有实现的 -Mode Check：
             // 宁可多锁一次，也不要因为上次异常退出而敞着。
             //
@@ -473,30 +465,6 @@ pub fn run() {
                     // 启动时先告诉汉化引擎该去哪读，不然面板重启后「附加」找的还是默认那份的文件。
                     if let Err(e) = usecase::antigravity_ops::sync_ide_profile() {
                         audit::write(&format!("读反重力 IDE 槽位索引失败（汉化引擎会按默认资料目录找端口）：{e}"));
-                    }
-                    // 0.24.0–0.24.6 的旧做法留下的「官方 turn-state 环境」记录与目录
-                    // （连同复制进去的那份 OAuth 快照）：一次性清掉（best effort）。
-                    // 先查记录在不在再动手 —— `Repository::remove` 删不到也回 Ok，
-                    // 不查的话每次启动都会写一条「已清理」。环境先于 provider：
-                    // 环境引用着 provider，反过来删会被 `references` 拦下。
-                    for (kind, id) in [
-                        ("environments", "qb-router-codex-official"),
-                        ("providers", "qb-router-official"),
-                    ] {
-                        let exists = repository::Repository::open()
-                            .and_then(|db| db.get::<serde_json::Value>(kind, id))
-                            .is_ok();
-                        if !exists {
-                            continue;
-                        }
-                        match workspace::remove(kind, id) {
-                            Ok(()) => audit::write(&format!(
-                                "已清理 0.24.7 之前识别留下的 {kind} 记录 {id}"
-                            )),
-                            Err(e) => audit::write(&format!(
-                                "清理 0.24.7 之前识别留下的 {kind} 记录 {id} 失败：{e}"
-                            )),
-                        }
                     }
                     // 智能调度是**落盘的承诺**：上次开着的，这次起来要接着跑。
                     // 不接回去的话，使用者重启一次面板，调度就悄悄停了 ——

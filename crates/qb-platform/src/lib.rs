@@ -43,7 +43,6 @@ pub mod config_io;
 pub mod credentials;
 pub mod endpoint;
 pub mod firewall;
-pub mod legacy;
 pub mod logging;
 pub mod operations;
 pub mod panic_hook;

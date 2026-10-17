@@ -2,5 +2,7 @@
 
 /**
  * 后端错误的分类。与 `qb_foundation::error::GateError` 的变体一一对应。
+ *
+ * 原来第一个是 `Cancelled`（使用者点了取消），连同取消机制 2026-09-27 删了。
  */
-export type ErrorKind = "cancelled" | "io" | "http" | "json" | "win-api" | "not-found" | "ip-not-allowed" | "ip-unknown" | "gate-rejected" | "database" | "other";
+export type ErrorKind = "io" | "http" | "json" | "win-api" | "not-found" | "ip-not-allowed" | "ip-unknown" | "gate-rejected" | "database" | "other";

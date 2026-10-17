@@ -1,50 +1,37 @@
-//! 中转站：多供应商目录 + 写进各个工具自己的配置文件。
+//! 中转：把一条「地址 + 协议 + 凭证形态」写进各个工具自己的配置文件。
 //!
-//! 形态对标 cc-switch（MIT，https://github.com/farion1231/cc-switch）：
-//! 三个应用各一份列表、一键切换、写进目标工具自己的配置：
-//!   `~/.codex/config.toml`    模型供应商与 base_url
-//!   `~/.codex/auth.json`      API Key（**只并入，不整份覆盖**）
-//!   `~/.claude/settings.json` Claude Code / 桌面端的 env 段
+//!   `config.toml`    Codex 的模型供应商与 base_url
+//!   `settings.json`  Claude Code 的 env 段
 //!
-//! 界面布局参考了 Cockpit Tools 的排法，但**一行代码都没有复制** ——
-//! 那个项目是 CC BY-NC-SA 4.0，SA 条款会把本项目从 MIT 拖成同一个协议，
-//! NC 条款还会禁止商业使用。详见 `ATTRIBUTION.md`。
+//! 调用方是 `qb_app::workspace::configuration_files` —— 写的是每个中转环境自己的隔离目录，
+//! 不是 `~\.codex` / `~\.claude`。形态参考 cc-switch（MIT，https://github.com/farion1231/cc-switch），
+//! 实现是自己写的，见 `ATTRIBUTION.md`。
 //!
-//! # API Key 去哪了
+//! # 原来这里还有什么（2026-09-27 删了）
 //!
-//! 目录里的 Key 用 DPAPI 加密后存在 `relay.json`（见 [`secret`]），
-//! 回给前端的 [`ProviderView`] **结构上装不下 Key**（见 [`store`]）。
-//! 写进目标工具的配置是那些工具本身的要求，不在本项目的管辖内。
+//! 数据库之前那一代的中转站目录：`relay.json` 的读写与增删改查（`store`）、
+//! 「从当前配置导入」（`current_providers` / `import_live`）、拉模型列表与测延迟（`probe`）、
+//! 按响应头判断「真实后端」的分类器（`backend`，只有已经删掉的草稿诊断在用）。
+//! 迁移之后这些一个调用者都没有了。`relay.json` 的老数据只在 `repository::migrate()`
+//! 里按 v1 的形状读一次，那边有自己的结构体，不依赖这里。
 //!
-//! # 三条踩过的坑（2026-09-09 实机核对后修）
+//! # 两条踩过的坑（2026-09-09 实机核对后修）
 //!
 //! 1. **`wire_api` 不能写死成 `chat`。** 实机在用的中转站是 `responses`，
 //!    写死会把可用配置改坏。现在由 [`WireApi`] 决定，默认 `responses`。
-//! 2. **`auth.json` 不能整份覆盖。** 旧代码写 `{"OPENAI_API_KEY": key}`
-//!    覆盖全文件，会把 Codex 官方登录留下的 `tokens`（access / refresh /
-//!    account_id）和 `type` 一起抹掉 —— 等于把用户从 Codex 登出。
-//!    现在走 [`codex_auth_json`] 并入。
-//! 3. **读回配置时不能优先 Claude 就提前返回。** 旧代码只要读到
-//!    `ANTHROPIC_BASE_URL` 就 return，Codex 那边的配置在界面上永远看不见。
-//!    现在 [`current_providers`] 两个都读，各返回一条。
+//! 2. **两种凭证不能同时留着。** `env_key` 与 `experimental_bearer_token`、
+//!    `ANTHROPIC_API_KEY` 与 `ANTHROPIC_AUTH_TOKEN` 同时在的时候客户端用哪个说不准，
+//!    症状是「改了没生效」。
 //!
-//! 三条都有单测钉着，见文件末尾。
+//! 两条都有单测钉着，见文件末尾。
 
-pub mod backend;
 pub mod presets;
-pub mod probe;
-pub mod store;
 
 use crate::error::{GateError, Result};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use ts_rs::TS;
 
-pub use store::{ProviderInput, ProviderMeta, ProviderView, RelayStore, StoredProvider};
-
-/// 中转站服务的哪个工具。
-///
-/// 三个是各自独立的列表 —— 切 Codex 的供应商不该动到 Claude 那边。
+/// 中转服务的哪个工具。预设按它分（`presets::for_target`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "kebab-case")]
@@ -61,29 +48,12 @@ impl RelayTarget {
         RelayTarget::Codex,
     ];
 
-    /// 与 serde 输出一致。**两边必须对得上** —— `active` 那张表是按这个
-    /// 字符串做键的，对不上就会出现「切了但界面上没变」。有单测钉着。
+    /// 与 serde 输出一致。**两边必须对得上** —— 有单测钉着。
     pub fn as_str(self) -> &'static str {
         match self {
             RelayTarget::ClaudeDesktop => "claude-desktop",
             RelayTarget::ClaudeCode => "claude-code",
             RelayTarget::Codex => "codex",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            RelayTarget::ClaudeDesktop => "Claude 桌面端",
-            RelayTarget::ClaudeCode => "Claude Code",
-            RelayTarget::Codex => "Codex",
-        }
-    }
-
-    /// 写的是哪个配置文件。
-    pub fn config_path(self) -> PathBuf {
-        match self {
-            RelayTarget::Codex => codex_dir().join("config.toml"),
-            _ => claude_settings_path(),
         }
     }
 }
@@ -117,42 +87,39 @@ impl WireApi {
 #[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthStyle {
-    /// Codex：provider 段写 `env_key`，Key 并进 `auth.json`。
+    /// Codex：provider 段写 `env_key`，Key 由启动时的环境变量（或环境目录里的 `auth.json`）给。
     /// Claude：写 `ANTHROPIC_API_KEY`。
     #[default]
     EnvKey,
-    /// Codex：provider 段直接写 `experimental_bearer_token`，不碰 `auth.json`。
+    /// Codex：provider 段直接写 `experimental_bearer_token`。
     /// Claude：写 `ANTHROPIC_AUTH_TOKEN`。
     BearerToken,
     /// 不写任何凭证 —— 官方 OAuth 登录，或者 Key 由用户自己管。
     None,
 }
 
-pub fn codex_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_default().join(".codex")
-}
-
-pub fn claude_settings_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join(".claude")
-        .join("settings.json")
-}
-
-/// 备份目录。**按时间戳分文件夹，不是单槽 `.bak`。**
+/// 写进配置要用到的那几项。
 ///
-/// 旧版每个文件只留一个 `.bak`，写第二次就把第一次的备份盖掉了 ——
-/// 等于「改坏了能退回去」只在改坏的下一秒成立。
-pub fn backup_dir() -> PathBuf {
-    crate::paths::state_dir().join("relay-backups")
-}
-
-pub(crate) fn atomic_write(p: &std::path::Path, body: &str) -> Result<()> {
-    crate::config_io::commit(vec![crate::config_io::Edit::text(
-        p.to_path_buf(),
-        body.into(),
-    )?])
-    .map(|_| ())
+/// 原来它是 `relay.json` 目录里一条供应商的公开信息，还带着 id、所属工具、备注、网址、
+/// 图标、排序、创建时间 —— 那些只给目录与界面用，目录删了之后一个都没人读。
+#[derive(Debug, Clone)]
+pub struct ProviderMeta {
+    /// 写进 `config.toml` 的 `model_providers.<slug>`。Codex 用，Claude 侧忽略。
+    pub slug: String,
+    pub name: String,
+    pub base_url: String,
+    pub model: Option<String>,
+    /// 小模型 / 快模型那一档（落到 `ANTHROPIC_SMALL_FAST_MODEL`）。
+    ///
+    /// Claude Code 会拿它跑后台的轻活（补全会话标题之类）。**很多中转站的
+    /// 小模型跟主模型不是同一个名字**，只配主模型的话那些后台请求会直接报错，
+    /// 而报错信息跟你正在做的事完全无关，极难联想。
+    ///
+    /// `None` = 不设这个变量，交给 Claude Code 用它自己的默认值。
+    /// 形态参考 z-switch（MIT）的多档模型配置。
+    pub small_fast_model: Option<String>,
+    pub wire_api: WireApi,
+    pub auth_style: AuthStyle,
 }
 
 // ------------------------------------------------------- 纯函数（可单测）
@@ -317,121 +284,6 @@ pub fn claude_settings_json(existing: &str, m: &ProviderMeta, key: Option<&str>)
     Ok(serde_json::to_string_pretty(&doc)?)
 }
 
-// ------------------------------------------------------------ 读回
-
-/// 从目标工具的 live 配置里读回当前值，**不含 Key**。
-///
-/// 每个 target 各返回一条。旧代码读到 Claude 就提前 return，
-/// Codex 那边的配置在界面上永远看不见 —— 见文件头坑 3。
-pub fn current_providers() -> Vec<ProviderMeta> {
-    let mut out = Vec::new();
-    if let Some(p) = current_claude_provider() {
-        out.push(p);
-    }
-    if let Some(p) = current_codex_provider() {
-        out.push(p);
-    }
-    out
-}
-
-/// 读某一个 target 的 live 配置，用于「从当前配置导入」。
-pub fn import_live(target: RelayTarget) -> Option<ProviderMeta> {
-    match target {
-        RelayTarget::Codex => current_codex_provider(),
-        _ => current_claude_provider().map(|mut m| {
-            m.target = target;
-            m
-        }),
-    }
-}
-
-fn blank_meta(target: RelayTarget) -> ProviderMeta {
-    ProviderMeta {
-        id: String::new(),
-        target,
-        slug: String::new(),
-        name: String::new(),
-        base_url: String::new(),
-        model: None,
-        small_fast_model: None,
-        wire_api: WireApi::default(),
-        auth_style: AuthStyle::default(),
-        note: None,
-        website: None,
-        icon: None,
-        sort: 0,
-        created_at: String::new(),
-    }
-}
-
-fn current_claude_provider() -> Option<ProviderMeta> {
-    let text = std::fs::read_to_string(claude_settings_path()).ok()?;
-    let doc = serde_json::from_str::<serde_json::Value>(&text).ok()?;
-    let env = doc.get("env")?;
-    let base = env.get("ANTHROPIC_BASE_URL")?.as_str()?;
-
-    let auth_style = if env.get("ANTHROPIC_AUTH_TOKEN").is_some() {
-        AuthStyle::BearerToken
-    } else if env.get("ANTHROPIC_API_KEY").is_some() {
-        AuthStyle::EnvKey
-    } else {
-        AuthStyle::None
-    };
-
-    Some(ProviderMeta {
-        slug: "claude".into(),
-        name: "当前 Claude 配置".into(),
-        base_url: base.into(),
-        model: env
-            .get("ANTHROPIC_MODEL")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        small_fast_model: env
-            .get("ANTHROPIC_SMALL_FAST_MODEL")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        auth_style,
-        ..blank_meta(RelayTarget::ClaudeCode)
-    })
-}
-
-fn current_codex_provider() -> Option<ProviderMeta> {
-    let text = std::fs::read_to_string(codex_dir().join("config.toml")).ok()?;
-    let doc = text.parse::<toml_edit::DocumentMut>().ok()?;
-    let slug = doc.get("model_provider")?.as_str()?.to_string();
-    let node = doc.get("model_providers")?.get(&slug)?;
-
-    let wire_api = match node.get("wire_api").and_then(|v| v.as_str()) {
-        Some("chat") => WireApi::Chat,
-        _ => WireApi::Responses,
-    };
-    let auth_style = if node.get("experimental_bearer_token").is_some() {
-        AuthStyle::BearerToken
-    } else if node.get("env_key").is_some() {
-        AuthStyle::EnvKey
-    } else {
-        AuthStyle::None
-    };
-
-    Some(ProviderMeta {
-        name: node
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&slug)
-            .to_string(),
-        base_url: node
-            .get("base_url")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string(),
-        model: doc.get("model").and_then(|v| v.as_str()).map(String::from),
-        wire_api,
-        auth_style,
-        slug,
-        ..blank_meta(RelayTarget::Codex)
-    })
-}
-
 /// 掩码，给界面显示用。
 pub fn mask(key: &str) -> String {
     let n = key.chars().count();
@@ -453,9 +305,9 @@ mod tests {
             name: "我的中转".into(),
             base_url: "https://api.example.com".into(),
             model: Some("gpt-5.2".into()),
+            small_fast_model: None,
             wire_api,
             auth_style,
-            ..blank_meta(RelayTarget::Codex)
         }
     }
 
@@ -553,8 +405,7 @@ enabled = true
     #[test]
     fn claude_settings_keep_unrelated_keys() {
         let existing = r#"{"permissions":{"allow":["Bash"]},"env":{"FOO":"bar"}}"#;
-        let mut m = meta(AuthStyle::EnvKey, WireApi::Responses);
-        m.target = RelayTarget::ClaudeCode;
+        let m = meta(AuthStyle::EnvKey, WireApi::Responses);
         let out = claude_settings_json(existing, &m, Some("sk-x")).unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["permissions"]["allow"][0], "Bash");
@@ -566,7 +417,6 @@ enabled = true
     fn claude_settings_never_keep_both_key_and_token() {
         // 两个同时存在时用哪个是不确定的，会变成「改了没生效」。
         let mut m = meta(AuthStyle::BearerToken, WireApi::Responses);
-        m.target = RelayTarget::ClaudeCode;
         let out = claude_settings_json(r#"{"env":{"ANTHROPIC_API_KEY":"old"}}"#, &m, Some("sk-x"))
             .unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -612,8 +462,7 @@ enabled = true
     #[test]
     fn auth_style_none_writes_no_credential_at_all() {
         // 官方 OAuth 登录的场景：只改端点，一个凭证都不许写进去。
-        let mut m = meta(AuthStyle::None, WireApi::Responses);
-        m.target = RelayTarget::ClaudeCode;
+        let m = meta(AuthStyle::None, WireApi::Responses);
         let out = claude_settings_json("{}", &m, Some("sk-should-not-appear")).unwrap();
         assert!(!out.contains("sk-should-not-appear"));
 

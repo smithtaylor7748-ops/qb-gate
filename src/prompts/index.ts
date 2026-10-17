@@ -263,12 +263,5 @@ export const BROWSER_REINSTALL_PROMPT: PromptDef = {
 - 不要修改系统级的语言与时区（那个由控制面板单独负责）`,
 };
 
-export const ALL_PROMPTS = [
-  DNS_LEAK_PROMPT,
-  CLEAN_REINSTALL_PROMPT,
-  CODEX_REINSTALL_PROMPT,
-  BROWSER_REINSTALL_PROMPT,
-];
-
 /** 索引文档里那份 sulianyan 新手指引，DNS 页面上作为参考链接给出。 */
 export const QUICKSTART_DOC = "https://docs.sulianyan.com/quickstart.html";

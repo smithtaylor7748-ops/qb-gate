@@ -260,9 +260,8 @@ export async function recordGate(): Promise<Risk | null> {
 /**
  * 纯净度的人工判定 —— 这一项的真值只能人工给。
  *
- * `verdict.rs` 把 `native` 写死成 `Unknown`（公开接口就是没这个字段），
- * 所以 `PanelVerdict.passed` 结构上永远是 false。评分那 35 分完全建立在
- * 这条路径上，见 `score.ts::purityItem`。
+ * 「原生 IP」那一项公开接口不给，面板自判结构上永远判不过（那条自判命令
+ * 2026-09-27 删了）。评分里纯净度那一项完全建立在这条路径上，见 `score.ts::purityItem`。
  */
 export async function judgePurity(
   pass: boolean,

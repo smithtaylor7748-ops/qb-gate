@@ -34,7 +34,6 @@
 //! 根目录由调用方传进来，单测用临时目录搭假树 —— 单测不许碰真实的运行期状态。
 
 use crate::config_io;
-use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use ts_rs::TS;
@@ -279,61 +278,9 @@ pub fn language_server_log(roaming: &Path) -> PathBuf {
         .join("language_server.log")
 }
 
-/// Hub 的键值存储（`StorageManager`，扁平 JSON，值都是字符串）。
-pub fn app_storage_path(roaming: &Path) -> PathBuf {
-    user_data_dir(Product::Hub, roaming).join("app_storage.json")
-}
-
-/// `autoCheckForUpdates` 这个键。Hub 自己的 `SettingKey.AUTO_CHECK_FOR_UPDATES`。
-pub const AUTO_UPDATE_KEY: &str = "autoCheckForUpdates";
-
-/// 读 Hub 的「自动检查更新」开关。键不在 = Hub 的默认值 `true`。
-///
-/// 文件不在或坏了回 `None`（不知道），别把「读不出来」显示成「关着」。
-pub fn auto_update_enabled(roaming: &Path) -> Option<bool> {
-    let bytes = config_io::read_optional(&app_storage_path(roaming)).ok()??;
-    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let obj = v.as_object()?;
-    Some(!matches!(
-        obj.get(AUTO_UPDATE_KEY).and_then(|x| x.as_str()),
-        Some("false")
-    ))
-}
-
-/// 把「自动检查更新」写进 Hub 的键值存储。**只并入这一个键，其余原样保留。**
-///
-/// # 为什么面板要管这个
-///
-/// electron-updater 在 Hub 退出时静默装新版本，新 exe 没有 Deny ACE，
-/// 到下一次上锁之前是一份能绕过门禁的完整副本（跟 Claude Code 的
-/// `DISABLE_AUTOUPDATER` 是同一个理由）；而且汉化字典是按界面版本配的，
-/// 悄悄升级会让字典对不上。所以软件页给一个开关。
-///
-/// # 只并入
-///
-/// 这个文件还装着使用者的窗口布局、置顶对话顺序那些 —— 整份写会把它们抹掉。
-/// 走 `config_io::commit`：两阶段提交，期间被外部改过就拒绝。
-///
-/// Hub **只在启动时读它**（运行中改要重启才生效），界面上要写明。
-pub fn set_auto_update(roaming: &Path, enabled: bool) -> Result<()> {
-    let path = app_storage_path(roaming);
-    let expected = config_io::read_optional(&path)?;
-    let mut root = config_io::parse_object(expected.as_deref())?;
-    let obj = root.as_object_mut().ok_or_else(|| {
-        crate::error::GateError::Other("反重力的 app_storage.json 不是对象".into())
-    })?;
-    // Hub 的 StorageManager 把值一律存成字符串（`String(value)`），照它的样子写。
-    obj.insert(
-        AUTO_UPDATE_KEY.into(),
-        serde_json::Value::String(if enabled { "true" } else { "false" }.into()),
-    );
-    config_io::commit(vec![config_io::Edit {
-        path,
-        expected,
-        body: Some(serde_json::to_vec_pretty(&root)?),
-    }])?;
-    Ok(())
-}
+// 原来这里有 Hub「自动检查更新」的读写（`app_storage.json` 里的 `autoCheckForUpdates`），
+// 给软件页一个开关用。那个开关早就不在界面上了、状态也没人显示，2026-09-27 删掉。
+// 如果要再管这件事（静默升级出来的新 exe 在下次上锁前没有 Deny ACE），连界面一起加回来。
 
 /// 语言服务器日志里有没有「登录成功」这一行。**只读日志，不碰凭据。**
 ///
@@ -456,39 +403,6 @@ mod tests {
         );
     }
 
-    /// 写自动更新开关只并入一个键，别的键一个都不许丢。
-    #[test]
-    fn setting_auto_update_keeps_the_other_keys() {
-        let (_t, local) = tree();
-        let roaming = local.join("Roaming");
-        let p = app_storage_path(&roaming);
-        touch(&p);
-        std::fs::write(
-            &p,
-            br#"{"ide-install-wizard-shown":"true","auxPaneWidth":"320"}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            auto_update_enabled(&roaming),
-            Some(true),
-            "键不在 = Hub 默认开"
-        );
-        set_auto_update(&roaming, false).unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
-        assert_eq!(v["autoCheckForUpdates"], "false", "{v}");
-        assert_eq!(v["ide-install-wizard-shown"], "true", "别的键丢了：{v}");
-        assert_eq!(v["auxPaneWidth"], "320");
-        assert_eq!(auto_update_enabled(&roaming), Some(false));
-        set_auto_update(&roaming, true).unwrap();
-        assert_eq!(auto_update_enabled(&roaming), Some(true));
-    }
-
-    #[test]
-    fn a_missing_storage_file_reads_as_unknown_not_off() {
-        let (_t, local) = tree();
-        assert_eq!(auto_update_enabled(&local.join("nope")), None);
-    }
-
     #[test]
     fn paths_have_the_shapes_the_hub_uses() {
         let home = Path::new(r"C:\Users\me");
@@ -506,7 +420,6 @@ mod tests {
         assert!(devtools_port_file(Product::Ide, roaming)
             .ends_with(r"Antigravity IDE\DevToolsActivePort"));
         assert!(language_server_log(roaming).ends_with(r"Antigravity\logs\language_server.log"));
-        assert!(app_storage_path(roaming).ends_with(r"Antigravity\app_storage.json"));
     }
 
     #[test]

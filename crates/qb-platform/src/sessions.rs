@@ -114,6 +114,7 @@ pub fn start(
         context.client == Client::ClaudeCode,
         // 托管会话一律绑定生命周期，与「收不收」无关。
         true,
+        None,
         &id,
     )?;
     let mut session = Session {
@@ -257,38 +258,10 @@ pub fn stop(id: &str) -> Result<()> {
     Repository::open()?.put("sessions", id, &m.session)
 }
 
-/// 放弃一条核验不了的会话记录。**只删记录，不动进程。**
-///
-/// `unverified`（以及 running 但不在注册表里）的会话会挡住切账户、迁移配置、
-/// 恢复快照、回滚软件版本 —— 全靠 [`ensure_verified`]。而界面上又停不掉它：
-/// [`stop`] 要求它在注册表里。更糟的是 `gate::stop_managed` 收不掉它就把
-/// `pending_stop` 置位，看门狗此后每轮只重试关停、不再复判门禁，
-/// 门就再也自动开不回来。
-///
-/// 多数情况下 [`recover`] 下一轮能把它降级成 `exited` 自愈。这个命令是
-/// 自愈不了时（PID 被高权限进程占了，`OpenProcess` 一直 ACCESS_DENIED 之类）
-/// 唯一能让使用者靠自己走出来的路，否则只能重装或者手改数据库。
-///
-/// 不杀进程是故意的：面板既然核验不了这个 PID 的身份，就更没有资格动它 ——
-/// 「仅凭 PID 不终止任何进程」这条在这里同样成立。
-pub fn forget(id: &str) -> Result<()> {
-    if registry().lock().unwrap().contains_key(id) {
-        return Err(GateError::Other(
-            "此会话仍由面板托管，请用「停止会话」正常结束它".into(),
-        ));
-    }
-    let db = Repository::open()?;
-    let session: Session = db.get("sessions", id)?;
-    if !["unverified", "running"].contains(&session.state.as_str()) {
-        return Err(GateError::Other("此会话已经结束，不需要放弃".into()));
-    }
-    db.remove("sessions", id)?;
-    crate::audit::write(&format!(
-        "使用者放弃了核验不了的会话记录 {id}（PID {}，进程未被终止）",
-        session.pid
-    ));
-    Ok(())
-}
+// 原来这里有 `forget(id)`：放弃一条核验不了的会话记录（只删记录，不动进程），
+// 给 `recover` 自愈不了的场面（PID 被高权限进程占着、`OpenProcess` 一直拒绝）留一条出路。
+// 它的界面入口早就没了、命令 `session_forget` 一直没人调，2026-09-27 删掉 ——
+// 这个缺口记在 `docs/KNOWN-ISSUES.zh-CN.md`。要加回来就连界面一起加。
 
 pub fn ensure_verified(predicate: impl Fn(&Session) -> bool) -> Result<()> {
     let registry = registry().lock().unwrap();
@@ -403,6 +376,33 @@ impl OwnedProgram {
         cwd: &Path,
         env: Vec<(String, String)>,
     ) -> Result<Self> {
+        Self::launch_inner(exe, args, cwd, env, None)
+    }
+    /// 同 [`Self::launch`]（没有窗口、随面板退出一起收），另把它的 stdout / stderr **追加**进 `log`
+    /// （2026-09-29，酒馆的控制台）。
+    ///
+    /// 原来酒馆是 `CREATE_NO_WINDOW` 起的，而它的输出没有接到任何地方 —— 报错文案叫人「到它自己的窗口看」，
+    /// 可那个窗口从来不存在。现在输出进这个文件，面板读它。
+    ///
+    /// ⛔ 句柄只交这两个：用 `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` 把继承范围收窄到 stdin（`NUL`）与日志，
+    /// 面板自己别的可继承句柄一个都不跟过去。文件用追加方式打开（`FILE_APPEND_DATA`），
+    /// stdout 与 stderr 共用同一个句柄，两路输出按写入的先后落进同一个文件。
+    pub fn launch_logged(
+        exe: &Path,
+        args: &[String],
+        cwd: &Path,
+        env: Vec<(String, String)>,
+        log: &Path,
+    ) -> Result<Self> {
+        Self::launch_inner(exe, args, cwd, env, Some(log))
+    }
+    fn launch_inner(
+        exe: &Path,
+        args: &[String],
+        cwd: &Path,
+        env: Vec<(String, String)>,
+        log: Option<&Path>,
+    ) -> Result<Self> {
         let id = crate::config_io::id();
         let process = NativeProcess::create(
             exe,
@@ -411,6 +411,7 @@ impl OwnedProgram {
             &sanitized_environment(std::env::vars(), env),
             false,
             true,
+            log,
             &id,
         )?;
         if let Err(e) = process.resume() {
@@ -451,6 +452,7 @@ impl OwnedProgram {
             &sanitized_environment(std::env::vars(), env),
             true,
             false,
+            None,
             &id,
         )?;
         if let Err(e) = process.resume() {
@@ -568,6 +570,94 @@ mod native {
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(Some(0)).collect()
     }
+    /// `OwnedProgram::launch_logged` 的两个句柄：stdin 接 `NUL`，stdout / stderr 追加进日志文件。
+    ///
+    /// 我们手里这两份在 `spawn` 之后随 `Redirect` 一起关掉；子进程拿的是继承过去的副本。
+    struct Redirect {
+        stdin: std::fs::File,
+        log: std::fs::File,
+    }
+    impl Redirect {
+        fn open(path: &Path) -> Result<Self> {
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            let log = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .map_err(|e| GateError::Other(format!("打不开日志文件 {}：{e}", path.display())))?;
+            let stdin = std::fs::File::open("NUL")
+                .map_err(|e| GateError::Other(format!("打不开 NUL：{e}")))?;
+            Ok(Self { stdin, log })
+        }
+        /// ⛔ 继承只放这两个句柄（`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`）：`bInheritHandles` 一开，
+        /// 不收窄的话面板进程里任何一个可继承的句柄都会跟进子进程。
+        unsafe fn spawn(
+            &self,
+            application: PCWSTR,
+            command: PWSTR,
+            flags: PROCESS_CREATION_FLAGS,
+            block: &[u16],
+            cwd: PCWSTR,
+            pi: &mut PROCESS_INFORMATION,
+        ) -> windows::core::Result<()> {
+            use std::os::windows::io::AsRawHandle;
+            use windows::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
+            let stdin = HANDLE(self.stdin.as_raw_handle());
+            let log = HANDLE(self.log.as_raw_handle());
+            for h in [stdin, log] {
+                SetHandleInformation(h, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT)?;
+            }
+            let mut size = 0usize;
+            // 第一次调用只问要多大，按约定返回「缓冲区不够」。
+            let _ = InitializeProcThreadAttributeList(
+                LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut()),
+                1,
+                0,
+                &mut size,
+            );
+            // 按指针宽度对齐。
+            let mut buf = vec![0usize; size.div_ceil(std::mem::size_of::<usize>()).max(1)];
+            let list = LPPROC_THREAD_ATTRIBUTE_LIST(buf.as_mut_ptr() as *mut _);
+            InitializeProcThreadAttributeList(list, 1, 0, &mut size)?;
+            // 属性里存的是这个数组的地址，它要活到 `DeleteProcThreadAttributeList` 之后。
+            let handles = [stdin, log];
+            let result = (|| {
+                UpdateProcThreadAttribute(
+                    list,
+                    0,
+                    PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
+                    Some(handles.as_ptr() as *const _),
+                    std::mem::size_of_val(&handles),
+                    None,
+                    None,
+                )?;
+                let mut si = STARTUPINFOEXW::default();
+                si.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
+                si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+                si.StartupInfo.hStdInput = stdin;
+                si.StartupInfo.hStdOutput = log;
+                si.StartupInfo.hStdError = log;
+                si.lpAttributeList = list;
+                CreateProcessW(
+                    application,
+                    command,
+                    None,
+                    None,
+                    true,
+                    flags | EXTENDED_STARTUPINFO_PRESENT,
+                    Some(block.as_ptr() as *const _),
+                    cwd,
+                    &si.StartupInfo,
+                    pi,
+                )
+            })();
+            DeleteProcThreadAttributeList(list);
+            drop(buf);
+            result
+        }
+    }
     fn created(h: HANDLE) -> Result<u64> {
         let (mut c, mut e, mut k, mut u) = (
             FILETIME::default(),
@@ -581,6 +671,7 @@ mod native {
         Ok(((c.dwHighDateTime as u64) << 32) | c.dwLowDateTime as u64)
     }
     impl NativeProcess {
+        #[allow(clippy::too_many_arguments)]
         pub fn create(
             exe: &Path,
             args: &[String],
@@ -590,6 +681,8 @@ mod native {
             // kill_on_close：面板退出时把这棵进程树一起收掉
             // （`KILL_ON_JOB_CLOSE`）。**跟 IP 门禁无关**，见 `start` 的说明。
             kill_on_close: bool,
+            // 给了就把 stdout / stderr 追加进这个文件、stdin 接 `NUL`（`OwnedProgram::launch_logged`）。
+            output: Option<&Path>,
             id: &str,
         ) -> Result<Self> {
             let exe = exe.to_string_lossy();
@@ -651,10 +744,6 @@ mod native {
                         return Err(err(e));
                     }
                 }
-                let si = STARTUPINFOW {
-                    cb: std::mem::size_of::<STARTUPINFOW>() as u32,
-                    ..Default::default()
-                };
                 let mut pi = PROCESS_INFORMATION::default();
                 let flags = CREATE_SUSPENDED
                     | CREATE_UNICODE_ENVIRONMENT
@@ -663,18 +752,41 @@ mod native {
                     } else {
                         CREATE_NO_WINDOW
                     };
-                if let Err(e) = CreateProcessW(
-                    PCWSTR(application.as_ptr()),
-                    PWSTR(command.as_mut_ptr()),
-                    None,
-                    None,
-                    false,
-                    flags,
-                    Some(block.as_ptr() as *const _),
-                    PCWSTR(cwd.as_ptr()),
-                    &si,
-                    &mut pi,
-                ) {
+                let spawned = match output {
+                    None => {
+                        let si = STARTUPINFOW {
+                            cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+                            ..Default::default()
+                        };
+                        CreateProcessW(
+                            PCWSTR(application.as_ptr()),
+                            PWSTR(command.as_mut_ptr()),
+                            None,
+                            None,
+                            false,
+                            flags,
+                            Some(block.as_ptr() as *const _),
+                            PCWSTR(cwd.as_ptr()),
+                            &si,
+                            &mut pi,
+                        )
+                    }
+                    Some(path) => match Redirect::open(path) {
+                        Ok(r) => r.spawn(
+                            PCWSTR(application.as_ptr()),
+                            PWSTR(command.as_mut_ptr()),
+                            flags,
+                            &block,
+                            PCWSTR(cwd.as_ptr()),
+                            &mut pi,
+                        ),
+                        Err(e) => {
+                            let _ = CloseHandle(job);
+                            return Err(e);
+                        }
+                    },
+                };
+                if let Err(e) = spawned {
                     let _ = CloseHandle(job);
                     return Err(err(e));
                 }
@@ -883,6 +995,7 @@ struct NativeProcess {
 }
 #[cfg(not(windows))]
 impl NativeProcess {
+    #[allow(clippy::too_many_arguments)]
     fn create(
         _: &Path,
         _: &[String],
@@ -890,6 +1003,7 @@ impl NativeProcess {
         _: &[(String, String)],
         _: bool,
         _: bool,
+        _: Option<&Path>,
         _: &str,
     ) -> Result<Self> {
         Err(GateError::Other("会话管理需要 Windows".into()))

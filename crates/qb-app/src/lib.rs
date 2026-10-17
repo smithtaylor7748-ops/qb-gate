@@ -11,10 +11,11 @@
 //! | 模块 | 它编排什么 |
 //! |---|---|
 //! | [`usecase`] | 关停（门禁 + 杀进程 + 停插件 + 刷托盘）、切号（账户 + hook）、装机（安装 + 上锁窗口）、存设置（写盘 + 作废判定缓存） |
-//! | [`workspace`] | 工作区聚合：供应商 · 凭证 · 环境 · 启动方案 · 会话，以及「起一个会话」这条最长的链 |
+//! | [`workspace`] | 工作区聚合：供应商 · 凭证 · 环境 · 会话，以及「起一个会话」这条最长的链 |
 //! | [`snapshot`] | 备份与回滚：数据库 + 账户目录 + 门禁状态一起进、一起出 |
-//! | [`profile`] | 统一档案：把「账号 + 供应商 + 时区」当成一个整体切过去 |
-//! | [`diagnostics`] | 拿工作区里那条环境记录去实测连通性 |
+//!
+//! 原来还有 `profile`（统一档案）和 `diagnostics`（拿环境记录实测连通性）两个模块。
+//! 前者的入口早就只回「已停用」，后者只有「服务商与环境」旧页在用；2026-09-27 一起删了。
 //!
 //! # 它不认识 Tauri
 //!
@@ -27,8 +28,9 @@
 //!
 //! # 政策边界
 //!
-//! `profile::apply` 会切账户，所以**它必须是纯人工触发的**：没有定时器、
-//! 没有看门狗触发点。加一个自动调用点，「统一档案」就变成了自动轮换账户。
+//! 这一层里会切账户的用例（`usecase::account_ops`，GPT / 反重力各自的槽位切换）
+//! **必须是纯人工触发的**：没有定时器、没有看门狗触发点。加一个自动调用点，
+//! 多槽位就变成了自动轮换账户。
 
 pub use qb_accounts::{accounts, residue};
 pub use qb_contract::domain;
@@ -47,11 +49,9 @@ pub use qb_relay::relay;
 pub use qb_sysenv::sysenv;
 
 pub mod browser_probe;
-pub mod diagnostics;
 pub mod gemini_bridge;
 pub mod gpt_bridge;
 pub mod local_router;
-pub mod profile;
 pub mod snapshot;
 pub mod turnstate_marker;
 pub mod usecase;
