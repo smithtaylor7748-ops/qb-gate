@@ -1,0 +1,26 @@
+[package]
+name = "qb-proxy"
+description = "QB Gate 本机路由的纯逻辑：错误分类、整流器、模型映射、用量解析、SSE 工具（多数搬自 cc-switch v4.0.14，MIT）"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# 第 3 层（`src-tauri/tests/architecture.rs` 的 LAYERS）。**只做纯计算**：不联网、不碰文件、
+# 不碰数据库 —— 那些在 `qb-app::local_router`。
+#
+# ⛔ 不许依赖 `qb-accounts` / `qb-launch`：这里的错误分类决定「换下一条中转线」，
+# 物理上就不该够得着官方账户槽位（`proxy_logic_can_never_reach_account_switching` 钉着）。
+[dependencies]
+qb-contract.workspace = true
+qb-foundation.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+base64.workspace = true
+http.workspace = true
+regex.workspace = true

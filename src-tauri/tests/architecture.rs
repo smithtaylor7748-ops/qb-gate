@@ -380,6 +380,27 @@ fn relay_breakers_can_never_reach_account_switching() {
     }
 }
 
+/// `qb-proxy` 决定的是「这一发失败了，换不换下一条中转线」——
+/// 跟 `qb-station` 的熔断同一个道理，它也不许认识官方账户。
+///
+/// 那里的错误分类把 401 / 余额不足判成「换下一条」：要是它够得着账户切换，
+/// 「额度用完就换号」就只差一行代码，而那正是 CLAUDE.md 明确不做的「自动换号」。
+#[test]
+fn proxy_logic_can_never_reach_account_switching() {
+    let all = crate_deps();
+    let (_, proxy) = all
+        .iter()
+        .find(|(name, _)| name == "qb-proxy")
+        .expect("qb-proxy 不在 workspace 里了？");
+    for forbidden in ["qb-accounts", "qb-launch"] {
+        assert!(
+            !proxy.iter().any(|d| d == forbidden),
+            "qb-proxy 依赖了 {forbidden} —— 本机路由的「换下一条线」因此够得着官方账户槽位。\n\
+             错误分类与重试只许换中转线路；按额度 / 429 自动切官方槽位是 CLAUDE.md 明确不做的「自动换号」。"
+        );
+    }
+}
+
 /// 每个 crate 在哪一层。**只许往下依赖。**
 ///
 /// # 为什么 workspace 之外还要这一条
@@ -402,6 +423,8 @@ const LAYERS: &[(&str, u8)] = &[
     ("qb-launch", 3),
     ("qb-extensions", 3),
     ("qb-sysenv", 3),
+    // 本机路由的纯逻辑（2026-10-17，搬 cc-switch）：错误分类、整流器、模型映射、用量解析。
+    ("qb-proxy", 3),
     ("qb-app", 4),
     ("qb-gate", 5), // src-tauri 这个包就叫 qb-gate（产出 qb-gate.exe）
 ];

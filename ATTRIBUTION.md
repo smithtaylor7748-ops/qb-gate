@@ -23,18 +23,79 @@
 
 MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件头注明。
 
-### cc-switch — 中转站配置的形态
+### cc-switch — 中转站配置的形态，以及 2026-10-17 起直接搬进来的本机路由逻辑
 
 - 仓库：https://github.com/farion1231/cc-switch
-- 许可：**MIT**，Copyright (c) Jason Young
+- 许可：**MIT**，Copyright (c) 2025 Jason Young（全文在本节末尾）
 - 用在：`crates/qb-relay/src/relay/`（`mod.rs` · `presets.rs`），
-  以及 v0.17.0 起的 `src/features/station/`（`RouteDialog.tsx` · `ConfigPane.tsx`）。
+  v0.17.0 起的 `src/features/station/`（`RouteDialog.tsx` · `ConfigPane.tsx`），
+  以及 **2026-10-17 起的 `crates/qb-proxy/` 与 `crates/qb-foundation/src/json_canonical.rs`（直接搬了源码，见下）**。
   原来的 `store.rs`（`relay.json` 那一代供应商目录）与「从当前配置导入」2026-09-27 删了，
   下表里对应的那一行留着作记录。
 
 参考的是「多供应商 + 一键切换 + 直接写进 CLI 自己的配置文件」这套产品形态，
-以及原子写（临时文件 + 改名）与自动备份的做法。代码为独立实现，未复制。
+以及原子写（临时文件 + 改名）与自动备份的做法。2026-10-17 之前的那部分代码为独立实现、未复制；
 技术栈选型（Tauri 2 + React + TypeScript）同样是跟着它走的。
+
+#### 2026-10-17 起：中转站重构，照搬 cc-switch v4.0.14 的源码
+
+使用者定的：「我想要抄和搬运 CCSwitch 的源码来完善」，35 项功能里搬 27 项（清单在桌面 `claude-op\23`）。
+钉死在标签 **v4.0.14，提交 `5de6feb4e5adda61f4ad824ce0df2c449245f447`**；以后要跟上游，按提交号逐个挑着合。
+每个搬来的文件头都有一行
+`Portions derived from cc-switch v4.0.14 (…, commit 5de6feb4…), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.`
+
+**阶段 1 第一批（`crates/qb-proxy/`，纯逻辑，不联网）**：
+
+| QB Gate 的文件 | cc-switch 的出处（`src-tauri/src/`） | 改了什么 |
+|---|---|---|
+| `qb-foundation/src/json_canonical.rs` | `proxy/json_canonical.rs` | 放到地基层（MCP 条目指纹也要用）；多两条测试 |
+| `qb-proxy/src/sse_text.rs` | `proxy/sse.rs` | 改名（workspace 里 `sse` 已被 `qb-station` 占了）；`pub(crate)` → `pub` |
+| `qb-proxy/src/body_filter.rs` | `proxy/body_filter.rs` | `log::` → `tracing::` |
+| `qb-proxy/src/model_mapper.rs` | `proxy/model_mapper.rs` | 映射从「`Provider.settings_config.env`」改成线路自己的一份（`ModelMapping::from_env`）；`ONE_M_CONTEXT_MARKER` 搬进来 |
+| `qb-proxy/src/model_capabilities.rs` | `model_capabilities.rs` | 只改了常量的路径 |
+| `qb-proxy/src/session.rs` | `proxy/session.rs` | `axum::http::HeaderMap` → `http::HeaderMap` |
+| `qb-proxy/src/usage/parser.rs` | `proxy/usage/parser.rs` | `log::` → `tracing::` |
+| `qb-proxy/src/usage/calculator.rs` | `proxy/usage/calculator.rs` | `rust_decimal` → `f64`（QB Gate 的价目全是 `f64`）；**去掉 `cost_multiplier`**（QB Gate 的线路价是四类单价，不是乘一个数）；`is_cache_inclusive_app` 一起搬进来 |
+| `qb-proxy/src/proxy_error.rs` | `proxy/error.rs` | 改名；axum 的 `IntoResponse` 换成 `response_parts`（本机路由是 hyper）；`describe_reqwest_error` 不搬到这一层（不依赖 reqwest） |
+| `qb-proxy/src/types.rs` | `proxy/types.rs` | 只搬 `RectifierConfig` / `OptimizerConfig` |
+| `qb-proxy/src/thinking_rectifier.rs` · `thinking_budget_rectifier.rs` · `thinking_optimizer.rs` · `cache_injector.rs` · `tool_media.rs` | 同名（`proxy/`） | `log::` → `tracing::`、路径 |
+| `qb-proxy/src/media_sanitizer.rs` | `proxy/media_sanitizer.rs` | 入参从整条 `Provider` 改成它的能力声明 JSON |
+| `qb-proxy/src/opaque_state_rectifier.rs` | `proxy/opaque_state_rectifier.rs` | 子 agent 读不到任务时的那句说明指路到 QB Gate（原文指向 cc-switch 自己的设置页） |
+| `qb-proxy/src/codex_compaction.rs` | `proxy/providers/codex_compaction.rs` | 只搬纯函数那一半；流式那一半（要 `async-stream`）跟协议转换一起在阶段 3 搬。`ccswitch-compaction-v1:` 前缀照原样保留 —— 它写进 Codex 自己的会话历史，两边认得对方包的摘要 |
+| `qb-proxy/src/envelope.rs` | `proxy/forwarder.rs` 的四个私有函数（2xx 里的错误信封） | 搬出来成公开函数；另加一个 cc-switch 没有的 `inspect_anthropic_start_event` |
+| `qb-proxy/src/classify.rs` | `proxy/forwarder.rs` 的 `categorize_proxy_error` 的状态码分桶 | 跟 QB Gate 自己的熔断三档、sub2guard 的报错文字表合成一张（见下面 sub2guard 那一节） |
+
+测试跟着文件一起搬（qb-proxy 261 条）；跟 cc-switch 对不上的只有：`calculator` 的两条 `Decimal` / `cost_multiplier`
+测试换成了 `f64` 精度与「Claude 不含缓存」两条，`error` 那条要联网的 reqwest 测试换成了 `response_parts` 的测试，
+`codex_compaction` 的两条 tokio 流测试随流式那一半留到阶段 3。
+
+cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
+
+```text
+MIT License
+
+Copyright (c) 2025 Jason Young
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+#### 2026-10-17 之前那部分（形态参考，独立实现）
 
 具体参考到的几处，逐条列明：
 
@@ -73,13 +134,14 @@ MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件
 Artifact 里的 `\p{..}` 正则会让每个请求 400）也来自 cc-switch 源码里的注释。
 
 **路径前缀区分客户端**（`/cd` 前缀认 Claude 桌面端）是本项目自己的做法，
-不是从 cc-switch 来的 —— 它没有本机路由这一层。这一条记在这里是因为
-「没抄什么」同样要写明：Claude Code 与桌面端走同一套 Anthropic 协议，
-协议上分不开，而 cc-switch 直接改客户端配置、不需要在运行期分辨来源。
+不是从 cc-switch 来的。这一条记在这里是因为「没抄什么」同样要写明：
+Claude Code 与桌面端走同一套 Anthropic 协议，协议上分不开。
+（这里原来还写着「它没有本机路由这一层」——那是旧版的事；cc-switch 后来也有了本机代理，
+默认端口同样是 15721，2026-10-17 起它的转发逻辑分批搬进了 `qb-proxy`，见上。）
 
-**MIT 允许直接复制源码**（保留版权声明即可）。本项目仍然选择独立实现，
-原因是 cc-switch 现在这部分已经和 SQLite DAO、本地代理层缠在一起，
-逐行搬进来的维护成本高于重写。
+**MIT 允许直接复制源码**（保留版权声明即可）。2026-10-17 之前本项目选择独立实现，
+理由是 cc-switch 这部分和它的 SQLite DAO、本地代理层缠在一起，逐行搬的维护成本高于重写；
+2026-10-17 使用者改了主意（「自己做的太拉了」），于是改成按模块搬、在接缝处适配（上面那张表）。
 
 **2026-09-24 追加：用量统计。** 使用者要「ccswitch 里显示的数据本面板也要有」，对着它的会话用量导入与
 用量面板核了一遍。取的是做法，代码仍是自己写的（Rust 在 `qb-accounts::accounts::tokens`、
@@ -248,8 +310,7 @@ GPT **不换**（OpenAI 的刷新令牌会轮换，面板一换桌面端就被�
 **⛔ 一行源码都没抄,只按公开描述用 Rust 重写。** 理由是许可：本项目是
 **AGPL-3.0-only + 商业授权双授权**，而 ccodex 是第三方持有版权的 GPL 代码 ——
 按 [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) 第三节,抄进来的 copyleft 代码
-无法再许可给商业档,会把商业档堵死。所以跟对 cc-switch(MIT，本可直接抄却仍独立实现)
-一样,这里也是 clean-room。
+无法再许可给商业档,会把商业档堵死。所以这里是 clean-room（cc-switch 是 MIT，2026-10-17 起直接搬了它的源码；ccodex 是 GPL，搬不得）。
 
 **参照了什么（都是公开协议 / 行为,不受版权保护）：**
 
@@ -823,7 +884,7 @@ ippure 与 FuckClaude 都提到：Claude Code 在 `ANTHROPIC_BASE_URL` 指向中
 
 | 来源                                                             | 用途                                                           | 许可与固定依据                                                                                                                                                    |
 | ---------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [cc-switch](https://github.com/farion1231/cc-switch)             | 配置适配、MCP/Skills 与备份组织方式的参考；QB Gate 独立实现    | MIT                                                                                                                                                               |
+| [cc-switch](https://github.com/farion1231/cc-switch)             | 配置形态参考；2026-10-17 起本机路由逻辑直接搬了源码（见上）| MIT                                                                                                                                                               |
 | [UniGetUI](https://github.com/Devolutions/UniGetUI)              | 发现、已安装、更新及任务交互参考                               | MIT；未复制应用代码                                                                                                                                               |
 | [Bruno](https://github.com/usebruno/bruno)                       | 脱敏请求集合导出思路与 `.bru` 文件格式                         | MIT；未打包 Bruno                                                                                                                                                 |
 | [MCP Registry](https://github.com/modelcontextprotocol/registry) | 元数据、来源与版本字段参考                                     | 未复制源码，不把收录视为安全背书                                                                                                                                  |
@@ -899,6 +960,16 @@ ippure 与 FuckClaude 都提到：Claude Code 在 `ANTHROPIC_BASE_URL` 指向中
    （㉙）。QB Gate 侧对应的是 `UsageRow::status_reported` 与熔断器。
 
 峰时倍率 1.5 倍浮动「取 max 才是上界」也来自那份档案（`StationRates::peak_rate`）。
+
+**2026-10-17 追加：中转站重构把 sub2guard v2 的调度规则改写进来。** sub2guard 是使用者自己的代码
+（`guardian/scheduler/`，Python），使用者要它「融入」本项目；改写成 Rust，不是逐行翻译。第一批：
+
+| QB Gate 的位置 | sub2guard 的出处 | 说明 |
+|---|---|---|
+| `qb-proxy/src/classify.rs` 的 `TEXT_PATTERNS`、`classify_status`、`status_in_text` | `probe.py` 的 `_TEXT_PATTERNS`、`classify`、`_STATUS_RE` | 文字表逐条照原样、顺序也照原样（顺序有意义）；状态码只从「returned / HTTP / error code」上下文里取 |
+| 同上的 `Fault` / `FaultGroup` | `probe.py` 的 `DETERMINISTIC` / `TRANSIENT` / `BUSY` / `MODEL_MISSING` / `INFRA` 与 `LABELS` | 另加两档请求侧的（`ClientRequest`、`ClientAbort`，来自 cc-switch 的状态码分桶） |
+
+分档派单、防抖、测活节奏与预算在阶段 2 搬（`claude-op\23` 的 §4）。
 
 ## 评估过但没有采用
 

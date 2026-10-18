@@ -58,6 +58,7 @@ qb-app = { path = "crates/qb-app" }
 qb-contract = { path = "crates/qb-contract" }
 qb-foundation = { path = "crates/qb-foundation" }
 qb-platform = { path = "crates/qb-platform" }
+qb-proxy = { path = "crates/qb-proxy" }
 
 serde = { version = "1", features = ["derive"] }
 # `preserve_order`（2026-10-17，中转站重构阶段 1 第 2 步）：对象按插入 / 解析顺序存，不再按字母序。
@@ -116,6 +117,10 @@ base64 = "0.22"
 # flate2 本来就在依赖树里（`png` → Tauri 的图标处理），加它不引入任何新 crate。
 flate2 = "1"
 uuid = { version = "1", features = ["v4"] }
+# `qb-proxy`（2026-10-17，搬 cc-switch 的路由逻辑）：`http` 给会话 id 读请求头用，
+# `regex` 给错误分类的文字表用（sub2guard 的 `probe.classify`）。两个都早就在依赖树里，不引入新来源。
+http = "1"
+regex = "1"
 toml_edit = { version = "0.22", features = ["serde"] }
 serde_yaml_ng = "0.10"
 reqwest-mcp = { package = "reqwest", version = "0.13", default-features = false, features = ["rustls"] }

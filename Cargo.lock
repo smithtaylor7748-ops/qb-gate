@@ -3260,6 +3260,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "qb-proxy"
+version = "0.25.6"
+dependencies = [
+ "base64 0.22.1",
+ "http",
+ "qb-contract",
+ "qb-foundation",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "qb-relay"
 version = "0.25.6"
 dependencies = [
