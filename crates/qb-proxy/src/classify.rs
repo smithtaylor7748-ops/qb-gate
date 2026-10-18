@@ -45,6 +45,10 @@ pub enum Fault {
     ModelMissing,
     /// 本机这一侧的问题（这条线没配 Key、出站代理连不上……），不是上游的错。
     Infra,
+    /// 这条线不接这一发（404 / 409 / 451，响应里也没说为什么）。换别的线试，**不算这条线的故障** ——
+    /// QB Gate 原来的规矩：404 多半是模型名写错，算成故障的话连打五次就把一条健康的线掐掉；
+    /// cc-switch 那边则换下一家（别家的模型映射、地域可能不同）。两条都留着。
+    NotServedHere,
     /// 请求自己的问题（参数错、体太大、协议不支持）—— 换哪条线都一样。
     ClientRequest,
     /// 客户端自己断开了。
@@ -75,7 +79,9 @@ impl Fault {
             }
             Fault::RateLimit | Fault::Concurrency => FaultGroup::Busy,
             Fault::ModelMissing => FaultGroup::ModelMissing,
-            Fault::Infra | Fault::ClientRequest | Fault::ClientAbort => FaultGroup::Neutral,
+            Fault::Infra | Fault::NotServedHere | Fault::ClientRequest | Fault::ClientAbort => {
+                FaultGroup::Neutral
+            }
         }
     }
 
@@ -93,6 +99,7 @@ impl Fault {
             Fault::Concurrency => "并发已满",
             Fault::ModelMissing => "上游不提供这个模型",
             Fault::Infra => "本机这一侧的问题（不算上游的错）",
+            Fault::NotServedHere => "这条线不接这一发（404 之类），换别的线试",
             Fault::ClientRequest => "请求本身的问题（换哪条线都一样）",
             Fault::ClientAbort => "客户端自己断开了",
         }
@@ -112,6 +119,7 @@ impl Fault {
             Fault::Concurrency => "concurrency",
             Fault::ModelMissing => "model-missing",
             Fault::Infra => "infra",
+            Fault::NotServedHere => "not-served",
             Fault::ClientRequest => "client-request",
             Fault::ClientAbort => "client-abort",
         }
@@ -152,9 +160,9 @@ impl ErrorClass {
             // 别的线可能有这个模型；这条线只在这个模型上跳过（调用方记 6 小时）。
             FaultGroup::ModelMissing => (true, BreakerVerdict::Neutral),
             FaultGroup::Neutral => (
-                // 本机这一侧的问题（比如这条线没配 Key）换一条线可能就好了；
+                // 本机这一侧的问题（比如这条线没配 Key）、这条线不接（404）换一条可能就好了；
                 // 请求自己的问题与客户端断开，换哪条都一样。
-                fault == Fault::Infra,
+                matches!(fault, Fault::Infra | Fault::NotServedHere),
                 BreakerVerdict::Neutral,
             ),
         };
@@ -252,8 +260,10 @@ pub fn classify_status(status: u16) -> Fault {
         // cc-switch：客户端请求自身有问题的状态码，无论换哪个 provider 都会被拒绝。
         400 | 405 | 406 | 413 | 414 | 415 | 422 | 501 => Fault::ClientRequest,
         s if s >= 500 => Fault::UpstreamDown,
-        // 404 / 409 / 451 等：cc-switch 换下一家（别家的 key、地域、模型映射可能不同），
-        // sub2guard 记成「未知」按暂时性算。两边一致。
+        // 404 / 409 / 451 等其余 4xx：cc-switch 换下一家（别家的 key、地域、模型映射可能不同）；
+        // 但不记成这条线的故障 —— QB Gate 原来的规矩（`Outcome::from_status` 把它们当 Ok），
+        // 404 多半是模型名写错，按故障算会把一条健康的线掐掉。
+        s if (400..500).contains(&s) => Fault::NotServedHere,
         _ => Fault::Unknown,
     }
 }
@@ -397,6 +407,23 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_404_tries_the_next_line_without_hurting_this_one() {
+        // QB Gate 原来的规矩（`a_bad_request_is_our_fault_not_the_line_s_fault`）：404 多半是模型名写错，
+        // 按故障算连打五次就把健康的线掐掉。cc-switch 的规矩：换下一家试。两条都要成立。
+        for status in [404, 409, 451] {
+            let c = classify_upstream(status, None, None);
+            assert_eq!(c.fault, Fault::NotServedHere, "{status}");
+            assert!(c.retry_next, "{status}");
+            assert_eq!(c.breaker, BreakerVerdict::Neutral, "{status}");
+        }
+        // 响应里写着「没这个模型」的 404 照文字归到缺模型（这条线上跳过这个模型）。
+        assert_eq!(
+            classify_upstream(404, Some("model_not_found"), None).fault,
+            Fault::ModelMissing
+        );
+    }
+
+    #[test]
     fn our_three_breaker_tiers_survive_the_merge() {
         // 429 只降权，带上 Retry-After。
         assert_eq!(
@@ -489,6 +516,7 @@ mod tests {
             Fault::Concurrency,
             Fault::ModelMissing,
             Fault::Infra,
+            Fault::NotServedHere,
             Fault::ClientRequest,
             Fault::ClientAbort,
         ];
