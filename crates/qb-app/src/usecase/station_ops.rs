@@ -28,7 +28,7 @@ use qb_station::schedule::{
     cheap_values, cost_per_token, rank, Candidate, CheapBasis, CheapInput, Prefs, Ranking, Schedule,
 };
 use qb_station::station::audit::{AuditRound, Check, CheckKind};
-use qb_station::station::model::Protocols;
+use qb_station::station::model::{Protocols, UsageRow};
 use qb_station::station::pricing::{self, FetchedPrice};
 use qb_station::station::route::Route;
 use std::collections::HashMap;
@@ -103,7 +103,17 @@ pub fn route_health<'a>(
     now_ms: i64,
 ) -> impl std::future::Future<Output = HashMap<String, RouteHealth>> + Send + 'a {
     let sources = sources(db, routes);
-    let errors: HashMap<_, _> = routes
+    let errors = source_errors(db, routes);
+    async move {
+        let mut health = refresh_health(&sources, client, now_ms).await;
+        health.extend(errors);
+        health
+    }
+}
+
+/// 拿不到账单来源的那几条（没绑 Key、站点被删了……），原因照实写进健康度里。
+fn source_errors(db: &Repository, routes: &[Route]) -> HashMap<String, RouteHealth> {
+    routes
         .iter()
         .filter_map(|route| {
             source(db, route).err().map(|error| {
@@ -116,12 +126,157 @@ pub fn route_health<'a>(
                 )
             })
         })
+        .collect()
+}
+
+/// 排序用的健康度（中转站重构阶段 1 第 10 步）：**本机路由自己记过的线用它自己的日志**，
+/// 没记过的退回站点账单。
+///
+/// 原来「快 / 稳」只从站点账单来：没在「查套路」里连过站点后台的线永远「没有证据」，
+/// 排序退化成只比倍率（交接文档 §2.12 第 6 条）。本机路由的日志是真实流量、成败都记
+/// （`status_reported` 为真），而且不用登录任何后台。
+///
+/// 有本机证据的线**不再去拉账单**：拉了也用不上，白给站点发一个请求。
+/// 站点账单那张卡（`route_health` / `station_refresh_health`）照旧只看账单，口径不混。
+pub fn decision_health<'a>(
+    db: &Repository,
+    routes: &[Route],
+    client: &'a reqwest::Client,
+    now_ms: i64,
+) -> impl std::future::Future<Output = HashMap<String, RouteHealth>> + Send + 'a {
+    let local = local_health(db, routes, now_ms);
+    let rest: Vec<Route> = routes
+        .iter()
+        .filter(|r| !local.contains_key(&r.id))
+        .cloned()
         .collect();
+    let sources = sources(db, &rest);
+    let errors = source_errors(db, &rest);
     async move {
         let mut health = refresh_health(&sources, client, now_ms).await;
         health.extend(errors);
+        health.extend(local.into_iter().map(|(id, windows)| {
+            (
+                id,
+                RouteHealth {
+                    windows,
+                    error: None,
+                },
+            )
+        }));
         health
     }
+}
+
+/// 本机路由日志看多久以前的（跟健康度最长那个窗口一样，7 天）。
+const LOCAL_HEALTH_LOOKBACK_MS: i64 = 7 * 24 * 3600 * 1000;
+
+/// 一个软件最多读多少条本机日志来算健康度（7 天、每分钟几发，几万条足够；再多就截掉最旧的）。
+const LOCAL_HEALTH_ROWS: u32 = 50_000;
+
+/// 本机路由自己的日志算出来的健康度，按线路。没有日志的线不在里面。读不了库就当没有（退回账单）。
+pub fn local_health(db: &Repository, routes: &[Route], now_ms: i64) -> HashMap<String, Windows> {
+    let mut clients: Vec<Client> = routes.iter().map(|r| r.client).collect();
+    clients.sort_by_key(|c| schedule_key(*c).unwrap_or_default());
+    clients.dedup();
+    let mut requests = Vec::new();
+    for client in clients {
+        let Ok(key) = schedule_key(client) else {
+            continue;
+        };
+        match db.router_requests::<RouterRequest>(&RouterRequestQuery {
+            since_ms: Some(now_ms - LOCAL_HEALTH_LOOKBACK_MS),
+            client: Some(key),
+            route_id: None,
+            limit: LOCAL_HEALTH_ROWS,
+        }) {
+            Ok(rows) => requests.extend(rows),
+            Err(e) => tracing::warn!("读本机路由日志算健康度失败（这一轮退回站点账单）：{e}"),
+        }
+    }
+    let mut by_route = router_usage_rows(&requests);
+    routes
+        .iter()
+        .filter_map(|r| {
+            let rows = by_route.remove(&r.id)?;
+            Some((r.id.clone(), health::windows(&rows, now_ms)))
+        })
+        .collect()
+}
+
+/// 本机路由的请求日志换成每条线的证据行。**一发请求试过几条线，就给那几条线各记一行。**
+///
+/// - 换走了的那几条：记一次失败（成没成功是它自己的事，跟最后那条无关）。
+/// - 最后回话的那条：成败照日志（`RouterRequest::ok`，含流半路断掉），token、首字、花费都记在它身上。
+/// - 不算线路的错的（请求本身的问题、客户端断开、这条线不接、没有这个模型、本机这一侧）**不记** ——
+///   熔断那边对它们记中性，这里也不拿它们拉低成功率。整流前那一次也不记（同一条线紧接着又试了一次）。
+pub fn router_usage_rows(requests: &[RouterRequest]) -> HashMap<String, Vec<UsageRow>> {
+    use qb_proxy::classify::Fault;
+    const NEUTRAL: &[Fault] = &[
+        Fault::ClientRequest,
+        Fault::ClientAbort,
+        Fault::NotServedHere,
+        Fault::ModelMissing,
+        Fault::Infra,
+    ];
+    let neutral = |key: &str| NEUTRAL.iter().any(|f| f.key() == key);
+    let mut out: HashMap<String, Vec<UsageRow>> = HashMap::new();
+    for req in requests {
+        let last = req.attempts.len().saturating_sub(1);
+        for (i, att) in req.attempts.iter().enumerate() {
+            if att
+                .fault
+                .as_deref()
+                .is_some_and(|f| f.starts_with("rectify-"))
+            {
+                continue;
+            }
+            let final_one = i == last && att.route_id == req.route_id;
+            let fault = if final_one {
+                req.fault.as_deref()
+            } else {
+                att.fault.as_deref()
+            };
+            if fault.is_some_and(neutral) {
+                continue;
+            }
+            let ok = if final_one {
+                req.ok()
+            } else {
+                att.fault.is_none() && att.status.is_some_and(|s| (200..300).contains(&s))
+            };
+            let mut row = UsageRow {
+                request_id: req.id.clone(),
+                at_ms: req.at_ms,
+                model: req.model.clone(),
+                total_ms: Some(att.ms),
+                ok,
+                status_reported: true,
+                ..Default::default()
+            };
+            if final_one {
+                let read = req.cache_read_tokens;
+                let write = req.cache_write_tokens;
+                // OpenAI 协议（Codex）报的输入含缓存读写；UsageRow 要的是没缓存的那部分。
+                row.input_uncached = req.input_tokens.map(|input| {
+                    if req.client == "codex" {
+                        input
+                            .saturating_sub(read.unwrap_or(0))
+                            .saturating_sub(write.unwrap_or(0))
+                    } else {
+                        input
+                    }
+                });
+                row.cache_read = read;
+                row.cache_write = write;
+                row.output = req.output_tokens;
+                row.first_token_ms = req.first_token_ms;
+                row.cost = req.station_cost;
+            }
+            out.entry(att.route_id.clone()).or_default().push(row);
+        }
+    }
+    out
 }
 
 /// 账单日志的端点。
@@ -1056,7 +1211,6 @@ pub fn price_router_requests(
 mod tests {
     use super::*;
     use qb_station::schedule::Axis;
-    use qb_station::station::model::UsageRow;
 
     fn route(id: &str, rate: f64) -> Route {
         Route {
@@ -1254,6 +1408,165 @@ mod tests {
         busy.set_now(Client::Codex, b.clone());
         restore_router(&db, &mut busy).unwrap();
         assert_eq!(busy.current(Client::Codex).as_deref(), Some(b.as_str()));
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn tried(
+        route: &str,
+        status: Option<u16>,
+        fault: Option<&str>,
+    ) -> qb_station::router::RouteAttempt {
+        qb_station::router::RouteAttempt {
+            route_id: route.into(),
+            status,
+            fault: fault.map(str::to_string),
+            ms: 100,
+        }
+    }
+
+    #[test]
+    fn every_line_a_request_tried_gets_its_own_evidence_row() {
+        let a = "claude-code\u{1f}s\u{1f}a";
+        let b = "claude-code\u{1f}s\u{1f}b";
+        let at = 1_700_000_000_000;
+        let reqs = vec![
+            // a 502 → 换到 b 成功：a 记一次失败，b 记一次成功（token、首字、花费都在 b 身上）。
+            RouterRequest {
+                id: "1".into(),
+                at_ms: at,
+                client: "claude-code".into(),
+                route_id: b.into(),
+                status: Some(200),
+                first_token_ms: Some(800),
+                input_tokens: Some(10),
+                output_tokens: Some(5),
+                cache_read_tokens: Some(100),
+                cache_write_tokens: Some(0),
+                station_cost: Some(0.01),
+                attempts: vec![
+                    tried(a, Some(502), Some("upstream-down")),
+                    tried(b, Some(200), None),
+                ],
+                ..Default::default()
+            },
+            // 400：请求自己的错，不记（熔断那边也是中性）。
+            RouterRequest {
+                id: "2".into(),
+                at_ms: at,
+                client: "claude-code".into(),
+                route_id: a.into(),
+                status: Some(400),
+                fault: Some("client-request".into()),
+                attempts: vec![tried(a, Some(400), Some("client-request"))],
+                ..Default::default()
+            },
+            // 整流前那一次不记，整流后成功的那次记。
+            RouterRequest {
+                id: "3".into(),
+                at_ms: at,
+                client: "claude-code".into(),
+                route_id: a.into(),
+                status: Some(200),
+                attempts: vec![
+                    tried(a, Some(400), Some("rectify-thinking-signature")),
+                    tried(a, Some(200), None),
+                ],
+                ..Default::default()
+            },
+            // 200 但流半路断了：最后那条按日志的结局记失败。
+            RouterRequest {
+                id: "4".into(),
+                at_ms: at,
+                client: "claude-code".into(),
+                route_id: b.into(),
+                status: Some(200),
+                fault: Some("timeout".into()),
+                attempts: vec![tried(b, Some(200), None)],
+                ..Default::default()
+            },
+        ];
+        let rows = router_usage_rows(&reqs);
+        let oks = |id: &str| -> Vec<bool> { rows[id].iter().map(|r| r.ok).collect() };
+        assert_eq!(
+            oks(a),
+            [false, true],
+            "a：换走的那次算失败、400 不记、整流前那次不记"
+        );
+        assert_eq!(oks(b), [true, false]);
+        assert!(
+            rows[a].iter().all(|r| r.status_reported),
+            "本机路由的成败是报了的"
+        );
+        let b_ok = &rows[b][0];
+        assert_eq!(
+            (
+                b_ok.first_token_ms,
+                b_ok.input_uncached,
+                b_ok.cache_read,
+                b_ok.cost
+            ),
+            (Some(800), Some(10), Some(100), Some(0.01))
+        );
+        assert_eq!(rows[a][0].output, None, "换走的那一次不该带上别人的 token");
+
+        // Codex（OpenAI 协议）的输入含缓存：没缓存的那部分要先扣掉。
+        let codex = RouterRequest {
+            id: "5".into(),
+            client: "codex".into(),
+            route_id: "codex\u{1f}s\u{1f}".into(),
+            status: Some(200),
+            input_tokens: Some(1000),
+            cache_read_tokens: Some(600),
+            cache_write_tokens: Some(0),
+            attempts: vec![tried("codex\u{1f}s\u{1f}", Some(200), None)],
+            ..Default::default()
+        };
+        let rows = router_usage_rows(&[codex]);
+        assert_eq!(rows["codex\u{1f}s\u{1f}"][0].input_uncached, Some(400));
+    }
+
+    #[test]
+    fn ranking_evidence_comes_from_the_router_s_own_log_where_there_is_one() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        let now = 1_700_000_000_000i64;
+        let a = route("claude-code\u{1f}s\u{1f}a", 1.0);
+        let b = route("claude-code\u{1f}s\u{1f}b", 1.0);
+        let reqs: Vec<RouterRequest> = (0..4)
+            .map(|i| RouterRequest {
+                id: format!("r{i}"),
+                at_ms: now - 60_000,
+                client: "claude-code".into(),
+                route_id: a.id.clone(),
+                status: Some(if i == 0 { 502 } else { 200 }),
+                fault: (i == 0).then(|| "upstream-down".to_string()),
+                first_token_ms: Some(700),
+                attempts: vec![tried(
+                    &a.id,
+                    Some(if i == 0 { 502 } else { 200 }),
+                    (i == 0).then_some("upstream-down"),
+                )],
+                ..Default::default()
+            })
+            .collect();
+        db.insert_router_requests(&reqs).unwrap();
+        let local = local_health(&db, &[a.clone(), b.clone()], now);
+        assert!(
+            local.contains_key(&a.id),
+            "本机路由记过的线没用上它自己的日志"
+        );
+        assert!(
+            !local.contains_key(&b.id),
+            "没记过的线不该凭空有证据（它退回站点账单）"
+        );
+        let day = &local[&a.id].day;
+        assert_eq!(day.requests, 4);
+        assert_eq!(
+            day.success_rate,
+            Some(0.75),
+            "成功率不是按本机路由的成败算的"
+        );
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
     }

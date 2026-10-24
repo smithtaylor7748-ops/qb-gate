@@ -1445,9 +1445,10 @@ pub async fn station_decide(
 
     // 健康度要现拉一轮。**不拉的话「快」和「稳」两维永远是「没有证据」**,
     // 排序退化成只比倍率 —— 界面上还摆着三个复选框,而其中两个不起作用。
-    // 这一轮是免费的:读的是站点自己的账单日志,不打模型。
+    // 这一轮是免费的:本机路由自己记过的线读它自己的日志(2026-10-24 起),
+    // 没记过的才去读站点的账单日志,都不打模型。
     let health =
-        station_ops::route_health(&db, &routes, &station_billing::http_client()?, now).await;
+        station_ops::decision_health(&db, &routes, &station_billing::http_client()?, now).await;
 
     // 熔断状态归路由器管 —— 这里只读,不另算一份(两份必然漂移)。
     let (incumbent, breakers) = {
@@ -1664,7 +1665,8 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
             out.push(sched);
             continue;
         };
-        let health = station_ops::route_health(&db, &routes, http, now).await;
+        // 本机路由自己记过的线用它的日志，没记过的读站点账单（一跳 60 秒，⛔ 不调小）。
+        let health = station_ops::decision_health(&db, &routes, http, now).await;
         let (incumbent, breakers) = {
             let s = state.station.lock().ok();
             (
