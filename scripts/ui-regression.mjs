@@ -2005,6 +2005,39 @@ try {
     false,
     "关掉的故障转移读回来又开着",
   );
+  // 网络那一节（R6）：开到所有网卡上才出现口令与警告；代理框不回填存着的那个（会冲掉密码）。
+  const netDialog = page.getByRole("dialog");
+  assert.equal(
+    await netDialog.getByText("路由口令", { exact: true }).count(),
+    0,
+    "只本机时也显示了路由口令",
+  );
+  await netDialog.getByLabel("所有网卡：WSL、局域网里别的机器也能连").check();
+  await netDialog.getByText("路由口令", { exact: true }).waitFor();
+  await page.setViewportSize({ width: 680, height: 940 });
+  await assertNoOverflow(page, "router network open 680");
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await netDialog
+    .getByRole("button", { name: "扫描本机", exact: true })
+    .click();
+  await netDialog
+    .getByRole("button", { name: "http://127.0.0.1:7890", exact: true })
+    .click();
+  await netDialog
+    .getByRole("button", { name: "保存代理", exact: true })
+    .click();
+  // 等的是保存那句提示 —— 扫描出来的那个胶囊上也写着这个地址，按地址等会在存完之前就等到。
+  await page.getByText("出站代理已保存：下一发中转请求就经它走").waitFor();
+  await netDialog.locator("b", { hasText: "http://127.0.0.1:7890" }).waitFor();
+  assert.equal(
+    await netDialog.getByLabel("出站代理地址").inputValue(),
+    "",
+    "保存之后代理框里还留着地址（下次一保存会冲掉密码）",
+  );
+  await netDialog.getByLabel("只本机（127.0.0.1）—— 默认").check();
+  await netDialog
+    .getByText("路由口令", { exact: true })
+    .waitFor({ state: "hidden" });
   await page.keyboard.press("Escape");
 
   assert.deepEqual(errors, []);
@@ -2033,7 +2066,7 @@ try {
     "SillyTavern card versions without tabs: release list, downgrade names itself and still gates on Node, swap back to the kept copy",
     "tavern panel console tab: a failed start is recognized with a hint, colors are rendered not printed, the previous run is one click away",
     "tavern panel library tabs: character detail, to trash with its chats and back, world entries whose Esc closes only the entry dialog, extension check then update, every tab without overflow at 680px",
-    "relay router settings: dispatch queue and breaker pills without overflow at two widths, retest turns a tripped line half-open, failover switch saved and read back off",
+    "relay router settings: dispatch queue and breaker pills without overflow at two widths, retest turns a tripped line half-open, failover switch saved and read back off; network section shows the key only when open to all interfaces, scan fills the proxy, the proxy box is not prefilled after saving",
   ];
   writeFileSync(
     "docs/ui-regression.json",

@@ -33,13 +33,25 @@ pub async fn serve(
     state: Arc<Mutex<RouterState>>,
     client: reqwest::Client,
 ) -> Result<RouterHandle> {
+    // ⛔ 非回环却没有口令：不起。同一个局域网里的任何人都能拿你的 Key 打你的额度（模块头）。
+    if config.unguarded() {
+        return Err(GateError::Other(format!(
+            "本机路由开到 {} 上必须设路由口令：不设的话，同一个网络里谁都能拿你的 Key 打你的额度。",
+            config.listen
+        )));
+    }
     let want = config.bind();
     let listener = tokio::net::TcpListener::bind(want).await.map_err(|e| {
         GateError::Other(format!(
-            "本机路由绑不上 127.0.0.1:{} —— {e}。这个端口多半被别的程序占了,换一个再试。",
-            want.port()
+            "本机路由绑不上 {want} —— {e}。这个端口多半被别的程序占了,换一个再试。",
         ))
     })?;
+    let key: Option<Arc<str>> = config
+        .key
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .map(Arc::from);
     let addr = listener
         .local_addr()
         .map_err(|e| GateError::Other(format!("拿不到本机路由的真实端口：{e}")))?;
@@ -53,14 +65,23 @@ pub async fn serve(
                 _ = stopped.changed() => break,
                 a = listener.accept() => a,
             };
-            let Ok((stream, _)) = accepted else {
+            let Ok((stream, peer)) = accepted else {
                 // 单次 accept 失败不该让整个路由停掉 —— 客户端会重连。
                 continue;
             };
             let state = Arc::clone(&accept_state);
             let client = client.clone();
+            let key = key.clone();
             tokio::spawn(async move {
-                let svc = service_fn(move |req| handle(req, Arc::clone(&state), client.clone()));
+                let svc = service_fn(move |req| {
+                    handle(
+                        req,
+                        Arc::clone(&state),
+                        client.clone(),
+                        peer.ip(),
+                        key.clone(),
+                    )
+                });
                 let _ = hyper::server::conn::http1::Builder::new()
                     .serve_connection(TokioIo::new(stream), svc)
                     .await;
@@ -81,9 +102,16 @@ async fn handle(
     state: Arc<Mutex<RouterState>>,
     // 不叫 client —— 下面 `caller` 才是「哪个软件发来的」。
     http: reqwest::Client,
+    peer: std::net::IpAddr,
+    key: Option<Arc<str>>,
 ) -> std::result::Result<Response<ProxyBody>, std::convert::Infallible> {
     let started = Instant::now();
     let now_ms = chrono::Utc::now().timestamp_millis();
+
+    // 别的机器来的先验口令（本机来的不查，见模块头）。在绑线之前做：进不来的不占在飞计数。
+    if let Err((status, why)) = admit(peer, req.headers(), key.as_deref(), false) {
+        return Ok(text(status, why));
+    }
 
     let raw_path = req
         .uri()
@@ -169,9 +197,21 @@ async fn handle(
 
     // 官方 Codex turn-state 模式:保留客户端自带的 OAuth,不剥不换、不进重试。见 `UpstreamAuth`。
     let response = if matches!(upstream.auth, UpstreamAuth::OAuthPassthrough) {
+        // ⛔ 官方线只给本机用（`admit` 的第三条）。口令对了也不行。
+        if let Err((status, why)) = admit(peer, &inbound.headers, key.as_deref(), true) {
+            record.log.fault = Some(qb_proxy::classify::Fault::ClientRequest.key().to_string());
+            record.log.error = Some(why.to_string());
+            record.log.status = Some(status.as_u16());
+            return Ok(text(status, why));
+        }
+        // 官方线永远用直连的那个客户端，不走出站代理（`RouterState::relay_http` 只给中转线路）。
         official::relay(&state, &http, inbound, upstream, record).await
     } else {
-        forward::relay(&state, &http, inbound, upstream, record).await
+        let relay_http = match state.lock() {
+            Ok(s) => s.relay_http(&http),
+            Err(_) => http.clone(),
+        };
+        forward::relay(&state, &relay_http, inbound, upstream, record).await
     };
     Ok(response)
 }

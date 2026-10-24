@@ -105,8 +105,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()?;
-    let router =
-        local_router::serve(local_router::RouterConfig { port: 0 }, shared, http.clone()).await?;
+    let router = local_router::serve(
+        local_router::RouterConfig::loopback(0),
+        shared,
+        http.clone(),
+    )
+    .await?;
     let base = workspace::client_base(
         &local_router::client_base_url(Client::Codex, router.addr.port()),
         Client::Codex,

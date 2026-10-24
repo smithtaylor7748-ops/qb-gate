@@ -83,7 +83,7 @@ pub(super) async fn relay(
         Ok(r) => r,
         Err(e) => {
             // 连不上或超时 —— 对熔断来说是同一档。登记 + 立刻按超时判健康。**不换线。**
-            let error = describe_send_error(&e);
+            let error = describe_send_error(e);
             let class = classify::classify(&error, None);
             if let Ok(mut s) = state.lock() {
                 s.breaker_mut(&route_id, caller)
@@ -97,7 +97,7 @@ pub(super) async fn relay(
             });
             record.log.fault = Some(class.fault.key().to_string());
             record.log.error = Some(error.to_string());
-            return text(StatusCode::BAD_GATEWAY, &format!("上游没回应：{e}"));
+            return text(StatusCode::BAD_GATEWAY, &format!("上游没回应：{error}"));
         }
     };
 

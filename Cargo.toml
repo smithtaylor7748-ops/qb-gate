@@ -100,6 +100,9 @@ reqwest = { version = "0.12", features = [
   # 本机路由要把上游的响应**流式**转回客户端。整包收完再转的话，
   # SSE 会一直卡到最后一个 token 才吐出来，而且首字延迟根本量不到。
   "stream",
+  # 本机路由的出站代理（中转站重构 R6，2026-10-24）：中转线路可以经使用者自己填的
+  # HTTP / SOCKS5 代理出去。只给中转线路用，官方 Codex 那条线永远直连。
+  "socks",
 ], default-features = false }
 ts-rs = { version = "11", features = ["serde-compat"] }
 sha2 = "0.10"

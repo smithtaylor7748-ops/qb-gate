@@ -5,16 +5,24 @@
 //! **是**:一个 API 路由器。客户端把 base_url 指到本机,之后换上游不用重启客户端 ——
 //! 这就是每页顶上「只有一处能启动」的意义。
 //!
-//! **不是**:代理 / VPN / 翻墙工具。它不改系统代理设置、不接管任何别的程序的流量、
-//! 不做链式转发,也没有任何「强制所有流量走代理」「断网即停」的开关。
+//! **不是**:代理 / VPN / 翻墙工具。它不改系统代理设置、不接管任何别的程序的流量,
+//! 也没有任何「强制所有流量走代理」「断网即停」的开关。
 //! 它只转发**指到它自己身上的**那些 API 请求,目的地是使用者自己填进去的中转站。
+//! 中转线路的请求可以经**使用者自己填的**出站代理出去（R6，2026-10-24）；官方 Codex 那条线永远直连。
 //! `DISCLAIMER.md` 里那一节按这个口径写。
 //!
-//! # ⛔ 只绑 127.0.0.1
+//! # ⛔ 默认只绑 127.0.0.1；开到局域网上就必须带路由口令
 //!
-//! 绝不绑 `0.0.0.0`。绑上去的那一刻,同一个局域网里的任何人都能拿你的 Key
+//! 默认绝不绑 `0.0.0.0`。绑上去的那一刻,同一个局域网里的任何人都能拿你的 Key
 //! 打你的额度,而且账单看起来完全正常 —— 这个软件是开源分发的,
-//! 谁都可能在咖啡馆的 Wi-Fi 上跑它。[`RouterConfig::bind`] 因此没有做成可配置项。
+//! 谁都可能在咖啡馆的 Wi-Fi 上跑它。
+//!
+//! 2026-10-24 起（中转站重构 R6，使用者选的）可以改成「所有网卡」，给 WSL / 局域网里别的机器用。
+//! 那时 [`RouterConfig::key`] 必须有：**从别的机器来的每一发**都要带这个随机口令
+//! （`x-api-key` 或 `Authorization: Bearer`），对不上回 401（[`admit`]）；口令验过就跟客户端
+//! 别的凭证一起剥掉，到不了上游。本机进程不查口令 —— 跟只绑回环时一样，本机进程读得到配置文件里的口令，
+//! 查它挡不住谁，只会让已经开着的客户端全都 401。**官方 Codex 那条线只给本机用**：别的机器带着
+//! 它自己的 OAuth 打进来，等于让这台机器替它承载官方身份。
 //!
 //! # 端口被占了怎么办
 //!
@@ -227,9 +235,29 @@ pub struct RouterState {
     missing_models: HashMap<(String, String), i64>,
     /// 官方 Codex 的 turn-state。
     turnstate: TurnState,
+    /// 中转线路走的出站客户端（使用者设了出站代理时才有）。没有就用 `serve` 给的那个。
+    ///
+    /// ⛔ **只给中转线路**（`forward.rs`）。官方 Codex 那条线（`official.rs`）永远用 `serve` 给的直连客户端 ——
+    /// 走代理的话，门禁核过的出口就不是它真走的出口。
+    relay_http: Option<reqwest::Client>,
 }
 
 impl RouterState {
+    /// 换中转线路的出站客户端（设了 / 改了 / 清掉出站代理）。下一发请求生效，正在飞的那发不受影响。
+    pub fn set_relay_http(&mut self, client: Option<reqwest::Client>) {
+        self.relay_http = client;
+    }
+
+    /// 中转线路这一发用哪个客户端：设了出站代理用那个，否则用 `fallback`（直连）。
+    pub(crate) fn relay_http(&self, fallback: &reqwest::Client) -> reqwest::Client {
+        self.relay_http.clone().unwrap_or_else(|| fallback.clone())
+    }
+
+    /// 设了出站代理没有。
+    pub fn relay_proxied(&self) -> bool {
+        self.relay_http.is_some()
+    }
+
     /// 用中转线路整批替换上游表。
     ///
     /// ⛔ **官方 Codex 那条（`OAuthPassthrough`）不在其列 —— 它会被保留下来。**
@@ -579,19 +607,100 @@ impl RouterState {
 pub struct RouterConfig {
     /// 监听端口。0 = 让系统挑一个空闲的(测试用)。
     pub port: u16,
+    /// 监听哪个地址。默认 `127.0.0.1`；不是回环就必须有 [`key`](Self::key)（[`serve`] 查）。
+    pub listen: std::net::IpAddr,
+    /// 开到非回环地址上时，从别的机器来的请求要带的路由口令（见模块头与 [`admit`]）。
+    pub key: Option<String>,
 }
 
 impl Default for RouterConfig {
     fn default() -> Self {
-        Self { port: DEFAULT_PORT }
+        Self::loopback(DEFAULT_PORT)
     }
 }
 
 impl RouterConfig {
-    /// **写死 127.0.0.1,没有可配置项。** 理由见模块头。
-    fn bind(&self) -> SocketAddr {
-        SocketAddr::from((Ipv4Addr::LOCALHOST, self.port))
+    /// 只绑 `127.0.0.1`（默认，也是原来唯一的一种）。
+    pub fn loopback(port: u16) -> Self {
+        Self {
+            port,
+            listen: Ipv4Addr::LOCALHOST.into(),
+            key: None,
+        }
     }
+
+    /// 开到别的地址上（所有网卡 / 某一张网卡）。**必须带口令**。
+    pub fn open(listen: std::net::IpAddr, port: u16, key: impl Into<String>) -> Self {
+        Self {
+            port,
+            listen,
+            key: Some(key.into()),
+        }
+    }
+
+    fn bind(&self) -> SocketAddr {
+        SocketAddr::from((self.listen, self.port))
+    }
+
+    /// 非回环却没有口令 —— `serve` 拒绝起。
+    fn unguarded(&self) -> bool {
+        !self.listen.is_loopback() && self.key.as_deref().is_none_or(|k| k.trim().is_empty())
+    }
+}
+
+/// 一发请求进不进得来（纯函数，单测直接喂地址）。
+///
+/// - 本机来的（回环）：一律放行 —— 跟只绑回环时一样（模块头说了为什么不查口令）。
+/// - 别的机器来的：路由必须开着口令、请求必须带对（`x-api-key: <口令>` 或 `Authorization: Bearer <口令>`），
+///   否则 401；带对了也**不许打官方 Codex 那条线**（403）。
+pub fn admit(
+    peer: std::net::IpAddr,
+    headers: &hyper::HeaderMap,
+    key: Option<&str>,
+    official: bool,
+) -> std::result::Result<(), (StatusCode, &'static str)> {
+    if peer.is_loopback() {
+        return Ok(());
+    }
+    let Some(key) = key.filter(|k| !k.trim().is_empty()) else {
+        // 只绑回环时根本收不到别的机器的连接；真收到了说明配置对不上，按拒绝处理。
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "本机路由没有设路由口令，不接受从别的机器来的请求。",
+        ));
+    };
+    let presented = headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .or_else(|| {
+            headers
+                .get(hyper::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().strip_prefix("Bearer "))
+                .map(str::trim)
+        });
+    if !presented.is_some_and(|p| constant_time_eq(p.as_bytes(), key.as_bytes())) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "路由口令不对：从别的机器连本机路由，要把 QB Gate「路由设置」里显示的路由口令填成这个客户端的 API Key。",
+        ));
+    }
+    if official {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "官方 Codex 那条线只给本机用：从别的机器打进来，等于让这台机器替它承载官方身份。",
+        ));
+    }
+    Ok(())
+}
+
+/// 比口令不提前返回（不让「对了几位」从响应时间里漏出去）。
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// 跑起来的路由器。
@@ -1006,14 +1115,88 @@ mod tests {
         }
     }
     #[test]
-    fn the_listener_address_is_always_loopback() {
+    fn the_listener_is_loopback_unless_opened_and_opening_needs_a_key() {
         // 绑上 0.0.0.0 的那一刻,同一个局域网里的任何人都能拿你的 Key
         // 打你的额度,而且账单看起来完全正常。这个软件是开源分发的。
+        // 2026-10-24（R6）起可以开到所有网卡上，但默认仍是回环，而且开了就必须有口令。
         for port in [0u16, 15721, 65535] {
-            let addr = RouterConfig { port }.bind();
+            let addr = RouterConfig::loopback(port).bind();
             assert!(addr.ip().is_loopback(), "{addr} 不是回环地址");
             assert_eq!(addr.ip().to_string(), "127.0.0.1");
         }
+        assert!(
+            RouterConfig::default().bind().ip().is_loopback(),
+            "默认不是回环"
+        );
+        assert!(!RouterConfig::default().unguarded());
+        let any: std::net::IpAddr = Ipv4Addr::UNSPECIFIED.into();
+        assert!(
+            RouterConfig::open(any, 15721, "  ").unguarded(),
+            "空口令也算没设"
+        );
+        assert!(!RouterConfig::open(any, 15721, "k-123").unguarded());
+        let naked = RouterConfig {
+            key: None,
+            ..RouterConfig::open(any, 15721, "x")
+        };
+        assert!(naked.unguarded());
+    }
+
+    #[tokio::test]
+    async fn opening_the_router_without_a_key_refuses_to_start() {
+        // 绑之前就拒：不能先绑上 0.0.0.0、再发现没口令（那一瞬间已经对外开着了）。
+        let state = Arc::new(Mutex::new(RouterState::default()));
+        let any: std::net::IpAddr = Ipv4Addr::UNSPECIFIED.into();
+        let err = match serve(
+            RouterConfig {
+                key: None,
+                ..RouterConfig::open(any, 0, "x")
+            },
+            state,
+            reqwest::Client::new(),
+        )
+        .await
+        {
+            Ok(_) => panic!("没口令却在 0.0.0.0 上起来了"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("路由口令"), "{err}");
+    }
+
+    #[test]
+    fn requests_from_other_machines_need_the_key_and_never_reach_the_official_line() {
+        let lan: std::net::IpAddr = "192.168.1.23".parse().unwrap();
+        let local: std::net::IpAddr = Ipv4Addr::LOCALHOST.into();
+        let none = hyper::HeaderMap::new();
+        let mut api_key = hyper::HeaderMap::new();
+        api_key.insert("x-api-key", "k-123".parse().unwrap());
+        let mut bearer = hyper::HeaderMap::new();
+        bearer.insert("authorization", "Bearer k-123".parse().unwrap());
+        let mut wrong = hyper::HeaderMap::new();
+        wrong.insert("x-api-key", "k-124".parse().unwrap());
+
+        // 本机来的：不查口令（跟只绑回环时一样），官方线照常。
+        assert!(admit(local, &none, Some("k-123"), false).is_ok());
+        assert!(admit(local, &none, Some("k-123"), true).is_ok());
+        assert!(admit(local, &none, None, true).is_ok());
+        // 别的机器来的：要带对口令，两种写法都认。
+        assert_eq!(
+            admit(lan, &none, Some("k-123"), false).unwrap_err().0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            admit(lan, &wrong, Some("k-123"), false).unwrap_err().0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert!(admit(lan, &api_key, Some("k-123"), false).is_ok());
+        assert!(admit(lan, &bearer, Some("k-123"), false).is_ok());
+        // 路由没设口令却收到了别的机器的连接：按拒绝处理。
+        assert!(admit(lan, &api_key, None, false).is_err());
+        // 口令对了也不许打官方线。
+        assert_eq!(
+            admit(lan, &api_key, Some("k-123"), true).unwrap_err().0,
+            StatusCode::FORBIDDEN
+        );
     }
 
     #[test]
@@ -1168,7 +1351,7 @@ mod tests {
             });
             s.set_now(Client::ClaudeCode, "r1");
         }
-        let handle = serve(RouterConfig { port: 0 }, state, reqwest::Client::new())
+        let handle = serve(RouterConfig::loopback(0), state, reqwest::Client::new())
             .await
             .expect("本机路由起不来");
         (handle, seen)
@@ -1191,7 +1374,7 @@ mod tests {
             s.set_now(Client::ClaudeCode, "r1");
         }
         let h = serve(
-            RouterConfig { port: 0 },
+            RouterConfig::loopback(0),
             Arc::clone(&state),
             reqwest::Client::new(),
         )
@@ -1271,7 +1454,7 @@ mod tests {
     async fn with_no_upstream_selected_it_says_so_instead_of_hanging() {
         // 不制造死局,也不静默吞掉 —— 「启动了但没反应」是最难查的那种。
         let state = Arc::new(Mutex::new(RouterState::default()));
-        let h = serve(RouterConfig { port: 0 }, state, reqwest::Client::new())
+        let h = serve(RouterConfig::loopback(0), state, reqwest::Client::new())
             .await
             .expect("本机路由起不来");
         let resp = reqwest::Client::new()
@@ -1296,7 +1479,7 @@ mod tests {
         // 用 match 而不是 expect_err:RouterHandle 没有 Debug,
         // 而给它派生 Debug 会连带要求整个 RouterState 都有 —— 不值当。
         let err = match serve(
-            RouterConfig { port },
+            RouterConfig::loopback(port),
             Arc::new(Mutex::new(RouterState::default())),
             reqwest::Client::new(),
         )
@@ -1313,7 +1496,7 @@ mod tests {
     async fn stopping_the_router_frees_the_port_for_a_restart() {
         // 托盘应用要能停了再起。停不掉的话,改端口这类操作只能靠重启整个面板。
         let state = Arc::new(Mutex::new(RouterState::default()));
-        let h = serve(RouterConfig { port: 0 }, state, reqwest::Client::new())
+        let h = serve(RouterConfig::loopback(0), state, reqwest::Client::new())
             .await
             .expect("起不来");
         let port = h.addr.port();
@@ -1354,7 +1537,7 @@ mod tests {
             s.set_now(Client::ClaudeCode, "a");
         }
         let h = serve(
-            RouterConfig { port: 0 },
+            RouterConfig::loopback(0),
             Arc::clone(&state),
             reqwest::Client::new(),
         )
@@ -1417,7 +1600,7 @@ mod tests {
             s.set_now(Client::Codex, "r1");
         }
         let h = serve(
-            RouterConfig { port: 0 },
+            RouterConfig::loopback(0),
             Arc::clone(state),
             reqwest::Client::new(),
         )
@@ -1560,7 +1743,7 @@ mod tests {
             s.turnstate_configure(true, TurnKind::Personal);
         }
         let h = serve(
-            RouterConfig { port: 0 },
+            RouterConfig::loopback(0),
             Arc::clone(&state),
             reqwest::Client::new(),
         )
@@ -1645,7 +1828,7 @@ mod tests {
             s.turnstate_configure(true, TurnKind::Personal);
         }
         let h = serve(
-            RouterConfig { port: 0 },
+            RouterConfig::loopback(0),
             Arc::clone(&state),
             reqwest::Client::new(),
         )
@@ -1706,7 +1889,7 @@ mod tests {
             s.turnstate_configure(true, TurnKind::Personal);
         }
         let h = serve(
-            RouterConfig { port: 0 },
+            RouterConfig::loopback(0),
             Arc::clone(&state),
             reqwest::Client::new(),
         )

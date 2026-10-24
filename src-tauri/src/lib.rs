@@ -167,6 +167,13 @@ pub fn run() {
             commands::station::station_dispatch_queue,
             commands::station::station_dispatch_queue_save,
             commands::station::station_route_retest,
+            // 本机路由的网络设置（R6）：监听范围与路由口令、中转线路的出站代理。
+            commands::station::station_router_network,
+            commands::station::station_router_listen_save,
+            commands::station::station_router_key_rotate,
+            commands::station::station_outbound_proxy_save,
+            commands::station::station_outbound_proxy_test,
+            commands::station::station_outbound_proxy_scan,
             commands::station::station_launch,
             commands::station::station_schedules,
             commands::station::station_schedule_set,

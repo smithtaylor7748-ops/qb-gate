@@ -15,6 +15,8 @@ import type { AuditRound } from "./generated/AuditRound";
 import type { DecisionView } from "./generated/DecisionView";
 import type { Prefs } from "./generated/Prefs";
 import type { DispatchQueue } from "./generated/DispatchQueue";
+import type { ListenScope } from "./generated/ListenScope";
+import type { RouterNetworkView } from "./generated/RouterNetworkView";
 import type { RouterRequest } from "./generated/RouterRequest";
 import type { RouterSettings } from "./generated/RouterSettings";
 import type { RouteHealthView } from "./generated/RouteHealthView";
@@ -33,7 +35,9 @@ export type {
   AuditRound,
   DecisionView,
   DispatchQueue,
+  ListenScope,
   Prefs,
+  RouterNetworkView,
   RouterRequest,
   RouterSettings,
   Route,
@@ -142,6 +146,25 @@ export const stationApi = {
    */
   retest: (routeId: string) =>
     call<boolean>("station_route_retest", { routeId }),
+
+  /** 本机路由的网络设置（三个软件共用）：监听范围、路由口令、出站代理（不带用户名密码）。 */
+  routerNetwork: () => call<RouterNetworkView>("station_router_network"),
+  /**
+   * 改监听范围。开到所有网卡上时没有口令就先生成一个；路由起着就按新的重启一次（在飞的请求照样跑完）。
+   * Windows 防火墙会弹窗问一次 —— 界面上提前写着。
+   */
+  saveRouterListen: (scope: ListenScope) =>
+    call<RouterNetworkView>("station_router_listen_save", { scope }),
+  /** 换一个新的路由口令。旧的立刻失效。 */
+  rotateRouterKey: () => call<RouterNetworkView>("station_router_key_rotate"),
+  /** 设 / 清中转线路的出站代理（`null` = 直连）。官方 Codex 那条线永远直连。 */
+  saveOutboundProxy: (url: string | null) =>
+    call<RouterNetworkView>("station_outbound_proxy_save", { url }),
+  /** 经出站代理试连这个软件的第一条线（只在点「测试」时）。回耗时毫秒。 */
+  testOutboundProxy: (client: Client, url: string | null) =>
+    call<number>("station_outbound_proxy_test", { client, url }),
+  /** 扫本机常见代理端口（只连 127.0.0.1、不发数据）。 */
+  scanOutboundProxies: () => call<string[]>("station_outbound_proxy_scan"),
 
   /** 拉一轮账单并聚合。**零成本** —— 读的是站点自己的日志，不打模型。 */
   refreshHealth: () => call<RouteHealthView[]>("station_refresh_health"),

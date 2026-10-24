@@ -20,6 +20,8 @@ import type { CodexLocaleOutcome } from "./generated/CodexLocaleOutcome";
 import type { CodexLocaleStatus } from "./generated/CodexLocaleStatus";
 import type { BreakerView } from "./generated/BreakerView";
 import type { RouterRequest } from "./generated/RouterRequest";
+import type { ListenScope } from "./generated/ListenScope";
+import type { RouterNetworkView } from "./generated/RouterNetworkView";
 import type { RouterSettings } from "./generated/RouterSettings";
 /**
  * 演示数据 —— 只给截图和界面预览用。
@@ -1928,6 +1930,15 @@ const routerSettingsOf = (client: string): RouterSettings => {
   };
 };
 const stationRouterSettings: Record<string, RouterSettings> = {};
+/** 演示里的路由口令。一眼看得出是演示用的，别像真的。 */
+const DEMO_ROUTER_KEY = "qbr-demo-not-a-real-key-0000";
+/** 本机路由的网络设置（R6）。默认只本机、直连 —— 跟真后端没存过时一样。 */
+const stationNetwork: RouterNetworkView = {
+  scope: "loopback",
+  key: null,
+  outbound_proxy: null,
+  port: 15721,
+};
 /** 派单顺序。Claude Code 排了一条替补，好让弹窗里那张表两种状态都看得见。 */
 const stationDispatch: Record<string, string[]> = {
   "claude-code": [R_CHEAP],
@@ -2578,6 +2589,34 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       updated_ms: BigInt(Date.now()),
     };
   },
+  // 本机路由的网络设置（R6）。演示里不真的改监听、不真的连代理；状态照样记着。
+  station_router_network: () => ({ ...stationNetwork }),
+  station_router_listen_save: (args) => {
+    stationNetwork.scope = (args?.scope as ListenScope) ?? "loopback";
+    stationNetwork.key =
+      stationNetwork.scope === "all-interfaces"
+        ? (stationNetwork.key ?? DEMO_ROUTER_KEY)
+        : null;
+    return { ...stationNetwork };
+  },
+  station_router_key_rotate: () => {
+    if (stationNetwork.scope === "all-interfaces")
+      stationNetwork.key = `${DEMO_ROUTER_KEY.slice(0, 12)}${Date.now()}`;
+    return { ...stationNetwork };
+  },
+  station_outbound_proxy_save: (args) => {
+    const url = (args?.url as string | null) ?? null;
+    // 跟真后端一样只给界面看去掉用户名密码的写法。
+    stationNetwork.outbound_proxy = url
+      ? url.replace(/\/\/[^@/]*@/, "//").replace(/(:\/\/[^/]*)\/.*$/, "$1")
+      : null;
+    return { ...stationNetwork };
+  },
+  station_outbound_proxy_test: () => 182,
+  station_outbound_proxy_scan: () => [
+    "http://127.0.0.1:7890",
+    "socks5://127.0.0.1:7890",
+  ],
   // 「立刻重测」：熔断中的那条转半开（真后端一样：下一发真实请求就是回探）。
   station_route_retest: (args) => {
     const id = String(args?.routeId ?? "");

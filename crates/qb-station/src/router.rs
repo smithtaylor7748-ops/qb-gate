@@ -324,6 +324,87 @@ impl Default for RouterSettings {
     }
 }
 
+/// 本机路由监听在哪（三个软件共用一个监听端口）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub enum ListenScope {
+    /// 只本机（`127.0.0.1`）。默认，也是 2026-10-24 之前唯一的一种。
+    #[default]
+    Loopback,
+    /// 所有网卡（`0.0.0.0`）：WSL、局域网里别的机器也连得上。**从别的机器来的必须带路由口令。**
+    AllInterfaces,
+}
+
+/// 本机路由的网络设置（中转站重构 R6，使用者选的；三个软件共用一份，存在 metadata 的 `router_network` 键下）。
+///
+/// ⛔ 这一份**不出后端**：口令只在使用者要开到所有网卡上时由界面显示（他要抄到别的机器上去），
+/// 出站代理的地址可能带用户名密码，给界面的是去掉了那两样的写法（[`mask_proxy_url`]）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RouterNetwork {
+    pub scope: ListenScope,
+    /// 路由口令（随机）。只在 `AllInterfaces` 时用；空 = 还没生成过。
+    pub key: String,
+    /// 中转线路的出站代理（`http://` / `https://` / `socks5://` / `socks5h://`）。`None` = 直连。
+    /// ⛔ 只给中转线路；官方 Codex 那条线永远直连。
+    pub outbound_proxy: Option<String>,
+}
+
+impl RouterNetwork {
+    /// 绑哪个地址。
+    pub fn listen(&self) -> std::net::IpAddr {
+        match self.scope {
+            ListenScope::Loopback => std::net::Ipv4Addr::LOCALHOST.into(),
+            ListenScope::AllInterfaces => std::net::Ipv4Addr::UNSPECIFIED.into(),
+        }
+    }
+}
+
+/// 出站代理地址看一遍：只认 `http` / `https` / `socks5` / `socks5h`，要有主机和端口。
+/// 不合格就说哪里不对（不夹、不猜）。
+pub fn check_proxy_url(url: &str) -> std::result::Result<(), String> {
+    let url = url.trim();
+    let Some((scheme, rest)) = url.split_once("://") else {
+        // 认不出形状时不回显填的东西：那里面可能就是密码。
+        return Err("出站代理要写成 http://主机:端口 或 socks5://主机:端口".to_string());
+    };
+    if !matches!(
+        scheme.to_ascii_lowercase().as_str(),
+        "http" | "https" | "socks5" | "socks5h"
+    ) {
+        return Err(format!(
+            "出站代理只认 http / https / socks5 / socks5h（填的是 {scheme}）"
+        ));
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, hp)| hp);
+    let Some((host, port)) = host_port.rsplit_once(':') else {
+        return Err("出站代理要带端口（例如 :7890）".to_string());
+    };
+    if host.trim().is_empty() {
+        return Err("出站代理的主机是空的".to_string());
+    }
+    match port.parse::<u16>() {
+        Ok(p) if p > 0 => Ok(()),
+        _ => Err(format!("出站代理的端口不对：{port}")),
+    }
+}
+
+/// 给日志和界面看的写法：去掉用户名和密码，只留 `协议://主机:端口`。
+pub fn mask_proxy_url(url: &str) -> String {
+    let url = url.trim();
+    match url.split_once("://") {
+        Some((scheme, rest)) => {
+            let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+            let host_port = authority.rsplit_once('@').map_or(authority, |(_, hp)| hp);
+            format!("{scheme}://{host_port}")
+        }
+        // 认不出形状：一个字都不露，那里面可能就是密码。
+        None => "（认不出的代理地址）".to_string(),
+    }
+}
+
 /// 一个软件的派单队列（落盘的那一份，存在 `dispatch_queue` 表里，一个软件一行）。
 ///
 /// 中转站重构阶段 1 只有「当前那条 + 手动排的顺序」：当前那条失败时按 `order` 往下试
@@ -682,6 +763,44 @@ mod tests {
         unlimited.first_byte_timeout_secs = 0;
         unlimited.idle_timeout_secs = 0;
         assert!(unlimited.validate().is_ok());
+    }
+
+    #[test]
+    fn proxy_urls_are_checked_and_masked_without_leaking_the_password() {
+        for ok in [
+            "http://127.0.0.1:7890",
+            "socks5://127.0.0.1:1080",
+            "socks5h://user:p%40ss@proxy.example:1080",
+            "HTTPS://proxy.example:443/",
+        ] {
+            assert!(check_proxy_url(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "127.0.0.1:7890",
+            "ftp://127.0.0.1:21",
+            "http://127.0.0.1",
+            "http://:7890",
+            "socks5://127.0.0.1:0",
+            "socks5://127.0.0.1:99999",
+        ] {
+            assert!(check_proxy_url(bad).is_err(), "{bad} 不该过");
+        }
+        // 用户名密码不进界面、不进日志。
+        assert_eq!(
+            mask_proxy_url("socks5h://user:secret@proxy.example:1080/x"),
+            "socks5h://proxy.example:1080"
+        );
+        let err = check_proxy_url("user:secret@host").unwrap_err();
+        assert!(!err.contains("secret"), "报错里带出了密码：{err}");
+        // 默认只本机。
+        let net = RouterNetwork::default();
+        assert_eq!(net.scope, ListenScope::Loopback);
+        assert!(net.listen().is_loopback());
+        let open = RouterNetwork {
+            scope: ListenScope::AllInterfaces,
+            ..Default::default()
+        };
+        assert_eq!(open.listen().to_string(), "0.0.0.0");
     }
 
     #[test]

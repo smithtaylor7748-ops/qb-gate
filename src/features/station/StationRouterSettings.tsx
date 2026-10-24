@@ -19,7 +19,12 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { Client } from "../../lib/generated/Client";
 import type { RouterStatus } from "../../lib/generated/RouterStatus";
-import { stationApi, type Route, type RouterSettings } from "../../lib/station";
+import {
+  stationApi,
+  type Route,
+  type RouterNetworkView,
+  type RouterSettings,
+} from "../../lib/station";
 import { Button, useToast } from "../../ui";
 
 export default function StationRouterSettings({
@@ -368,7 +373,267 @@ export default function StationRouterSettings({
           保存
         </Button>
       </div>
+
+      <RouterNetworkPanel client={client} />
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ 网络（三个软件共用）
+
+/**
+ * 本机路由监听在哪、中转线路走不走出站代理（R6）。这一节**三个软件共用**，各自即时保存 ——
+ * 不跟上面那个「保存」绑在一起：改监听会重启路由，不该因为顺手改了一个超时就重启一次。
+ *
+ * ⛔ 代理地址框**不回填**存着的那个：后端给的是去掉了用户名密码的写法，回填之后一保存，
+ * 密码就被冲掉了。框里只放新填的；存着的那个写在框上面。
+ */
+function RouterNetworkPanel({ client }: { client: Client }) {
+  const toast = useToast();
+  const [view, setView] = useState<RouterNetworkView | null>(null);
+  const [proxy, setProxy] = useState("");
+  const [found, setFound] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let dropped = false;
+    void stationApi
+      .routerNetwork()
+      .then((v) => !dropped && setView(v))
+      .catch((e: unknown) => {
+        if (!dropped) setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      dropped = true;
+    };
+  }, []);
+
+  const run = async (what: () => Promise<RouterNetworkView>, ok: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setView(await what());
+      toast.ok(ok);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const test = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const ms = await stationApi.testOutboundProxy(
+        client,
+        proxy.trim() === "" ? null : proxy.trim(),
+      );
+      toast.ok(`代理通了：经它连到这个软件的第一条线用了 ${ms} 毫秒`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const scan = async () => {
+    setBusy(true);
+    try {
+      setFound(await stationApi.scanOutboundProxies());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyKey = async (key: string) => {
+    try {
+      await navigator.clipboard.writeText(key);
+      toast.ok("路由口令已复制");
+    } catch {
+      toast.error("复制不了，请手动选中复制");
+    }
+  };
+
+  // 点了就先翻过去（存要重启路由，等它回来再翻的话，点下去那一下看起来像没点上）；
+  // 存失败就翻回原来那一档，并把原因写出来。
+  const switchScope = async (scope: RouterNetworkView["scope"], ok: string) => {
+    if (!view || view.scope === scope) return;
+    const before = view;
+    setView({ ...view, scope });
+    setBusy(true);
+    setError(null);
+    try {
+      setView(await stationApi.saveRouterListen(scope));
+      toast.ok(ok);
+    } catch (e) {
+      setView(before);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!view)
+    return error ? (
+      <div className="qb-st-nudge">读不到本机路由的网络设置：{error}</div>
+    ) : null;
+
+  const open = view.scope === "all-interfaces";
+  return (
+    <>
+      <h4 className="qb-st-sect">网络 · 三个软件共用</h4>
+      <div role="radiogroup" aria-label="本机路由监听在哪">
+        <label className="qb-st-check">
+          <input
+            type="radio"
+            name="qb-router-scope"
+            checked={!open}
+            disabled={busy}
+            onChange={() =>
+              void switchScope("loopback", "本机路由改成只本机能连")
+            }
+          />
+          只本机（127.0.0.1）—— 默认
+        </label>
+        <label className="qb-st-check">
+          <input
+            type="radio"
+            name="qb-router-scope"
+            checked={open}
+            disabled={busy}
+            onChange={() =>
+              void switchScope(
+                "all-interfaces",
+                "本机路由开到了所有网卡上：别的机器要带路由口令",
+              )
+            }
+          />
+          所有网卡：WSL、局域网里别的机器也能连
+        </label>
+      </div>
+      {open && (
+        <>
+          <p className="qb-st-nudge">
+            <span aria-hidden="true">⚠</span>
+            <span>
+              别的机器连 <code>这台电脑的 IP:{view.port}</code>，API Key
+              填下面这个路由口令；这台电脑上的客户端不用改。
+              <b>拿到口令的人就能用你的线路额度</b> ——
+              只在你信得过的网络里开。Windows
+              防火墙会弹窗问一次，要点「允许」。官方 Codex
+              那条线不给别的机器用。
+            </span>
+          </p>
+          <label className="qb-st-fieldrow">
+            <span className="qb-st-k">路由口令</span>
+            <span className="qb-st-inline">
+              <input readOnly value={view.key ?? ""} />
+              <button
+                className="qb-st-iconbtn"
+                onClick={() => void copyKey(view.key ?? "")}
+              >
+                复制
+              </button>
+              <button
+                className="qb-st-iconbtn"
+                title="旧口令立刻失效：别的机器上的客户端要改成新的"
+                disabled={busy}
+                onClick={() =>
+                  void run(
+                    () => stationApi.rotateRouterKey(),
+                    "换了一个新口令，旧的已经失效",
+                  )
+                }
+              >
+                换一个
+              </button>
+            </span>
+          </label>
+        </>
+      )}
+
+      <div>
+        <span className="qb-st-k">出站代理（只给中转线路）</span>
+        <p className="qb-st-note">
+          中转线路的请求经这个代理出去（HTTP / SOCKS5）。官方 Codex
+          那条线永远直连 —— 走代理的话，门禁核过的出口就不是它真走的出口。
+          现在：<b>{view.outbound_proxy ?? "直连"}</b>
+        </p>
+        <span className="qb-st-inline">
+          <input
+            value={proxy}
+            aria-label="出站代理地址"
+            placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
+            onChange={(e) => setProxy(e.target.value)}
+          />
+          <button
+            className="qb-st-iconbtn"
+            disabled={busy}
+            title="只连本机 127.0.0.1 的几个常见端口，不发任何数据"
+            onClick={() => void scan()}
+          >
+            扫描本机
+          </button>
+        </span>
+        {found != null && (
+          <div className="qb-st-presets">
+            {found.length === 0 ? (
+              <span className="qb-st-note">本机常见端口上没有代理在听。</span>
+            ) : (
+              found.map((u) => (
+                <button key={u} className="chip" onClick={() => setProxy(u)}>
+                  {u}
+                </button>
+              ))
+            )}
+          </div>
+        )}
+        <div className="qb-st-inline" style={{ justifyContent: "flex-end" }}>
+          <Button
+            variant="ghost"
+            disabled={busy || (proxy.trim() === "" && !view.outbound_proxy)}
+            onClick={() => void test()}
+          >
+            测试
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={busy || !view.outbound_proxy}
+            onClick={() =>
+              void run(
+                () => stationApi.saveOutboundProxy(null),
+                "出站代理清掉了：中转线路直连",
+              )
+            }
+          >
+            清掉，直连
+          </Button>
+          <Button
+            variant="primary"
+            disabled={busy || proxy.trim() === ""}
+            onClick={() =>
+              void run(async () => {
+                const v = await stationApi.saveOutboundProxy(proxy.trim());
+                setProxy("");
+                return v;
+              }, "出站代理已保存：下一发中转请求就经它走")
+            }
+          >
+            保存代理
+          </Button>
+        </div>
+      </div>
+      {error && (
+        <div className="qb-st-nudge">
+          <span aria-hidden="true">⚠</span>
+          <span>{error}</span>
+        </div>
+      )}
+    </>
   );
 }
 

@@ -21,7 +21,9 @@ use crate::local_router::RouterState;
 use crate::repository::Repository;
 use qb_platform::repository::RouterRequestQuery;
 use qb_station::health::{self, Windows};
-use qb_station::router::{DispatchQueue, RouterRequest, RouterSettings};
+use qb_station::router::{
+    DispatchQueue, ListenScope, RouterNetwork, RouterRequest, RouterSettings,
+};
 use qb_station::schedule::{
     cheap_values, cost_per_token, rank, Candidate, CheapBasis, CheapInput, Prefs, Ranking, Schedule,
 };
@@ -808,7 +810,140 @@ pub fn restore_router(db: &Repository, state: &mut RouterState) -> Result<()> {
             }
         }
     }
+    // 出站代理：设了就把中转线路的客户端换成走它的（官方线不受影响，见 `RouterState::relay_http`）。
+    state.set_relay_http(relay_client(&load_router_network(db)?)?);
     Ok(())
+}
+
+// ------------------------------------------------------------ 本机路由的网络设置（R6）
+
+/// 本机路由的网络设置存在 metadata 的这个键下（三个软件共用一份，不用另建表）。
+const NETWORK_META: &str = "router_network";
+
+/// 读本机路由的网络设置。没存过 = 只本机、不走代理。
+pub fn load_router_network(db: &Repository) -> Result<RouterNetwork> {
+    match db.meta(NETWORK_META)? {
+        Some(raw) => Ok(serde_json::from_str(&raw)?),
+        None => Ok(RouterNetwork::default()),
+    }
+}
+
+/// 存本机路由的网络设置。出站代理不合格、开到所有网卡上却没有口令 —— 整份不存。
+pub fn save_router_network(db: &Repository, net: &RouterNetwork) -> Result<()> {
+    if let Some(url) = &net.outbound_proxy {
+        qb_station::router::check_proxy_url(url).map_err(GateError::Other)?;
+    }
+    if net.scope == ListenScope::AllInterfaces && net.key.trim().is_empty() {
+        return Err(GateError::Other(
+            "开到所有网卡上之前要先有路由口令（不设的话，同一个网络里谁都能拿你的 Key 打你的额度）"
+                .into(),
+        ));
+    }
+    db.set_meta(NETWORK_META, &serde_json::to_string(net)?)
+}
+
+/// 新的路由口令：两段 v4 UUID（操作系统的密码学随机数），带个前缀好认。
+pub fn new_router_key() -> String {
+    format!(
+        "qbr-{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    )
+}
+
+/// 中转线路走的出站客户端。没设出站代理就是 `None`（用路由默认的直连客户端）。
+///
+/// 连接超时跟默认那个一样是 15 秒；读超时由路由自己的首包 / 静默 / 非流式三道管，这里不设总超时 ——
+/// SSE 生成可以合法地跑很久。
+pub fn relay_client(net: &RouterNetwork) -> Result<Option<reqwest::Client>> {
+    let Some(url) = net.outbound_proxy.as_deref() else {
+        return Ok(None);
+    };
+    qb_station::router::check_proxy_url(url).map_err(GateError::Other)?;
+    let proxy = reqwest::Proxy::all(url).map_err(|e| {
+        GateError::Other(format!(
+            "出站代理 {} 用不了：{e}",
+            qb_station::router::mask_proxy_url(url)
+        ))
+    })?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .proxy(proxy)
+        .build()
+        .map_err(|e| GateError::Other(format!("建不出走代理的客户端：{e}")))?;
+    Ok(Some(client))
+}
+
+/// 本机常见的代理端口（cc-switch v4.0.14 `commands/global_proxy.rs` 的 `PROXY_PORTS`，MIT）。
+/// `(端口, 先按哪种协议认, 是不是 HTTP + SOCKS 混合端口)`。
+pub const COMMON_PROXY_PORTS: &[(u16, &str, bool)] = &[
+    (7890, "http", true),     // Clash（混合端口）
+    (7897, "http", true),     // Clash Verge（混合端口）
+    (7891, "socks5", false),  // Clash 只开 SOCKS
+    (1080, "socks5", false),  // 通用 SOCKS5
+    (8080, "http", false),    // 通用 HTTP
+    (8888, "http", false),    // Charles / Fiddler
+    (3128, "http", false),    // Squid
+    (10808, "socks5", false), // V2Ray SOCKS
+    (10809, "http", false),   // V2Ray HTTP
+];
+
+/// 扫一遍本机常见代理端口，回连得上的那些（`http://127.0.0.1:7890` 这种写法；混合端口两种都给）。
+///
+/// **只连 `127.0.0.1`、每个端口 100 毫秒、不发任何数据**（cc-switch 的 `scan_local_proxies`）。
+/// 只在使用者点「扫描」时跑。
+pub fn scan_local_proxies() -> Vec<String> {
+    let mut found = Vec::new();
+    for &(port, kind, mixed) in COMMON_PROXY_PORTS {
+        let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
+        if std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(100))
+            .is_ok()
+        {
+            found.push(format!("{kind}://127.0.0.1:{port}"));
+            if mixed {
+                found.push(format!("socks5://127.0.0.1:{port}"));
+            }
+        }
+    }
+    found
+}
+
+/// 经出站代理试连一个地址：收到任何 HTTP 回答就算代理通（状态码不管 —— 站点回 401 / 404 也说明连上了）。
+///
+/// 试的是**使用者自己加的那条线**的地址，不是 cc-switch 那几个公共网站：面板的联网清单里没有它们
+/// （DISCLAIMER 的联网一节），为了测代理去连一个使用者没填过的网站，是在替他发一个他没要的请求。
+/// 只在点「测试」时跑。
+pub async fn test_outbound_proxy(url: &str, target: &str) -> Result<u64> {
+    let client = relay_client(&RouterNetwork {
+        outbound_proxy: Some(url.to_string()),
+        ..Default::default()
+    })?
+    .ok_or_else(|| GateError::Other("出站代理是空的".into()))?;
+    let started = std::time::Instant::now();
+    client
+        .get(target)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| {
+            GateError::Other(format!(
+                "经 {} 连不上 {}：{}",
+                qb_station::router::mask_proxy_url(url),
+                host_of(target),
+                qb_proxy::proxy_error::describe_error_chain(&e.without_url())
+            ))
+        })?;
+    Ok(started.elapsed().as_millis() as u64)
+}
+
+/// 地址里只留主机（报错时用：别把路径里可能带着的东西印出来）。
+fn host_of(url: &str) -> String {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host)
+        .to_string()
 }
 
 /// 把攒下的请求日志落库：先补两种花费，再写，再裁掉 [`ROUTER_REQUEST_KEEP_DAYS`] 天以前的。
@@ -1121,6 +1256,64 @@ mod tests {
         assert_eq!(busy.current(Client::Codex).as_deref(), Some(b.as_str()));
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_router_network_is_saved_only_when_it_is_safe_and_well_formed() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        assert_eq!(load_router_network(&db).unwrap(), RouterNetwork::default());
+        // 开到所有网卡上却没口令：不存。
+        let open = RouterNetwork {
+            scope: ListenScope::AllInterfaces,
+            ..Default::default()
+        };
+        assert!(save_router_network(&db, &open).is_err());
+        // 代理地址不合格：不存，报错里不带密码。
+        let bad = RouterNetwork {
+            outbound_proxy: Some("user:secret@127.0.0.1".into()),
+            ..Default::default()
+        };
+        let err = save_router_network(&db, &bad).unwrap_err().to_string();
+        assert!(!err.contains("secret"), "{err}");
+        // 合格的那份存了读得回来。
+        let key = new_router_key();
+        assert!(key.starts_with("qbr-") && key.len() > 60, "{key}");
+        assert_ne!(key, new_router_key(), "口令不是随机的");
+        let good = RouterNetwork {
+            scope: ListenScope::AllInterfaces,
+            key,
+            outbound_proxy: Some("socks5h://127.0.0.1:1080".into()),
+        };
+        save_router_network(&db, &good).unwrap();
+        assert_eq!(load_router_network(&db).unwrap(), good);
+        assert!(relay_client(&good).unwrap().is_some());
+        assert!(relay_client(&RouterNetwork::default()).unwrap().is_none());
+        // restore 装回去：中转线路走代理。
+        let mut state = RouterState::default();
+        restore_router(&db, &mut state).unwrap();
+        assert!(state.relay_proxied());
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_dead_outbound_proxy_is_reported_without_its_password_or_the_target_path() {
+        let dead = {
+            let l = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let err = test_outbound_proxy(
+            &format!("http://u:topsecret@127.0.0.1:{dead}"),
+            "https://relay.example/v1?token=abc",
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(!err.contains("topsecret"), "{err}");
+        assert!(!err.contains("token=abc"), "{err}");
+        assert!(err.contains("relay.example"), "{err}");
+        assert_eq!(host_of("https://a:b@h.example:8443/x?y"), "h.example:8443");
     }
 
     #[test]

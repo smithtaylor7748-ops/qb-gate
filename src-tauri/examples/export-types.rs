@@ -274,6 +274,8 @@ fn main() {
         qb_gate_lib::commands::station::ProbeResult::export_all_to(&root)?;
         qb_gate_lib::commands::station::ClientConfig::export_all_to(&root)?;
         qb_gate_lib::commands::station::RouterStatus::export_all_to(&root)?;
+        // 本机路由的网络设置（R6）：监听范围、路由口令、出站代理（去掉了用户名密码）。
+        qb_gate_lib::commands::station::RouterNetworkView::export_all_to(&root)?;
         qb_gate_lib::commands::station::RouteHealthView::export_all_to(&root)?;
         qb_gate_lib::commands::station::DecisionView::export_all_to(&root)?;
         qb_gate_lib::commands::station::StoredAudit::export_all_to(&root)?;

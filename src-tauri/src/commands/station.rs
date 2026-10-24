@@ -14,7 +14,7 @@ use qb_app::local_router::{self, RouterConfig, Upstream, UpstreamAuth};
 use qb_app::usecase::station_billing::{self, StationBillingSettings};
 use qb_app::usecase::station_ops;
 use qb_contract::domain::Client;
-use qb_station::router::RouterRequest;
+use qb_station::router::{ListenScope, RouterNetwork, RouterRequest};
 use qb_station::schedule::{CheapBasis, Prefs, Ranking, Schedule};
 use qb_station::station::audit::AuditRound;
 use qb_station::station::route::Route;
@@ -235,14 +235,18 @@ async fn ensure_router(app: &tauri::AppHandle, client: Client) -> Result<RouterS
         .connect_timeout(std::time::Duration::from_secs(15))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
-    let mut handle = local_router::serve(
-        RouterConfig {
-            port: local_router::DEFAULT_PORT,
-        },
-        shared,
-        http,
-    )
-    .await?;
+    // 监听在哪、走不走出站代理（R6）。默认只本机、直连 —— 跟原来一模一样。
+    let net = station_ops::load_router_network(&crate::repository::Repository::open()?)?;
+    if let Ok(mut s) = state.station.lock() {
+        s.set_relay_http(station_ops::relay_client(&net)?);
+    }
+    let config = match net.scope {
+        ListenScope::Loopback => RouterConfig::loopback(local_router::DEFAULT_PORT),
+        ListenScope::AllInterfaces => {
+            RouterConfig::open(net.listen(), local_router::DEFAULT_PORT, net.key.clone())
+        }
+    };
+    let mut handle = local_router::serve(config, shared, http).await?;
     // 请求日志后台批量落库（原来只在打开日志页时才落，没打开时内存里一直涨）。
     handle.write_logs_to(std::sync::Arc::new(DbLogSink), LOG_FLUSH_EVERY);
     if let Ok(mut a) = state.station_addr.lock() {
@@ -252,6 +256,35 @@ async fn ensure_router(app: &tauri::AppHandle, client: Client) -> Result<RouterS
         *h = Some(handle);
     }
     Ok(status_of(&state, client))
+}
+
+/// 路由起着的话停掉再按现在的网络设置起一次（换了监听范围 / 换了口令之后）。没起着就什么都不做。
+///
+/// 停掉时在飞的请求照样跑完（`RouterHandle::stop`）；新的监听要等旧的那个真的放开端口，
+/// 所以绑不上时隔一会儿再试，最多两秒。
+async fn restart_router(app: &tauri::AppHandle) -> Result<()> {
+    use tauri::Manager;
+    let state = app.state::<AppState>();
+    let old = state.station_router.lock().ok().and_then(|mut h| h.take());
+    let Some(old) = old else {
+        return Ok(());
+    };
+    old.stop();
+    drop(old);
+    if let Ok(mut a) = state.station_addr.lock() {
+        *a = None;
+    }
+    let mut last = None;
+    for _ in 0..20 {
+        match ensure_router(app, Client::ClaudeCode).await {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                last = Some(e);
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+    }
+    Err(last.unwrap_or_else(|| GateError::Other("本机路由重启失败".into())))
 }
 
 #[tauri::command]
@@ -483,6 +516,140 @@ pub fn station_route_retest(state: State<'_, AppState>, route_id: String) -> Res
         .lock()
         .map_err(|_| GateError::Other("中转站状态损坏".into()))?
         .retest(&route_id, now))
+}
+
+// ------------------------------------------------------------------ 本机路由的网络设置（R6）
+
+/// 本机路由的网络设置给界面看的那一份。**出站代理去掉了用户名密码**；口令只在开到所有网卡上时给
+/// （使用者要把它抄到别的机器上去）。
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RouterNetworkView {
+    pub scope: ListenScope,
+    /// 路由口令。只本机时是 `None`（用不上，也不显示）。
+    pub key: Option<String>,
+    /// 出站代理（`协议://主机:端口`，没有用户名密码）。`None` = 直连。
+    pub outbound_proxy: Option<String>,
+    /// 监听端口（别的机器连 `本机 IP:这个端口`）。
+    pub port: u16,
+}
+
+fn network_view(net: &RouterNetwork) -> RouterNetworkView {
+    RouterNetworkView {
+        scope: net.scope,
+        key: (net.scope == ListenScope::AllInterfaces).then(|| net.key.clone()),
+        outbound_proxy: net
+            .outbound_proxy
+            .as_deref()
+            .map(qb_station::router::mask_proxy_url),
+        port: local_router::DEFAULT_PORT,
+    }
+}
+
+#[tauri::command]
+pub fn station_router_network() -> Result<RouterNetworkView> {
+    let db = crate::repository::Repository::open()?;
+    Ok(network_view(&station_ops::load_router_network(&db)?))
+}
+
+/// 改监听范围。开到所有网卡上时还没有口令就先生成一个。路由起着的话按新的重启一次
+/// （在飞的请求照样跑完）。**开到所有网卡上时 Windows 防火墙会弹窗问一次**，界面上提前写着。
+#[tauri::command]
+pub async fn station_router_listen_save(
+    app: tauri::AppHandle,
+    scope: ListenScope,
+) -> Result<RouterNetworkView> {
+    let net = {
+        let db = crate::repository::Repository::open()?;
+        let mut net = station_ops::load_router_network(&db)?;
+        net.scope = scope;
+        if scope == ListenScope::AllInterfaces && net.key.trim().is_empty() {
+            net.key = station_ops::new_router_key();
+        }
+        station_ops::save_router_network(&db, &net)?;
+        net
+    };
+    restart_router(&app).await?;
+    crate::audit::write(&format!(
+        "本机路由的监听范围改成了「{}」",
+        match scope {
+            ListenScope::Loopback => "只本机",
+            ListenScope::AllInterfaces => "所有网卡（别的机器要带路由口令）",
+        }
+    ));
+    Ok(network_view(&net))
+}
+
+/// 换一个新的路由口令（旧的立刻失效：别的机器上的客户端要改成新的）。
+#[tauri::command]
+pub async fn station_router_key_rotate(app: tauri::AppHandle) -> Result<RouterNetworkView> {
+    let net = {
+        let db = crate::repository::Repository::open()?;
+        let mut net = station_ops::load_router_network(&db)?;
+        net.key = station_ops::new_router_key();
+        station_ops::save_router_network(&db, &net)?;
+        net
+    };
+    if net.scope == ListenScope::AllInterfaces {
+        restart_router(&app).await?;
+    }
+    Ok(network_view(&net))
+}
+
+/// 设 / 清中转线路的出站代理（`None` 或空串 = 清掉，直连）。下一发请求就按新的走，不用重启路由。
+/// ⛔ 只给中转线路；官方 Codex 那条线永远直连。
+#[tauri::command]
+pub fn station_outbound_proxy_save(
+    state: State<'_, AppState>,
+    url: Option<String>,
+) -> Result<RouterNetworkView> {
+    let db = crate::repository::Repository::open()?;
+    let mut net = station_ops::load_router_network(&db)?;
+    net.outbound_proxy = url.map(|u| u.trim().to_string()).filter(|u| !u.is_empty());
+    station_ops::save_router_network(&db, &net)?;
+    let client = station_ops::relay_client(&net)?;
+    state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?
+        .set_relay_http(client);
+    Ok(network_view(&net))
+}
+
+/// 经出站代理试连这个软件的第一条线（只在点「测试」时跑）。`url` 不给就试存着的那个。回耗时（毫秒）。
+#[tauri::command]
+pub async fn station_outbound_proxy_test(client: Client, url: Option<String>) -> Result<u64> {
+    let (proxy, target) = {
+        let db = crate::repository::Repository::open()?;
+        let proxy = match url.map(|u| u.trim().to_string()).filter(|u| !u.is_empty()) {
+            Some(u) => u,
+            None => station_ops::load_router_network(&db)?
+                .outbound_proxy
+                .ok_or_else(|| GateError::Other("还没设出站代理".into()))?,
+        };
+        let routes: Vec<Route> = db.list("station_routes")?;
+        let target = routes
+            .iter()
+            .filter(|r| r.client == client)
+            .find_map(|r| station_ops::source(&db, r).ok())
+            .map(|s| s.base_url)
+            .ok_or_else(|| {
+                GateError::Other(
+                    "这个软件底下还没有能用的线路：测代理时试连的是你自己加的那条线的地址，先加一条再测。"
+                        .into(),
+                )
+            })?;
+        (proxy, target)
+    };
+    station_ops::test_outbound_proxy(&proxy, &target).await
+}
+
+/// 扫本机常见的代理端口（只连 127.0.0.1、不发数据），回连得上的地址。只在点「扫描」时跑。
+#[tauri::command]
+pub async fn station_outbound_proxy_scan() -> Result<Vec<String>> {
+    tauri::async_runtime::spawn_blocking(station_ops::scan_local_proxies)
+        .await
+        .map_err(|e| GateError::Other(format!("扫描没跑完：{e}")))
 }
 
 /// 面板启动时：把线路装进路由器，再把落盘的设置、派单顺序、上次选中的那条装回去。

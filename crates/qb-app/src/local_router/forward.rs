@@ -525,15 +525,20 @@ fn relay_headers(incoming: &hyper::HeaderMap, auth: &UpstreamAuth) -> reqwest::h
 
 /// reqwest 发送失败换成路由的错误。cc-switch 的 `map_reqwest_send_error`
 /// （`proxy_error.rs` 里写着它挪到了这里：那一层不认识 reqwest）。
-pub(super) fn describe_send_error(e: &reqwest::Error) -> ProxyError {
-    let chain = describe_error_chain(e);
-    if e.is_timeout() {
-        ProxyError::Timeout(chain)
-    } else if e.is_connect() {
-        ProxyError::ForwardFailed(format!("连不上上游：{chain}"))
-    } else {
-        ProxyError::ForwardFailed(chain)
+///
+/// ⛔ 先 `without_url()`：reqwest 的错误文字里带着整个请求地址（含查询串），这句话会进日志、
+/// 回给客户端；有的上游把 Key 放在查询串里（Gemini 的 `?key=`），不剥就把 Key 写进了日志。
+pub(super) fn describe_send_error(e: reqwest::Error) -> ProxyError {
+    let timeout = e.is_timeout();
+    let connect = e.is_connect();
+    let chain = describe_error_chain(&e.without_url());
+    if timeout {
+        return ProxyError::Timeout(chain);
     }
+    if connect {
+        return ProxyError::ForwardFailed(format!("连不上上游：{chain}"));
+    }
+    ProxyError::ForwardFailed(chain)
 }
 
 fn secs(n: u32) -> Option<Duration> {
@@ -577,7 +582,7 @@ async fn attempt(
     };
     let mut resp = match sent {
         Ok(r) => r,
-        Err(e) => return Failure::local(describe_send_error(&e)),
+        Err(e) => return Failure::local(describe_send_error(e)),
     };
 
     let status = resp.status().as_u16();
@@ -714,13 +719,13 @@ async fn read_whole(
                 Err(e) if e.is_timeout() => {
                     return Err(ProxyError::Timeout(format!(
                         "响应体读取超时（上游发完响应头后 body 没到齐）：{}",
-                        describe_error_chain(&e)
+                        describe_error_chain(&e.without_url())
                     )))
                 }
                 Err(e) => {
                     return Err(ProxyError::ForwardFailed(format!(
                         "读上游响应时断了：{}",
-                        describe_error_chain(&e)
+                        describe_error_chain(&e.without_url())
                     )))
                 }
             }
@@ -831,7 +836,7 @@ async fn prime(
             Some(Err(e)) => {
                 return Failure::local(ProxyError::ForwardFailed(format!(
                     "读取流式响应失败: {}",
-                    describe_error_chain(&e)
+                    describe_error_chain(&e.without_url())
                 )))
             }
             Some(Ok(chunk)) => chunk,
@@ -1248,7 +1253,7 @@ mod tests {
             s.put_upstream(a);
             s.put_upstream(b);
         }
-        serve(RouterConfig { port: 0 }, state, reqwest::Client::new())
+        serve(RouterConfig::loopback(0), state, reqwest::Client::new())
             .await
             .expect("本机路由起不来")
     }
@@ -1676,7 +1681,7 @@ mod tests {
             s.set_now(Client::Codex, OFFICIAL_CODEX_ROUTE_ID);
         }
         let h = serve(
-            RouterConfig { port: 0 },
+            RouterConfig::loopback(0),
             Arc::clone(&state),
             reqwest::Client::new(),
         )
@@ -1704,12 +1709,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_outbound_proxy_carries_relay_lines_and_never_the_official_one() {
+        // 出站代理指向一个没人听的端口：走它的请求一定连不上。
+        // 中转线路走它（于是失败），官方 Codex 那条线永远直连（于是照常成功）。
+        let dead = {
+            let l = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let proxied = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{dead}")).unwrap())
+            .build()
+            .unwrap();
+        let (relay, relay_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let (official, official_hits) = stub(Script::sse(vec![
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
+        ]))
+        .await;
+        let state = Arc::new(Mutex::new(RouterState::default()));
+        {
+            let mut s = state.lock().unwrap();
+            s.put_upstream(line("relay", relay));
+            s.set_now(Client::ClaudeCode, "relay");
+            s.put_upstream(Upstream {
+                route_id: OFFICIAL_CODEX_ROUTE_ID.into(),
+                base_url: format!("http://127.0.0.1:{}", official.port()),
+                auth: UpstreamAuth::OAuthPassthrough,
+                ..Default::default()
+            });
+            s.set_now(Client::Codex, OFFICIAL_CODEX_ROUTE_ID);
+            s.set_relay_http(Some(proxied));
+        }
+        let h = serve(
+            RouterConfig::loopback(0),
+            Arc::clone(&state),
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        let (status, _) = post(&h, "/v1/messages", r#"{"model":"m"}"#).await;
+        assert_eq!(
+            status, 502,
+            "中转线路没走出站代理（代理是死的，走了就该连不上）"
+        );
+        assert!(relay_hits.lock().unwrap().is_empty());
+
+        let (status, _) = post(&h, "/codex/v1/responses", r#"{"model":"gpt-5.6-sol"}"#).await;
+        assert_eq!(status, 200, "官方线走了出站代理");
+        assert_eq!(official_hits.lock().unwrap().len(), 1);
+
+        // 清掉出站代理：中转线路又直连了。
+        state.lock().unwrap().set_relay_http(None);
+        let (status, _) = post(&h, "/v1/messages", r#"{"model":"m"}"#).await;
+        assert_eq!(status, 200);
+    }
+
+    #[tokio::test]
     async fn the_line_s_own_key_replaces_the_client_s_and_encoding_is_identity() {
         let (a, _) = stub(Script::json(200, CLAUDE_OK)).await;
         let state = Arc::new(Mutex::new(RouterState::default()));
         state.lock().unwrap().put_upstream(line("a", a));
         state.lock().unwrap().set_now(Client::ClaudeCode, "a");
-        let h = serve(RouterConfig { port: 0 }, state, reqwest::Client::new())
+        let h = serve(RouterConfig::loopback(0), state, reqwest::Client::new())
             .await
             .unwrap();
         // 回环假上游只记了请求体；头的断言在 mod.rs 那条老测试里。这里只确认 gzip 请求也能读出用量。
