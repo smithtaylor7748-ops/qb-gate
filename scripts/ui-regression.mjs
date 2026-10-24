@@ -2040,6 +2040,74 @@ try {
     .waitFor({ state: "hidden" });
   await page.keyboard.press("Escape");
 
+  // 中转站重构阶段 2：调度设置里的派单队列与测活。先把 Claude Code 的调度打开 ——
+  // 关着时档位那一列是空的、也没有「钉住」。演示里低价组没过底线、在兜底档。
+  // ⚠ 高倍组本来熔断着（故障档），但上面路由设置那一段已经把它「立刻重测」成半开了，这里不等「故障」。
+  await page.goto(origin + "/#/relays");
+  // 那颗按钮的名字就叫「智能调度」，开没开看 aria-pressed。
+  const schedToggle = (pressed) =>
+    page.getByRole("button", { name: "智能调度", exact: true, pressed });
+  await schedToggle(false).click();
+  await schedToggle(true).waitFor();
+  await page.getByRole("button", { name: "调度设置", exact: true }).click();
+  const schedDialog = page.getByRole("dialog");
+  await schedDialog
+    .getByRole("heading", { name: "派单队列", exact: true })
+    .waitFor();
+  await schedDialog.getByText("合格", { exact: true }).first().waitFor();
+  await schedDialog.getByText("兜底", { exact: true }).first().waitFor();
+  await schedDialog.getByText("活着", { exact: true }).first().waitFor();
+  for (const width of [1320, 680]) {
+    await page.setViewportSize({ width, height: 940 });
+    await assertNoOverflow(page, `schedule dispatch queue ${width}`);
+  }
+  await page.setViewportSize({ width: 1320, height: 940 });
+  // 花钱测活默认关：「立刻测」只做免费的，今天花的还是 0。
+  const paidProbe = schedDialog.getByLabel("开启花钱测活");
+  assert.equal(await paidProbe.isChecked(), false, "花钱测活默认就开着");
+  await schedDialog
+    .getByRole("button", { name: "立刻测", exact: true })
+    .click();
+  await page
+    .getByText(/^测了 \d+ 次/)
+    .first()
+    .waitFor();
+  await schedDialog.getByText(/今天测活约 ¥0\.0000～¥0\.0000/).waitFor();
+  // 打开之后再测：花钱的那几次照实记上，「今天测活约」跟着涨。
+  await paidProbe.check();
+  await schedDialog
+    .getByRole("button", { name: "立刻测", exact: true })
+    .click();
+  await schedDialog
+    .getByText(/今天测活约 ¥0\.0000～¥0\.0000/)
+    .waitFor({ state: "hidden" });
+  await paidProbe.uncheck();
+  // 钉住一条：横幅出现、动作日志多一条；取消之后横幅消失。
+  await schedDialog
+    .getByRole("button", { name: "钉住", exact: true })
+    .first()
+    .click();
+  await schedDialog.getByText(/^已钉住「/).waitFor();
+  // 档位那一格和动作日志那一格都写「钉住」。
+  await schedDialog
+    .getByRole("cell", { name: "钉住", exact: true })
+    .first()
+    .waitFor();
+  await schedDialog
+    .getByRole("button", { name: "取消钉住", exact: true })
+    .first()
+    .click();
+  await page.getByText("已取消钉住，交回调度", { exact: true }).waitFor();
+  await schedDialog.getByText(/^已钉住「/).waitFor({ state: "hidden" });
+  await page.keyboard.press("Escape");
+  await schedDialog.waitFor({ state: "hidden" });
+  // 调度开着时路由设置里的替补顺序只读（顺序归调度排）。
+  await page.getByRole("button", { name: /路由设置 · 故障转移/ }).click();
+  await page.getByText(/智能调度开着：替补顺序由调度按档位排/).waitFor();
+  await page.keyboard.press("Escape");
+  await schedToggle(true).click();
+  await schedToggle(false).waitFor();
+
   assert.deepEqual(errors, []);
   const flows = [
     "catalog isolation",
@@ -2067,6 +2135,7 @@ try {
     "tavern panel console tab: a failed start is recognized with a hint, colors are rendered not printed, the previous run is one click away",
     "tavern panel library tabs: character detail, to trash with its chats and back, world entries whose Esc closes only the entry dialog, extension check then update, every tab without overflow at 680px",
     "relay router settings: dispatch queue and breaker pills without overflow at two widths, retest turns a tripped line half-open, failover switch saved and read back off; network section shows the key only when open to all interfaces, scan fills the proxy, the proxy box is not prefilled after saving",
+    "relay schedule dispatch: tiers and liveness without overflow at two widths, paid probing off by default and spends nothing, switched on it shows a cost, pin shows a banner and an action, unpin clears it, the manual standby order is read-only while scheduling",
   ];
   writeFileSync(
     "docs/ui-regression.json",

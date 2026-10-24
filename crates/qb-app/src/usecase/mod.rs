@@ -17,6 +17,7 @@ pub mod purge_ops;
 pub mod settings_ops;
 pub mod station_batch;
 pub mod station_billing;
+pub mod station_liveness;
 pub mod station_ops;
 pub mod station_probe;
 pub mod token_summary;

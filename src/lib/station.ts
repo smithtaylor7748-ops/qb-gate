@@ -15,6 +15,10 @@ import type { AuditRound } from "./generated/AuditRound";
 import type { DecisionView } from "./generated/DecisionView";
 import type { Prefs } from "./generated/Prefs";
 import type { DispatchQueue } from "./generated/DispatchQueue";
+import type { DispatchParams } from "./generated/DispatchParams";
+import type { DispatchView } from "./generated/DispatchView";
+import type { ProbeAttempt } from "./generated/ProbeAttempt";
+import type { ProbeSettings } from "./generated/ProbeSettings";
 import type { ListenScope } from "./generated/ListenScope";
 import type { RouterNetworkView } from "./generated/RouterNetworkView";
 import type { RouterRequest } from "./generated/RouterRequest";
@@ -34,7 +38,11 @@ import type { StationModelsView } from "./generated/StationModelsView";
 export type {
   AuditRound,
   DecisionView,
+  DispatchParams,
   DispatchQueue,
+  DispatchView,
+  ProbeAttempt,
+  ProbeSettings,
   ListenScope,
   Prefs,
   RouterNetworkView,
@@ -222,12 +230,39 @@ export const stationApi = {
     client: Client,
     enabled: boolean | null,
     prefs?: Prefs | null,
+    dispatch?: DispatchParams | null,
   ) =>
     call<Schedule>("station_schedule_set", {
       client,
       enabled,
       prefs: prefs ?? null,
+      dispatch: dispatch ?? null,
     }),
+
+  /**
+   * 派单队列与测活（调度设置弹窗那张表）：每一行的档位、死活、速度、失败率、折合价、
+   * 上次 / 下次测活、24 小时流量，告警、动作日志、今天测活花了多少。**全是读库**，不联网。
+   */
+  dispatchView: (client: Client) =>
+    call<DispatchView>("station_dispatch_view", { client }),
+  /**
+   * 「立刻测」：不看到没到点。免费的一律测；花钱的只在打开了花钱测活、今天预算还够时测。
+   * `routeId` 不给 = 这个软件的每一条。
+   */
+  probeNow: (client: Client, routeId?: string | null) =>
+    call<ProbeAttempt[]>("station_probe_now", {
+      client,
+      routeId: routeId ?? null,
+    }),
+  /**
+   * 钉住一条线：下一发请求换过去，4 小时内调度不换走它（它挂了就不算）。
+   * `routeId` 传 `null` = 取消钉住、交回调度。
+   */
+  pin: (client: Client, routeId: string | null) =>
+    call<DispatchQueue>("station_pin", { client, routeId }),
+  /** 测活设置（三个软件共用）：花钱测活开关（默认关）、每日预算、间隔。不合格整份不存。 */
+  saveProbeSettings: (settings: ProbeSettings) =>
+    call<ProbeSettings>("station_probe_settings_save", { settings }),
 
   /**
    * 这条线路(站点 + 分组)上能用哪些模型。**零成本** —— 读的是站点的价目表。

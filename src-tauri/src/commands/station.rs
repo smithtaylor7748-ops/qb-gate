@@ -432,19 +432,39 @@ pub fn station_select_route(
             s.request_switch(route.client, route_id.clone());
         }
     }
+    let now = chrono::Utc::now().timestamp_millis();
     // 记下来：面板重启后接着用这一条（原来只在内存里，重启后客户端收到 503「还没选上游」）。
     // 写不进去不挡这一次切换 —— 切换已经生效了，只是重启后不记得；记进审计日志。
-    if let Err(e) = station_ops::remember_current(
-        &db,
-        route.client,
-        &route_id,
-        chrono::Utc::now().timestamp_millis(),
-    ) {
+    if let Err(e) = station_ops::remember_current(&db, route.client, &route_id, now) {
         crate::audit::write(&format!(
             "中转站：已切到「{route_id}」，但没记下来（面板重启后不会接着用它）：{e}"
         ));
     }
+    // 调度开着时手动选的线钉住 4 小时（除非它挂了），不然下一跳调度就把它换回去了。
+    if station_ops::load_schedule(&db, route.client).is_ok_and(|s| s.enabled) {
+        pin_route(&db, route.client, Some(&route_id), now)?;
+    }
     Ok(status_of(&state, route.client))
+}
+
+/// 钉住 / 取消钉住，记一条动作。
+fn pin_route(
+    db: &crate::repository::Repository,
+    client: Client,
+    route_id: Option<&str>,
+    now: i64,
+) -> Result<qb_station::router::DispatchQueue> {
+    let q = station_ops::set_pin(db, client, route_id, now)?;
+    let (kind, note) = match route_id {
+        Some(_) => ("pin", "你手动选的，钉住 4 小时（它挂了就不算）"),
+        None => ("unpin", "取消钉住，交回调度"),
+    };
+    let logged = station_ops::action(client, kind, route_id.map(str::to_string), note, now)
+        .and_then(|a| station_ops::record_actions(db, &[a]));
+    if let Err(e) = logged {
+        tracing::warn!("智能调度：钉住这一条没写进动作日志：{e}");
+    }
+    Ok(q)
 }
 
 // ------------------------------------------------------------------ 本机路由的设置与派单顺序
@@ -492,6 +512,11 @@ pub fn station_dispatch_queue_save(
     order: Vec<String>,
 ) -> Result<qb_station::router::DispatchQueue> {
     let db = crate::repository::Repository::open()?;
+    if station_ops::load_schedule(&db, client)?.enabled {
+        return Err(GateError::Other(
+            "智能调度开着时热备顺序由调度排（下一跳就会盖掉手排的）；要自己排先停调度，或者钉住一条".into(),
+        ));
+    }
     let q = station_ops::save_dispatch_order(
         &db,
         client,
@@ -704,11 +729,21 @@ pub async fn station_launch(
                 "这条线路不属于这个软件，不能拿它启动".into(),
             ));
         }
-        let mut s = state
+        state
             .station
             .lock()
-            .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
-        s.set_now(route.client, id);
+            .map_err(|_| GateError::Other("中转站状态损坏".into()))?
+            .set_now(route.client, id.clone());
+        // 行上「指定这一条再启动」也是手动选：记下来（面板重启后接着用），调度开着时钉住 4 小时 ——
+        // 跟 `station_select_route` 同一条规矩，不然下一跳调度就把刚指定的那条换走了。
+        let db = crate::repository::Repository::open()?;
+        let now = chrono::Utc::now().timestamp_millis();
+        if let Err(e) = station_ops::remember_current(&db, route.client, &id, now) {
+            tracing::warn!("启动：已切到 {id}，但没记下来：{e}");
+        }
+        if station_ops::load_schedule(&db, route.client).is_ok_and(|s| s.enabled) {
+            pin_route(&db, route.client, Some(&id), now)?;
+        }
     }
     let selected_id = {
         let router = state
@@ -1451,23 +1486,24 @@ pub async fn station_decide(
         station_ops::decision_health(&db, &routes, &station_billing::http_client()?, now).await;
 
     // 熔断状态归路由器管 —— 这里只读,不另算一份(两份必然漂移)。
-    let (incumbent, breakers) = {
-        let s = state.station.lock().ok();
-        (
-            s.as_ref().and_then(|s| s.current(client)),
-            s.as_ref().map(|s| s.breaker_state(now)).unwrap_or_default(),
-        )
-    };
+    let breakers = state
+        .station
+        .lock()
+        .ok()
+        .map(|s| s.breaker_state(now))
+        .unwrap_or_default();
     // 官方价目跟检验那边用同一份:抓回来的优先,没抓到退回内置快照。
     let catalog = qb_station::station::pricing::Catalog::new(stored_prices());
+    // 不带现任(2026-10-24 起):迟滞只在派单那一道(`schedule::dispatch`),这里看的是纯排名。
+    // 测活速度只在调度那一跳里用;这个预览按本机日志 / 账单的体验分排。
     let (ranking, basis) = station_ops::decide(
         &routes,
         &health,
         &breakers,
         &prefs,
-        incumbent.as_deref(),
         &catalog,
         &station_ops::topup_ratios(&db),
+        None,
     );
     Ok(DecisionView { ranking, basis })
 }
@@ -1485,16 +1521,30 @@ pub async fn station_decide(
 
 /// 两跳之间隔多久。
 ///
-/// # 为什么是 60 秒而不是 10 秒
+/// # 30 秒一跳，但账单仍然最多 60 秒拉一次
 ///
-/// 每一跳要给池子里每条线路各拉一次站点账单。那是免费的(不打模型),
+/// 原来是 60 秒:每一跳要给池子里每条线路各拉一次站点账单。那是免费的(不打模型),
 /// 但不是没有代价:十条线路的池子在 10 秒档上就是每分钟 60 个请求打到
 /// 中转站的账单接口,有些站点会因此限流 —— 而限流的表现是健康度读不到,
 /// 于是排序退化成只比倍率。**盯得太紧反而让它瞎掉。**
 ///
-/// 60 秒也跟迟滞是一套的:换上游的代价(正在飞的请求落到另一把 key 上、
-/// 日志断成两段、熔断窗口重来)决定了换的频率本来就该低。
-const SCHEDULE_TICK: std::time::Duration = std::time::Duration::from_secs(60);
+/// 阶段 2(2026-10-24)起派单的证据大半来自本机路由自己的日志、熔断器和测活,用不着等账单,
+/// 所以一跳改成 30 秒(sub2guard 的节奏);账单照旧最多 [`BILLING_EVERY_MS`] 拉一次
+/// (缓存在 `AppState::billing_cache`)。
+///
+/// 跳得快不等于换得勤:换上游的代价(正在飞的请求落到另一把 key 上、日志断成两段、
+/// 熔断窗口重来)由派单那一道防抖管 —— 挑战者要连续几轮有新证据都领先够多才换。
+const SCHEDULE_TICK: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 站点账单最多多久拉一次（毫秒）。见 [`SCHEDULE_TICK`]。
+const BILLING_EVERY_MS: i64 = 60_000;
+
+/// 派单与测活看这个软件多久以内的本机日志（突发判定、真实流量、测活模型都从这里取）。
+const SCHEDULE_LOG_WINDOW_MS: i64 = 24 * 3600 * 1000;
+/// 上面那个窗口最多读多少条。
+const SCHEDULE_LOG_ROWS: u32 = 5_000;
+/// 每条线读最近几次测活。
+const SCHEDULE_PROBE_ROWS: u32 = 50;
 
 /// 起智能调度的驻留循环。**重复调是安全的** —— 已经在跑就直接返回。
 ///
@@ -1583,10 +1633,16 @@ pub fn station_schedule_set(
     client: Client,
     enabled: Option<bool>,
     prefs: Option<Prefs>,
+    // 换第一条的防抖（领先多少、几个样本、连续几轮）。`None` = 不动（2026-10-24 起）。
+    dispatch: Option<qb_station::schedule::DispatchParams>,
 ) -> Result<Schedule> {
     use tauri::Manager;
     let db = crate::repository::Repository::open()?;
     let mut s = station_ops::load_schedule(&db, client)?;
+    if let Some(d) = dispatch {
+        d.validate().map_err(GateError::Other)?;
+        s.dispatch = d;
+    }
     if let Some(on) = enabled {
         s.enabled = on;
         if !on {
@@ -1609,20 +1665,222 @@ pub fn station_schedule_set(
     Ok(s)
 }
 
-/// 调度循环跑一跳:每个开着的软件各排一次序，该换就换。
+// ------------------------------------------------------------------ 派单队列与测活（阶段 2）
+
+/// 一个软件的派单队列与测活（调度设置弹窗里那张表）。**全是读库**，不联网、不花钱。
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DispatchView {
+    pub client: Client,
+    /// 调度开着没有。关着时队列是手动排的那一份，档位那几列是空的。
+    pub enabled: bool,
+    pub queue: qb_station::router::DispatchQueue,
+    /// 按队列顺序；队列里还没有的线（新加的）排在后面。
+    pub lines: Vec<qb_app::usecase::station_liveness::LineLiveness>,
+    /// 今天（本地时间）花钱测活大概花了多少元：`[下限, 上界]`。
+    pub spent_today: [f64; 2],
+    pub settings: qb_station::schedule::liveness::ProbeSettings,
+    /// 最近的动作，新的在前。
+    pub actions: Vec<qb_station::schedule::liveness::SchedulerAction>,
+}
+
+/// 弹窗里列最近几条动作。
+const DISPATCH_VIEW_ACTIONS: usize = 30;
+
+#[tauri::command]
+pub fn station_dispatch_view(client: Client) -> Result<DispatchView> {
+    use qb_app::usecase::station_liveness;
+    let db = crate::repository::Repository::open()?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let schedule = station_ops::load_schedule(&db, client)?;
+    let queue = station_ops::load_dispatch_queue(&db, client)?;
+    let settings = station_liveness::load_probe_settings(&db)?;
+    let names = station_ops::provider_names(&db);
+    let topup = station_ops::topup_ratios(&db);
+    let mut routes: Vec<Route> = db
+        .list::<Route>("station_routes")?
+        .into_iter()
+        .filter(|r| r.client == client)
+        .collect();
+    let pos = |id: &str| {
+        queue
+            .order
+            .iter()
+            .position(|o| o == id)
+            .unwrap_or(usize::MAX)
+    };
+    routes.sort_by(|a, b| pos(&a.id).cmp(&pos(&b.id)).then_with(|| a.id.cmp(&b.id)));
+    let requests: Vec<RouterRequest> =
+        db.router_requests(&qb_platform::repository::RouterRequestQuery {
+            since_ms: Some(now - SCHEDULE_LOG_WINDOW_MS),
+            client: Some(client_key(client).to_string()),
+            route_id: None,
+            limit: SCHEDULE_LOG_ROWS,
+        })?;
+    let usage = station_ops::router_usage_rows(&requests);
+    let lines = routes
+        .iter()
+        .map(|r| {
+            let attempts = station_liveness::recent(&db, &r.id, SCHEDULE_PROBE_ROWS)?;
+            let rows = usage.get(&r.id);
+            Ok(station_liveness::summarize(
+                &r.id,
+                &station_ops::route_label(r, &names),
+                &attempts,
+                rows.and_then(|u| u.iter().map(|x| x.at_ms).max()),
+                rows.map_or(0, |u| u32::try_from(u.len()).unwrap_or(u32::MAX)),
+                r.rate_for_ranking()
+                    .map(|v| v * station_ops::topup_for(&topup, &r.station_id)),
+                &settings,
+                now,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let (lo, hi) = station_liveness::spent_since(&db, station_liveness::local_midnight_ms(now))?;
+    Ok(DispatchView {
+        client,
+        enabled: schedule.enabled,
+        queue,
+        lines,
+        spent_today: [lo, hi],
+        settings,
+        actions: station_ops::scheduler_actions(&db, Some(client), DISPATCH_VIEW_ACTIONS)?,
+    })
+}
+
+/// 「立刻测」：这个软件的线（给了 `route_id` 就只测那一条）马上测一遍，**不看到没到点**。
 ///
-/// # 为什么一跳要重新拉健康度
+/// 免费的那种一律测；花钱的那种只在使用者打开了花钱测活、今天的预算还够时才测（跟调度那一跳同一条规矩）。
+#[tauri::command]
+pub async fn station_probe_now(
+    client: Client,
+    route_id: Option<String>,
+) -> Result<Vec<qb_station::schedule::liveness::ProbeAttempt>> {
+    use qb_app::usecase::station_liveness::{self, ProbeKind, ProbeTarget};
+    use qb_station::schedule::liveness;
+    let now = chrono::Utc::now().timestamp_millis();
+    // 读库、挑线在这个块里做完：await 不能揣着 `&Repository`（它不是 Send）。
+    let (jobs, http) = {
+        let db = crate::repository::Repository::open()?;
+        let settings = station_liveness::load_probe_settings(&db)?;
+        let routes: Vec<Route> = db
+            .list::<Route>("station_routes")?
+            .into_iter()
+            .filter(|r| r.client == client && route_id.as_ref().is_none_or(|id| &r.id == id))
+            .collect();
+        if routes.is_empty() {
+            return Err(GateError::Other("这个软件底下没有这条线".into()));
+        }
+        let catalog = qb_station::station::pricing::Catalog::new(stored_prices());
+        let topup = station_ops::topup_ratios(&db);
+        let requests: Vec<RouterRequest> = db
+            .router_requests(&qb_platform::repository::RouterRequestQuery {
+                since_ms: Some(now - SCHEDULE_LOG_WINDOW_MS),
+                client: Some(client_key(client).to_string()),
+                route_id: None,
+                limit: SCHEDULE_LOG_ROWS,
+            })
+            .unwrap_or_default();
+        let models = station_liveness::traffic_models(&requests);
+        let spent = station_liveness::spent_since(&db, station_liveness::local_midnight_ms(now))?.1;
+        let mut left = settings.daily_budget_cny - spent;
+        let mut jobs = Vec::new();
+        for r in &routes {
+            jobs.push((
+                ProbeTarget::load(&db, r, (None, 0.0))?,
+                ProbeKind::Free,
+                String::new(),
+            ));
+            if !settings.paid {
+                continue;
+            }
+            let recent = station_liveness::recent(&db, &r.id, SCHEDULE_PROBE_ROWS)?;
+            let missing = liveness::assess(&recent, now).missing_models;
+            let Some(model) = liveness::pick_model(&models, &missing) else {
+                continue;
+            };
+            let cost = station_liveness::probe_cost(
+                r,
+                Some(model),
+                &catalog,
+                station_ops::topup_for(&topup, &r.station_id),
+            );
+            if cost.1 <= left {
+                left -= cost.1;
+                jobs.push((
+                    ProbeTarget::load(&db, r, cost)?,
+                    ProbeKind::Paid,
+                    model.to_string(),
+                ));
+            }
+        }
+        let http = station_ops::relay_client(&station_ops::load_router_network(&db)?)?
+            .unwrap_or_else(|| {
+                reqwest::Client::builder()
+                    .connect_timeout(std::time::Duration::from_secs(15))
+                    .build()
+                    .unwrap_or_else(|_| reqwest::Client::new())
+            });
+        (jobs, http)
+    };
+    let attempts = station_liveness::run(jobs, &http, now).await;
+    let db = crate::repository::Repository::open()?;
+    station_liveness::persist(&db, &attempts, now)?;
+    Ok(attempts)
+}
+
+/// 钉住一条线（`route_id` 给 `None` = 取消钉住）。钉住就是「现在就用它」：下一发请求换过去，
+/// 4 小时内调度不换走它（除非它挂了）。
+#[tauri::command]
+pub fn station_pin(
+    state: State<'_, AppState>,
+    client: Client,
+    route_id: Option<String>,
+) -> Result<qb_station::router::DispatchQueue> {
+    let db = crate::repository::Repository::open()?;
+    let now = chrono::Utc::now().timestamp_millis();
+    if let Some(id) = &route_id {
+        let route: Route = db.get("station_routes", id)?;
+        if route.client != client {
+            return Err(GateError::Other("钉住的线不是这个软件的".into()));
+        }
+        state
+            .station
+            .lock()
+            .map_err(|_| GateError::Other("中转站状态损坏".into()))?
+            .request_switch(client, id.clone());
+        if let Err(e) = station_ops::remember_current(&db, client, id, now) {
+            tracing::warn!("钉住：已换到 {id}，但没记下来：{e}");
+        }
+    }
+    pin_route(&db, client, route_id.as_deref(), now)
+}
+
+/// 存测活设置（三个软件共用一份）。不合格整份不存。
+#[tauri::command]
+pub fn station_probe_settings_save(
+    settings: qb_station::schedule::liveness::ProbeSettings,
+) -> Result<qb_station::schedule::liveness::ProbeSettings> {
+    let db = crate::repository::Repository::open()?;
+    qb_app::usecase::station_liveness::save_probe_settings(&db, &settings)?;
+    Ok(settings)
+}
+
+/// 调度循环跑一跳:每个开着的软件各排一轮派单（分档、防抖、热备），该换就换；然后测活。
 ///
-/// 「快」和「稳」两维的证据只有站点账单里有，不拉就是 `None`，排序退化成
-/// 只比倍率 —— 而界面上那三个复选框还摆着。这一轮是**免费**的:读的是
-/// 站点自己的账单日志，不打模型。
+/// # 每一跳读哪些证据
+///
+/// 本机路由自己记过的线读它的日志（每跳现读），没记过的读站点账单（最多 [`BILLING_EVERY_MS`]
+/// 拉一次）；熔断状态从路由器现读；测活记录从库里读。这些都是**免费**的。花钱测活默认关，
+/// 开了也按每日预算封顶（`station_liveness`）。
 ///
 /// # ⛔ 返回值是给日志和界面看的，不是给下一跳看的
 ///
 /// 每一跳都从库里重新读设置与线路。把状态缓存在循环变量里的话，
 /// 使用者在面板上改了偏好要等到下次重启才生效，而界面上立刻就变了 ——
-/// 两边说的不是同一件事。
+/// 两边说的不是同一件事。（账单缓存是例外：它只省请求，60 秒内的账单本来就是同一份。）
 pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
+    use qb_app::usecase::station_liveness;
     let Ok(db) = crate::repository::Repository::open() else {
         return Vec::new();
     };
@@ -1631,7 +1889,15 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
     let catalog = qb_station::station::pricing::Catalog::new(stored_prices());
     // 每家站 1 美元额度付几元 —— 跨站比便宜之前先折成同一种钱。每一跳重读,改完下一跳就生效。
     let topup = station_ops::topup_ratios(&db);
+    let names = station_ops::provider_names(&db);
+    // 读不出测活设置就按默认（花钱的关着）—— 宁可这一跳不花钱。
+    let probe_settings = station_liveness::load_probe_settings(&db).unwrap_or_else(|e| {
+        tracing::warn!("智能调度：读不出测活设置，这一跳按默认（不花钱）：{e}");
+        Default::default()
+    });
     let mut out = Vec::new();
+    let mut pools = Vec::new();
+    let mut probed_routes = Vec::new();
     let http = station_billing::http_client();
 
     for &client in ALL_CLIENTS {
@@ -1665,8 +1931,26 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
             out.push(sched);
             continue;
         };
-        // 本机路由自己记过的线用它的日志，没记过的读站点账单（一跳 60 秒，⛔ 不调小）。
-        let health = station_ops::decision_health(&db, &routes, http, now).await;
+        // 本机路由记过的线每跳现读它的日志；其余的读站点账单，最多 BILLING_EVERY_MS 拉一次。
+        // ⛔ await 只在这个函数体里：`&Repository` 不是 Send，揣过 await 循环就交不给 spawn。
+        let local = station_ops::local_health(&db, &routes, now);
+        let rest: Vec<Route> = routes
+            .iter()
+            .filter(|r| !local.contains_key(&r.id))
+            .cloned()
+            .collect();
+        let billing = match cached_billing(state, client, &rest, now) {
+            Some(hit) => hit,
+            None if rest.is_empty() => (now, Default::default()),
+            None => {
+                let fetched = station_ops::route_health(&db, &rest, http, now).await;
+                if let Ok(mut c) = state.billing_cache.lock() {
+                    c.insert(client, (now, fetched.clone()));
+                }
+                (now, fetched)
+            }
+        };
+        let (health, billing_at) = merge_health(local, &rest, billing);
         let (incumbent, breakers) = {
             let s = state.station.lock().ok();
             (
@@ -1674,53 +1958,327 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
                 s.as_ref().map(|s| s.breaker_state(now)).unwrap_or_default(),
             )
         };
-        let (ranking, _) = station_ops::decide(
+        let queue = match station_ops::load_dispatch_queue(&db, client) {
+            Ok(q) => q,
+            Err(e) => {
+                sched.last_note = format!("读不出派单队列，这一跳没排：{e}");
+                keep_schedule(&db, &sched);
+                out.push(sched);
+                continue;
+            }
+        };
+        let requests: Vec<RouterRequest> = db
+            .router_requests(&qb_platform::repository::RouterRequestQuery {
+                since_ms: Some(now - SCHEDULE_LOG_WINDOW_MS),
+                client: Some(client_key(client).to_string()),
+                route_id: None,
+                limit: SCHEDULE_LOG_ROWS,
+            })
+            .unwrap_or_else(|e| {
+                tracing::warn!("智能调度：读不出 {} 的本机日志：{e}", client_key(client));
+                Vec::new()
+            });
+        let evidence = station_ops::Evidence {
+            usage: station_ops::router_usage_rows(&requests),
+            probes: routes
+                .iter()
+                .map(|r| {
+                    let recent = station_liveness::recent(&db, &r.id, SCHEDULE_PROBE_ROWS)
+                        .unwrap_or_default();
+                    (r.id.clone(), recent)
+                })
+                .collect(),
+            paid_probing: probe_settings.paid,
+            labels: routes
+                .iter()
+                .map(|r| (r.id.clone(), station_ops::route_label(r, &names)))
+                .collect(),
+            billing_at,
+        };
+        let round = station_ops::plan_round(
             &routes,
             &health,
             &breakers,
-            &sched.prefs,
+            &sched,
+            &queue,
             incumbent.as_deref(),
             &catalog,
             &topup,
+            &evidence,
+            now,
         );
-        match station_ops::next_upstream(&ranking, incumbent.as_deref()) {
-            Some(next) => {
-                let label = routes
-                    .iter()
-                    .find(|r| r.id == next)
-                    .map(|r| {
-                        if r.group.is_empty() {
-                            r.station_id.clone()
-                        } else {
-                            format!("{} · {}", r.station_id, r.group)
-                        }
-                    })
-                    .unwrap_or_else(|| next.clone());
-                if let Ok(mut s) = state.station.lock() {
-                    // 下一次请求生效，不打断正在飞的那一发。
-                    s.request_switch(client, next.clone());
-                }
-                // 调度换过去的也记下来，面板重启后接着用（写不进去不挡这一跳）。
-                if let Err(e) = station_ops::remember_current(&db, client, &next, now) {
-                    tracing::warn!("智能调度：已换到 {next}，但没记下来：{e}");
-                }
-                sched.last_switch_ms = Some(now);
-                sched.last_note = format!("已换到「{label}」");
-            }
-            None => {
-                sched.last_note = if ranking.held_by_hysteresis {
-                    "有更好的，但没好够，留着现任".into()
-                } else if ranking.winner.is_none() {
-                    "排不出名次：勾中的那几项这一轮都没有证据".into()
-                } else {
-                    "现任仍然是最好的那条".into()
-                };
-            }
-        }
+        apply_round(
+            state,
+            &db,
+            client,
+            &mut sched,
+            &queue,
+            incumbent.as_deref(),
+            &round.dispatch,
+            now,
+        );
+        let last_burst = station_ops::scheduler_actions(&db, Some(client), usize::MAX)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|a| a.kind == "probe-burst")
+            .map(|a| a.at_ms);
+        pools.push(probe_pool(
+            client,
+            &routes,
+            &round.dispatch,
+            &evidence,
+            &requests,
+            incumbent.as_deref(),
+            last_burst,
+            &catalog,
+            &topup,
+            now,
+        ));
+        probed_routes.extend(routes);
         keep_schedule(&db, &sched);
         out.push(sched);
     }
+    if let Some((jobs, http)) = prepare_probes(
+        &db,
+        &pools,
+        &probe_settings,
+        &probed_routes,
+        &catalog,
+        &topup,
+        now,
+    ) {
+        let attempts = station_liveness::run(jobs, &http, now).await;
+        if let Err(e) = station_liveness::persist(&db, &attempts, now) {
+            tracing::warn!("测活：{} 条结果没写进库：{e}", attempts.len());
+        }
+    }
     out
+}
+
+/// 账单缓存里这个软件那一份，还新鲜（[`BILLING_EVERY_MS`] 以内）而且该读账单的线都在里面才给。
+fn cached_billing(
+    state: &AppState,
+    client: Client,
+    rest: &[Route],
+    now: i64,
+) -> Option<(
+    i64,
+    std::collections::HashMap<String, station_ops::RouteHealth>,
+)> {
+    let hit = state
+        .billing_cache
+        .lock()
+        .ok()
+        .and_then(|c| c.get(&client).cloned())?;
+    (now - hit.0 < BILLING_EVERY_MS && rest.iter().all(|r| hit.1.contains_key(&r.id)))
+        .then_some(hit)
+}
+
+/// 本机日志那一份 + 账单那一份（只留该读账单的线）。第二项是账单的拉取时刻（没有读账单的线就是 `None`）。
+fn merge_health(
+    local: std::collections::HashMap<String, qb_station::health::Windows>,
+    rest: &[Route],
+    billing: (
+        i64,
+        std::collections::HashMap<String, station_ops::RouteHealth>,
+    ),
+) -> (
+    std::collections::HashMap<String, station_ops::RouteHealth>,
+    Option<i64>,
+) {
+    let (billing_at, mut health) = billing;
+    health.retain(|id, _| rest.iter().any(|r| &r.id == id));
+    health.extend(local.into_iter().map(|(id, windows)| {
+        (
+            id,
+            station_ops::RouteHealth {
+                windows,
+                error: None,
+            },
+        )
+    }));
+    (health, (!rest.is_empty()).then_some(billing_at))
+}
+
+/// 把这一轮派单落到路由器和库上：第一条换了就换（下一发请求生效，不打断正在飞的那一发），
+/// 失败时按派单顺序往下试，队列、动作日志、一句话结论都存下来。写不进库不挡这一跳（上游已经换了）。
+#[allow(clippy::too_many_arguments)]
+fn apply_round(
+    state: &AppState,
+    db: &crate::repository::Repository,
+    client: Client,
+    sched: &mut Schedule,
+    previous: &qb_station::router::DispatchQueue,
+    incumbent: Option<&str>,
+    dispatch: &qb_station::schedule::Dispatch,
+    now: i64,
+) {
+    let next = station_ops::next_upstream(dispatch, incumbent);
+    if let Ok(mut s) = state.station.lock() {
+        if let Some(next) = &next {
+            s.request_switch(client, next.clone());
+        }
+        // 第一条在不在里面都行：路由自己去重（`RouterState::candidates`）。
+        s.set_queue(client, dispatch.order.clone());
+    }
+    if let Some(next) = &next {
+        // 调度换过去的也记下来，面板重启后接着用。
+        if let Err(e) = station_ops::remember_current(db, client, next, now) {
+            tracing::warn!("智能调度：已换到 {next}，但没记下来：{e}");
+        }
+        sched.last_switch_ms = Some(now);
+    }
+    if let Err(e) = station_ops::save_dispatch(db, client, dispatch, now) {
+        tracing::warn!(
+            "智能调度：{} 这一轮的派单队列没写进库：{e}",
+            client_key(client)
+        );
+    }
+    match station_ops::round_actions(client, &previous.order, incumbent, dispatch, now)
+        .and_then(|actions| station_ops::record_actions(db, &actions))
+    {
+        Ok(()) => {}
+        Err(e) => tracing::warn!("智能调度：动作日志没写进库：{e}"),
+    }
+    sched.last_note = dispatch.note.clone();
+}
+
+/// 测活要的这个软件那一份：队列顺序、每条线最近的测活、最近一次真实流量、测哪个模型、一次多少钱、
+/// 要不要突发。
+#[allow(clippy::too_many_arguments)]
+fn probe_pool(
+    client: Client,
+    routes: &[Route],
+    dispatch: &qb_station::schedule::Dispatch,
+    evidence: &station_ops::Evidence,
+    requests: &[RouterRequest],
+    incumbent: Option<&str>,
+    last_burst: Option<i64>,
+    catalog: &qb_station::station::pricing::Catalog,
+    topup: &std::collections::HashMap<String, f64>,
+    now: i64,
+) -> qb_app::usecase::station_liveness::Pool {
+    use qb_app::usecase::station_liveness::{self, LineProbes, Pool};
+    use qb_station::schedule::liveness;
+    let models = station_liveness::traffic_models(requests);
+    let lines = dispatch
+        .order
+        .iter()
+        .filter_map(|id| routes.iter().find(|r| &r.id == id))
+        .map(|r| {
+            let attempts = evidence.probes.get(&r.id).cloned().unwrap_or_default();
+            let judged = liveness::assess(&attempts, now);
+            let paid_model =
+                liveness::pick_model(&models, &judged.missing_models).map(str::to_string);
+            let (_, cost_hi) = station_liveness::probe_cost(
+                r,
+                paid_model.as_deref(),
+                catalog,
+                station_ops::topup_for(topup, &r.station_id),
+            );
+            LineProbes {
+                route_id: r.id.clone(),
+                attempts,
+                last_traffic_ms: evidence
+                    .usage
+                    .get(&r.id)
+                    .and_then(|u| u.iter().map(|x| x.at_ms).max()),
+                paid_model,
+                cost_hi,
+            }
+        })
+        .collect();
+    let burst = incumbent
+        .and_then(|p1| evidence.usage.get(p1))
+        .is_some_and(|rows| station_liveness::burst_needed(rows, last_burst, now));
+    Pool {
+        client,
+        lines,
+        burst,
+    }
+}
+
+/// 这一跳要测的那几条（到点的），连同发它们用的客户端；突发的那一轮记进动作日志。
+/// 真去发（同时 3 条）、落库在调用方（await 不能揣着 `&Repository`）。
+///
+/// 中转线路的测活跟真实流量一样走出站代理（设了的话，`station_ops::relay_client`）。
+#[allow(clippy::type_complexity)]
+fn prepare_probes(
+    db: &crate::repository::Repository,
+    pools: &[qb_app::usecase::station_liveness::Pool],
+    settings: &qb_station::schedule::liveness::ProbeSettings,
+    routes: &[Route],
+    catalog: &qb_station::station::pricing::Catalog,
+    topup: &std::collections::HashMap<String, f64>,
+    now: i64,
+) -> Option<(
+    Vec<(
+        qb_app::usecase::station_liveness::ProbeTarget,
+        qb_app::usecase::station_liveness::ProbeKind,
+        String,
+    )>,
+    reqwest::Client,
+)> {
+    use qb_app::usecase::station_liveness::{self, ProbeTarget};
+    if pools.is_empty() {
+        return None;
+    }
+    // 读不出今天花了多少：这一跳一分钱都不花（免费的照测）。
+    let spent = station_liveness::spent_since(db, station_liveness::local_midnight_ms(now))
+        .map(|(_, hi)| hi)
+        .unwrap_or_else(|e| {
+            tracing::warn!("测活：读不出今天花了多少，这一跳不做花钱的：{e}");
+            f64::INFINITY
+        });
+    let planned = station_liveness::plan(pools, settings, spent, now);
+    let bursts: Vec<_> = pools
+        .iter()
+        .filter(|p| p.burst)
+        .filter_map(|p| {
+            station_ops::action(
+                p.client,
+                "probe-burst",
+                None,
+                "当前那条连着失败，整个队列紧急测一遍（免费的那种）",
+                now,
+            )
+            .ok()
+        })
+        .collect();
+    if let Err(e) = station_ops::record_actions(db, &bursts) {
+        tracing::warn!("测活：突发那一条没写进动作日志：{e}");
+    }
+    if planned.is_empty() {
+        return None;
+    }
+    let jobs: Vec<_> = planned
+        .into_iter()
+        .filter_map(|p| {
+            let route = routes.iter().find(|r| r.id == p.route_id)?;
+            let model = Some(p.model.as_str()).filter(|m| !m.is_empty());
+            let cost = station_liveness::probe_cost(
+                route,
+                model,
+                catalog,
+                station_ops::topup_for(topup, &route.station_id),
+            );
+            let target = ProbeTarget::load(db, route, cost).ok()?;
+            Some((target, p.kind, p.model))
+        })
+        .collect();
+    let net = station_ops::load_router_network(db).unwrap_or_default();
+    let http = match station_ops::relay_client(&net) {
+        Ok(Some(proxied)) => proxied,
+        Ok(None) => reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new()),
+        Err(e) => {
+            tracing::warn!("测活：出站代理用不了，这一跳不测：{e}");
+            return None;
+        }
+    };
+    Some((jobs, http))
 }
 
 /// 把这一跳的结论写回库。写不回去不挡这一跳（上游已经换了），但要留下痕迹 ——
@@ -1741,6 +2299,51 @@ fn keep_schedule(db: &crate::repository::Repository, sched: &Schedule) {
 mod tests {
     use super::*;
     use qb_station::station::model::Protocols;
+
+    #[test]
+    fn the_bill_is_reused_for_a_minute_and_local_logs_win() {
+        // 一跳 30 秒、账单最多 60 秒拉一次：缓存里有、还新鲜、该读账单的线都在，才复用。
+        let state = AppState::default();
+        let a = Route::new(Client::Codex, "s", "a");
+        let b = Route::new(Client::Codex, "s", "b");
+        let billed = station_ops::RouteHealth {
+            error: Some("账单那一份".into()),
+            ..Default::default()
+        };
+        state.billing_cache.lock().unwrap().insert(
+            Client::Codex,
+            (
+                1_000,
+                [(a.id.clone(), billed.clone())].into_iter().collect(),
+            ),
+        );
+        let rest = [a.clone()];
+        assert!(cached_billing(&state, Client::Codex, &rest, 1_000 + 59_000).is_some());
+        assert!(
+            cached_billing(&state, Client::Codex, &rest, 1_000 + 60_000).is_none(),
+            "过期了"
+        );
+        assert!(
+            cached_billing(&state, Client::Codex, &[a.clone(), b.clone()], 2_000).is_none(),
+            "多出一条没拉过账单的线"
+        );
+        assert!(cached_billing(&state, Client::ClaudeCode, &rest, 2_000).is_none());
+
+        // b 有本机日志：用它自己的，账单里那份（哪怕有）不要。
+        let local = [(b.id.clone(), Default::default())].into_iter().collect();
+        let billing = (
+            1_000,
+            [(a.id.clone(), billed.clone()), (b.id.clone(), billed)]
+                .into_iter()
+                .collect(),
+        );
+        let (health, at) = merge_health(local, &rest, billing);
+        assert_eq!(at, Some(1_000));
+        assert!(health[&a.id].error.is_some());
+        assert!(health[&b.id].error.is_none(), "本机日志那一份");
+        let (_, at) = merge_health(Default::default(), &[], (1_000, Default::default()));
+        assert_eq!(at, None, "没有读账单的线就没有账单时刻");
+    }
 
     fn route_with(client: Client, protocols: Protocols) -> Route {
         Route {

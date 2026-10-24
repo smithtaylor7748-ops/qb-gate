@@ -19,6 +19,13 @@ import type { ClaudeZhOutcome } from "./generated/ClaudeZhOutcome";
 import type { CodexLocaleOutcome } from "./generated/CodexLocaleOutcome";
 import type { CodexLocaleStatus } from "./generated/CodexLocaleStatus";
 import type { BreakerView } from "./generated/BreakerView";
+import type { DispatchPin } from "./generated/DispatchPin";
+import type { DispatchRow } from "./generated/DispatchRow";
+import type { DispatchTier } from "./generated/DispatchTier";
+import type { LineLiveness } from "./generated/LineLiveness";
+import type { ProbeAttempt } from "./generated/ProbeAttempt";
+import type { ProbeSettings } from "./generated/ProbeSettings";
+import type { SchedulerAction } from "./generated/SchedulerAction";
 import type { RouterRequest } from "./generated/RouterRequest";
 import type { ListenScope } from "./generated/ListenScope";
 import type { RouterNetworkView } from "./generated/RouterNetworkView";
@@ -1966,6 +1973,160 @@ const stationBreakers: Record<string, BreakerView[]> = {
  */
 const stationPending: Record<string, string> = {};
 
+/** 测活设置（三个软件共用）。跟真后端没存过时一样：花钱测活关着。 */
+const stationProbeSettings: ProbeSettings = {
+  paid: false,
+  daily_budget_cny: 3,
+  free_interval_min: 10,
+  paid_min_interval_min: 10,
+  paid_max_interval_min: 120,
+};
+/** 钉住的那条（按软件）。调度开着时手动选的线钉 4 小时 —— 跟真后端 `PIN_MS` 一样。 */
+const stationPins: Record<string, DispatchPin> = {};
+const DEMO_PIN_MS = 4 * 3600_000;
+/** 每条线上次测活是什么时候（「立刻测」会刷新它）。没有 = 演示里按「十分钟前」算。 */
+const stationProbedAt: Record<string, number> = {};
+/** 今天花钱测活花了多少元（演示里只有开了花钱测活再点「立刻测」才会涨）。 */
+let stationProbeSpent: [number, number] = [0, 0];
+/** 动作日志，新的在前。 */
+const stationActions: SchedulerAction[] = [];
+
+function demoAction(
+  client: string,
+  kind: string,
+  routeId: string | null,
+  note: string,
+) {
+  stationActions.unshift({
+    id: `demo-action-${stationActions.length + 1}`,
+    at_ms: BigInt(Date.now()),
+    client,
+    kind,
+    route_id: routeId,
+    note,
+  });
+}
+
+/**
+ * 演示里的派单：跟真后端同一套分档（钉住 → 合格 → 兜底 → 故障），熔断着的那条排最后、
+ * 照样留在队列里（永不全关）。调度关着时队列是手动排的那份，档位那几列是空的。
+ *
+ * 低价组演示成「没过底线、兜底」：那一档在截图里要看得见，而它恰好是成功率最差的那条。
+ */
+function demoDispatchOf(who: string) {
+  const routes = stationRoutes.filter((r) => r.client === who);
+  const open = new Set(
+    (stationBreakers[who] ?? [])
+      .filter((b) => b.state === "open")
+      .map((b) => b.route_id),
+  );
+  const sched = stationSchedules.find((x) => x.client === who);
+  const held = stationPins[who];
+  const pin = held && Number(held.until_ms) > Date.now() ? held : null;
+  const tierOf = (id: string): DispatchTier =>
+    open.has(id)
+      ? "faulty"
+      : pin?.route_id === id
+        ? "pinned"
+        : id === R_CHEAP
+          ? "fallback"
+          : "qualified";
+  const rank: Record<DispatchTier, number> = {
+    pinned: 0,
+    qualified: 1,
+    fallback: 2,
+    faulty: 3,
+  };
+  const reason: Record<DispatchTier, string> = {
+    pinned: "你手动选的，钉住",
+    qualified: "合格",
+    fallback: "稳没过线，兜底",
+    faulty: "熔断中",
+  };
+  const sorted = [...routes].sort(
+    (a, b) =>
+      rank[tierOf(a.id)] - rank[tierOf(b.id)] || a.id.localeCompare(b.id),
+  );
+  if (!sched?.enabled) {
+    return {
+      order: [...(stationDispatch[who] ?? [])],
+      rows: [] as DispatchRow[],
+      alerts: [] as string[],
+      pin,
+    };
+  }
+  const rows: DispatchRow[] = sorted.map((r, i) => ({
+    route_id: r.id,
+    tier: tierOf(r.id),
+    position: i + 1,
+    score:
+      tierOf(r.id) === "faulty" ? null : Number((0.92 - i * 0.18).toFixed(2)),
+    samples: Math.max(0, 14 - i * 5),
+    reason: reason[tierOf(r.id)],
+  }));
+  const alerts =
+    routes.length === 1
+      ? ["只有 1 条线，挂了没有可以换的 —— 再加一条线才谈得上调度"]
+      : [];
+  return { order: sorted.map((r) => r.id), rows, alerts, pin };
+}
+
+function demoQueueOf(who: string) {
+  const d = demoDispatchOf(who);
+  return {
+    client: who,
+    current: stationCurrent[who] ?? null,
+    order: d.order,
+    updated_ms: BigInt(Date.now()),
+    pin: d.pin,
+    memory: { challenger: null, streak: 0, signature: null },
+    rows: d.rows,
+    alerts: d.alerts,
+  };
+}
+
+/** 演示里一条线的测活状况。熔断着的那条测活也判死（余额不足），对得上熔断那一格。 */
+function demoLivenessOf(who: string, id: string): LineLiveness {
+  const route = stationRoutes.find((r) => r.id === id);
+  const dead = (stationBreakers[who] ?? []).some(
+    (b) => b.route_id === id && b.state === "open",
+  );
+  const at = stationProbedAt[id] ?? Date.now() - 10 * 60_000;
+  const busy = id === stationCurrent[who];
+  return {
+    route_id: id,
+    label: routeLabelOfDemo(id),
+    health: {
+      state: dead ? "down" : "up",
+      reason: dead ? "测活失败：上游余额不足，要充值" : "测活通过",
+      fault: dead ? "balance" : null,
+      faults: dead ? 1 : 0,
+      last_ok_ms: dead ? null : BigInt(at),
+      busy: false,
+      missing_models: [],
+    },
+    last_probe_ms: BigInt(at),
+    next_probe_ms:
+      busy && !dead ? null : BigInt(at + (dead ? 60 : 10) * 60_000),
+    speed_ms:
+      stationProbeSettings.paid && !dead ? 1180n + BigInt(id.length * 7) : null,
+    speed_samples: stationProbeSettings.paid && !dead ? 3 : 0,
+    fail_rate: dead ? 1 : id === R_CHEAP ? 0.2 : 0,
+    requests_24h: busy ? 186 : id === R_CHEAP ? 9 : 0,
+    real_rate:
+      route?.nominal_rate == null
+        ? null
+        : route.nominal_rate * (route.latest_mult ?? 1),
+  };
+}
+
+function routeLabelOfDemo(id: string): string {
+  const r = stationRoutes.find((x) => x.id === id);
+  if (!r) return id;
+  const station = r.station_id === "example" ? "Example 中转" : "Moxi";
+  return r.group ? `${station} · ${r.group}` : station;
+}
+
 const stationHealth = [
   {
     route_id: R_MAIN,
@@ -2359,6 +2520,7 @@ const stationSchedules = [
     },
     last_switch_ms: null,
     last_note: "",
+    dispatch: { margin: 0.08, min_samples: 3, confirm: 2 },
   },
   {
     client: "claude-desktop",
@@ -2373,6 +2535,7 @@ const stationSchedules = [
     },
     last_switch_ms: null,
     last_note: "",
+    dispatch: { margin: 0.08, min_samples: 3, confirm: 2 },
   },
   {
     client: "codex",
@@ -2387,6 +2550,7 @@ const stationSchedules = [
     },
     last_switch_ms: null,
     last_note: "",
+    dispatch: { margin: 0.08, min_samples: 3, confirm: 2 },
   },
 ];
 
@@ -2570,24 +2734,107 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     stationRouterSettings[s.client] = { ...s };
     return { ...s };
   },
-  station_dispatch_queue: (args) => {
-    const who = String(args?.client ?? "claude-code");
-    return {
-      client: who,
-      current: stationCurrent[who] ?? null,
-      order: [...(stationDispatch[who] ?? [])],
-      updated_ms: 0n,
-    };
-  },
+  station_dispatch_queue: (args) =>
+    demoQueueOf(String(args?.client ?? "claude-code")),
   station_dispatch_queue_save: (args) => {
     const who = String(args?.client ?? "claude-code");
+    // 跟真后端一样：调度开着时顺序归调度排。
+    if (stationSchedules.find((x) => x.client === who)?.enabled)
+      throw new Error(
+        "智能调度开着时热备顺序由调度排（下一跳就会盖掉手排的）；要自己排先停调度，或者钉住一条",
+      );
     stationDispatch[who] = [...((args?.order as string[]) ?? [])];
+    return demoQueueOf(who);
+  },
+  // 派单队列与测活（阶段 2）。全是演示夹具里的状态，跟真后端一样有状态。
+  station_dispatch_view: (args) => {
+    const who = String(args?.client ?? "claude-code");
+    const queue = demoQueueOf(who);
+    const ids = [
+      ...queue.order,
+      ...stationRoutes
+        .filter((r) => r.client === who && !queue.order.includes(r.id))
+        .map((r) => r.id),
+    ];
     return {
       client: who,
-      current: stationCurrent[who] ?? null,
-      order: [...stationDispatch[who]],
-      updated_ms: BigInt(Date.now()),
+      enabled: Boolean(stationSchedules.find((x) => x.client === who)?.enabled),
+      queue,
+      lines: ids.map((id) => demoLivenessOf(who, id)),
+      spent_today: [...stationProbeSpent] as [number, number],
+      settings: { ...stationProbeSettings },
+      actions: stationActions.filter((a) => a.client === who).slice(0, 30),
     };
+  },
+  station_probe_now: (args) => {
+    const who = String(args?.client ?? "claude-code");
+    const only = args?.routeId as string | null | undefined;
+    const now = Date.now();
+    const out: ProbeAttempt[] = [];
+    for (const r of stationRoutes.filter(
+      (x) => x.client === who && (only == null || x.id === only),
+    )) {
+      stationProbedAt[r.id] = now;
+      const dead = (stationBreakers[who] ?? []).some(
+        (b) => b.route_id === r.id && b.state === "open",
+      );
+      out.push({
+        id: `demo-probe-${r.id}-${now}`,
+        route_id: r.id,
+        at_ms: BigInt(now),
+        model: "",
+        ok: !dead,
+        fault: dead ? "balance" : null,
+        total_ms: dead ? 140n : 320n,
+        first_ms: null,
+        paid: false,
+        cost_lo: null,
+        cost_hi: null,
+        error: dead ? "HTTP 402：上游余额不足，要充值" : null,
+      });
+      if (stationProbeSettings.paid && !dead) {
+        stationProbeSpent = [
+          stationProbeSpent[0] + 0.0004,
+          stationProbeSpent[1] + 0.0011,
+        ];
+        out.push({
+          ...out[out.length - 1],
+          id: `demo-paid-${r.id}-${now}`,
+          model: who === "codex" ? "gpt-6-luna" : "claude-sonnet-5",
+          total_ms: 1180n,
+          first_ms: 860n,
+          paid: true,
+          cost_lo: 0.0004,
+          cost_hi: 0.0011,
+        });
+      }
+    }
+    return new Promise((done) => setTimeout(done, 600)).then(() => out);
+  },
+  station_pin: (args) => {
+    const who = String(args?.client ?? "claude-code");
+    const id = (args?.routeId as string | null | undefined) ?? null;
+    if (id) {
+      stationPins[who] = {
+        route_id: id,
+        until_ms: BigInt(Date.now() + DEMO_PIN_MS),
+      };
+      if (stationCurrent[who] !== id) stationPending[who] = id;
+      demoAction(who, "pin", id, "你手动选的，钉住 4 小时（它挂了就不算）");
+    } else {
+      delete stationPins[who];
+      demoAction(who, "unpin", null, "取消钉住，交回调度");
+    }
+    return demoQueueOf(who);
+  },
+  station_probe_settings_save: (args) => {
+    const next = args?.settings as ProbeSettings;
+    if (!(next.daily_budget_cny >= 0))
+      throw new Error("每日预算要是个不小于 0 的数");
+    if (next.paid_min_interval_min > next.paid_max_interval_min)
+      throw new Error("花钱测活的最短间隔不能比最长的还长");
+    Object.assign(stationProbeSettings, next);
+    return { ...stationProbeSettings };
   },
   // 本机路由的网络设置（R6）。演示里不真的改监听、不真的连代理；状态照样记着。
   station_router_network: () => ({ ...stationNetwork }),
@@ -2682,6 +2929,18 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     );
     if (route) {
       const who = route.client;
+      if (stationSchedules.find((x) => x.client === who)?.enabled) {
+        stationPins[who] = {
+          route_id: route.id,
+          until_ms: BigInt(Date.now() + DEMO_PIN_MS),
+        };
+        demoAction(
+          who,
+          "pin",
+          route.id,
+          "你手动选的，钉住 4 小时（它挂了就不算）",
+        );
+      }
       if (args?.immediate) {
         // `set_now`：直接落定，顺手撤掉排队。
         if (stationCurrent[who] !== route.id) stationSwitches += 1;
@@ -2759,6 +3018,8 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       s.last_note = s.enabled ? "现任仍然是最好的那条" : "";
     }
     if (args?.prefs != null) s.prefs = args.prefs as (typeof s)["prefs"];
+    if (args?.dispatch != null)
+      s.dispatch = args.dispatch as (typeof s)["dispatch"];
     return { ...s };
   },
   station_logs: () => stationLogs,

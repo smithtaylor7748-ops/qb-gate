@@ -25,6 +25,7 @@ import {
   type Prefs,
 } from "../../lib/station";
 import { Button } from "../../ui";
+import StationDispatch from "./StationDispatch";
 
 const AX: Record<Axis, { label: string; desc: string }> = {
   cheap: { label: "便宜", desc: "单位配额消耗最低" },
@@ -167,12 +168,10 @@ export default function StationSchedule({
   return (
     <>
       <div className="qb-st-verdict">
-        <span className="lead">现在会走</span>
+        {/* 排名第一的不一定就是当前上游：换第一条还要过派单那一道防抖与分档（下面「派单队列」）。 */}
+        <span className="lead">按这套排第一</span>
         <span className="big">
           {winner ? routeLabelFromId(winner) : "没有可用线路"}
-          {ranking?.held_by_hysteresis && (
-            <small>现任留任 · 挑战者没领先够 8%</small>
-          )}
         </span>
         <span style={{ flex: 1 }} />
         {winner && (
@@ -340,10 +339,13 @@ export default function StationSchedule({
                 <br />
               </>
             )}
-            换上游会让上游那边的 prompt 缓存作废，所以挑战者要领先现任 8% 才换。
+            这里只是这一轮的排名；真要换第一条还得过「换第一条的防抖」（领先多少、几个样本、连续几轮），
+            熔断中或没过底线的线永远不会被换上来当第一。
           </p>
         </div>
       </div>
+
+      <StationDispatch client={client} />
 
       <div className="qb-card">
         <h3>熔断</h3>

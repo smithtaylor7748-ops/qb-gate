@@ -9,6 +9,9 @@
 //! 所以可以自动刷新。真打模型测速和站点检验要花钱,**只在使用者点的时候跑** ——
 //! 这一层不提供任何自动触发它们的入口。
 //!
+//! 唯一的例外是花钱测活(2026-10-24 起,中转站重构阶段 2,见 [`super::station_liveness`]):
+//! **默认关**,使用者在调度设置里自己打开之后才由调度循环按每日预算自动跑,每次一个 token。
+//!
 //! # ⛔ 这里绝不许碰官方账户槽位
 //!
 //! 中转线路挂了就换中转线路。按额度 / 429 自动切官方槽位是
@@ -24,8 +27,10 @@ use qb_station::health::{self, Windows};
 use qb_station::router::{
     DispatchQueue, ListenScope, RouterNetwork, RouterRequest, RouterSettings,
 };
+use qb_station::schedule::liveness::{self, ProbeAttempt, ProbeState, SchedulerAction};
 use qb_station::schedule::{
-    cheap_values, cost_per_token, rank, Candidate, CheapBasis, CheapInput, Prefs, Ranking, Schedule,
+    cheap_values, cost_per_token, rank, Candidate, CheapBasis, CheapInput, Dispatch, LineFacts,
+    Pin, Prefs, Ranking, Schedule,
 };
 use qb_station::station::audit::{AuditRound, Check, CheckKind};
 use qb_station::station::model::{Protocols, UsageRow};
@@ -424,27 +429,340 @@ pub async fn probe_protocols(base_url: &str, key: &str, client: &reqwest::Client
     out
 }
 
-/// 这一跳该不该换上游,换到哪。
+/// 这一跳该不该换上游,换到哪:派单队列的第一条不是现任就换过去。`None` = 不换。
 ///
-/// `None` = 不换。三种情况都归到这里:排不出赢家(没勾维度、全没证据)、
-/// 赢家就是现任、赢家不合格。
+/// # ⛔ 防抖与「不合格的不当第一」都不在这里
 ///
-/// # ⛔ 迟滞不在这里
+/// 两件事都由派单([`dispatch`](qb_station::schedule::dispatch))做过了:挑战者要连续几轮
+/// 领先够多才换,兜底 / 故障档的线永远不会被换上来当第一(CLAUDE.md「熔断中或不合格的线
+/// 不当第一」)。这里再判一次的话就是两道叠在一起,结果是永远不换,而且没有任何地方说得清
+/// 为什么。所以这里只问一句:第一条跟现任是不是同一条。
+pub fn next_upstream(dispatch: &Dispatch, current: Option<&str>) -> Option<String> {
+    let first = dispatch.order.first()?;
+    (Some(first.as_str()) != current).then(|| first.clone())
+}
+
+// ------------------------------------------------------------ 派单（中转站重构阶段 2）
+
+/// 一个软件这一轮派单要的证据（健康度以外的那些）。
+#[derive(Debug, Clone, Default)]
+pub struct Evidence {
+    /// 每条线在本机路由日志里的证据行（[`router_usage_rows`]）。
+    pub usage: HashMap<String, Vec<UsageRow>>,
+    /// 每条线最近的测活（新 → 旧）。
+    pub probes: HashMap<String, Vec<ProbeAttempt>>,
+    /// 花钱测活开着没有。开着时「快」整池改用测活量出来的速度（[`probe_speeds`]）。
+    pub paid_probing: bool,
+    /// 界面上的显示名（站点 · 分组），见 [`route_label`]。
+    pub labels: HashMap<String, String>,
+    /// 健康度从站点账单来的那几条，账单是什么时候拉的（它们没有逐条的时间戳，防抖拿这个当「新证据」）。
+    pub billing_at: Option<i64>,
+}
+
+/// 速度看最近几次花钱测活。
+const PROBE_SPEED_SAMPLES: usize = 5;
+/// 速度只看多久以内的测活。
+const PROBE_SPEED_WINDOW_MS: i64 = 6 * 3600 * 1000;
+
+/// 花钱测活量出来的速度（总耗时中位数，毫秒）与样本数，按线路。
 ///
-/// 「挑战者好得不够多就留现任」由 [`rank`](qb_station::schedule::rank) 做过了 ——
-/// 它拿着 `incumbent` 参数。这里再判一次的话就是两道迟滞叠在一起,
-/// 结果是永远不换,而且没有任何地方说得清为什么。
-///
-/// 所以这里只问一句:赢家跟现任是不是同一条。
-pub fn next_upstream(ranking: &Ranking, current: Option<&str>) -> Option<String> {
-    let winner = ranking.winner.as_deref()?;
-    // 赢家必须还在场上 —— 熔断中/没过底线的那几条 rank 不会选,
-    // 但放开底线那一轮会。放开是为了不制造死局,不是为了把不合格的送上去。
-    let row = ranking.rows.iter().find(|r| r.route_id == winner)?;
-    if !row.eligible || row.tripped {
+/// **整池都有才给**（`None` = 退回本机日志 / 账单的体验分）—— 跟「便宜」整池统一口径一个道理：
+/// p1 的体验分是长请求的生成时间，热备只有一个 token 的测活，混着比出来的比值没有意义。
+pub fn probe_speeds(
+    routes: &[Route],
+    evidence: &Evidence,
+    now_ms: i64,
+) -> Option<HashMap<String, (f64, u32)>> {
+    if !evidence.paid_probing || routes.is_empty() {
         return None;
     }
-    (Some(winner) != current).then(|| winner.to_string())
+    routes
+        .iter()
+        .map(|r| {
+            let attempts = evidence.probes.get(&r.id)?;
+            let (total, _, n) = liveness::speed(
+                attempts,
+                None,
+                now_ms,
+                PROBE_SPEED_SAMPLES,
+                PROBE_SPEED_WINDOW_MS,
+            );
+            Some((r.id.clone(), (total? as f64, n)))
+        })
+        .collect()
+}
+
+/// 线路在界面上的名字：站点名 · 分组（站点删了就用站点 id）。
+pub fn route_label(route: &Route, providers: &HashMap<String, String>) -> String {
+    let station = providers
+        .get(&route.station_id)
+        .filter(|n| !n.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| route.station_id.clone());
+    if route.group.is_empty() {
+        station
+    } else {
+        format!("{station} · {}", route.group)
+    }
+}
+
+/// 所有站点的显示名，按站点 id。
+pub fn provider_names(db: &Repository) -> HashMap<String, String> {
+    db.list::<Provider>("providers")
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| (p.id, p.name))
+        .collect()
+}
+
+/// 派单要的每条线的事实（[`LineFacts`]）。
+///
+/// - 样本数：整池用测活速度时是花钱测活的成功次数，否则是本机日志 / 账单里一天的请求数。
+/// - 最新证据：本机日志与测活里最新的那一条；只有账单的线用账单拉取的时刻。
+/// - 测活判死：[`liveness::assess`] 判死了，**而且判死之后本机路由没在它上面成功过** ——
+///   真实流量成功了就是活着，不能让一次测活把正在干活的线打进故障档。
+/// - 映射缺模型：这条线上「上游说没有」的模型里，被这条线自己的模型映射改过名的那几个
+///   （写成「客户端的名字 → 映射成的名字」）。
+pub fn line_facts(
+    routes: &[Route],
+    health: &HashMap<String, RouteHealth>,
+    evidence: &Evidence,
+    speeds: Option<&HashMap<String, (f64, u32)>>,
+    now_ms: i64,
+) -> HashMap<String, LineFacts> {
+    routes
+        .iter()
+        .map(|r| {
+            let usage: &[UsageRow] = evidence.usage.get(&r.id).map_or(&[], Vec::as_slice);
+            let probes: &[ProbeAttempt] = evidence.probes.get(&r.id).map_or(&[], Vec::as_slice);
+            let last_usage = usage.iter().map(|u| u.at_ms).max();
+            let last_probe = probes.first().map(|a| a.at_ms);
+            let billed = health
+                .get(&r.id)
+                .is_some_and(|h| h.windows.day.requests > 0);
+            let evidence_at = last_usage
+                .max(last_probe)
+                .or(evidence.billing_at.filter(|_| billed));
+            let samples = match speeds {
+                Some(s) => s.get(&r.id).map_or(0, |(_, n)| *n),
+                None => health.get(&r.id).map_or(0, |h| {
+                    u32::try_from(h.windows.day.requests).unwrap_or(u32::MAX)
+                }),
+            };
+            let judged = liveness::assess(probes, now_ms);
+            let newest_fault = probes.iter().find(|a| a.is_fault()).map(|a| a.at_ms);
+            let recovered = usage
+                .iter()
+                .any(|u| u.ok && newest_fault.is_some_and(|t| u.at_ms > t));
+            let probe_down =
+                (judged.state == ProbeState::Down && !recovered).then(|| judged.reason.clone());
+            let mapping = crate::local_router::Upstream::default().with_model_map(&r.model_map);
+            let mapping_missing = judged
+                .missing_models
+                .iter()
+                .filter_map(|m| mapping.map_model(m).map(|to| format!("{m} → {to}")))
+                .collect();
+            (
+                r.id.clone(),
+                LineFacts {
+                    samples,
+                    evidence_at,
+                    probe_down,
+                    mapping_missing,
+                    label: evidence.labels.get(&r.id).cloned().unwrap_or_default(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// 一个软件这一轮派单的结果。
+#[derive(Debug, Clone)]
+pub struct Round {
+    pub ranking: Ranking,
+    pub basis: CheapBasis,
+    pub dispatch: Dispatch,
+    /// 「快」这一轮用的是不是测活速度。
+    pub probe_speed: bool,
+}
+
+/// 排一轮派单：健康度 + 证据 → 排序（不带现任）→ 分档、防抖、热备。**不联网、不碰路由器。**
+#[allow(clippy::too_many_arguments)]
+pub fn plan_round(
+    routes: &[Route],
+    health: &HashMap<String, RouteHealth>,
+    breaker_state: &HashMap<String, (f64, bool)>,
+    schedule: &Schedule,
+    queue: &DispatchQueue,
+    incumbent: Option<&str>,
+    catalog: &pricing::Catalog,
+    topup: &HashMap<String, f64>,
+    evidence: &Evidence,
+    now_ms: i64,
+) -> Round {
+    let speeds = probe_speeds(routes, evidence, now_ms);
+    let speed_ms: Option<HashMap<String, f64>> = speeds
+        .as_ref()
+        .map(|s| s.iter().map(|(id, (ms, _))| (id.clone(), *ms)).collect());
+    let (ranking, basis) = decide(
+        routes,
+        health,
+        breaker_state,
+        &schedule.prefs,
+        catalog,
+        topup,
+        speed_ms.as_ref(),
+    );
+    let facts = line_facts(routes, health, evidence, speeds.as_ref(), now_ms);
+    let dispatch = qb_station::schedule::dispatch(
+        &ranking,
+        &facts,
+        incumbent,
+        &queue.order,
+        queue.pin.as_ref(),
+        &queue.memory,
+        &schedule.dispatch,
+        now_ms,
+    );
+    Round {
+        ranking,
+        basis,
+        dispatch,
+        probe_speed: speeds.is_some(),
+    }
+}
+
+/// 调度开着时手动选的线钉多久。
+pub const PIN_MS: i64 = 4 * 3600 * 1000;
+
+/// 把这一轮派单存进派单队列（顺序、防抖记忆、每一行、告警），过期的钉住顺手清掉。
+pub fn save_dispatch(
+    db: &Repository,
+    client: Client,
+    dispatch: &Dispatch,
+    now_ms: i64,
+) -> Result<DispatchQueue> {
+    let mut q = load_dispatch_queue(db, client)?;
+    q.order = dispatch.order.clone();
+    q.memory = dispatch.memory.clone();
+    q.rows = dispatch.rows.clone();
+    q.alerts = dispatch.alerts.clone();
+    if q.pin.as_ref().is_some_and(|p| p.until_ms <= now_ms) {
+        q.pin = None;
+    }
+    q.updated_ms = now_ms;
+    db.put(DISPATCH_TABLE, &schedule_key(client)?, &q)?;
+    Ok(q)
+}
+
+/// 钉住一条线 [`PIN_MS`]（`None` = 取消钉住）。只收这个软件自己的线。
+pub fn set_pin(
+    db: &Repository,
+    client: Client,
+    route_id: Option<&str>,
+    now_ms: i64,
+) -> Result<DispatchQueue> {
+    let mut q = load_dispatch_queue(db, client)?;
+    q.pin = match route_id {
+        Some(id) => {
+            if !id.starts_with(&format!("{}\u{1f}", schedule_key(client)?)) {
+                return Err(GateError::Other(format!("钉住的线不是这个软件的（{id}）")));
+            }
+            Some(Pin {
+                route_id: id.to_string(),
+                until_ms: now_ms + PIN_MS,
+            })
+        }
+        None => None,
+    };
+    // 钉住换了人，防抖的记忆作废（那是跟上一个现任比出来的）。
+    q.memory = Default::default();
+    q.updated_ms = now_ms;
+    db.put(DISPATCH_TABLE, &schedule_key(client)?, &q)?;
+    Ok(q)
+}
+
+/// 动作日志落在哪张表（迁移 7）。
+const ACTIONS_TABLE: &str = "scheduler_actions";
+/// 动作日志留多少条（一天几条，够看几个月）。
+pub const SCHEDULER_ACTIONS_KEEP: usize = 500;
+
+/// 这一轮跟上一轮比做了什么：换了第一条、热备改了顺序。
+pub fn round_actions(
+    client: Client,
+    previous_order: &[String],
+    incumbent: Option<&str>,
+    dispatch: &Dispatch,
+    now_ms: i64,
+) -> Result<Vec<SchedulerAction>> {
+    let mut out = Vec::new();
+    let first = dispatch.order.first();
+    if first.is_some_and(|f| Some(f.as_str()) != incumbent) {
+        out.push(action(
+            client,
+            "switch",
+            first.cloned(),
+            &dispatch.note,
+            now_ms,
+        )?);
+    }
+    let standby = |order: &[String]| -> Vec<String> {
+        order
+            .iter()
+            .filter(|id| Some(*id) != first)
+            .cloned()
+            .collect()
+    };
+    let before = standby(previous_order);
+    // 第一次排（上一轮没有顺序）不算「改了顺序」。
+    if !before.is_empty() && before != standby(&dispatch.order) {
+        out.push(action(client, "reorder", None, "热备顺序改了", now_ms)?);
+    }
+    Ok(out)
+}
+
+/// 一条动作（`kind` 的几种写法见 [`SchedulerAction`]）。
+pub fn action(
+    client: Client,
+    kind: &str,
+    route_id: Option<String>,
+    note: &str,
+    now_ms: i64,
+) -> Result<SchedulerAction> {
+    Ok(SchedulerAction {
+        id: uuid::Uuid::new_v4().to_string(),
+        at_ms: now_ms,
+        client: schedule_key(client)?,
+        kind: kind.into(),
+        route_id,
+        note: note.into(),
+    })
+}
+
+/// 记几条动作，只留最新的 [`SCHEDULER_ACTIONS_KEEP`] 条。
+pub fn record_actions(db: &Repository, actions: &[SchedulerAction]) -> Result<()> {
+    if actions.is_empty() {
+        return Ok(());
+    }
+    for a in actions {
+        db.put(ACTIONS_TABLE, &a.id, a)?;
+    }
+    db.prune(ACTIONS_TABLE, SCHEDULER_ACTIONS_KEEP, |_| false)?;
+    Ok(())
+}
+
+/// 最近的动作，新的在前。`client` 给了就只要这个软件的。
+pub fn scheduler_actions(
+    db: &Repository,
+    client: Option<Client>,
+    limit: usize,
+) -> Result<Vec<SchedulerAction>> {
+    let key = client.map(schedule_key).transpose()?;
+    let mut all: Vec<SchedulerAction> = db.list(ACTIONS_TABLE)?;
+    all.retain(|a| key.as_ref().is_none_or(|k| &a.client == k));
+    all.sort_by_key(|a| std::cmp::Reverse(a.at_ms));
+    all.truncate(limit);
+    Ok(all)
 }
 
 /// 每家站点的充值比例(1 美元站内额度付几元),按站点 id。
@@ -463,6 +781,16 @@ pub fn topup_ratios(db: &Repository) -> HashMap<String, f64> {
         .collect()
 }
 
+/// 这家站 1 美元站内额度付几元。没填(或填的不是正数)按 1 算
+/// ([`DEFAULT_TOPUP_PER_USD`](crate::domain::DEFAULT_TOPUP_PER_USD))。
+pub fn topup_for(topup: &HashMap<String, f64>, station_id: &str) -> f64 {
+    topup
+        .get(station_id)
+        .copied()
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .unwrap_or(crate::domain::DEFAULT_TOPUP_PER_USD)
+}
+
 /// 把线路 + 健康度拼成排序用的候选,再排一次。
 ///
 /// `demotion` / `tripped` 由调用方从各自的熔断器里取 —— 熔断器的状态
@@ -479,19 +807,14 @@ pub fn decide(
     health: &HashMap<String, RouteHealth>,
     breaker_state: &HashMap<String, (f64, bool)>,
     prefs: &Prefs,
-    incumbent: Option<&str>,
     // 官方价目。四类倍率都要拿站点单价除它,见下面那段。
     catalog: &pricing::Catalog,
     // 每家站的充值比例。不在表里的按 1 算。
     topup: &HashMap<String, f64>,
+    // 花钱测活量出来的速度(毫秒,按线路)。给了就整池拿它当「快」(见 [`probe_speeds`])。
+    speed: Option<&HashMap<String, f64>>,
 ) -> (Ranking, CheapBasis) {
-    let topup_of = |r: &Route| {
-        topup
-            .get(&r.station_id)
-            .copied()
-            .filter(|v| v.is_finite() && *v > 0.0)
-            .unwrap_or(crate::domain::DEFAULT_TOPUP_PER_USD)
-    };
+    let topup_of = |r: &Route| topup_for(topup, &r.station_id);
     // 「便宜」整池统一口径：所有线都拿得出 24h 实扣单价才用它,
     // 差一条就整池退回真实倍率。混着比出来的比值没有意义。
     let inputs: Vec<CheapInput> = routes
@@ -541,7 +864,10 @@ pub fn decide(
                 // 底线「倍率不高于」比真实倍率(没有就退回加权倍率),都已折过充值比例。
                 // ⛔ 不拿 `cheap[i]`:整池走实扣单价时那是 1e-6 量级,底线等于没设。
                 real_rate: inputs[i].real_rate.or(inputs[i].blended_ratio),
-                experience_ms: day.and_then(|d| d.experience_ms),
+                experience_ms: match speed {
+                    Some(v) => v.get(&r.id).copied(),
+                    None => day.and_then(|d| d.experience_ms),
+                },
                 ttft_p95_ms: day.and_then(|d| d.ttft_p95_ms),
                 success_rate: day.and_then(|d| d.success_rate),
                 demotion,
@@ -550,7 +876,8 @@ pub fn decide(
         })
         .collect();
 
-    (rank(&candidates, prefs, incumbent), basis)
+    // ⛔ 不给 incumbent:换不换第一条只由派单那一道防抖管(`schedule::dispatch` 的模块头)。
+    (rank(&candidates, prefs, None), basis)
 }
 
 /// 一轮检验的产物:结论,外加**顺手学到的那家站点的价目**。
@@ -1412,6 +1739,250 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    fn probe(at_ms: i64, ok: bool, fault: Option<&str>, total_ms: u64) -> ProbeAttempt {
+        ProbeAttempt {
+            at_ms,
+            ok,
+            fault: fault.map(str::to_string),
+            total_ms: Some(total_ms),
+            paid: true,
+            model: "m".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn probe_speed_is_used_only_when_paid_probing_covers_the_whole_pool() {
+        let now = 1_700_000_000_000i64;
+        let routes = [route("a", 1.0), route("b", 1.0)];
+        let mut ev = Evidence {
+            paid_probing: true,
+            ..Default::default()
+        };
+        ev.probes.insert(
+            routes[0].id.clone(),
+            vec![probe(now - 1_000, true, None, 800)],
+        );
+        assert!(
+            probe_speeds(&routes, &ev, now).is_none(),
+            "b 还没测过：整池退回体验分"
+        );
+        ev.probes.insert(
+            routes[1].id.clone(),
+            vec![
+                probe(now - 1_000, true, None, 400),
+                probe(now - 2_000, true, None, 600),
+            ],
+        );
+        let s = probe_speeds(&routes, &ev, now).unwrap();
+        assert_eq!(s[&routes[1].id], (500.0, 2));
+        ev.paid_probing = false;
+        assert!(probe_speeds(&routes, &ev, now).is_none(), "关着就不用");
+
+        // 用上测活速度时，「快」按它排：b 比 a 快。
+        ev.paid_probing = true;
+        let round = plan_round(
+            &routes,
+            &HashMap::new(),
+            &HashMap::new(),
+            &Schedule {
+                prefs: Prefs {
+                    axes: vec![Axis::Fast],
+                    ..Default::default()
+                },
+                ..Schedule::new(Client::ClaudeCode)
+            },
+            &DispatchQueue::new(Client::ClaudeCode),
+            None,
+            &pricing::Catalog::new(vec![]),
+            &HashMap::new(),
+            &ev,
+            now,
+        );
+        assert!(round.probe_speed);
+        assert_eq!(round.dispatch.order.first(), Some(&routes[1].id));
+        assert_eq!(
+            next_upstream(&round.dispatch, None),
+            Some(routes[1].id.clone())
+        );
+    }
+
+    #[test]
+    fn a_probe_failure_is_overruled_by_a_real_success_afterwards() {
+        let now = 1_700_000_000_000i64;
+        let mut r = route("a", 1.0);
+        r.model_map.default = Some("relay-x".into());
+        let routes = [r];
+        let mut ev = Evidence::default();
+        let mut missing = probe(now - 90_000, false, Some("model-missing"), 50);
+        missing.model = "claude-opus-5".into();
+        ev.probes.insert(
+            routes[0].id.clone(),
+            vec![probe(now - 60_000, false, Some("auth"), 30), missing],
+        );
+        let facts = line_facts(&routes, &HashMap::new(), &ev, None, now);
+        let f = &facts[&routes[0].id];
+        assert!(
+            f.probe_down.as_deref().unwrap_or("").contains("凭据"),
+            "{f:?}"
+        );
+        assert_eq!(f.mapping_missing, ["claude-opus-5 → relay-x"]);
+        assert_eq!(f.evidence_at, Some(now - 60_000));
+
+        // 判死之后真实流量在它上面成功了：活着，不进故障档。
+        ev.usage.insert(
+            routes[0].id.clone(),
+            vec![UsageRow {
+                at_ms: now - 10_000,
+                ok: true,
+                ..Default::default()
+            }],
+        );
+        let facts = line_facts(&routes, &HashMap::new(), &ev, None, now);
+        assert_eq!(facts[&routes[0].id].probe_down, None);
+        assert_eq!(facts[&routes[0].id].evidence_at, Some(now - 10_000));
+    }
+
+    #[test]
+    fn a_line_known_only_from_the_bill_dates_its_evidence_by_the_fetch() {
+        let routes = [route("a", 1.0)];
+        let ev = Evidence {
+            billing_at: Some(42),
+            ..Default::default()
+        };
+        let mut h = HashMap::new();
+        h.insert(routes[0].id.clone(), health_with(1.0, 1000, 500, 4, 0));
+        let facts = line_facts(&routes, &h, &ev, None, 1_700_000_000_000);
+        assert_eq!(facts[&routes[0].id].evidence_at, Some(42));
+        assert_eq!(facts[&routes[0].id].samples, 4);
+        // 账单里一条都没有：不算有证据。
+        let facts = line_facts(&routes, &HashMap::new(), &ev, None, 1_700_000_000_000);
+        assert_eq!(facts[&routes[0].id].evidence_at, None);
+    }
+
+    #[test]
+    fn a_pin_belongs_to_one_client_expires_and_resets_the_debounce_memory() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        let mine = Route::make_id(Client::Codex, "s", "a");
+        let theirs = Route::make_id(Client::ClaudeCode, "s", "a");
+        assert!(set_pin(&db, Client::Codex, Some(&theirs), 0).is_err());
+        let d = Dispatch {
+            order: vec![mine.clone()],
+            rows: Vec::new(),
+            memory: qb_station::schedule::DispatchMemory {
+                challenger: Some("x".into()),
+                streak: 1,
+                signature: None,
+            },
+            alerts: vec!["P1 告警".into()],
+            note: String::new(),
+            switched: false,
+        };
+        save_dispatch(&db, Client::Codex, &d, 1).unwrap();
+        let q = set_pin(&db, Client::Codex, Some(&mine), 1_000).unwrap();
+        assert_eq!(q.pin.as_ref().unwrap().until_ms, 1_000 + PIN_MS);
+        assert_eq!(q.memory, Default::default(), "换了钉住，防抖记忆作废");
+        assert_eq!(q.alerts, ["P1 告警"]);
+        // 还没到期：存这一轮不动它；过期了：顺手清掉。
+        assert!(save_dispatch(&db, Client::Codex, &d, 2_000)
+            .unwrap()
+            .pin
+            .is_some());
+        assert!(save_dispatch(&db, Client::Codex, &d, 1_000 + PIN_MS)
+            .unwrap()
+            .pin
+            .is_none());
+        assert!(set_pin(&db, Client::Codex, Some(&mine), 0)
+            .unwrap()
+            .pin
+            .is_some());
+        assert!(set_pin(&db, Client::Codex, None, 0).unwrap().pin.is_none());
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_round_logs_a_switch_and_a_reorder_but_not_the_first_ordering() {
+        let d = |order: &[&str]| Dispatch {
+            order: order.iter().map(|s| s.to_string()).collect(),
+            rows: Vec::new(),
+            memory: Default::default(),
+            alerts: Vec::new(),
+            note: "换了".into(),
+            switched: false,
+        };
+        let kinds = |prev: &[&str], inc: Option<&str>, now: &[&str]| -> Vec<String> {
+            let prev: Vec<String> = prev.iter().map(|s| s.to_string()).collect();
+            round_actions(Client::Codex, &prev, inc, &d(now), 0)
+                .unwrap()
+                .into_iter()
+                .map(|a| a.kind)
+                .collect()
+        };
+        assert!(
+            kinds(&[], Some("a"), &["a", "b", "c"]).is_empty(),
+            "第一次排不算改顺序"
+        );
+        assert!(kinds(&["a", "b", "c"], Some("a"), &["a", "b", "c"]).is_empty());
+        assert_eq!(
+            kinds(&["a", "b", "c"], Some("a"), &["a", "c", "b"]),
+            ["reorder"]
+        );
+        // 原来的第一条退到热备第一位、其余顺序不变：只是换了第一条。
+        assert_eq!(
+            kinds(&["a", "b", "c"], Some("a"), &["b", "a", "c"]),
+            ["switch"]
+        );
+        assert_eq!(
+            kinds(&["a", "b", "c"], Some("a"), &["b", "c", "a"]),
+            ["switch", "reorder"]
+        );
+        assert_eq!(
+            kinds(&["a", "b"], Some("a"), &["b", "a"]),
+            ["switch"],
+            "只是第一条换了"
+        );
+    }
+
+    #[test]
+    fn scheduler_actions_are_capped_newest_first_and_filtered_by_client() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        let mk = |i: i64, client: &str| SchedulerAction {
+            id: format!("{client}-{i}"),
+            at_ms: i,
+            client: client.into(),
+            kind: "switch".into(),
+            ..Default::default()
+        };
+        let batch: Vec<SchedulerAction> = (0..SCHEDULER_ACTIONS_KEEP as i64 + 5)
+            .map(|i| mk(i, if i % 2 == 0 { "codex" } else { "claude-code" }))
+            .collect();
+        for chunk in batch.chunks(50) {
+            record_actions(&db, chunk).unwrap();
+        }
+        let all = scheduler_actions(&db, None, usize::MAX).unwrap();
+        assert_eq!(all.len(), SCHEDULER_ACTIONS_KEEP);
+        assert_eq!(all[0].at_ms, SCHEDULER_ACTIONS_KEEP as i64 + 4, "新的在前");
+        let codex = scheduler_actions(&db, Some(Client::Codex), 3).unwrap();
+        assert_eq!(codex.len(), 3);
+        assert!(codex.iter().all(|a| a.client == "codex"));
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_route_label_is_the_station_name_and_the_group() {
+        let names = HashMap::from([("s".to_string(), "某站".to_string())]);
+        let mut r = Route::new(Client::Codex, "s", "vip");
+        assert_eq!(route_label(&r, &names), "某站 · vip");
+        r.group.clear();
+        assert_eq!(route_label(&r, &names), "某站");
+        r.station_id = "gone".into();
+        assert_eq!(route_label(&r, &names), "gone");
+    }
+
     fn tried(
         route: &str,
         status: Option<u16>,
@@ -1775,9 +2346,9 @@ mod tests {
                 axes: vec![Axis::Cheap],
                 ..Default::default()
             },
-            None,
             &pricing::Catalog::new(Vec::new()),
             &HashMap::new(),
+            None,
         );
         assert_eq!(basis, CheapBasis::CostPerToken);
         assert_eq!(
@@ -1803,9 +2374,9 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &prefs,
-            None,
             &catalog,
             &HashMap::new(),
+            None,
         );
         assert_eq!(naive.winner.as_deref(), Some(routes[0].id.as_str()));
 
@@ -1815,9 +2386,9 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &prefs,
-            None,
             &catalog,
             &topup,
+            None,
         );
         assert_eq!(basis, CheapBasis::RealRate);
         assert_eq!(ranking.winner.as_deref(), Some(routes[1].id.as_str()));
@@ -1835,9 +2406,9 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &strict,
-            None,
             &catalog,
             &topup,
+            None,
         );
         let seven = floored
             .rows
@@ -1884,9 +2455,9 @@ mod tests {
                 axes: vec![Axis::Cheap],
                 ..Default::default()
             },
-            None,
             &pricing::Catalog::new(Vec::new()),
             &HashMap::new(),
+            None,
         );
         assert_eq!(basis, CheapBasis::BlendedRatio);
         assert_eq!(ranking.winner.as_deref(), Some(routes[1].id.as_str()));
@@ -1920,9 +2491,9 @@ mod tests {
                 axes: vec![Axis::Cheap],
                 ..Default::default()
             },
-            None,
             &pricing::Catalog::new(Vec::new()),
             &HashMap::new(),
+            None,
         );
         assert_eq!(basis, CheapBasis::RealRate);
         assert_eq!(ranking.winner.as_deref(), Some(routes[1].id.as_str()));
@@ -1955,9 +2526,9 @@ mod tests {
                 axes: vec![Axis::Cheap],
                 ..Default::default()
             },
-            None,
             &pricing::Catalog::new(Vec::new()),
             &HashMap::new(),
+            None,
         );
         assert_eq!(ranking.winner.as_deref(), Some(routes[1].id.as_str()));
         let a = ranking
@@ -1993,17 +2564,60 @@ mod tests {
         }
     }
 
-    /// 赢家就是现任时**不换**。
+    /// 排一轮派单（一轮确认就换、证据都够）再问 [`next_upstream`]。
+    fn next_after(r: &Ranking, current: Option<&str>) -> Option<String> {
+        let facts: HashMap<String, LineFacts> = r
+            .rows
+            .iter()
+            .map(|row| {
+                (
+                    row.route_id.clone(),
+                    LineFacts {
+                        samples: 10,
+                        evidence_at: Some(1),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let params = qb_station::schedule::DispatchParams {
+            confirm: 1,
+            ..Default::default()
+        };
+        let d = qb_station::schedule::dispatch(
+            r,
+            &facts,
+            current,
+            &[],
+            None,
+            &Default::default(),
+            &params,
+            0,
+        );
+        next_upstream(&d, current)
+    }
+
+    fn scored(id: &str, score: Option<f64>, tripped: bool) -> qb_station::schedule::Row {
+        qb_station::schedule::Row {
+            score,
+            ..row(id, !tripped, tripped)
+        }
+    }
+
+    /// 第一条就是现任时**不换**。
     ///
     /// 换一次的代价不是零：正在飞的请求会落在另一把 key 上、日志断成两段、
     /// 熔断窗口重来。每一跳都"换"到自己身上，等于每分钟制造一次这些代价，
     /// 而排名一动不动。
     #[test]
     fn the_scheduler_does_not_switch_to_the_route_that_is_already_current() {
-        let r = ranking("a", vec![row("a", true, false), row("b", true, false)]);
-        assert_eq!(next_upstream(&r, Some("a")), None);
-        assert_eq!(next_upstream(&r, Some("b")), Some("a".into()));
-        assert_eq!(next_upstream(&r, None), Some("a".into()));
+        let r = ranking(
+            "a",
+            vec![scored("a", Some(2.0), false), scored("b", Some(1.0), false)],
+        );
+        assert_eq!(next_after(&r, Some("a")), None);
+        assert_eq!(next_after(&r, Some("b")), Some("a".into()));
+        assert_eq!(next_after(&r, None), Some("a".into()));
     }
 
     /// ⛔ 熔断中或没过底线的那条，即使排序把它顶上来也不换。
@@ -2011,23 +2625,42 @@ mod tests {
     /// 底线全卡光时 rank 会放开底线重排一轮 —— 那是为了不制造死局
     /// （界面上还能看见名次），**不是**为了把不合格的那条送上生产。
     /// 这两件事混在一起的话，一次全站抖动会把所有人换到熔断中的线路上。
+    /// 2026-10-24 起这条规矩在派单里（`schedule::dispatch` 的模块头），这里照它问。
     #[test]
     fn a_tripped_or_ineligible_winner_is_never_switched_to() {
-        let tripped = ranking("a", vec![row("a", true, true)]);
-        assert_eq!(next_upstream(&tripped, Some("b")), None);
-        let blocked = ranking("a", vec![row("a", false, false)]);
-        assert_eq!(next_upstream(&blocked, Some("b")), None);
+        let tripped = ranking(
+            "a",
+            vec![scored("a", Some(5.0), true), scored("b", Some(1.0), false)],
+        );
+        assert_eq!(next_after(&tripped, Some("b")), None);
+        let mut floored = scored("a", Some(5.0), false);
+        floored.eligible = false;
+        floored.failed_floors = vec![qb_station::schedule::FloorMiss {
+            axis: Axis::Stable,
+            actual: 0.5,
+            limit: 0.9,
+        }];
+        let blocked = ranking("a", vec![floored.clone(), scored("b", Some(1.0), false)]);
+        assert_eq!(next_after(&blocked, Some("b")), None);
+        // 现任自己熔断了、另一条只是没过底线：兜底的也不换上来，留着现任（本机路由会自己跳过熔断着的线）。
+        let worse = ranking("a", vec![floored, scored("b", Some(1.0), true)]);
+        assert_eq!(next_after(&worse, Some("b")), None);
     }
 
-    /// 排不出赢家就不换 —— 没勾维度、全没证据都算这一档。
+    /// 排不出分就不换 —— 没勾维度、全没证据都算这一档。
+    ///
+    /// 还没有当前上游时（2026-10-24 起）挑排第一的那条：没有第一条，客户端每一发都是「还没选上游」。
     #[test]
     fn no_winner_means_the_incumbent_stays() {
         let none = Ranking {
             winner: None,
-            ..ranking("a", vec![row("a", true, false)])
+            ..ranking(
+                "a",
+                vec![scored("a", None, false), scored("b", None, false)],
+            )
         };
-        assert_eq!(next_upstream(&none, Some("b")), None);
-        assert_eq!(next_upstream(&none, None), None);
+        assert_eq!(next_after(&none, Some("b")), None);
+        assert_eq!(next_after(&none, None), Some("a".into()));
     }
 
     /// ⛔ Key 或站点的问题不许被读成「这条协议不支持」。

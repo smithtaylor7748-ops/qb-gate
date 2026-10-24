@@ -45,6 +45,8 @@ export default function StationRouterSettings({
   const toast = useToast();
   const [settings, setSettings] = useState<RouterSettings | null>(null);
   const [order, setOrder] = useState<string[]>([]);
+  // 调度开着时替补顺序归调度排（阶段 2）：这里只读，保存时也不碰它 —— 后端会拒收手排的顺序。
+  const [scheduled, setScheduled] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -55,11 +57,13 @@ export default function StationRouterSettings({
     void Promise.all([
       stationApi.routerSettings(client),
       stationApi.dispatchQueue(client),
+      stationApi.schedules(),
     ])
-      .then(([s, q]) => {
+      .then(([s, q, all]) => {
         if (dropped) return;
         setSettings(s);
         setOrder(q.order);
+        setScheduled(all.some((x) => x.client === client && x.enabled));
       })
       .catch((e: unknown) => {
         if (!dropped) setError(e instanceof Error ? e.message : String(e));
@@ -114,9 +118,11 @@ export default function StationRouterSettings({
     setError(null);
     try {
       const saved = await stationApi.saveRouterSettings(settings);
-      const q = await stationApi.saveDispatchQueue(client, order);
       setSettings(saved);
-      setOrder(q.order);
+      if (!scheduled) {
+        const q = await stationApi.saveDispatchQueue(client, order);
+        setOrder(q.order);
+      }
       toast.ok("路由设置已保存，下一发请求就按新的来");
       onSaved?.();
     } catch (e) {
@@ -170,6 +176,12 @@ export default function StationRouterSettings({
           当前那条永远第一个试；勾上的按从上到下的顺序当替补。熔断中的会跳过
           （所有线都熔断着时仍打当前那条）。
         </p>
+        {scheduled && (
+          <p className="qb-st-note">
+            智能调度开着：替补顺序由调度按档位排（在「智能调度」里看），这里只读。
+            要自己排先停调度，或者在调度里钉住一条。
+          </p>
+        )}
         {rows.length === 0 ? (
           <p className="qb-st-note">这个软件底下还没有线路。</p>
         ) : (
@@ -194,6 +206,7 @@ export default function StationRouterSettings({
                           type="checkbox"
                           aria-label={`把「${label(r)}」排进替补`}
                           checked={pos >= 0}
+                          disabled={scheduled}
                           onChange={(e) => toggle(r.id, e.target.checked)}
                         />
                       </td>
@@ -239,7 +252,7 @@ export default function StationRouterSettings({
                             <button
                               className="qb-st-iconbtn"
                               aria-label="往前挪"
-                              disabled={pos === 0}
+                              disabled={scheduled || pos === 0}
                               onClick={() => move(r.id, -1)}
                             >
                               ↑
@@ -247,7 +260,7 @@ export default function StationRouterSettings({
                             <button
                               className="qb-st-iconbtn"
                               aria-label="往后挪"
-                              disabled={pos === order.length - 1}
+                              disabled={scheduled || pos === order.length - 1}
                               onClick={() => move(r.id, 1)}
                             >
                               ↓

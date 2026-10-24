@@ -379,6 +379,18 @@
   padding-right: 0;
   font-variant-numeric: tabular-nums;
 }
+/* 派单队列（阶段 2）：数字列不在最后一列，左边也留空，不然表头挤成「#线路」「24H原因」。 */
+.qb-st-dq th,
+.qb-st-dq td {
+  padding-left: 8px;
+}
+/* 表里和钉住横幅里的按钮是几个字的文字按钮，不是 38px 的图标按钮（不然「取消钉住」折成两行）。 */
+.qb-st-dq .qb-st-iconbtn {
+  width: auto;
+  padding: 2px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
 
 .qb-st-empty {
   border: 1px dashed var(--border);

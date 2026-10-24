@@ -268,6 +268,19 @@ fn main() {
         qb_gate_lib::schedule::Row::export_all_to(&root)?;
         qb_gate_lib::schedule::Ranking::export_all_to(&root)?;
         qb_gate_lib::schedule::Schedule::export_all_to(&root)?;
+        // 中转站重构阶段 2：派单（分档、防抖、钉住）与测活（死活、速度、花了多少）。
+        qb_gate_lib::schedule::DispatchParams::export_all_to(&root)?;
+        qb_gate_lib::schedule::Tier::export_all_to(&root)?;
+        qb_gate_lib::schedule::Pin::export_all_to(&root)?;
+        qb_gate_lib::schedule::DispatchMemory::export_all_to(&root)?;
+        qb_gate_lib::schedule::DispatchRow::export_all_to(&root)?;
+        qb_gate_lib::schedule::liveness::ProbeAttempt::export_all_to(&root)?;
+        qb_gate_lib::schedule::liveness::ProbeSettings::export_all_to(&root)?;
+        qb_gate_lib::schedule::liveness::ProbeState::export_all_to(&root)?;
+        qb_gate_lib::schedule::liveness::Health::export_all_to(&root)?;
+        qb_gate_lib::schedule::liveness::SchedulerAction::export_all_to(&root)?;
+        qb_app::usecase::station_liveness::LineLiveness::export_all_to(&root)?;
+        qb_gate_lib::commands::station::DispatchView::export_all_to(&root)?;
         // 官方 Codex turn-state 的界面状态（导出名 TurnStateStatus / TurnStateModelStatus）。
         qb_gate_lib::turnstate::Status::export_all_to(&root)?;
         qb_gate_lib::turnstate::ModelStatus::export_all_to(&root)?;

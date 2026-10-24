@@ -19,10 +19,15 @@
 
 pub mod breaker;
 pub mod cheap;
+pub mod dispatch;
+pub mod liveness;
 pub mod rank;
 
 pub use breaker::{BreakerSettings, Outcome, Permit, RouteBreaker, State};
 pub use cheap::{cheap_values, cost_per_token, CheapBasis, CheapInput};
+pub use dispatch::{
+    dispatch, Dispatch, DispatchMemory, DispatchParams, DispatchRow, LineFacts, Pin, Tier,
+};
 pub use rank::{rank, AxisScore, FloorMiss, Ranking, Row, HYSTERESIS, INDISTINGUISHABLE_SPREAD};
 
 use serde::{Deserialize, Serialize};
@@ -159,6 +164,9 @@ pub struct Schedule {
     /// 上一次算完的结论,一句话。界面照实显示,**不自己再算一遍** ——
     /// 再算一遍就是两份判定,而两份判定必然漂移。
     pub last_note: String,
+    /// 换第一条的防抖（领先多少、几个样本、连续几轮）。2026-10-24 起（阶段 2）；老数据没有就按默认补。
+    #[serde(default)]
+    pub dispatch: DispatchParams,
 }
 
 impl Schedule {
@@ -173,6 +181,7 @@ impl Schedule {
             prefs: Prefs::coding(),
             last_switch_ms: None,
             last_note: String::new(),
+            dispatch: DispatchParams::default(),
         }
     }
 }

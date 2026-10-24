@@ -53,7 +53,19 @@ pub struct AppState {
     /// 看门狗一起关掉 —— 而那扇门开着却没人核对出口 IP,正是 CLAUDE.md
     /// 里那条教训防的场面。
     pub scheduler_stop: std::sync::Mutex<Option<tokio::sync::watch::Sender<bool>>>,
+    /// 智能调度从站点账单拉来的健康度（按软件），连同拉取时刻。调度一跳 30 秒，账单最多
+    /// 60 秒拉一次（`commands::station::BILLING_EVERY_MS`）—— 盯得太紧站点会限流，限流了健康度就读不到。
+    pub billing_cache: std::sync::Mutex<BillingCache>,
 }
+
+/// 智能调度的账单缓存：按软件，`(拉取时刻, 每条线从账单来的健康度)`。
+pub type BillingCache = std::collections::HashMap<
+    qb_contract::domain::Client,
+    (
+        i64,
+        std::collections::HashMap<String, qb_app::usecase::station_ops::RouteHealth>,
+    ),
+>;
 
 impl AppState {
     /// 装配时把「怎么刷界面」交进来。只在 `run()` 里调一次。

@@ -981,6 +981,14 @@ ippure 与 FuckClaude 都提到：Claude Code 在 `ANTHROPIC_BASE_URL` 指向中
 
 分档派单、防抖、测活节奏与预算在阶段 2 搬（`claude-op\23` 的 §4）。
 
+**2026-10-24 第二批（阶段 2）：**
+
+| QB Gate 的位置 | sub2guard 的出处 | 说明 |
+|---|---|---|
+| `qb-station/src/schedule/dispatch.rs` 的 `dispatch` | `scheduler/rank.py` 的 `decide`、`_speed_verdict`、`_inverted` | 防抖（领先 margin、最少样本、连续几轮**有新证据**、证据时间戳做签名）、同档时「现任有证据却排不出分就立刻让位 / 只是没证据先等」、热备「没明显排反就不动」都照原规则；分档换成 QB Gate 自己的「钉住 → 合格 → 兜底 → 故障」（使用者定的），比较的是 `rank` 的最弱项总分而不是 sub2guard 的速度中位数。sub2guard 的粘性会话回收（drain）**没搬**：本机路由每一发自己选线，没有要回收的会话 |
+| `qb-station/src/schedule/liveness.rs` | `scheduler/probe.py` 的 `assess`、`missing_models`、`fail_rate`、`speed`、`probe_model_order` / `pick_model`、`next_due`、`probe_interval_min` 与 `tests/scheduler/test_probe.py` | 判死活（确定性一次即死、暂时性连续两次、限流不算故障、缺模型 6 小时内跳过）、退避 5 → 60 分钟、按预算摊复测间隔都照原样；秒换成毫秒；测活走 Sub2API admin 接口的那一半换成两种测活（免费的空请求体、花钱的最小真实请求），见 `qb-app/src/usecase/station_liveness.rs` |
+| `qb-app/src/usecase/station_liveness.rs` 的 `plan`、`burst_needed` | `scheduler/loop.py` 的测活节奏与「p1 连续失败触发全队列测活」 | 只有一条线的软件不做花钱测活（sub2guard 给它们每小时一次的份额；这里有免费测活管死活，用不着） |
+
 ## 评估过但没有采用
 
 ### 订阅指引（Subscription Guide）— MIT，已移除

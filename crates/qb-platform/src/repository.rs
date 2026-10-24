@@ -146,13 +146,72 @@ const MIGRATIONS: &[&str] = &[
     // 派单队列里也存「上次选中的那条」：原来它只在内存里，面板一重启客户端就收到 503「还没选上游」。
     "CREATE TABLE IF NOT EXISTS router_settings(id TEXT PRIMARY KEY,body TEXT NOT NULL);
      CREATE TABLE IF NOT EXISTS dispatch_queue(id TEXT PRIMARY KEY,body TEXT NOT NULL);",
+    // 7：测活记录与调度的动作日志（2026-10-24，中转站重构阶段 2）。
+    //
+    // 测活记录跟请求日志一样是高频表：正经的列，按线路 + 时间、按时间建索引，查询带 LIMIT。
+    // 动作日志一天几条，`(id, body)` 就够。
+    "CREATE TABLE IF NOT EXISTS probe_attempts(
+        id TEXT PRIMARY KEY,
+        route_id TEXT NOT NULL,
+        at_ms INTEGER NOT NULL,
+        model TEXT NOT NULL DEFAULT '',
+        ok INTEGER NOT NULL DEFAULT 0,
+        fault TEXT,
+        total_ms INTEGER,
+        first_ms INTEGER,
+        paid INTEGER NOT NULL DEFAULT 0,
+        cost_lo REAL,
+        cost_hi REAL,
+        error TEXT);
+     CREATE INDEX IF NOT EXISTS probe_attempts_route ON probe_attempts(route_id, at_ms);
+     CREATE INDEX IF NOT EXISTS probe_attempts_at ON probe_attempts(at_ms);
+     CREATE TABLE IF NOT EXISTS scheduler_actions(id TEXT PRIMARY KEY,body TEXT NOT NULL);",
 ];
 
-/// `router_requests` 的列，跟 `qb_station::router::RouterRequest` 的字段**同名**。
+/// 用正经列存的高频表（不走通用的 `(id, body)`）。列名跟第 3 层那个类型的字段**同名**。
 ///
-/// 这一层不认识那个类型（它在第 3 层），读写都经 serde 的对象形状换过去：
-/// 写的时候按列名从对象里取值，读的时候按列名拼回对象。字段改名的话，这里不跟着改，
-/// 那一列就永远是 NULL —— `router_requests_round_trip_every_column` 钉着。
+/// 这一层不认识那些类型，读写都经 serde 的对象形状换过去：写的时候按列名从对象里取值，
+/// 读的时候按列名拼回对象。字段改名的话，这里不跟着改，那一列就永远是 NULL ——
+/// `router_requests_round_trip_every_column` / `probe_attempts_round_trip_every_column` 钉着。
+struct ColumnTable {
+    name: &'static str,
+    columns: &'static [&'static str],
+    /// 存 0 / 1、读回来是 `true` / `false` 的列。
+    bools: &'static [&'static str],
+    /// 存 JSON 文本的列（数组 / 对象）。缺的时候存 `[]`。
+    jsons: &'static [&'static str],
+}
+
+/// `router_requests`（迁移 5），对应 `qb_station::router::RouterRequest`。
+const ROUTER_REQUESTS: ColumnTable = ColumnTable {
+    name: "router_requests",
+    columns: ROUTER_REQUEST_COLUMNS,
+    bools: &["streaming"],
+    jsons: &["attempts"],
+};
+
+/// `probe_attempts`（迁移 7），对应 `qb_station::schedule::liveness::ProbeAttempt`。
+const PROBE_ATTEMPTS: ColumnTable = ColumnTable {
+    name: "probe_attempts",
+    columns: &[
+        "id", "route_id", "at_ms", "model", "ok", "fault", "total_ms", "first_ms", "paid",
+        "cost_lo", "cost_hi", "error",
+    ],
+    bools: &["ok", "paid"],
+    jsons: &[],
+};
+
+/// 查 `probe_attempts` 的条件。新的在前。
+#[derive(Debug, Clone, Default)]
+pub struct ProbeAttemptQuery {
+    pub route_id: Option<String>,
+    pub since_ms: Option<i64>,
+    /// 只要花钱的（`Some(true)`）/ 只要免费的（`Some(false)`）。
+    pub paid: Option<bool>,
+    pub limit: u32,
+}
+
+/// `router_requests` 的列，跟 `qb_station::router::RouterRequest` 的字段**同名**。
 const ROUTER_REQUEST_COLUMNS: &[&str] = &[
     "id",
     "at_ms",
@@ -212,6 +271,7 @@ const TABLES: &[&str] = &[
     "station_schedule",
     "router_settings",
     "dispatch_queue",
+    "scheduler_actions",
 ];
 
 impl Repository {
@@ -528,24 +588,80 @@ COMMIT;"
     ///
     /// `T` 序列化出来必须是对象，键名见 [`ROUTER_REQUEST_COLUMNS`]；缺的键当 NULL。
     pub fn insert_router_requests<T: Serialize>(&self, rows: &[T]) -> Result<usize> {
-        let placeholders = (1..=ROUTER_REQUEST_COLUMNS.len())
+        self.insert_columns(&ROUTER_REQUESTS, rows)
+    }
+
+    /// 按条件读请求日志，新的在前。**走索引、带 LIMIT** —— 不像通用的 `list` 那样整表读。
+    pub fn router_requests<T: DeserializeOwned>(&self, q: &RouterRequestQuery) -> Result<Vec<T>> {
+        let mut filter: Vec<(&str, rusqlite::types::Value)> = Vec::new();
+        if let Some(since) = q.since_ms {
+            filter.push(("at_ms >= ?", since.into()));
+        }
+        if let Some(client) = &q.client {
+            filter.push(("client = ?", client.clone().into()));
+        }
+        if let Some(route) = &q.route_id {
+            filter.push(("route_id = ?", route.clone().into()));
+        }
+        self.select_columns(&ROUTER_REQUESTS, filter, q.limit)
+    }
+
+    /// 删掉 `before_ms` 之前的请求日志（走 `at_ms` 的索引）。返回删了几条。
+    pub fn prune_router_requests(&self, before_ms: i64) -> Result<usize> {
+        self.prune_columns(&ROUTER_REQUESTS, before_ms)
+    }
+
+    // ------------------------------------------------------------ 测活记录（迁移 7）
+
+    /// 一批测活记录落库（同一个 id 再写一次就覆盖）。
+    pub fn insert_probe_attempts<T: Serialize>(&self, rows: &[T]) -> Result<usize> {
+        self.insert_columns(&PROBE_ATTEMPTS, rows)
+    }
+
+    /// 按条件读测活记录，新的在前（走 `route_id, at_ms` / `at_ms` 的索引，带 LIMIT）。
+    pub fn probe_attempts<T: DeserializeOwned>(&self, q: &ProbeAttemptQuery) -> Result<Vec<T>> {
+        let mut filter: Vec<(&str, rusqlite::types::Value)> = Vec::new();
+        if let Some(route) = &q.route_id {
+            filter.push(("route_id = ?", route.clone().into()));
+        }
+        if let Some(since) = q.since_ms {
+            filter.push(("at_ms >= ?", since.into()));
+        }
+        if let Some(paid) = q.paid {
+            filter.push(("paid = ?", i64::from(paid).into()));
+        }
+        self.select_columns(&PROBE_ATTEMPTS, filter, q.limit)
+    }
+
+    /// 删掉 `before_ms` 之前的测活记录。
+    pub fn prune_probe_attempts(&self, before_ms: i64) -> Result<usize> {
+        self.prune_columns(&PROBE_ATTEMPTS, before_ms)
+    }
+
+    fn insert_columns<T: Serialize>(&self, table: &ColumnTable, rows: &[T]) -> Result<usize> {
+        let placeholders = (1..=table.columns.len())
             .map(|i| format!("?{i}"))
             .collect::<Vec<_>>()
             .join(",");
         let query = format!(
-            "INSERT OR REPLACE INTO router_requests({}) VALUES({placeholders})",
-            ROUTER_REQUEST_COLUMNS.join(",")
+            "INSERT OR REPLACE INTO {}({}) VALUES({placeholders})",
+            table.name,
+            table.columns.join(",")
         );
         self.transaction(|| {
             let mut stmt = self.conn.prepare_cached(&query).map_err(sql)?;
             for row in rows {
                 let value = serde_json::to_value(row)?;
-                let object = value
-                    .as_object()
-                    .ok_or_else(|| GateError::Other("请求日志序列化出来不是一个对象".into()))?;
-                let cells: Vec<rusqlite::types::Value> = ROUTER_REQUEST_COLUMNS
+                let object = value.as_object().ok_or_else(|| {
+                    GateError::Other(format!(
+                        "写进 {} 的那一行序列化出来不是一个对象",
+                        table.name
+                    ))
+                })?;
+                let cells: Vec<rusqlite::types::Value> = table
+                    .columns
                     .iter()
-                    .map(|column| to_cell(column, object.get(*column)))
+                    .map(|column| to_cell(table, column, object.get(*column)))
                     .collect::<Result<_>>()?;
                 stmt.execute(rusqlite::params_from_iter(cells))
                     .map_err(sql)?;
@@ -554,38 +670,31 @@ COMMIT;"
         })
     }
 
-    /// 按条件读请求日志，新的在前。**走索引、带 LIMIT** —— 不像通用的 `list` 那样整表读。
-    pub fn router_requests<T: DeserializeOwned>(&self, q: &RouterRequestQuery) -> Result<Vec<T>> {
-        let mut clauses: Vec<&str> = Vec::new();
-        let mut args: Vec<rusqlite::types::Value> = Vec::new();
-        if let Some(since) = q.since_ms {
-            clauses.push("at_ms >= ?");
-            args.push(since.into());
-        }
-        if let Some(client) = &q.client {
-            clauses.push("client = ?");
-            args.push(client.clone().into());
-        }
-        if let Some(route) = &q.route_id {
-            clauses.push("route_id = ?");
-            args.push(route.clone().into());
-        }
+    fn select_columns<T: DeserializeOwned>(
+        &self,
+        table: &ColumnTable,
+        filter: Vec<(&str, rusqlite::types::Value)>,
+        limit: u32,
+    ) -> Result<Vec<T>> {
+        let (clauses, mut args): (Vec<&str>, Vec<rusqlite::types::Value>) =
+            filter.into_iter().unzip();
         let filter = if clauses.is_empty() {
             String::new()
         } else {
             format!("WHERE {}", clauses.join(" AND "))
         };
-        args.push(i64::from(q.limit.max(1)).into());
+        args.push(i64::from(limit.max(1)).into());
         let query = format!(
-            "SELECT {} FROM router_requests {filter} ORDER BY at_ms DESC, rowid DESC LIMIT ?",
-            ROUTER_REQUEST_COLUMNS.join(",")
+            "SELECT {} FROM {} {filter} ORDER BY at_ms DESC, rowid DESC LIMIT ?",
+            table.columns.join(","),
+            table.name
         );
         let mut stmt = self.conn.prepare(&query).map_err(sql)?;
         let rows = stmt
             .query_map(rusqlite::params_from_iter(args), |r| {
                 let mut object = serde_json::Map::new();
-                for (i, column) in ROUTER_REQUEST_COLUMNS.iter().enumerate() {
-                    object.insert((*column).to_string(), from_cell(column, r.get(i)?));
+                for (i, column) in table.columns.iter().enumerate() {
+                    object.insert((*column).to_string(), from_cell(table, column, r.get(i)?));
                 }
                 Ok(serde_json::Value::Object(object))
             })
@@ -594,10 +703,12 @@ COMMIT;"
             .collect()
     }
 
-    /// 删掉 `before_ms` 之前的请求日志（走 `at_ms` 的索引）。返回删了几条。
-    pub fn prune_router_requests(&self, before_ms: i64) -> Result<usize> {
+    fn prune_columns(&self, table: &ColumnTable, before_ms: i64) -> Result<usize> {
         self.conn
-            .execute("DELETE FROM router_requests WHERE at_ms < ?1", [before_ms])
+            .execute(
+                &format!("DELETE FROM {} WHERE at_ms < ?1", table.name),
+                [before_ms],
+            )
             .map_err(sql)
     }
 
@@ -898,36 +1009,53 @@ struct LegacyProfile {
     timezone: Option<String>,
 }
 
-/// 对象里的一个字段换成 `router_requests` 的一格。`attempts` 存 JSON 文本，`streaming` 存 0 / 1。
-fn to_cell(column: &str, value: Option<&serde_json::Value>) -> Result<rusqlite::types::Value> {
+/// 对象里的一个字段换成列表的一格。JSON 列存 JSON 文本，布尔存 0 / 1。
+fn to_cell(
+    table: &ColumnTable,
+    column: &str,
+    value: Option<&serde_json::Value>,
+) -> Result<rusqlite::types::Value> {
     use rusqlite::types::Value as Cell;
     use serde_json::Value as Json;
-    Ok(match (column, value) {
-        ("attempts", Some(v)) => Cell::Text(serde_json::to_string(v)?),
-        ("attempts", None) => Cell::Text("[]".into()),
-        (_, None | Some(Json::Null)) => Cell::Null,
-        (_, Some(Json::Bool(b))) => Cell::Integer(i64::from(*b)),
-        (_, Some(Json::Number(n))) => match n.as_i64() {
+    if table.jsons.contains(&column) {
+        return Ok(match value {
+            Some(v) => Cell::Text(serde_json::to_string(v)?),
+            None => Cell::Text("[]".into()),
+        });
+    }
+    Ok(match value {
+        None | Some(Json::Null) => Cell::Null,
+        Some(Json::Bool(b)) => Cell::Integer(i64::from(*b)),
+        Some(Json::Number(n)) => match n.as_i64() {
             Some(i) => Cell::Integer(i),
             None => Cell::Real(n.as_f64().unwrap_or(f64::NAN)),
         },
-        (_, Some(Json::String(s))) => Cell::Text(s.clone()),
-        (_, Some(other)) => Cell::Text(other.to_string()),
+        Some(Json::String(s)) => Cell::Text(s.clone()),
+        Some(other) => Cell::Text(other.to_string()),
     })
 }
 
 /// [`to_cell`] 反过来。
-fn from_cell(column: &str, cell: rusqlite::types::Value) -> serde_json::Value {
+fn from_cell(table: &ColumnTable, column: &str, cell: rusqlite::types::Value) -> serde_json::Value {
     use rusqlite::types::Value as Cell;
     use serde_json::Value as Json;
-    match (column, cell) {
-        ("attempts", Cell::Text(s)) => serde_json::from_str(&s).unwrap_or(Json::Array(vec![])),
-        ("streaming", Cell::Integer(i)) => Json::Bool(i != 0),
-        (_, Cell::Null) => Json::Null,
-        (_, Cell::Integer(i)) => Json::from(i),
-        (_, Cell::Real(f)) => serde_json::Number::from_f64(f).map_or(Json::Null, Json::Number),
-        (_, Cell::Text(s)) => Json::String(s),
-        (_, Cell::Blob(_)) => Json::Null,
+    if table.jsons.contains(&column) {
+        return match cell {
+            Cell::Text(s) => serde_json::from_str(&s).unwrap_or(Json::Array(vec![])),
+            _ => Json::Array(vec![]),
+        };
+    }
+    if table.bools.contains(&column) {
+        if let Cell::Integer(i) = cell {
+            return Json::Bool(i != 0);
+        }
+    }
+    match cell {
+        Cell::Null => Json::Null,
+        Cell::Integer(i) => Json::from(i),
+        Cell::Real(f) => serde_json::Number::from_f64(f).map_or(Json::Null, Json::Number),
+        Cell::Text(s) => Json::String(s),
+        Cell::Blob(_) => Json::Null,
     }
 }
 
@@ -1233,6 +1361,134 @@ mod tests {
         // 裁旧的按时间走。
         assert_eq!(db.prune_router_requests(2_500).unwrap(), 2);
         assert_eq!(ids(all), ["4", "3"]);
+        drop(db);
+        std::fs::remove_dir_all(p).unwrap();
+    }
+
+    fn sample_probe(id: &str, at_ms: i64, route: &str, paid: bool) -> serde_json::Value {
+        serde_json::json!({
+            "id": id, "route_id": route, "at_ms": at_ms, "model": "claude-sonnet-5",
+            "ok": !paid, "fault": if paid { serde_json::json!("timeout") } else { serde_json::Value::Null },
+            "total_ms": 1234, "first_ms": if paid { serde_json::Value::Null } else { serde_json::json!(410) },
+            "paid": paid,
+            "cost_lo": if paid { serde_json::json!(0.0012) } else { serde_json::Value::Null },
+            "cost_hi": if paid { serde_json::json!(0.0031) } else { serde_json::Value::Null },
+            "error": if paid { serde_json::json!("首字 30 秒没来") } else { serde_json::Value::Null },
+        })
+    }
+
+    #[test]
+    fn probe_attempts_round_trip_every_column() {
+        // 布尔列存 0 / 1，读回来必须还是 true / false（不然 ProbeAttempt 反序列化不回去）。
+        let p = fixture();
+        let db = Repository::open_in(&p).unwrap();
+        let rows = [
+            sample_probe("1", 1_000, "a", false),
+            sample_probe("2", 2_000, "a", true),
+        ];
+        assert_eq!(db.insert_probe_attempts(&rows).unwrap(), 2);
+        let back: Vec<serde_json::Value> = db
+            .probe_attempts(&ProbeAttemptQuery {
+                limit: 10,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(back, vec![rows[1].clone(), rows[0].clone()]);
+        assert_eq!(
+            back[0].as_object().unwrap().len(),
+            PROBE_ATTEMPTS.columns.len(),
+            "每个字段都要有一列"
+        );
+        drop(db);
+        std::fs::remove_dir_all(p).unwrap();
+    }
+
+    #[test]
+    fn probe_attempts_filter_by_route_time_and_paid_newest_first() {
+        let p = fixture();
+        let db = Repository::open_in(&p).unwrap();
+        db.insert_probe_attempts(&[
+            sample_probe("1", 1_000, "x", false),
+            sample_probe("2", 2_000, "y", true),
+            sample_probe("3", 3_000, "x", true),
+            sample_probe("4", 4_000, "x", false),
+        ])
+        .unwrap();
+        let ids = |q: ProbeAttemptQuery| -> Vec<String> {
+            db.probe_attempts::<serde_json::Value>(&q)
+                .unwrap()
+                .into_iter()
+                .map(|v| v["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let all = ProbeAttemptQuery {
+            limit: 100,
+            ..Default::default()
+        };
+        assert_eq!(ids(all.clone()), ["4", "3", "2", "1"]);
+        assert_eq!(
+            ids(ProbeAttemptQuery {
+                route_id: Some("x".into()),
+                since_ms: Some(2_000),
+                ..all.clone()
+            }),
+            ["4", "3"]
+        );
+        // 「今天花了多少」只数花钱的那几次。
+        assert_eq!(
+            ids(ProbeAttemptQuery {
+                paid: Some(true),
+                ..all.clone()
+            }),
+            ["3", "2"]
+        );
+        assert_eq!(
+            ids(ProbeAttemptQuery {
+                paid: Some(false),
+                limit: 1,
+                ..all.clone()
+            }),
+            ["4"]
+        );
+        assert_eq!(db.prune_probe_attempts(2_500).unwrap(), 2);
+        assert_eq!(ids(all), ["4", "3"]);
+        drop(db);
+        std::fs::remove_dir_all(p).unwrap();
+    }
+
+    #[test]
+    fn a_version_six_database_gains_the_probe_tables_and_keeps_its_logs() {
+        // 阶段 1 的库停在版本 6：升上来要多出测活表与动作日志，请求日志一条不掉。
+        let p = fixture();
+        {
+            let db = Repository::open_in(&p).unwrap();
+            db.insert_router_requests(&[sample_request("r1", 1_000, "codex", "a")])
+                .unwrap();
+            db.conn
+                .execute_batch(
+                    "DROP TABLE probe_attempts; DROP TABLE scheduler_actions; PRAGMA user_version=6;",
+                )
+                .unwrap();
+        }
+        let db = Repository::open_in(&p).unwrap();
+        assert_eq!(db.pragma_query_value_user_version().unwrap(), SCHEMA);
+        let logs: Vec<serde_json::Value> = db
+            .router_requests(&RouterRequestQuery {
+                limit: 10,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(logs.len(), 1);
+        db.insert_probe_attempts(&[sample_probe("p1", 5_000, "a", false)])
+            .unwrap();
+        db.put(
+            "scheduler_actions",
+            "s1",
+            &serde_json::json!({"id": "s1", "kind": "switch"}),
+        )
+        .unwrap();
+        let actions: Vec<serde_json::Value> = db.list("scheduler_actions").unwrap();
+        assert_eq!(actions.len(), 1);
         drop(db);
         std::fs::remove_dir_all(p).unwrap();
     }

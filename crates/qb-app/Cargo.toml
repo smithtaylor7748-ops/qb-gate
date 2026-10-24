@@ -36,7 +36,8 @@ tokio.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 http-body-util.workspace = true
-futures-util.workspace = true
+# 测活要按并发上限一批批发（`buffer_unordered`），那一组在 alloc 后面。
+futures-util = { workspace = true, features = ["alloc"] }
 toml_edit.workspace = true
 ts-rs.workspace = true
 

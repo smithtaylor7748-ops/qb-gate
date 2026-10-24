@@ -928,7 +928,7 @@ function StationBoard({
                 <span className="sub last" title={schedNote || undefined}>
                   {schedNote
                     ? `上一轮：${schedNote}`
-                    : "每分钟排一次 · 迟滞 8%"}
+                    : "每 30 秒排一次 · 领先 8% 连续 2 轮才换"}
                 </span>
               )}
               {/* ⛔ 「面板关掉它就停」必须写在这里。不写的话使用者会以为
@@ -1041,15 +1041,18 @@ function StationBoard({
                   siteName={siteName}
                   topup={topupOf(providers.find((p) => p.id === s.id))}
                   onPick={() => {
-                    if (sched) {
-                      toast.error(
-                        "要自己选就先停调度 —— 不停的话下一跳会把它换走。",
-                      );
-                      return;
-                    }
+                    // 调度开着时手动选 = 钉住 4 小时（后端 `station_select_route` 顺手钉上），
+                    // 这期间调度不换走它；它挂了就不算。原来是直接拒绝、要先停调度（阶段 2 前）。
                     void act(
-                      () => stationApi.selectRoute(r.id, false),
-                      "切换上游",
+                      async () => {
+                        const st = await stationApi.selectRoute(r.id, false);
+                        if (sched)
+                          toast.ok(
+                            "已钉住 4 小时：这期间调度不换走它（它挂了就不算）",
+                          );
+                        return st;
+                      },
+                      sched ? "钉住这一条" : "切换上游",
                     );
                   }}
                   onLaunch={() => void launchFrom(r)}
@@ -1107,8 +1110,8 @@ function StationBoard({
         footer={
           <>
             <span className="qb-st-note" style={{ flex: 1 }}>
-              换上游会让上游那边的 prompt 缓存作废，所以挑战者要领先现任 8%
-              才换。调度<b>只在面板开着时</b>生效。
+              换上游会让上游那边的 prompt 缓存作废，所以挑战者默认要领先现任
+              8%、连续 2 轮有新证据才换。调度<b>只在面板开着时</b>生效。
             </span>
             <Button variant="ghost" onClick={() => setSchedOpen(false)}>
               关闭
