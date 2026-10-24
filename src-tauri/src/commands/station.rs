@@ -119,16 +119,20 @@ fn load_upstreams(state: &AppState) -> Result<usize> {
         .iter()
         .filter_map(|route| {
             let source = station_ops::source(&db, route).ok()?;
-            Some(Upstream {
-                route_id: source.route_id,
-                base_url: source.base_url,
-                auth: if route.client == Client::Codex {
-                    UpstreamAuth::Bearer(source.key)
-                } else {
-                    UpstreamAuth::ApiKey(source.key)
-                },
-                ..Default::default()
-            })
+            Some(
+                Upstream {
+                    route_id: source.route_id,
+                    base_url: source.base_url,
+                    auth: if route.client == Client::Codex {
+                        UpstreamAuth::Bearer(source.key)
+                    } else {
+                        UpstreamAuth::ApiKey(source.key)
+                    },
+                    ..Default::default()
+                }
+                // 这条线自己的模型映射（2026-10-24 起）。`upstream_format` 阶段 1 还不读：只有原样转发。
+                .with_model_map(&route.model_map),
+            )
         })
         .collect();
     let n = upstreams.len();
@@ -1431,6 +1435,8 @@ mod tests {
             rates: Default::default(),
             output_markup: None,
             rates_model: None,
+            model_map: Default::default(),
+            upstream_format: None,
         }
     }
 

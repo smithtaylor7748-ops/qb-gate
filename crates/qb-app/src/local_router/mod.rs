@@ -108,8 +108,55 @@ pub struct Upstream {
     /// 上游基地址,例如 `https://example.com/v1`。
     pub base_url: String,
     pub auth: UpstreamAuth,
-    /// 这条线上把模型名换成什么（`Route.model_map`）。空的就原样发。
+    /// 这条线上把模型名换成什么：档位 + 兜底（`Route.model_map`，cc-switch 的那几档）。空的就原样发。
     pub model_map: ModelMapping,
+    /// 逐个指定的「从 → 到」，先于 `model_map` 看（不分大小写、完全一致）。
+    pub model_exact: Vec<(String, String)>,
+}
+
+impl Upstream {
+    /// 挂上一条线路自己的模型映射（`qb_station::station::route::RouteModelMap`）。
+    ///
+    /// 跨 crate 的类型转换放在这一层：`qb-station` 和 `qb-proxy` 同在第 3 层，彼此不依赖。
+    pub fn with_model_map(mut self, map: &qb_station::station::route::RouteModelMap) -> Self {
+        let keep = |v: &Option<String>| {
+            v.as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        self.model_map = ModelMapping {
+            haiku_model: keep(&map.haiku),
+            sonnet_model: keep(&map.sonnet),
+            opus_model: keep(&map.opus),
+            fable_model: keep(&map.fable),
+            subagent_model: keep(&map.subagent),
+            default_model: keep(&map.default),
+        };
+        self.model_exact = map
+            .exact
+            .iter()
+            .filter(|p| !p.from.trim().is_empty() && !p.to.trim().is_empty())
+            .map(|p| (p.from.trim().to_string(), p.to.trim().to_string()))
+            .collect();
+        self
+    }
+
+    /// 这条线上 `model` 该换成什么。`None` = 原样发。
+    pub fn map_model(&self, model: &str) -> Option<String> {
+        if let Some((_, to)) = self
+            .model_exact
+            .iter()
+            .find(|(from, _)| from.eq_ignore_ascii_case(model))
+        {
+            return (to != model).then(|| to.clone());
+        }
+        if !self.model_map.has_mapping() {
+            return None;
+        }
+        let mapped = self.model_map.map_model(model);
+        (mapped != model).then_some(mapped)
+    }
 }
 
 /// 内存里最多留几条最近的请求日志（界面「正在路由」那几行与单测用）。落库的在 `router_requests` 表。
@@ -225,7 +272,9 @@ impl RouterState {
             route_id: OFFICIAL_CODEX_ROUTE_ID.to_string(),
             base_url: OFFICIAL_CODEX_BASE.to_string(),
             auth: UpstreamAuth::OAuthPassthrough,
+            // ⛔ 官方线不换模型名：官方端点只认官方的模型名，映射只给中转线路用。
             model_map: ModelMapping::default(),
+            model_exact: Vec::new(),
         });
         self.set_now(Client::Codex, OFFICIAL_CODEX_ROUTE_ID);
     }

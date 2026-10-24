@@ -36,6 +36,14 @@ import { saveStationConnection } from "../../lib/stationConnection";
 import { modelRateLabel, stationApi, type Route } from "../../lib/station";
 import { Button, Modal } from "../../ui";
 import ConfigPane from "./ConfigPane";
+import {
+  mappedCount,
+  modelMapOf,
+  NO_TIERS,
+  pairsText,
+  tiersOf,
+  type Tiers,
+} from "./modelMap";
 
 /** 三态下拉的值。`""` = 还没探过。 */
 type Tri = "" | "yes" | "no";
@@ -114,6 +122,9 @@ export default function RouteDialog({
   const [chat, setChat] = useState<Tri>("");
   const [responses, setResponses] = useState<Tri>("");
   const [credentialId, setCredentialId] = useState("");
+  // ---- 模型映射（只对这条线，本机路由转发时换）
+  const [tiers, setTiers] = useState<Tiers>(NO_TIERS);
+  const [pairs, setPairs] = useState("");
   // ---- 探测
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [probing, setProbing] = useState(false);
@@ -162,6 +173,8 @@ export default function RouteDialog({
       setAnthropic(toTri(editing.protocols.anthropic));
       setChat(toTri(editing.protocols.openai_chat));
       setResponses(toTri(editing.protocols.openai_responses));
+      setTiers(tiersOf(editing.model_map));
+      setPairs(pairsText(editing.model_map));
     } else {
       setName("");
       setNote("");
@@ -174,6 +187,8 @@ export default function RouteDialog({
       setAnthropic("");
       setChat("");
       setResponses("");
+      setTiers(NO_TIERS);
+      setPairs("");
     }
     // Reset only when opening another route, never on a workspace refresh.
   }, [open, editing]);
@@ -238,6 +253,8 @@ export default function RouteDialog({
       }
       if (!name.trim()) throw new Error("站点名不能留空");
       if (!baseUrl.trim()) throw new Error("API 端点不能留空");
+      // 先读映射：读不懂就别去建站点、绑 Key（那几步落了库就撤不回来了）。
+      const modelMap = modelMapOf(tiers, pairs);
 
       const { stationId, credentialId: savedCredentialId } =
         await saveStationConnection(
@@ -291,6 +308,9 @@ export default function RouteDialog({
         // 这组价是哪个模型的，也由检验那一步写回 —— 手填一个模型名会让
         // 官方价按错的那一行去查，算出的倍率错得看不出来。
         rates_model: editing?.rates_model ?? null,
+        model_map: modelMap,
+        // 中转站重构阶段 1 只有原样转发：这一格界面不给改，原样带回去（协议转换在阶段 3）。
+        upstream_format: editing?.upstream_format ?? null,
       });
       onClose();
     } catch (e) {
@@ -523,6 +543,76 @@ export default function RouteDialog({
           <ConfigPane client={owner} />
         </details>
 
+        {/* ------------------------------------------------ 模型映射（这条线） */}
+        <details className="qb-st-adv">
+          <summary>
+            模型映射 · 只对这条线
+            {mappedCount(tiers, pairs) > 0 &&
+              ` · 已设 ${mappedCount(tiers, pairs)} 项`}
+          </summary>
+          <p className="qb-st-note">
+            本机路由把请求转给<b>这条线</b>时换掉模型名，{CLIENT_NAME[owner]}{" "}
+            那头的配置不动 —— 换到模型名不一样的另一家线时不会 404。
+            先看「逐个指定」，再看档位，最后是兜底；都留空就原样发。
+            只对经过本机路由的请求生效。
+          </p>
+          {owner !== "codex" && (
+            <>
+              <div className="qb-st-two">
+                <TierField
+                  label="Opus 档"
+                  value={tiers.opus}
+                  onChange={(v) => setTiers({ ...tiers, opus: v })}
+                />
+                <TierField
+                  label="Sonnet 档"
+                  value={tiers.sonnet}
+                  onChange={(v) => setTiers({ ...tiers, sonnet: v })}
+                />
+              </div>
+              <div className="qb-st-two">
+                <TierField
+                  label="Haiku 档"
+                  value={tiers.haiku}
+                  onChange={(v) => setTiers({ ...tiers, haiku: v })}
+                />
+                <TierField
+                  label="Fable 档（留空跟 Opus 档）"
+                  value={tiers.fable}
+                  onChange={(v) => setTiers({ ...tiers, fable: v })}
+                />
+              </div>
+              <TierField
+                label="子 agent"
+                value={tiers.subagent}
+                onChange={(v) => setTiers({ ...tiers, subagent: v })}
+              />
+            </>
+          )}
+          <Field label="兜底" hint="上面都没对上时一律换成它。留空 = 原样发。">
+            <input
+              value={tiers.default}
+              placeholder="例如这条线上叫 claude-opus-5-20261001 的那个"
+              onChange={(e) => setTiers({ ...tiers, default: e.target.value })}
+            />
+          </Field>
+          <Field
+            label="逐个指定"
+            hint="一行一条：客户端写的名字 → 这条线上的名字（不分大小写，要完全一致；→、=>、= 都认）"
+          >
+            <textarea
+              rows={3}
+              value={pairs}
+              placeholder={
+                owner === "codex"
+                  ? "gpt-5.6-sol → gpt-5.6"
+                  : "claude-opus-5 → claude-opus-5-thinking"
+              }
+              onChange={(e) => setPairs(e.target.value)}
+            />
+          </Field>
+        </details>
+
         {/* ------------------------------------------------ 高级选项 */}
         <details
           className="qb-st-adv"
@@ -702,6 +792,26 @@ function ProbeBox({
 }
 
 // ------------------------------------------------------------------ 小件
+
+function TierField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <Field label={label}>
+      <input
+        value={value}
+        placeholder="留空 = 不换"
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </Field>
+  );
+}
 
 function Field({
   label,

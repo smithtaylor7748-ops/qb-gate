@@ -1358,7 +1358,8 @@
 .qb-st-form input[type="text"],
 .qb-st-form input[type="password"],
 .qb-st-form input:not([type]),
-.qb-st-form select {
+.qb-st-form select,
+.qb-st-form textarea {
   font: inherit;
   font-size: 12.5px;
   width: 100%;
@@ -1368,6 +1369,10 @@
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
+}
+.qb-st-form textarea {
+  resize: vertical;
+  font-family: var(--mono);
 }
 .qb-st-form input:disabled,
 .qb-st-form select:disabled {

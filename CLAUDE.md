@@ -389,6 +389,9 @@ cargo run -p qb-app --example antigravity-hub-quota -- --account <槽位 id>
 9. **测试数只许涨**这条在这一步的对账：`a_codex_200_with_a_failed_sse_stream_is_counted_as_a_fault` 等老的端到端测试一条没删，
    只给 `Upstream` 字面量补了 `..Default::default()`；`router_settings_default_to_cc_switch_s_per_app_table_with_failover_on`
    里 Codex 静默超时那一项从 120 改写成 300（见第 7 条）。
+10. **模型映射挂在线路上、只改顶层 `model` 一个字段**（`Route.model_map` → `Upstream::with_model_map`）：先逐个指定、再档位、最后兜底；
+    换线之后用的是那条线自己的那份。**官方线不换模型名**。`qb-station::RouteModelMap` 与 `qb-proxy::ModelMapping`
+    同在第 3 层、互不依赖，换算放在 `qb-app`（别往 `ALLOWED_SIDEWAYS` 里补边）。`Route.upstream_format` 阶段 1 存得下但不读。
 
 ### 体检的无凭据探测与一次性采集页（2026-09-24，使用者选的）
 

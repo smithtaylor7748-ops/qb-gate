@@ -175,6 +175,75 @@ pub struct Route {
     /// 顶替出来的是另一个模型的官方价,算出的倍率会错得看不出来。
     #[serde(default)]
     pub rates_model: Option<String>,
+    /// 这条线上把模型名换成什么（2026-10-24 起；cc-switch 的模型映射，挂到线路上）。
+    ///
+    /// 原来模型名写在环境里、整个软件共用 —— 换到模型名不一样的另一家线就 404。
+    /// 这一份由本机路由在转发时换（`qb-app::local_router`），**客户端那头的配置不动**。
+    #[serde(default)]
+    pub model_map: RouteModelMap,
+    /// 这条线的上游说哪种协议。`None` = 跟客户端一样，原样转发。
+    ///
+    /// ⚠ 中转站重构阶段 1 只有原样转发这一种：存得下、读得回，但本机路由还不按它转换
+    /// （协议转换全套在阶段 3）。界面在那之前不给改。
+    #[serde(default)]
+    pub upstream_format: Option<UpstreamFormat>,
+}
+
+/// 一条线上的模型名映射。**先看逐个指定的，再看档位，最后是兜底。**
+///
+/// 档位那几项跟 cc-switch 的 `ANTHROPIC_DEFAULT_*_MODEL` / `CLAUDE_CODE_SUBAGENT_MODEL` /
+/// `ANTHROPIC_MODEL` 一一对应（按模型名里有没有 `haiku` / `sonnet` / `opus` / `fable` 认档，
+/// 没单独配 fable 档时落到 opus 档；`qb_proxy::model_mapper`）。全空就是原样发。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(default)]
+pub struct RouteModelMap {
+    /// 逐个指定：客户端写的模型名（不分大小写、完全一致）→ 这条线上的名字。
+    pub exact: Vec<ModelPair>,
+    pub haiku: Option<String>,
+    pub sonnet: Option<String>,
+    pub opus: Option<String>,
+    pub fable: Option<String>,
+    /// 子 agent 用的模型。
+    pub subagent: Option<String>,
+    /// 兜底：上面都没对上时一律换成它。
+    pub default: Option<String>,
+}
+
+impl RouteModelMap {
+    /// 一项都没填。
+    pub fn is_empty(&self) -> bool {
+        self.exact.is_empty()
+            && [
+                &self.haiku,
+                &self.sonnet,
+                &self.opus,
+                &self.fable,
+                &self.subagent,
+                &self.default,
+            ]
+            .iter()
+            .all(|v| v.as_deref().is_none_or(|s| s.trim().is_empty()))
+    }
+}
+
+/// 一对「从 → 到」。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModelPair {
+    pub from: String,
+    pub to: String,
+}
+
+/// 上游说的协议（cc-switch 的 `apiFormat`，写法照它）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum UpstreamFormat {
+    Anthropic,
+    OpenaiChat,
+    OpenaiResponses,
+    GeminiNative,
 }
 
 impl Route {
@@ -378,5 +447,28 @@ mod tests {
         let r = Route::new(Client::ClaudeCode, "s1", "");
         assert_eq!(r.group, "");
         assert!(!r.id.is_empty());
+    }
+
+    #[test]
+    fn a_route_saved_before_model_maps_existed_still_reads_and_maps_nothing() {
+        // 0.25.6 及以前存的线路没有这两个字段：读得进来、映射是空的、协议是原样转发。
+        let old: Route = serde_json::from_str(
+            r#"{"id":"codex\u001fs\u001f","client":"codex","station_id":"s","group":"",
+                "credential_id":null,"nominal_rate":0.2,"latest_mult":null,"last_audit_ms":null}"#,
+        )
+        .unwrap();
+        assert!(old.model_map.is_empty());
+        assert_eq!(old.upstream_format, None);
+        // 只填了空白的也算没填。
+        let blank = RouteModelMap {
+            default: Some("  ".into()),
+            ..Default::default()
+        };
+        assert!(blank.is_empty());
+        // 协议的写法照 cc-switch 的 apiFormat。
+        assert_eq!(
+            serde_json::to_string(&UpstreamFormat::OpenaiResponses).unwrap(),
+            "\"openai_responses\""
+        );
     }
 }

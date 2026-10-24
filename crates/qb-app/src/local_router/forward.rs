@@ -43,8 +43,8 @@ use qb_proxy::proxy_error::{describe_error_chain, ProxyError};
 use qb_proxy::sse_text::{append_utf8_safe, take_sse_block};
 use qb_proxy::types::RectifierConfig;
 use qb_proxy::{
-    envelope, media_sanitizer, model_mapper, opaque_state_rectifier, session,
-    thinking_budget_rectifier, thinking_rectifier,
+    envelope, media_sanitizer, opaque_state_rectifier, session, thinking_budget_rectifier,
+    thinking_rectifier,
 };
 use qb_station::router::{RectifierSwitches, RouteAttempt};
 use qb_station::schedule::Permit;
@@ -403,13 +403,20 @@ fn line_body(
     let mut value = original.clone();
     let mut changed = false;
     let mut upstream_model = String::new();
-    if line.model_map.has_mapping() {
-        let (mapped_body, _, mapped) = model_mapper::apply_model_mapping(value, &line.model_map);
-        value = mapped_body;
-        if let Some(mapped) = mapped {
-            upstream_model = mapped;
-            changed = true;
-        }
+    // 先看逐个指定的，再看 cc-switch 那几档（`Upstream::map_model`）。只改顶层 `model` 一个字段。
+    let requested = value
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    if let Some(mapped) = requested.as_deref().and_then(|m| line.map_model(m)) {
+        tracing::debug!(
+            "本机路由：{} 上的模型 {:?} → {mapped}",
+            line.route_id,
+            requested
+        );
+        value["model"] = Value::String(mapped.clone());
+        upstream_model = mapped;
+        changed = true;
     }
     if cfg.enabled
         && cfg.request_media_fallback
@@ -1528,6 +1535,51 @@ mod tests {
         let log = last_log(&h).await;
         assert_eq!(log.model, "claude-sonnet-5");
         assert_eq!(log.upstream_model, "relay-sonnet-x");
+    }
+
+    #[tokio::test]
+    async fn a_route_s_exact_pairs_win_over_tiers_and_each_line_maps_on_its_own() {
+        use qb_station::station::route::{ModelPair, RouteModelMap};
+        // a 失败、换到 b：发给 b 的是 b 自己那份映射，不是 a 换过的名字。
+        let (a, a_hits) = stub(Script::json(502, r#"{"error":{"message":"bad gateway"}}"#)).await;
+        let (b, b_hits) = stub(Script::json(200, r#"{"id":"resp_1"}"#)).await;
+        let map_a = RouteModelMap {
+            exact: vec![ModelPair {
+                from: "GPT-5.6-SOL".into(),
+                to: "a-sol".into(),
+            }],
+            default: Some("a-fallback".into()),
+            ..Default::default()
+        };
+        let map_b = RouteModelMap {
+            default: Some("b-everything".into()),
+            ..Default::default()
+        };
+        let h = two_lines(
+            Client::Codex,
+            line("a", a).with_model_map(&map_a),
+            line("b", b).with_model_map(&map_b),
+            |_| {},
+        )
+        .await;
+
+        post(
+            &h,
+            "/codex/v1/chat/completions",
+            r#"{"model":"gpt-5.6-sol"}"#,
+        )
+        .await;
+        let sent_a: Value = serde_json::from_str(&a_hits.lock().unwrap()[0].1).unwrap();
+        assert_eq!(
+            sent_a["model"], "a-sol",
+            "逐个指定的没先于兜底生效（不分大小写）"
+        );
+        let sent_b: Value = serde_json::from_str(&b_hits.lock().unwrap()[0].1).unwrap();
+        assert_eq!(
+            sent_b["model"], "b-everything",
+            "换线后用的不是那条线自己的映射"
+        );
+        assert_eq!(last_log(&h).await.upstream_model, "b-everything");
     }
 
     #[tokio::test]
