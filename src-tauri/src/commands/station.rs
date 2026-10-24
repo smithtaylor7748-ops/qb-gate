@@ -60,6 +60,32 @@ pub struct RouterStatus {
     /// Codex），落盘的 marker 是唯一真相 —— 面板重启后 `turnstate_official_armed` 归零，
     /// 而这个字段还能告诉界面「上次没关干净」（启动时会自动关闭并恢复）。
     pub turnstate_takeover: Option<String>,
+    /// **这个软件**的线上，熔断器不在「正常」那一档的（熔断中 / 半开）。正常的不列。
+    ///
+    /// 界面据此写「熔断中 · 还要几分钟」，旁边给一个「立刻重测」（充了值之后用）。
+    /// 跟转发时用的是同一份熔断器（`RouterState::breaker_views`），不另算。
+    pub breakers: Vec<BreakerView>,
+}
+
+/// 一条线的熔断器此刻在哪一档。
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct BreakerView {
+    pub route_id: String,
+    pub state: BreakerPhase,
+    /// 熔断到什么时候（毫秒）。半开时是已经过去的那个时刻。
+    pub open_until_ms: Option<i64>,
+}
+
+/// 熔断器不在「正常」时的两档。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub enum BreakerPhase {
+    /// 熔断中：除非所有线都熔断着，否则不打它。
+    Open,
+    /// 到期了：下一发就是回探（只放一发）。
+    HalfOpen,
 }
 
 /// `client` 是「界面现在停在哪个分页」。`current_route` / `pending_route`
@@ -67,7 +93,31 @@ pub struct RouterStatus {
 fn status_of(state: &AppState, client: Client) -> RouterStatus {
     let addr = state.station_addr.lock().ok().and_then(|a| *a);
     let s = state.station.lock().ok();
+    let now = chrono::Utc::now().timestamp_millis();
+    let prefix = format!("{}\u{1f}", client_key(client));
+    let breakers = s
+        .as_ref()
+        .map(|s| {
+            s.breaker_views(now)
+                .into_iter()
+                .filter(|(id, _, _)| id.starts_with(&prefix))
+                .filter_map(|(route_id, st, open_until_ms)| {
+                    let state = match st {
+                        qb_station::schedule::State::Closed => return None,
+                        qb_station::schedule::State::Open => BreakerPhase::Open,
+                        qb_station::schedule::State::HalfOpen => BreakerPhase::HalfOpen,
+                    };
+                    Some(BreakerView {
+                        route_id,
+                        state,
+                        open_until_ms,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     RouterStatus {
+        breakers,
         running: addr.is_some(),
         base_url: addr.map(|a| format!("http://127.0.0.1:{}", a.port())),
         current_route: s.as_ref().and_then(|s| s.current(client)),
@@ -336,19 +386,117 @@ pub fn station_select_route(
     // 拿分页当依据的话，只要界面状态和线路对不上（切完分页还没重渲染、
     // 深链接直接打进来），就会把 A 软件的上游换成一条属于 B 软件的线 ——
     // 那条线的 Key 是给 B 配的，账会记到 B 头上，而且完全看不出来。
-    let route: Route = crate::repository::Repository::open()?.get("station_routes", &route_id)?;
+    let db = crate::repository::Repository::open()?;
+    let route: Route = db.get("station_routes", &route_id)?;
     {
         let mut s = state
             .station
             .lock()
             .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
         if immediate {
-            s.set_now(route.client, route_id);
+            s.set_now(route.client, route_id.clone());
         } else {
-            s.request_switch(route.client, route_id);
+            s.request_switch(route.client, route_id.clone());
         }
     }
+    // 记下来：面板重启后接着用这一条（原来只在内存里，重启后客户端收到 503「还没选上游」）。
+    // 写不进去不挡这一次切换 —— 切换已经生效了，只是重启后不记得；记进审计日志。
+    if let Err(e) = station_ops::remember_current(
+        &db,
+        route.client,
+        &route_id,
+        chrono::Utc::now().timestamp_millis(),
+    ) {
+        crate::audit::write(&format!(
+            "中转站：已切到「{route_id}」，但没记下来（面板重启后不会接着用它）：{e}"
+        ));
+    }
     Ok(status_of(&state, route.client))
+}
+
+// ------------------------------------------------------------------ 本机路由的设置与派单顺序
+
+/// 一个软件的本机路由设置（故障转移、三种超时、熔断参数、整流器开关）。读的是库里那份 —— 库是真相。
+#[tauri::command]
+pub fn station_router_settings(client: Client) -> Result<qb_station::router::RouterSettings> {
+    let db = crate::repository::Repository::open()?;
+    station_ops::load_router_settings(&db, client)
+}
+
+/// 存一个软件的本机路由设置，并立刻换到路由器上（下一发请求就按新的来；熔断器的当前状态不动）。
+#[tauri::command]
+pub fn station_router_settings_save(
+    state: State<'_, AppState>,
+    settings: qb_station::router::RouterSettings,
+) -> Result<qb_station::router::RouterSettings> {
+    if !station_ops::RELAY_CLIENTS.contains(&settings.client) {
+        return Err(GateError::Other(
+            "这个软件没有中转路径，本机路由不给它换上游".into(),
+        ));
+    }
+    let db = crate::repository::Repository::open()?;
+    station_ops::save_router_settings(&db, &settings)?;
+    state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?
+        .set_settings(settings.clone());
+    Ok(settings)
+}
+
+/// 一个软件的派单队列：上次选中的那条 + 手动排的顺序。
+#[tauri::command]
+pub fn station_dispatch_queue(client: Client) -> Result<qb_station::router::DispatchQueue> {
+    let db = crate::repository::Repository::open()?;
+    station_ops::load_dispatch_queue(&db, client)
+}
+
+/// 存派单顺序：当前那条失败时依次改用谁。只收这个软件自己的线。
+#[tauri::command]
+pub fn station_dispatch_queue_save(
+    state: State<'_, AppState>,
+    client: Client,
+    order: Vec<String>,
+) -> Result<qb_station::router::DispatchQueue> {
+    let db = crate::repository::Repository::open()?;
+    let q = station_ops::save_dispatch_order(
+        &db,
+        client,
+        order,
+        chrono::Utc::now().timestamp_millis(),
+    )?;
+    state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?
+        .set_queue(client, q.order.clone());
+    Ok(q)
+}
+
+/// 「我充值了，立刻重测」：熔断中的线马上转半开，下一发真实请求就是回探（不花额外的钱）。
+/// 返回它原来是不是熔断着。
+#[tauri::command]
+pub fn station_route_retest(state: State<'_, AppState>, route_id: String) -> Result<bool> {
+    let now = chrono::Utc::now().timestamp_millis();
+    Ok(state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?
+        .retest(&route_id, now))
+}
+
+/// 面板启动时：把线路装进路由器，再把落盘的设置、派单顺序、上次选中的那条装回去。
+///
+/// **不拉起路由**（监听端口）—— 路由什么时候起，跟原来一样由「启动」/ 开启识别决定。
+/// 这里只保证路由起来之后，各软件接着用上次那条，而不是 503「还没选上游」。
+pub fn restore_router_state(state: &AppState) -> Result<()> {
+    load_upstreams(state)?;
+    let db = crate::repository::Repository::open()?;
+    let mut s = state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
+    station_ops::restore_router(&db, &mut s)
 }
 
 /// 启动这个软件,走当前选中的上游。**中转站页面上那个「启动」就是它。**
@@ -1381,7 +1529,11 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
                     .unwrap_or_else(|| next.clone());
                 if let Ok(mut s) = state.station.lock() {
                     // 下一次请求生效，不打断正在飞的那一发。
-                    s.request_switch(client, next);
+                    s.request_switch(client, next.clone());
+                }
+                // 调度换过去的也记下来，面板重启后接着用（写不进去不挡这一跳）。
+                if let Err(e) = station_ops::remember_current(&db, client, &next, now) {
+                    tracing::warn!("智能调度：已换到 {next}，但没记下来：{e}");
                 }
                 sched.last_switch_ms = Some(now);
                 sched.last_note = format!("已换到「{label}」");

@@ -899,7 +899,8 @@
     "software page SillyTavern card: missing Node gates install behind the winget choice, import source prefilled, install makes it managed, update says latest, uninstall backs up first",
     "SillyTavern card versions without tabs: release list, downgrade names itself and still gates on Node, swap back to the kept copy",
     "tavern panel console tab: a failed start is recognized with a hint, colors are rendered not printed, the previous run is one click away",
-    "tavern panel library tabs: character detail, to trash with its chats and back, world entries whose Esc closes only the entry dialog, extension check then update, every tab without overflow at 680px"
+    "tavern panel library tabs: character detail, to trash with its chats and back, world entries whose Esc closes only the entry dialog, extension check then update, every tab without overflow at 680px",
+    "relay router settings: dispatch queue and breaker pills without overflow at two widths, retest turns a tripped line half-open, failover switch saved and read back off"
   ],
   "pageErrors": []
 }

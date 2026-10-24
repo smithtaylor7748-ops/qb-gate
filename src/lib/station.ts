@@ -14,7 +14,9 @@ import { call } from "./ipc";
 import type { AuditRound } from "./generated/AuditRound";
 import type { DecisionView } from "./generated/DecisionView";
 import type { Prefs } from "./generated/Prefs";
+import type { DispatchQueue } from "./generated/DispatchQueue";
 import type { RouterRequest } from "./generated/RouterRequest";
+import type { RouterSettings } from "./generated/RouterSettings";
 import type { RouteHealthView } from "./generated/RouteHealthView";
 import type { Client } from "./generated/Client";
 import type { RouterStatus } from "./generated/RouterStatus";
@@ -30,8 +32,10 @@ import type { StationModelsView } from "./generated/StationModelsView";
 export type {
   AuditRound,
   DecisionView,
+  DispatchQueue,
   Prefs,
   RouterRequest,
+  RouterSettings,
   Route,
   RouteHealthView,
   RouterStatus,
@@ -119,6 +123,25 @@ export const stationApi = {
   /** 落库并回最近若干条。 */
   logs: (limit?: number) =>
     call<RouterRequest[]>("station_logs", { limit: limit ?? null }),
+
+  /** 这个软件的本机路由设置（故障转移、三种超时、熔断参数、整流器开关）。 */
+  routerSettings: (client: Client) =>
+    call<RouterSettings>("station_router_settings", { client }),
+  /** 存了立刻生效（下一发就按新的来；熔断器的当前状态不动）。不合格的整份不存、报原因。 */
+  saveRouterSettings: (settings: RouterSettings) =>
+    call<RouterSettings>("station_router_settings_save", { settings }),
+  /** 派单队列：上次选中的那条 + 手动排的顺序（当前那条失败时依次改用谁）。 */
+  dispatchQueue: (client: Client) =>
+    call<DispatchQueue>("station_dispatch_queue", { client }),
+  /** 只收这个软件自己的线；混进别的软件的线整份拒绝。 */
+  saveDispatchQueue: (client: Client, order: string[]) =>
+    call<DispatchQueue>("station_dispatch_queue_save", { client, order }),
+  /**
+   * 「我充值了，立刻重测」：熔断中的线马上转半开，下一发真实请求就是回探 —— 不额外花钱。
+   * 回它原来是不是熔断着。
+   */
+  retest: (routeId: string) =>
+    call<boolean>("station_route_retest", { routeId }),
 
   /** 拉一轮账单并聚合。**零成本** —— 读的是站点自己的日志，不打模型。 */
   refreshHealth: () => call<RouteHealthView[]>("station_refresh_health"),

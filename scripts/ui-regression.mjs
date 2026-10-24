@@ -1965,6 +1965,48 @@ try {
   await page.keyboard.press("Escape");
   await panel2.waitFor({ state: "hidden" });
 
+  // 中转站重构阶段 1：路由设置弹窗（故障转移、派单顺序、超时、熔断、整流器）。
+  // 演示里 Claude Code 的高倍组熔断着：「立刻重测」之后要转成半开，按钮上的「N 条熔断」跟着变。
+  await page.goto(origin + "/#/relays");
+  await page.getByRole("button", { name: /路由设置 · 故障转移/ }).click();
+  const routerDialog = page.getByRole("dialog");
+  await routerDialog.getByText("派单顺序（替补）", { exact: true }).waitFor();
+  for (const width of [1320, 680]) {
+    await page.setViewportSize({ width, height: 940 });
+    await assertNoOverflow(page, `router settings ${width}`);
+  }
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await routerDialog
+    .getByRole("button", { name: "立刻重测", exact: true })
+    .click();
+  await routerDialog.getByText("半开 · 下一发回探", { exact: true }).waitFor();
+  assert.equal(
+    await routerDialog
+      .getByRole("button", { name: "立刻重测", exact: true })
+      .count(),
+    0,
+    "重测之后那条线还显示着「立刻重测」",
+  );
+  await routerDialog
+    .getByLabel("当前那条线在交出回复之前失败时，这一发改用下面排的下一条")
+    .uncheck();
+  await routerDialog.getByRole("button", { name: "保存", exact: true }).click();
+  await page.getByText("路由设置已保存，下一发请求就按新的来").waitFor();
+  await page.keyboard.press("Escape");
+  await routerDialog.waitFor({ state: "hidden" });
+  // 存进去的那一份读回来还是关着（演示后端跟真后端一样有状态）。
+  await page.getByRole("button", { name: /路由设置 · 故障转移/ }).click();
+  await page.getByText("派单顺序（替补）", { exact: true }).waitFor();
+  assert.equal(
+    await page
+      .getByRole("dialog")
+      .getByLabel("当前那条线在交出回复之前失败时，这一发改用下面排的下一条")
+      .isChecked(),
+    false,
+    "关掉的故障转移读回来又开着",
+  );
+  await page.keyboard.press("Escape");
+
   assert.deepEqual(errors, []);
   const flows = [
     "catalog isolation",
@@ -1991,6 +2033,7 @@ try {
     "SillyTavern card versions without tabs: release list, downgrade names itself and still gates on Node, swap back to the kept copy",
     "tavern panel console tab: a failed start is recognized with a hint, colors are rendered not printed, the previous run is one click away",
     "tavern panel library tabs: character detail, to trash with its chats and back, world entries whose Esc closes only the entry dialog, extension check then update, every tab without overflow at 680px",
+    "relay router settings: dispatch queue and breaker pills without overflow at two widths, retest turns a tripped line half-open, failover switch saved and read back off",
   ];
   writeFileSync(
     "docs/ui-regression.json",

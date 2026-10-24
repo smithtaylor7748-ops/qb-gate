@@ -337,6 +337,23 @@ impl RouterState {
             .collect()
     }
 
+    /// 给界面看的熔断状态：`(线路, 档位, 熔断到什么时候)`，按线路 id 排好。
+    ///
+    /// 只读同一份 `breakers`（跟 [`breaker_state`](Self::breaker_state) 一个来源），不另算。
+    /// 从没失败过的线不在里面 —— 那就是「正常」。
+    pub fn breaker_views(
+        &self,
+        now_ms: i64,
+    ) -> Vec<(String, qb_station::schedule::State, Option<i64>)> {
+        let mut rows: Vec<_> = self
+            .breakers
+            .iter()
+            .map(|(id, b)| (id.clone(), b.state(now_ms), b.open_until_ms()))
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        rows
+    }
+
     /// 这条线现在能不能用(没熔断)。
     pub fn usable(&self, route_id: &str, now_ms: i64) -> bool {
         self.breakers

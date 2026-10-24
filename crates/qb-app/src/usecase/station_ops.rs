@@ -17,10 +17,11 @@
 
 use crate::domain::{Client, Credential, Provider};
 use crate::error::{GateError, Result};
+use crate::local_router::RouterState;
 use crate::repository::Repository;
 use qb_platform::repository::RouterRequestQuery;
 use qb_station::health::{self, Windows};
-use qb_station::router::RouterRequest;
+use qb_station::router::{DispatchQueue, RouterRequest, RouterSettings};
 use qb_station::schedule::{
     cheap_values, cost_per_token, rank, Candidate, CheapBasis, CheapInput, Prefs, Ranking, Schedule,
 };
@@ -706,6 +707,110 @@ pub fn save_schedule(db: &Repository, schedule: &Schedule) -> Result<()> {
     db.put(SCHEDULE_TABLE, &schedule_key(schedule.client)?, schedule)
 }
 
+// ------------------------------------------------------------ 本机路由的设置与派单队列
+
+/// 本机路由每个软件一份的设置落在哪张表（迁移 6）。主键跟调度一样是软件名。
+const ROUTER_SETTINGS_TABLE: &str = "router_settings";
+/// 派单队列（当前那条 + 手动顺序）落在哪张表（迁移 6）。
+const DISPATCH_TABLE: &str = "dispatch_queue";
+
+/// 有中转路径的三个软件。反重力没有（`workspace::reject_if_no_relay_path`）。
+pub const RELAY_CLIENTS: [Client; 3] = [Client::ClaudeCode, Client::ClaudeDesktop, Client::Codex];
+
+/// 读一个软件的本机路由设置。**没存过 = 默认那一份**（[`RouterSettings::for_client`]）；
+/// 别的失败照实报（跟 [`load_schedule`] 同一条规矩）。
+pub fn load_router_settings(db: &Repository, client: Client) -> Result<RouterSettings> {
+    let mut s: RouterSettings = db
+        .find(ROUTER_SETTINGS_TABLE, &schedule_key(client)?)?
+        .unwrap_or_else(|| RouterSettings::for_client(client));
+    // 主键说了算：存的那一份里 client 写错了也不许串到别的软件上。
+    s.client = client;
+    Ok(s)
+}
+
+/// 存一个软件的本机路由设置。先 [`RouterSettings::validate`]，不合格就整份不存。
+pub fn save_router_settings(db: &Repository, settings: &RouterSettings) -> Result<()> {
+    settings.validate().map_err(GateError::Other)?;
+    db.put(
+        ROUTER_SETTINGS_TABLE,
+        &schedule_key(settings.client)?,
+        settings,
+    )
+}
+
+/// 读一个软件的派单队列。没存过 = 空的（没有上次选中的那条、没有顺序）。
+pub fn load_dispatch_queue(db: &Repository, client: Client) -> Result<DispatchQueue> {
+    let mut q: DispatchQueue = db
+        .find(DISPATCH_TABLE, &schedule_key(client)?)?
+        .unwrap_or_else(|| DispatchQueue::new(client));
+    q.client = client;
+    Ok(q)
+}
+
+/// 存派单顺序。**只收这个软件自己的线**（按 `Route::make_id` 的软件前缀认），去重、去空；
+/// 别的软件的线混进来就整份拒绝 —— 换过去等于拿这个软件的请求打别人的 Key。
+pub fn save_dispatch_order(
+    db: &Repository,
+    client: Client,
+    order: Vec<String>,
+    now_ms: i64,
+) -> Result<DispatchQueue> {
+    let prefix = format!("{}\u{1f}", schedule_key(client)?);
+    let mut clean: Vec<String> = Vec::new();
+    for id in order {
+        let id = id.trim().to_string();
+        if id.is_empty() || clean.contains(&id) {
+            continue;
+        }
+        if !id.starts_with(&prefix) {
+            return Err(GateError::Other(format!(
+                "派单顺序里混进了别的软件的线（{id}）：每个软件只能排自己的线"
+            )));
+        }
+        clean.push(id);
+    }
+    let mut q = load_dispatch_queue(db, client)?;
+    q.order = clean;
+    q.updated_ms = now_ms;
+    db.put(DISPATCH_TABLE, &schedule_key(client)?, &q)?;
+    Ok(q)
+}
+
+/// 记下这个软件上次选中的那条（手动选的、调度换过去的都记），面板重启后接着用。
+pub fn remember_current(
+    db: &Repository,
+    client: Client,
+    route_id: &str,
+    now_ms: i64,
+) -> Result<()> {
+    let mut q = load_dispatch_queue(db, client)?;
+    if q.current.as_deref() == Some(route_id) {
+        return Ok(());
+    }
+    q.current = Some(route_id.to_string());
+    q.updated_ms = now_ms;
+    db.put(DISPATCH_TABLE, &schedule_key(client)?, &q)
+}
+
+/// 把落盘的设置、派单顺序、上次选中的那条装回路由器（面板启动时、路由拉起来之前）。
+///
+/// 上次选中的那条**只在这个软件眼下还没选时**装回去 —— 面板开着期间使用者或调度刚选过的，
+/// 不该被库里那份旧的盖掉。那条线后来被删了也照样装回去：下一发如实回 503「还没选上游」，
+/// 而不是悄悄换成另一条（那是替使用者做决定）。
+pub fn restore_router(db: &Repository, state: &mut RouterState) -> Result<()> {
+    for client in RELAY_CLIENTS {
+        state.set_settings(load_router_settings(db, client)?);
+        let q = load_dispatch_queue(db, client)?;
+        state.set_queue(client, q.order);
+        if state.current(client).is_none() {
+            if let Some(id) = q.current {
+                state.set_now(client, id);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// 把攒下的请求日志落库：先补两种花费，再写，再裁掉 [`ROUTER_REQUEST_KEEP_DAYS`] 天以前的。
 ///
 /// 线路的价从库里的 `station_routes` 现读（这一批里用到哪条读哪条，表很小）。
@@ -972,6 +1077,72 @@ mod tests {
         );
         let codex = router_requests(&db, Some(Client::Codex), None, 10).unwrap();
         assert_eq!(codex, vec![fresh], "按软件筛不对，或者读回来变了样");
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn router_settings_and_the_dispatch_queue_survive_a_panel_restart() {
+        // 原来当前上游只在内存里：面板一重启，客户端下一发收到 503「还没选上游」。
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let a = Route::make_id(Client::Codex, "s", "a");
+        let b = Route::make_id(Client::Codex, "s", "b");
+        {
+            let db = Repository::open_in(&root).unwrap();
+            let mut s = load_router_settings(&db, Client::Codex).unwrap();
+            assert_eq!(
+                s,
+                RouterSettings::for_client(Client::Codex),
+                "没存过 = 默认那份"
+            );
+            s.auto_failover = false;
+            s.max_attempts = 2;
+            save_router_settings(&db, &s).unwrap();
+            save_dispatch_order(&db, Client::Codex, vec![b.clone(), a.clone(), b.clone()], 7)
+                .unwrap();
+            remember_current(&db, Client::Codex, &a, 8).unwrap();
+        }
+        let db = Repository::open_in(&root).unwrap();
+        let mut state = RouterState::default();
+        restore_router(&db, &mut state).unwrap();
+        assert!(!state.settings(Client::Codex).auto_failover);
+        assert_eq!(state.settings(Client::Codex).max_attempts, 2);
+        assert_eq!(state.current(Client::Codex).as_deref(), Some(a.as_str()));
+        let q = load_dispatch_queue(&db, Client::Codex).unwrap();
+        assert_eq!(q.order, [b.clone(), a.clone()], "重复的那条没去掉");
+        // 别的软件不受影响。
+        assert_eq!(state.current(Client::ClaudeCode), None);
+        assert!(state.settings(Client::ClaudeCode).auto_failover);
+
+        // 面板开着期间刚选过的，不被库里那份旧的盖掉。
+        let mut busy = RouterState::default();
+        busy.set_now(Client::Codex, b.clone());
+        restore_router(&db, &mut busy).unwrap();
+        assert_eq!(busy.current(Client::Codex).as_deref(), Some(b.as_str()));
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bad_router_settings_and_foreign_lines_in_the_queue_are_refused() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        let mut bad = RouterSettings::for_client(Client::ClaudeCode);
+        bad.breaker.error_rate = 0.0;
+        assert!(save_router_settings(&db, &bad).is_err());
+        assert_eq!(
+            load_router_settings(&db, Client::ClaudeCode).unwrap(),
+            RouterSettings::for_client(Client::ClaudeCode),
+            "不合格的那份存进去了"
+        );
+        // Codex 的线混进 Claude Code 的派单顺序：换过去就是拿 Claude 的请求打 Codex 的 Key。
+        let foreign = Route::make_id(Client::Codex, "s", "");
+        let err = save_dispatch_order(&db, Client::ClaudeCode, vec![foreign], 1).unwrap_err();
+        assert!(err.to_string().contains("别的软件"), "{err}");
+        assert!(load_dispatch_queue(&db, Client::ClaudeCode)
+            .unwrap()
+            .order
+            .is_empty());
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
     }

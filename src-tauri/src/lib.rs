@@ -161,6 +161,12 @@ pub fn run() {
             commands::station::station_turnstate_enable,
             commands::station::station_turnstate_disable,
             commands::station::station_select_route,
+            // 本机路由每个软件一份的设置与派单顺序（2026-10-24，中转站重构阶段 1）。
+            commands::station::station_router_settings,
+            commands::station::station_router_settings_save,
+            commands::station::station_dispatch_queue,
+            commands::station::station_dispatch_queue_save,
+            commands::station::station_route_retest,
             commands::station::station_launch,
             commands::station::station_schedules,
             commands::station::station_schedule_set,
@@ -465,6 +471,16 @@ pub fn run() {
                     // 启动时先告诉汉化引擎该去哪读，不然面板重启后「附加」找的还是默认那份的文件。
                     if let Err(e) = usecase::antigravity_ops::sync_ide_profile() {
                         audit::write(&format!("读反重力 IDE 槽位索引失败（汉化引擎会按默认资料目录找端口）：{e}"));
+                    }
+                    // 本机路由的设置、派单顺序、各软件上次选中的那条（2026-10-24 起落盘）装回去。
+                    // 路由本身不在这里拉起（跟原来一样，「启动」/ 开启识别时才起）；
+                    // 这一步只保证它起来之后接着用上次那条，而不是 503「还没选上游」。
+                    if let Err(e) =
+                        commands::station::restore_router_state(&handle.state::<AppState>())
+                    {
+                        audit::write(&format!(
+                            "面板启动：没能把中转站的路由设置 / 上次选中的线路装回去（这次要重新选）：{e}"
+                        ));
                     }
                     // 智能调度是**落盘的承诺**：上次开着的，这次起来要接着跑。
                     // 不接回去的话，使用者重启一次面板，调度就悄悄停了 ——

@@ -392,6 +392,11 @@ cargo run -p qb-app --example antigravity-hub-quota -- --account <槽位 id>
 10. **模型映射挂在线路上、只改顶层 `model` 一个字段**（`Route.model_map` → `Upstream::with_model_map`）：先逐个指定、再档位、最后兜底；
     换线之后用的是那条线自己的那份。**官方线不换模型名**。`qb-station::RouteModelMap` 与 `qb-proxy::ModelMapping`
     同在第 3 层、互不依赖，换算放在 `qb-app`（别往 `ALLOWED_SIDEWAYS` 里补边）。`Route.upstream_format` 阶段 1 存得下但不读。
+11. **路由设置与派单队列是落盘的承诺**（迁移 6：`router_settings`、`dispatch_queue`，一个软件一行，主键是软件名）。
+    读的是库里那份、存了立刻 `set_settings` / `set_queue` 到路由器上；只改界面 state 的话路由和界面会漂开。
+    不合格的设置**整份拒绝、不夹到范围里**（`RouterSettings::validate`）；派单顺序混进别的软件的线整份拒绝。
+    手动选的、调度换过去的都 `remember_current`；面板启动时 `restore_router_state` 装回去，**只在那个软件眼下还没选时**。
+    ⛔ 面板启动**不拉起路由**（监听端口）—— 那是使用者还没回答的问题（交接文档阶段 1 第 8 步），别顺手加上。
 
 ### 体检的无凭据探测与一次性采集页（2026-09-24，使用者选的）
 

@@ -269,11 +269,88 @@ impl RouterSettings {
             rectifier: RectifierSwitches::default(),
         }
     }
+
+    /// 存之前先看一遍。**不悄悄夹到范围里** —— 使用者填的是 0.6 却存成 1.0，界面上看起来存上了。
+    ///
+    /// 超时 0 = 不限（cc-switch 同样如此），所以超时只有上限；上限一小时，再长就等于不限，
+    /// 那就该填 0，而不是一个看不出意图的大数。
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        const MAX_TIMEOUT_SECS: u32 = 3600;
+        let mut problems = Vec::new();
+        if !(1..=20).contains(&self.max_attempts) {
+            problems.push(format!(
+                "一发最多试几条线要在 1 到 20 之间（填的是 {}）",
+                self.max_attempts
+            ));
+        }
+        for (name, v) in [
+            ("首包超时", self.first_byte_timeout_secs),
+            ("静默超时", self.idle_timeout_secs),
+            ("非流式超时", self.non_streaming_timeout_secs),
+        ] {
+            if v > MAX_TIMEOUT_SECS {
+                problems.push(format!(
+                    "{name}最长 {MAX_TIMEOUT_SECS} 秒（填的是 {v}）；不想限就填 0"
+                ));
+            }
+        }
+        let b = &self.breaker;
+        if b.trip_after_consecutive == 0 {
+            problems.push("连续几次失败才熔断不能是 0".to_string());
+        }
+        if !(b.error_rate.is_finite() && b.error_rate > 0.0 && b.error_rate <= 1.0) {
+            problems.push(format!(
+                "错误率阈值要在 0 到 1 之间、大于 0（填的是 {}）",
+                b.error_rate
+            ));
+        }
+        if b.min_requests == 0 {
+            problems.push("看错误率前至少要几次结果不能是 0".to_string());
+        }
+        if b.half_open_successes == 0 {
+            problems.push("半开时要成功几次才闭合不能是 0".to_string());
+        }
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(problems.join("；"))
+        }
+    }
 }
 
 impl Default for RouterSettings {
     fn default() -> Self {
         Self::for_client(Client::ClaudeCode)
+    }
+}
+
+/// 一个软件的派单队列（落盘的那一份，存在 `dispatch_queue` 表里，一个软件一行）。
+///
+/// 中转站重构阶段 1 只有「当前那条 + 手动排的顺序」：当前那条失败时按 `order` 往下试
+/// （自动故障转移，见 [`RouterSettings::auto_failover`]）。调度融合（钉住 / 合格 / 兜底分档、
+/// 防抖记忆）在阶段 2 往这里加字段。
+///
+/// **为什么要落盘**：原来当前上游只在内存里，面板一重启就没了，客户端下一发收到 503
+/// 「还没选上游」（交接文档 §2.12 第 5 条，2026-10-24 照代码核过）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(default)]
+pub struct DispatchQueue {
+    pub client: Client,
+    /// 上次选中的那条（使用者手动选、或调度换过去的）。面板重启后从这里接着用。
+    pub current: Option<String>,
+    /// 当前那条失败时依次改用谁。当前那条不必在里面；删掉的线读的时候跳过。
+    pub order: Vec<String>,
+    /// 上次改的时刻（毫秒）。
+    pub updated_ms: i64,
+}
+
+impl DispatchQueue {
+    pub fn new(client: Client) -> Self {
+        Self {
+            client,
+            ..Default::default()
+        }
     }
 }
 
@@ -586,6 +663,34 @@ mod tests {
             serde_json::from_str(r#"{"client":"codex","max_attempts":2}"#).unwrap();
         assert_eq!(parsed.max_attempts, 2);
         assert!(parsed.auto_failover);
+    }
+
+    #[test]
+    fn router_settings_out_of_range_are_rejected_not_clamped() {
+        // 夹到范围里的话，使用者填的是 0.6 却存成 1.0，界面上看起来存上了。
+        assert!(RouterSettings::for_client(Client::Codex).validate().is_ok());
+        let mut s = RouterSettings::for_client(Client::ClaudeCode);
+        s.max_attempts = 0;
+        s.idle_timeout_secs = 9_999;
+        s.breaker.error_rate = 1.5;
+        let why = s.validate().unwrap_err();
+        assert!(why.contains("1 到 20"), "{why}");
+        assert!(why.contains("静默超时"), "{why}");
+        assert!(why.contains("错误率"), "{why}");
+        // 0 = 不限，是合法的。
+        let mut unlimited = RouterSettings::for_client(Client::ClaudeCode);
+        unlimited.first_byte_timeout_secs = 0;
+        unlimited.idle_timeout_secs = 0;
+        assert!(unlimited.validate().is_ok());
+    }
+
+    #[test]
+    fn a_dispatch_queue_saved_without_newer_fields_still_reads() {
+        let q: DispatchQueue =
+            serde_json::from_str(r#"{"client":"codex","order":["a","b"]}"#).unwrap();
+        assert_eq!(q.client, Client::Codex);
+        assert_eq!(q.order, ["a", "b"]);
+        assert_eq!(q.current, None);
     }
 
     #[test]

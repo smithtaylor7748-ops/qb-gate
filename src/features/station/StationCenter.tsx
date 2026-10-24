@@ -35,6 +35,7 @@ import {
   ChevronRight,
   Fingerprint,
   Play,
+  Shuffle,
   SlidersHorizontal,
   Square,
   X,
@@ -71,6 +72,7 @@ import {
   type GranId,
   type RangeId,
 } from "./shared";
+import StationRouterSettings from "./StationRouterSettings";
 import StationSchedule from "./StationSchedule";
 import StationAudit from "./StationAudit";
 import StationLogs from "./StationLogs";
@@ -227,6 +229,7 @@ function StationBoard({
     editing: Route | null;
   } | null>(null);
   const [schedOpen, setSchedOpen] = useState(false);
+  const [routerOpen, setRouterOpen] = useState(false);
   const [turnOpen, setTurnOpen] = useState(false);
   const [logOpen, setLogOpen] = useState<Route | null>(null);
   const [auditOpen, setAuditOpen] = useState<Route | null>(null);
@@ -950,6 +953,23 @@ function StationBoard({
             <ChevronRight size={14} className="chev" aria-hidden="true" />
           </button>
 
+          {/* 本机路由每个软件一份的设置：故障转移、派单顺序、超时、熔断、整流器。 */}
+          <button
+            type="button"
+            className="qb-st-schedcfg"
+            onClick={() => setRouterOpen(true)}
+          >
+            <span className="qb-st-sheen" aria-hidden="true" />
+            <Shuffle size={14} aria-hidden="true" />
+            路由设置 · 故障转移
+            {(status?.breakers.length ?? 0) > 0 && (
+              <span className="qb-st-pill qb-st-pill--danger">
+                {status?.breakers.length} 条熔断
+              </span>
+            )}
+            <ChevronRight size={14} className="chev" aria-hidden="true" />
+          </button>
+
           {/* turn-state 只对官方 Codex 有意义,别的软件不显示这个入口。 */}
           {client === "codex" && (
             <button
@@ -1109,6 +1129,24 @@ function StationBoard({
         <StationSchedule
           client={client}
           onSaved={(s) => setSchedPrefs(s.prefs)}
+        />
+      </Modal>
+
+      <Modal
+        open={routerOpen}
+        onClose={() => {
+          setRouterOpen(false);
+          void refreshStatus();
+        }}
+        title={`路由设置 · ${clientName.name}`}
+        size="form"
+      >
+        <StationRouterSettings
+          client={client}
+          routes={mine}
+          status={status}
+          label={(r) => `${siteName(r.station_id)} · ${r.group || "默认分组"}`}
+          onSaved={() => void refreshStatus()}
         />
       </Modal>
 

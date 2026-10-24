@@ -18,7 +18,9 @@ import type { ClaudeZhLeftovers } from "./generated/ClaudeZhLeftovers";
 import type { ClaudeZhOutcome } from "./generated/ClaudeZhOutcome";
 import type { CodexLocaleOutcome } from "./generated/CodexLocaleOutcome";
 import type { CodexLocaleStatus } from "./generated/CodexLocaleStatus";
+import type { BreakerView } from "./generated/BreakerView";
 import type { RouterRequest } from "./generated/RouterRequest";
+import type { RouterSettings } from "./generated/RouterSettings";
 /**
  * 演示数据 —— 只给截图和界面预览用。
  *
@@ -1896,6 +1898,54 @@ const stationCurrent: Record<string, string> = {
   // 那是刚装完面板的真实样子，也让「三个软件各走各的」一眼看得出来。
   "claude-code": R_MAIN,
 };
+
+/**
+ * 本机路由每个软件一份的设置（`RouterSettings::for_client` 的默认值，两边写同一组数）。
+ * 存了就真的存进这里 —— 只回固定值的话，改完点保存弹回旧值，看起来像没存上。
+ */
+const routerSettingsOf = (client: string): RouterSettings => {
+  const codex = client === "codex";
+  return {
+    client: client as RouterSettings["client"],
+    auto_failover: true,
+    max_attempts: codex ? 3 : 6,
+    first_byte_timeout_secs: codex ? 60 : 90,
+    idle_timeout_secs: codex ? 300 : 180,
+    non_streaming_timeout_secs: 600,
+    breaker: {
+      trip_after_consecutive: 5,
+      error_rate: codex ? 0.6 : 0.7,
+      min_requests: codex ? 10 : 15,
+      half_open_successes: 1,
+    },
+    rectifier: {
+      enabled: true,
+      thinking_signature: true,
+      thinking_budget: true,
+      media_fallback: true,
+      media_heuristic: true,
+    },
+  };
+};
+const stationRouterSettings: Record<string, RouterSettings> = {};
+/** 派单顺序。Claude Code 排了一条替补，好让弹窗里那张表两种状态都看得见。 */
+const stationDispatch: Record<string, string[]> = {
+  "claude-code": [R_CHEAP],
+};
+/**
+ * 熔断器不在「正常」的那几条。演示里让 Claude Code 的高倍组熔断着（余额不足关一小时），
+ * 好让「熔断中 · 还要几分钟」和「立刻重测」在截图里看得见。
+ */
+const stationBreakers: Record<string, BreakerView[]> = {
+  "claude-code": [
+    {
+      route_id: R_CLAUDE,
+      state: "open",
+      // 不用 ANCHOR：它在下面才定义（const 不能提前用）。
+      open_until_ms: BigInt(Date.now() + 37 * 60_000),
+    },
+  ],
+};
 /**
  * 排队中的那条，也按软件各记一份 —— 跟真后端的 `request_switch` 一样。
  *
@@ -2496,7 +2546,51 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     turnstate_enabled: stationTurnstateEnabled,
     turnstate_team: stationTurnstateTeam,
     turnstate_takeover: stationTurnstateTakeover,
+    breakers: [
+      ...(stationBreakers[String(args?.client ?? "claude-code")] ?? []),
+    ],
   }),
+  station_router_settings: (args) => {
+    const who = String(args?.client ?? "claude-code");
+    return { ...(stationRouterSettings[who] ?? routerSettingsOf(who)) };
+  },
+  station_router_settings_save: (args) => {
+    const s = args?.settings as RouterSettings;
+    stationRouterSettings[s.client] = { ...s };
+    return { ...s };
+  },
+  station_dispatch_queue: (args) => {
+    const who = String(args?.client ?? "claude-code");
+    return {
+      client: who,
+      current: stationCurrent[who] ?? null,
+      order: [...(stationDispatch[who] ?? [])],
+      updated_ms: 0n,
+    };
+  },
+  station_dispatch_queue_save: (args) => {
+    const who = String(args?.client ?? "claude-code");
+    stationDispatch[who] = [...((args?.order as string[]) ?? [])];
+    return {
+      client: who,
+      current: stationCurrent[who] ?? null,
+      order: [...stationDispatch[who]],
+      updated_ms: BigInt(Date.now()),
+    };
+  },
+  // 「立刻重测」：熔断中的那条转半开（真后端一样：下一发真实请求就是回探）。
+  station_route_retest: (args) => {
+    const id = String(args?.routeId ?? "");
+    for (const list of Object.values(stationBreakers)) {
+      const b = list.find((x) => x.route_id === id);
+      if (b && b.state === "open") {
+        b.state = "half-open";
+        b.open_until_ms = BigInt(Date.now());
+        return true;
+      }
+    }
+    return false;
+  },
   // 官方 Codex turn-state（实验）。演示数据给一张采到的 292，好看清界面。
   station_turnstate_configure: (args) => {
     stationTurnstateEnabled = Boolean(args?.enabled);

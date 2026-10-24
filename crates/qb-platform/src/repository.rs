@@ -140,6 +140,12 @@ const MIGRATIONS: &[&str] = &[
                 'ms', coalesce(json_extract(body, '$.total_ms'), 0)))
        FROM request_logs
       WHERE json_extract(body, '$.id') IS NOT NULL;",
+    // 6：本机路由每个软件一份的设置与派单队列（2026-10-24，中转站重构阶段 1）。
+    //
+    // 都是 `(id, body)`、一个软件一行、主键是软件名 —— 跟 `station_schedule` 同一个形状。
+    // 派单队列里也存「上次选中的那条」：原来它只在内存里，面板一重启客户端就收到 503「还没选上游」。
+    "CREATE TABLE IF NOT EXISTS router_settings(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS dispatch_queue(id TEXT PRIMARY KEY,body TEXT NOT NULL);",
 ];
 
 /// `router_requests` 的列，跟 `qb_station::router::RouterRequest` 的字段**同名**。
@@ -204,6 +210,8 @@ const TABLES: &[&str] = &[
     "station_audits",
     "request_logs",
     "station_schedule",
+    "router_settings",
+    "dispatch_queue",
 ];
 
 impl Repository {
