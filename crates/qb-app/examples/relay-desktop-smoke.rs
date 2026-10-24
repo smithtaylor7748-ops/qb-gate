@@ -98,6 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             route_id: route.id.clone(),
             base_url: source.base_url,
             auth: local_router::UpstreamAuth::Bearer(source.key),
+            ..Default::default()
         });
         state.set_now(Client::Codex, &route.id);
     }

@@ -254,7 +254,14 @@ fn main() {
         qb_gate_lib::station::audit::TrustDelta::export_all_to(&root)?;
         qb_gate_lib::station::audit::EvidenceLevel::export_all_to(&root)?;
         qb_gate_lib::station::audit::AuditRound::export_all_to(&root)?;
-        qb_gate_lib::router::RequestLog::export_all_to(&root)?;
+        // 请求日志第二版（2026-10-24）：多了试过的线路链、四类 token、两种花费。
+        // 第一版 `RequestLog` 只在后端读老数据时用，前端不再认它。
+        qb_gate_lib::router::RouterRequest::export_all_to(&root)?;
+        qb_gate_lib::router::RouteAttempt::export_all_to(&root)?;
+        // 每个软件一份的本机路由设置（故障转移、三种超时、熔断参数、整流器开关）。
+        qb_gate_lib::router::RouterSettings::export_all_to(&root)?;
+        qb_gate_lib::router::RectifierSwitches::export_all_to(&root)?;
+        qb_gate_lib::schedule::BreakerSettings::export_all_to(&root)?;
         qb_gate_lib::schedule::AxisScore::export_all_to(&root)?;
         qb_gate_lib::schedule::FloorMiss::export_all_to(&root)?;
         qb_gate_lib::schedule::Row::export_all_to(&root)?;

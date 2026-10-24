@@ -22,6 +22,7 @@
 //! `127.0.0.1`,之后换上游不需要重启客户端 —— 换的是这里的 `current`,
 //! 客户端那一头的地址一个字都不用动。
 
+use crate::schedule::breaker::BreakerSettings;
 use qb_contract::domain::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -192,12 +193,184 @@ impl ClientRouter {
     }
 }
 
-/// 一条请求日志。
+/// 一个软件的本机路由设置（cc-switch 的 `AppProxyConfig`，每个 app 一行）。
+///
+/// 存在 `router_settings` 表里，一个软件一行；没存过就是 [`RouterSettings::for_client`] 那一份。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(default)]
+pub struct RouterSettings {
+    pub client: Client,
+    /// 自动故障转移：这条线失败了改用队列里的下一条。**默认开**（使用者定的）；
+    /// 关掉就只打当前那一条、失败照实回给客户端（cc-switch 的默认是关）。
+    pub auto_failover: bool,
+    /// 一发请求最多试几条线（含第一条）。
+    pub max_attempts: u32,
+    /// 流式请求：响应头回来之后多久没等到第一块数据就算超时（秒，0 = 不限）。
+    pub first_byte_timeout_secs: u32,
+    /// 流式请求：两块数据之间最长等多久（秒，0 = 不限）。超了就断开，不再干等。
+    pub idle_timeout_secs: u32,
+    /// 非流式请求：整份响应要在多久之内读完（秒，0 = 不限）。
+    pub non_streaming_timeout_secs: u32,
+    pub breaker: BreakerSettings,
+    /// 整流器（cc-switch 的 `RectifierConfig`，默认全开）。
+    pub rectifier: RectifierSwitches,
+}
+
+/// 整流器的几个开关。跟 `qb_proxy::types::RectifierConfig` 一一对应，由 `qb-app` 换过去。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(default)]
+pub struct RectifierSwitches {
+    pub enabled: bool,
+    pub thinking_signature: bool,
+    pub thinking_budget: bool,
+    pub media_fallback: bool,
+    pub media_heuristic: bool,
+}
+
+impl Default for RectifierSwitches {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            thinking_signature: true,
+            thinking_budget: true,
+            media_fallback: true,
+            media_heuristic: true,
+        }
+    }
+}
+
+impl RouterSettings {
+    /// 默认值照 cc-switch 的 `proxy_config` 表（claude 一行、codex 一行），熔断的连续次数仍是 QB Gate 的 5。
+    ///
+    /// | | 最多试几条 | 首包 | 静默 | 非流式 | 错误率 / 最少样本 |
+    /// |---|---|---|---|---|---|
+    /// | Claude Code / 桌面端 | 6 | 90 | 180 | 600 | 0.7 / 15 |
+    /// | Codex | 3 | 60 | **300** | 600 | 0.6 / 10 |
+    ///
+    /// 只有一处跟 cc-switch 不一样：Codex 的静默超时它是 120 秒，这里取 Codex 自己的默认
+    /// （`stream_idle_timeout_ms` = 300 秒）。推理很久才出下一段的长回合会安静好几分钟，
+    /// 路由比客户端自己先掐断，等于替它做了一个它没要的决定（原来路由根本没有静默超时）。
+    pub fn for_client(client: Client) -> Self {
+        let codex = client == Client::Codex;
+        Self {
+            client,
+            auto_failover: true,
+            max_attempts: if codex { 3 } else { 6 },
+            first_byte_timeout_secs: if codex { 60 } else { 90 },
+            idle_timeout_secs: if codex { 300 } else { 180 },
+            non_streaming_timeout_secs: 600,
+            breaker: BreakerSettings {
+                error_rate: if codex { 0.6 } else { 0.7 },
+                min_requests: if codex { 10 } else { 15 },
+                ..BreakerSettings::default()
+            },
+            rectifier: RectifierSwitches::default(),
+        }
+    }
+}
+
+impl Default for RouterSettings {
+    fn default() -> Self {
+        Self::for_client(Client::ClaudeCode)
+    }
+}
+
+/// 一发请求试过的一条线。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RouteAttempt {
+    pub route_id: String,
+    /// 上游回的状态码。连不上、超时是 `None`。
+    pub status: Option<u16>,
+    /// 失败了的话是哪一类（`qb_proxy::classify::Fault::key`）。成功是 `None`。
+    pub fault: Option<String>,
+    /// 这一条用了多久（毫秒）。
+    pub ms: u64,
+}
+
+/// 一条请求日志（第二版，2026-10-17）：多了试过的线路链、四类 token、两种花费。
+///
+/// 存在 `router_requests` 表里（正经的列，按时间 / 线路 / 软件建了索引）；老的 [`RequestLog`]
+/// 那张 `request_logs` 由迁移 5 搬过来。**每一项都可能取不到**，取不到就是 `None`，不拿 0 顶上。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RouterRequest {
+    pub id: String,
+    pub at_ms: i64,
+    /// 哪个软件发来的（`Client` 的 kebab-case 写法）。
+    pub client: String,
+    /// 最后回给客户端的那条线（成功的那条，或者最后试的那条）。
+    pub route_id: String,
+    /// 客户端请求里写的模型。
+    pub model: String,
+    /// 按线路映射之后真正发上去的模型。没映射就是空串。
+    pub upstream_model: String,
+    pub status: Option<u16>,
+    pub first_token_ms: Option<u64>,
+    pub total_ms: Option<u64>,
+    /// 上游的 `Retry-After`,已经换算成毫秒。
+    pub retry_after_ms: Option<i64>,
+    pub streaming: bool,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
+    /// `cache_write_tokens` 里按 1 小时档写的那部分（Claude 单独计价）。
+    pub cache_write_1h_tokens: Option<u64>,
+    /// 站内花费（美元，按这条线自己公布的价；落库时算）。
+    pub station_cost: Option<f64>,
+    /// 同样的 token 按官方价折算（美元）。**不是账单** —— 订阅不按这个收费。
+    pub official_cost: Option<f64>,
+    pub session_id: Option<String>,
+    /// 失败了的话是哪一类（最后那一条线的）。
+    pub fault: Option<String>,
+    /// 失败的一句话摘要。**不含请求内容、不含 Key。**
+    pub error: Option<String>,
+    /// 按顺序试过的线。只试了一条也有一项。
+    pub attempts: Vec<RouteAttempt>,
+}
+
+impl RouterRequest {
+    /// 这一发算不算成功（2xx 且没有记故障）。
+    pub fn ok(&self) -> bool {
+        self.fault.is_none() && self.status.is_some_and(|s| (200..300).contains(&s))
+    }
+}
+
+impl From<RequestLog> for RouterRequest {
+    /// 第一版日志升上来：只有状态码与耗时，没有 token、没有线路链（那时候只试一条）。
+    fn from(old: RequestLog) -> Self {
+        Self {
+            attempts: vec![RouteAttempt {
+                route_id: old.route_id.clone(),
+                status: old.status,
+                fault: None,
+                ms: old.total_ms.unwrap_or(0),
+            }],
+            id: old.id,
+            at_ms: old.at_ms,
+            client: old.client,
+            route_id: old.route_id,
+            model: old.model,
+            status: old.status,
+            first_token_ms: old.first_token_ms,
+            total_ms: old.total_ms,
+            retry_after_ms: old.retry_after_ms,
+            ..Default::default()
+        }
+    }
+}
+
+/// 第一版请求日志（0.14.0–0.25.6 的 `request_logs` 表）。新的写 [`RouterRequest`]；
+/// 这个形状留着只为读老数据（迁移 5 与它的测试）。
 ///
 /// **每一项都可能取不到** —— 上游没回、连接断在半路都是常态,
 /// 取不到就是 `None`,不拿 0 顶上。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export)]
+///
+/// 前端不再认它（2026-10-24 起不导出 TS 类型）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RequestLog {
     pub id: String,
     pub at_ms: i64,
@@ -377,6 +550,60 @@ mod tests {
             assert_eq!(Outcome::from_status(s, None), Outcome::Ok, "{s}");
         }
         assert_eq!(Outcome::timeout(), Outcome::ServerError);
+    }
+
+    #[test]
+    fn router_settings_default_to_cc_switch_s_per_app_table_with_failover_on() {
+        let claude = RouterSettings::for_client(Client::ClaudeCode);
+        assert!(claude.auto_failover, "自动故障转移默认开（使用者定的）");
+        assert_eq!(
+            (
+                claude.max_attempts,
+                claude.first_byte_timeout_secs,
+                claude.idle_timeout_secs,
+                claude.non_streaming_timeout_secs
+            ),
+            (6, 90, 180, 600)
+        );
+        let codex = RouterSettings::for_client(Client::Codex);
+        assert_eq!(
+            (
+                codex.max_attempts,
+                codex.first_byte_timeout_secs,
+                codex.idle_timeout_secs
+            ),
+            (3, 60, 300),
+            "Codex 的静默超时不比它自己的默认（300 秒）短"
+        );
+        assert_eq!(codex.breaker.min_requests, 10);
+        assert_eq!(
+            claude.breaker.trip_after_consecutive, 5,
+            "连续次数仍是 QB Gate 的 5"
+        );
+        assert!(claude.rectifier.enabled && claude.rectifier.thinking_signature);
+        // 存下来的缺字段按默认补。
+        let parsed: RouterSettings =
+            serde_json::from_str(r#"{"client":"codex","max_attempts":2}"#).unwrap();
+        assert_eq!(parsed.max_attempts, 2);
+        assert!(parsed.auto_failover);
+    }
+
+    #[test]
+    fn a_first_generation_log_row_reads_into_the_new_shape() {
+        let old: RequestLog = serde_json::from_str(
+            r#"{"id":"1","at_ms":5,"route_id":"r","client":"codex","model":"gpt","status":502,"first_token_ms":9,"total_ms":40,"retry_after_ms":null}"#,
+        )
+        .unwrap();
+        let new = RouterRequest::from(old);
+        assert_eq!(new.route_id, "r");
+        assert_eq!(new.status, Some(502));
+        assert_eq!(new.attempts.len(), 1, "老日志只试过一条线");
+        assert_eq!(new.attempts[0].ms, 40);
+        assert_eq!(
+            new.input_tokens, None,
+            "老日志没有 token —— 是「没记」，不是 0"
+        );
+        assert!(!new.ok());
     }
 
     #[test]

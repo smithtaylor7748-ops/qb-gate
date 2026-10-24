@@ -10,7 +10,7 @@
  * ⛔ 颜色只引 `tokens.css` 的变量，不写 hex。
  */
 
-import type { RequestLog } from "../../lib/station";
+import type { RouterRequest } from "../../lib/station";
 
 /** 时间范围。`hours` 只用来算起点，「全部」给一个够大的数。 */
 export const RANGES = [
@@ -36,7 +36,7 @@ export function Chart({
   range,
   gran,
 }: {
-  rows: RequestLog[];
+  rows: RouterRequest[];
   range: RangeId;
   gran: GranId;
 }) {
@@ -51,7 +51,7 @@ export function Chart({
   const step = gran === "day" ? 24 : 1;
   const span = Math.min(rangeOf(range).hours, 24 * 30);
   const n = Math.max(2, Math.ceil(span / step));
-  const buckets: RequestLog[][] = Array.from({ length: n }, () => []);
+  const buckets: RouterRequest[][] = Array.from({ length: n }, () => []);
   for (const r of rows) {
     const age = (now - Number(r.at_ms)) / 3600_000;
     if (age >= 0 && age < span) buckets[n - 1 - Math.floor(age / step)].push(r);

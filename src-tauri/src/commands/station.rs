@@ -14,7 +14,7 @@ use qb_app::local_router::{self, RouterConfig, Upstream, UpstreamAuth};
 use qb_app::usecase::station_billing::{self, StationBillingSettings};
 use qb_app::usecase::station_ops;
 use qb_contract::domain::Client;
-use qb_station::router::RequestLog;
+use qb_station::router::RouterRequest;
 use qb_station::schedule::{CheapBasis, Prefs, Ranking, Schedule};
 use qb_station::station::audit::AuditRound;
 use qb_station::station::route::Route;
@@ -82,7 +82,7 @@ fn status_of(state: &AppState, client: Client) -> RouterStatus {
             .unwrap_or_default(),
         pending_route: s.as_ref().and_then(|s| s.pending(client)),
         switches: s.as_ref().map(|s| s.switches() as u32).unwrap_or(0),
-        pending_logs: s.as_ref().map(|s| s.logs().len() as u32).unwrap_or(0),
+        pending_logs: s.as_ref().map(|s| s.pending_logs() as u32).unwrap_or(0),
         turnstate_official_armed: s.as_ref().is_some_and(|s| s.official_codex_armed()),
         turnstate_enabled: s.as_ref().is_some_and(|s| s.turnstate_enabled()),
         turnstate_team: s
@@ -127,6 +127,7 @@ fn load_upstreams(state: &AppState) -> Result<usize> {
                 } else {
                     UpstreamAuth::ApiKey(source.key)
                 },
+                ..Default::default()
             })
         })
         .collect();
@@ -137,6 +138,26 @@ fn load_upstreams(state: &AppState) -> Result<usize> {
         .map_err(|_| GateError::Other("中转站状态损坏".into()))?
         .replace_upstreams(upstreams);
     Ok(n)
+}
+
+/// 请求日志多久落一次库。几秒的延迟对「看日志」无所谓（打开日志页时会先把手里的写掉），
+/// 又不至于每发请求都开一次库。
+const LOG_FLUSH_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// 请求日志落库的那一头：真库 + 落库时按价补两种花费。
+struct DbLogSink;
+
+impl local_router::LogSink for DbLogSink {
+    fn write(&self, batch: Vec<RouterRequest>) -> qb_app::error::Result<()> {
+        let db = crate::repository::Repository::open()?;
+        let catalog = qb_station::station::pricing::Catalog::new(stored_prices());
+        station_ops::persist_router_requests(
+            &db,
+            batch,
+            &catalog,
+            chrono::Utc::now().timestamp_millis(),
+        )
+    }
 }
 
 /// 拉起本机路由。已经起着就原样返回 —— **重复调不该换端口**,
@@ -160,7 +181,7 @@ async fn ensure_router(app: &tauri::AppHandle, client: Client) -> Result<RouterS
         .connect_timeout(std::time::Duration::from_secs(15))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
-    let handle = local_router::serve(
+    let mut handle = local_router::serve(
         RouterConfig {
             port: local_router::DEFAULT_PORT,
         },
@@ -168,6 +189,8 @@ async fn ensure_router(app: &tauri::AppHandle, client: Client) -> Result<RouterS
         http,
     )
     .await?;
+    // 请求日志后台批量落库（原来只在打开日志页时才落，没打开时内存里一直涨）。
+    handle.write_logs_to(std::sync::Arc::new(DbLogSink), LOG_FLUSH_EVERY);
     if let Ok(mut a) = state.station_addr.lock() {
         *a = Some(handle.addr);
     }
@@ -649,9 +672,12 @@ pub fn station_remove_route(app: tauri::AppHandle, id: String) -> Result<Vec<Rou
 
 // ------------------------------------------------------------------ 请求日志
 
-/// 把攒在内存里的请求日志落库,再回最近的若干条。
+/// 先把手里还没落库的那批写掉（后台每几秒写一次，打开日志页时不必等它），再回最近的若干条。
+///
+/// 读的是 `router_requests`（迁移 5，按时间建了索引、带 LIMIT），不再整表读出来再截断。
+/// 老的 `request_logs` 由迁移 5 搬了过来。
 #[tauri::command]
-pub fn station_logs(state: State<'_, AppState>, limit: Option<u32>) -> Result<Vec<RequestLog>> {
+pub fn station_logs(state: State<'_, AppState>, limit: Option<u32>) -> Result<Vec<RouterRequest>> {
     let drained = {
         let mut s = state
             .station
@@ -660,10 +686,16 @@ pub fn station_logs(state: State<'_, AppState>, limit: Option<u32>) -> Result<Ve
         s.drain_logs()
     };
     let db = crate::repository::Repository::open()?;
-    station_ops::persist_logs(&db, &drained)?;
-    let mut all: Vec<RequestLog> = db.list("request_logs").unwrap_or_default();
-    all.truncate(limit.unwrap_or(200) as usize);
-    Ok(all)
+    let catalog = qb_station::station::pricing::Catalog::new(stored_prices());
+    let now = chrono::Utc::now().timestamp_millis();
+    if let Err(e) = station_ops::persist_router_requests(&db, drained.clone(), &catalog, now) {
+        // 写不进去就放回去，下一轮再写 —— 别因为写库失败把这一批弄丢。
+        if let Ok(mut s) = state.station.lock() {
+            s.requeue_logs(drained);
+        }
+        return Err(e);
+    }
+    station_ops::router_requests(&db, None, None, limit.unwrap_or(200))
 }
 
 // ------------------------------------------------------------------ 站点检验

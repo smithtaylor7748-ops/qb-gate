@@ -18,6 +18,7 @@ import type { ClaudeZhLeftovers } from "./generated/ClaudeZhLeftovers";
 import type { ClaudeZhOutcome } from "./generated/ClaudeZhOutcome";
 import type { CodexLocaleOutcome } from "./generated/CodexLocaleOutcome";
 import type { CodexLocaleStatus } from "./generated/CodexLocaleStatus";
+import type { RouterRequest } from "./generated/RouterRequest";
 /**
  * 演示数据 —— 只给截图和界面预览用。
  *
@@ -2110,17 +2111,7 @@ const LOG_SHAPES: {
 ];
 
 const stationLogs = (() => {
-  const rows: {
-    id: string;
-    at_ms: bigint;
-    route_id: string;
-    client: string;
-    model: string;
-    status: number | null;
-    first_token_ms: bigint | null;
-    total_ms: bigint | null;
-    retry_after_ms: bigint | null;
-  }[] = [];
+  const rows: RouterRequest[] = [];
   let n = 0;
   for (const s of LOG_SHAPES) {
     const rand = seeded(s.route.length * 7919 + s.perDay);
@@ -2131,22 +2122,55 @@ const stationLogs = (() => {
       const x = rand();
       const bad = x > s.succ;
       const status = bad ? (x > 0.997 ? 500 : 429) : 200;
+      const model = s.models[Math.floor(rand() * s.models.length)];
+      const firstToken =
+        status === 200
+          ? BigInt(Math.round(s.baseTtft * 0.5 + rand() * s.baseTtft * 1.6))
+          : null;
+      const total =
+        status === 500 ? null : BigInt(Math.round(1600 + rand() * 24000));
+      const retryAfter =
+        status === 429 ? BigInt(Math.round(10 + rand() * 25) * 1000) : null;
+      // token 按序号算（不再多抽随机数 —— 那会让上面几列的序列整个变掉）。
+      const ok = status === 200;
+      const input = ok ? 1200 + ((i * 7919) % 30000) : null;
+      const output = ok ? 80 + ((i * 104729) % 2400) : null;
+      const fault = ok ? null : status === 429 ? "rate-limit" : "upstream-down";
       rows.push({
         id: `log-${++n}`,
         at_ms: BigInt(t),
         route_id: s.route,
         client: s.client,
-        model: s.models[Math.floor(rand() * s.models.length)],
+        model,
+        upstream_model: "",
         status,
         // 上游没回时首字取不到 —— `null`，⛔ 不拿 0 顶上。
-        first_token_ms:
-          status === 200
-            ? BigInt(Math.round(s.baseTtft * 0.5 + rand() * s.baseTtft * 1.6))
-            : null,
-        total_ms:
-          status === 500 ? null : BigInt(Math.round(1600 + rand() * 24000)),
-        retry_after_ms:
-          status === 429 ? BigInt(Math.round(10 + rand() * 25) * 1000) : null,
+        first_token_ms: firstToken,
+        total_ms: total,
+        retry_after_ms: retryAfter,
+        streaming: true,
+        input_tokens: input == null ? null : BigInt(input),
+        output_tokens: output == null ? null : BigInt(output),
+        cache_read_tokens: input == null ? null : BigInt(input * 6),
+        cache_write_tokens:
+          input == null ? null : BigInt(Math.round(input / 4)),
+        cache_write_1h_tokens:
+          input == null ? null : BigInt(Math.round(input / 4)),
+        station_cost:
+          input == null ? null : (input * 0.6 + (output ?? 0) * 3) / 1e6,
+        official_cost:
+          input == null ? null : (input * 5 + (output ?? 0) * 25) / 1e6,
+        session_id: null,
+        fault,
+        error: fault == null ? null : `${fault}（HTTP ${status}）`,
+        attempts: [
+          {
+            route_id: s.route,
+            status,
+            fault,
+            ms: total ?? 0n,
+          },
+        ],
       });
     }
   }

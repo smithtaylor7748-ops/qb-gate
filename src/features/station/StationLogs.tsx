@@ -4,8 +4,8 @@
  * **只记状态码、时延、token，不记正文。** 这条写在界面上而不是只写在注释里 ——
  * 使用者有权知道一个会看到全部请求的组件到底留了什么。
  *
- * 取日志这一步顺带把内存里攒的那批落库（后端 `station_logs` 就是这么做的），
- * 所以这一页刷新一次 = 一次落库。
+ * 日志由后台每几秒落一次库；取日志这一步顺带把手里还没落的那批先写掉
+ * （后端 `station_logs` 就是这么做的），所以刷新一次看得到刚才那一发。
  *
  * # ⛔ 两个数据源必须分行标注
  *
@@ -17,7 +17,12 @@
  * | 站点账单 | 中转站 | 这条线上的全部请求，包括没走本机路由的 |
  *
  * 不标来源就是自相矛盾：同一张卡上两个成功率不一样，而没有任何地方说得清
- * 哪个对。Token 四类只有账单那边有（路由不解析响应体），所以那一段一定是账单口径。
+ * 哪个对。Token 两边都有（2026-10-24 起路由从响应里解出四类），也各按各的口径标。
+ *
+ * # 一发请求可能试过好几条线
+ *
+ * 自动故障转移开着时，这条线失败之后会改用下一条。所以「这条线的记录」= 试过它的那些，
+ * 不只是最后落在它上面的；表里写明最后是哪条线回的话。
  *
  * # ⛔ 没有「来源 / 客户端」筛选
  *
@@ -31,7 +36,7 @@ import type { Credential } from "../../lib/generated/Credential";
 import {
   rateCell,
   stationApi,
-  type RequestLog,
+  type RouterRequest,
   type Route,
   type RouteHealthView,
 } from "../../lib/station";
@@ -47,13 +52,41 @@ import {
 } from "./shared";
 
 /**
- * 库里最多留这么多条。
+ * 这一页最多取最近多少条。
  *
- * ⛔ 跟 Rust 侧 `station_ops::REQUEST_LOG_KEEP` 是**同一个数**。对不上的话，
- * 界面会在还没到边界时就说「更早的被裁掉了」，或者更糟 —— 到了边界却不说，
- * 让人以为「近 7 天」就这点请求。
+ * 取满了而最早那条还没到所选时间段的起点，就要写明是**取不到更早的**，
+ * 不能让人以为「近 7 天」就这点请求。
  */
-const LOG_KEEP = 2000;
+const LOG_LIMIT = 2000;
+
+/**
+ * 库里留多少天。⛔ 跟 Rust 侧 `station_ops::ROUTER_REQUEST_KEEP_DAYS` 是**同一个数**。
+ */
+const KEEP_DAYS = 30;
+
+/** 故障类型（`qb_proxy::classify::Fault::key`）的说法。改了要两头一起改。 */
+const FAULT_LABEL: Record<string, string> = {
+  balance: "余额不足",
+  auth: "凭据失效",
+  retired: "域名已退役",
+  "upstream-down": "上游故障",
+  timeout: "超时",
+  overloaded: "过载",
+  unknown: "未知错误",
+  "rate-limit": "被限流",
+  concurrency: "并发已满",
+  "model-missing": "没有这个模型",
+  infra: "本机这一侧",
+  "not-served": "这条线不接",
+  "client-request": "请求本身的问题",
+  "client-abort": "客户端断开",
+  "rectify-media": "图片降级后重试",
+  "rectify-opaque-state": "去掉别家状态后重试",
+  "rectify-thinking-signature": "thinking 签名整流后重试",
+  "rectify-thinking-budget": "thinking 预算整流后重试",
+};
+
+const faultLabel = (key: string) => FAULT_LABEL[key] ?? key;
 
 export default function StationLogs({
   route,
@@ -67,7 +100,7 @@ export default function StationLogs({
   siteUrl: string;
   credentials: Credential[];
 }) {
-  const [rows, setRows] = useState<RequestLog[]>([]);
+  const [rows, setRows] = useState<RouterRequest[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [range, setRange] = useState<RangeId>("24h");
@@ -77,7 +110,7 @@ export default function StationLogs({
   const load = useCallback(async () => {
     setBusy(true);
     try {
-      setRows(await stationApi.logs(LOG_KEEP));
+      setRows(await stationApi.logs(LOG_LIMIT));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -91,8 +124,14 @@ export default function StationLogs({
   }, [load]);
 
   // 这条线路的全部记录（不看时间档）—— 边界提示要拿它算。
+  // 试过它、又换到别的线去的那些也算（故障转移），否则这条线的失败全都看不见。
   const mine = useMemo(
-    () => rows.filter((r) => r.route_id === route.id),
+    () =>
+      rows.filter(
+        (r) =>
+          r.route_id === route.id ||
+          r.attempts.some((a) => a.route_id === route.id),
+      ),
     [rows, route.id],
   );
 
@@ -110,20 +149,22 @@ export default function StationLogs({
     () =>
       inRange.filter(
         (r) =>
-          (!failedOnly || !ok(r.status)) && (model === "" || r.model === model),
+          (!failedOnly || !succeeded(r)) && (model === "" || r.model === model),
       ),
     [inRange, failedOnly, model],
   );
 
   const stats = useMemo(() => summarise(inRange), [inRange]);
 
-  // ⛔ 库里只留 2000 条。选了「近 7 天」而最早那条只到 3 天前时，
-  // 必须写明是**被裁掉了**，不能让人以为 7 天就这点请求。
+  // ⛔ 一次只取最近 2000 条。选了「近 7 天」而最早那条只到 3 天前时，
+  // 必须写明是**取不到更早的**，不能让人以为 7 天就这点请求。
   const oldest = mine.length
     ? Math.min(...mine.map((r) => Number(r.at_ms)))
     : null;
   const truncated =
-    rows.length >= LOG_KEEP && oldest != null && oldest > since ? oldest : null;
+    rows.length >= LOG_LIMIT && oldest != null && oldest > since
+      ? oldest
+      : null;
 
   const cred = credentials.find((c) => c.id === route.credential_id);
 
@@ -257,8 +298,8 @@ export default function StationLogs({
 
         {truncated && (
           <p className="qb-st-note">
-            ⚠ 库里只留最近 {LOG_KEEP.toLocaleString()} 条， 这条线路最早的一条是{" "}
-            <b>{full(truncated)}</b>。 再往前的已经被裁掉了 ——{" "}
+            ⚠ 这一页只取最近 {LOG_LIMIT.toLocaleString()} 条，
+            这条线路最早的一条是 <b>{full(truncated)}</b>。 再往前的没取到 ——{" "}
             <b>不是这段时间没有请求</b>。
           </p>
         )}
@@ -272,14 +313,15 @@ export default function StationLogs({
                 <th>状态</th>
                 <th className="num">首字</th>
                 <th className="num">耗时</th>
-                <th className="num">Token</th>
+                <th className="num">Token（入 / 出）</th>
+                <th>试过的线</th>
                 <th className="num">Retry-After</th>
               </tr>
             </thead>
             <tbody>
               {shown.length === 0 && (
                 <tr>
-                  <td colSpan={7} style={{ color: "var(--text-3)" }}>
+                  <td colSpan={8} style={{ color: "var(--text-3)" }}>
                     {mine.length === 0
                       ? "这条线路还没有请求。本机路由启动、客户端把地址指过来之后，每一发都会记在这里。"
                       : "这一档里没有符合筛选条件的记录。"}
@@ -295,9 +337,18 @@ export default function StationLogs({
                   </td>
                   <td className="num">{secs(numOrNull(r.first_token_ms))}</td>
                   <td className="num">{secs(numOrNull(r.total_ms))}</td>
-                  {/* ⛔ 路由不解析响应体，所以这里没有 token 数。
-                      写 0 会被读成「这一发没花 token」—— 那是个断言。 */}
-                  <td className="num">{dash}</td>
+                  {/* ⛔ 解不出来（老日志、上游没报、压缩过的响应）就是破折号，
+                      不写 0 —— 0 会被读成「这一发没花 token」，那是个断言。 */}
+                  <td className="num" title={tokenTitle(r)}>
+                    {r.input_tokens == null && r.output_tokens == null
+                      ? dash
+                      : `${mtok(numOrNull(r.input_tokens) ?? 0)} / ${mtok(
+                          numOrNull(r.output_tokens) ?? 0,
+                        )}`}
+                  </td>
+                  <td>
+                    <Attempts log={r} here={route.id} />
+                  </td>
                   <td className="num">
                     {r.retry_after_ms == null
                       ? dash
@@ -309,9 +360,8 @@ export default function StationLogs({
           </table>
         </div>
         <p className="qb-st-note" style={{ marginTop: 9 }}>
-          只记状态码、时延、<b>不记正文</b>。Token
-          那一列空着是因为路由不拆响应体 —— 分类 token
-          只有站点账单里有，在上面那张卡里。
+          只记状态码、时延、token 数和试过哪几条线，<b>不记正文</b>。 库里留最近{" "}
+          {KEEP_DAYS} 天。
         </p>
       </div>
     </>
@@ -472,9 +522,53 @@ function Kpi({
   );
 }
 
-function StatusPill({ log }: { log: RequestLog }) {
+/** 这一发依次试过的线。只试了一条、就是这条线的，不占地方。 */
+function Attempts({ log, here }: { log: RouterRequest; here: string }) {
+  const tries = log.attempts;
+  if (tries.length <= 1 && log.route_id === here) return <>{dash}</>;
+  const title = tries
+    .map(
+      (a, i) =>
+        `${i + 1}. ${a.route_id === here ? "这条线" : a.route_id} · ${
+          a.status ?? "没有回应"
+        }${a.fault ? ` · ${faultLabel(a.fault)}` : ""}`,
+    )
+    .join("\n");
+  return (
+    <span className="qb-st-pill qb-st-pill--unknown" title={title}>
+      试了 {tries.length} 次{log.route_id !== here && " · 换到了别的线"}
+    </span>
+  );
+}
+
+function tokenTitle(r: RouterRequest): string | undefined {
+  if (r.input_tokens == null && r.output_tokens == null) return undefined;
+  const n = (v: bigint | null) =>
+    v == null ? "—" : Number(v).toLocaleString();
+  const cost = (v: number | null) => (v == null ? "—" : `$${v.toFixed(4)}`);
+  return [
+    `输入 ${n(r.input_tokens)} · 输出 ${n(r.output_tokens)}`,
+    `缓存读 ${n(r.cache_read_tokens)} · 缓存写 ${n(r.cache_write_tokens)}`,
+    `站内花费 ${cost(r.station_cost)}（这条线自己公布的价）`,
+    `按官方价折算 ${cost(r.official_cost)}（不是账单）`,
+  ].join("\n");
+}
+
+function StatusPill({ log }: { log: RouterRequest }) {
   const s = log.status;
-  if (s == null) return <span className="pill pill--neutral">没有回应</span>;
+  // 状态码是 2xx 但流里报了失败 / 半路断了：按故障说，不显示成绿色的 200。
+  if (log.fault && s != null && s >= 200 && s < 300)
+    return (
+      <span className="pill pill--danger">
+        {s} · {faultLabel(log.fault)}
+      </span>
+    );
+  if (s == null)
+    return (
+      <span className="pill pill--neutral">
+        {log.fault ? faultLabel(log.fault) : "没有回应"}
+      </span>
+    );
   if (s === 429)
     return (
       <span className="pill pill--warn">
@@ -491,6 +585,11 @@ function StatusPill({ log }: { log: RequestLog }) {
 
 function ok(status: number | null): boolean {
   return status != null && status >= 200 && status < 400;
+}
+
+/** 这一发算不算成功：状态码对、而且没记故障（跟 Rust 侧 `RouterRequest::ok` 一个口径）。 */
+function succeeded(r: RouterRequest): boolean {
+  return ok(r.status) && r.fault == null;
 }
 
 function numOrNull(v: bigint | number | null | undefined): number | null {
@@ -523,7 +622,7 @@ function quantile(sorted: number[], q: number): number | null {
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
 }
 
-function summarise(rows: RequestLog[]) {
+function summarise(rows: RouterRequest[]) {
   const first = rows
     .map((r) => numOrNull(r.first_token_ms))
     .filter((v): v is number => v != null)
@@ -536,13 +635,18 @@ function summarise(rows: RequestLog[]) {
   // 等于让人自己再去翻表。
   const codes = new Map<string, number>();
   for (const r of rows) {
-    if (ok(r.status)) continue;
-    const k = r.status == null ? "没有回应" : String(r.status);
+    if (succeeded(r)) continue;
+    const k =
+      r.fault && ok(r.status)
+        ? faultLabel(r.fault)
+        : r.status == null
+          ? "没有回应"
+          : String(r.status);
     codes.set(k, (codes.get(k) ?? 0) + 1);
   }
   return {
     total: rows.length,
-    ok: rows.filter((r) => ok(r.status)).length,
+    ok: rows.filter(succeeded).length,
     p50: quantile(first, 0.5),
     p95: quantile(first, 0.95),
     worst: first.length ? first[first.length - 1] : null,

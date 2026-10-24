@@ -86,7 +86,104 @@ const MIGRATIONS: &[&str] = &[
     // 「关着」：真机上调度从没开成过，而演示模式喂的是假数据，`test:ui` 一直全绿。
     // 形状跟别的表一样是 `(id, body)`，一个软件一行，主键是软件名。
     "CREATE TABLE IF NOT EXISTS station_schedule(id TEXT PRIMARY KEY,body TEXT NOT NULL);",
+    // 5：本机路由的请求日志第二版（2026-10-24，中转站重构阶段 1）。
+    //
+    // 原来的 `request_logs` 是 `(id, body)`：每次打开日志页都把整张表读出来再截断，
+    // 裁旧的也是全读之后逐条删。日志是涨得最快的那张表，所以这一张用**正经的列**，
+    // 按时间、按线路、按软件建索引，查询带时间窗和 LIMIT（[`Repository::router_requests`]）。
+    // 多了试过的线路链（`attempts`，JSON 数组）、四类 token 与两种花费。
+    //
+    // 老表里的行原样搬过来（老日志只试过一条线，`attempts` 补那一条；没有 token、没有花费，
+    // 留 NULL —— 是「没记」，不是 0）。**老表不删**：这条迁移万一漏搬了什么，原始数据还在。
+    // 搬法跟 `qb_station::router::RouterRequest::from(RequestLog)` 一一对应，测试钉着两边一致。
+    "CREATE TABLE IF NOT EXISTS router_requests(
+        id TEXT PRIMARY KEY,
+        at_ms INTEGER NOT NULL,
+        client TEXT NOT NULL,
+        route_id TEXT NOT NULL,
+        model TEXT NOT NULL DEFAULT '',
+        upstream_model TEXT NOT NULL DEFAULT '',
+        status INTEGER,
+        first_token_ms INTEGER,
+        total_ms INTEGER,
+        retry_after_ms INTEGER,
+        streaming INTEGER NOT NULL DEFAULT 0,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cache_read_tokens INTEGER,
+        cache_write_tokens INTEGER,
+        cache_write_1h_tokens INTEGER,
+        station_cost REAL,
+        official_cost REAL,
+        session_id TEXT,
+        fault TEXT,
+        error TEXT,
+        attempts TEXT NOT NULL DEFAULT '[]');
+     CREATE INDEX IF NOT EXISTS router_requests_at ON router_requests(at_ms);
+     CREATE INDEX IF NOT EXISTS router_requests_route ON router_requests(route_id, at_ms);
+     CREATE INDEX IF NOT EXISTS router_requests_client ON router_requests(client, at_ms);
+     INSERT OR IGNORE INTO router_requests(
+        id, at_ms, client, route_id, model, status, first_token_ms, total_ms, retry_after_ms, attempts)
+     SELECT json_extract(body, '$.id'),
+            coalesce(json_extract(body, '$.at_ms'), 0),
+            coalesce(json_extract(body, '$.client'), ''),
+            coalesce(json_extract(body, '$.route_id'), ''),
+            coalesce(json_extract(body, '$.model'), ''),
+            json_extract(body, '$.status'),
+            json_extract(body, '$.first_token_ms'),
+            json_extract(body, '$.total_ms'),
+            json_extract(body, '$.retry_after_ms'),
+            json_array(json_object(
+                'route_id', coalesce(json_extract(body, '$.route_id'), ''),
+                'status', json_extract(body, '$.status'),
+                'fault', NULL,
+                'ms', coalesce(json_extract(body, '$.total_ms'), 0)))
+       FROM request_logs
+      WHERE json_extract(body, '$.id') IS NOT NULL;",
 ];
+
+/// `router_requests` 的列，跟 `qb_station::router::RouterRequest` 的字段**同名**。
+///
+/// 这一层不认识那个类型（它在第 3 层），读写都经 serde 的对象形状换过去：
+/// 写的时候按列名从对象里取值，读的时候按列名拼回对象。字段改名的话，这里不跟着改，
+/// 那一列就永远是 NULL —— `router_requests_round_trip_every_column` 钉着。
+const ROUTER_REQUEST_COLUMNS: &[&str] = &[
+    "id",
+    "at_ms",
+    "client",
+    "route_id",
+    "model",
+    "upstream_model",
+    "status",
+    "first_token_ms",
+    "total_ms",
+    "retry_after_ms",
+    "streaming",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "cache_write_1h_tokens",
+    "station_cost",
+    "official_cost",
+    "session_id",
+    "fault",
+    "error",
+    "attempts",
+];
+
+/// 查 `router_requests` 的条件。都不填就是「最近 `limit` 条」。
+#[derive(Debug, Clone, Default)]
+pub struct RouterRequestQuery {
+    /// 只要这个时刻（含）之后的。
+    pub since_ms: Option<i64>,
+    /// 只要这个软件的（`Client` 的 kebab-case 写法）。
+    pub client: Option<String>,
+    /// 只要这条线的。
+    pub route_id: Option<String>,
+    /// 最多几条，新的在前。0 当 1。
+    pub limit: u32,
+}
 
 /// 通用读写（`list` / `get` / `find` / `put` / `remove` / `prune`）认得的表。
 ///
@@ -417,6 +514,85 @@ COMMIT;"
         Ok(value)
     }
 
+    // ------------------------------------------------------------ 本机路由的请求日志
+
+    /// 一批请求日志落库（同一个 id 再写一次就覆盖）。一个事务，返回写了几条。
+    ///
+    /// `T` 序列化出来必须是对象，键名见 [`ROUTER_REQUEST_COLUMNS`]；缺的键当 NULL。
+    pub fn insert_router_requests<T: Serialize>(&self, rows: &[T]) -> Result<usize> {
+        let placeholders = (1..=ROUTER_REQUEST_COLUMNS.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let query = format!(
+            "INSERT OR REPLACE INTO router_requests({}) VALUES({placeholders})",
+            ROUTER_REQUEST_COLUMNS.join(",")
+        );
+        self.transaction(|| {
+            let mut stmt = self.conn.prepare_cached(&query).map_err(sql)?;
+            for row in rows {
+                let value = serde_json::to_value(row)?;
+                let object = value
+                    .as_object()
+                    .ok_or_else(|| GateError::Other("请求日志序列化出来不是一个对象".into()))?;
+                let cells: Vec<rusqlite::types::Value> = ROUTER_REQUEST_COLUMNS
+                    .iter()
+                    .map(|column| to_cell(column, object.get(*column)))
+                    .collect::<Result<_>>()?;
+                stmt.execute(rusqlite::params_from_iter(cells))
+                    .map_err(sql)?;
+            }
+            Ok(rows.len())
+        })
+    }
+
+    /// 按条件读请求日志，新的在前。**走索引、带 LIMIT** —— 不像通用的 `list` 那样整表读。
+    pub fn router_requests<T: DeserializeOwned>(&self, q: &RouterRequestQuery) -> Result<Vec<T>> {
+        let mut clauses: Vec<&str> = Vec::new();
+        let mut args: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(since) = q.since_ms {
+            clauses.push("at_ms >= ?");
+            args.push(since.into());
+        }
+        if let Some(client) = &q.client {
+            clauses.push("client = ?");
+            args.push(client.clone().into());
+        }
+        if let Some(route) = &q.route_id {
+            clauses.push("route_id = ?");
+            args.push(route.clone().into());
+        }
+        let filter = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
+        };
+        args.push(i64::from(q.limit.max(1)).into());
+        let query = format!(
+            "SELECT {} FROM router_requests {filter} ORDER BY at_ms DESC, rowid DESC LIMIT ?",
+            ROUTER_REQUEST_COLUMNS.join(",")
+        );
+        let mut stmt = self.conn.prepare(&query).map_err(sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(args), |r| {
+                let mut object = serde_json::Map::new();
+                for (i, column) in ROUTER_REQUEST_COLUMNS.iter().enumerate() {
+                    object.insert((*column).to_string(), from_cell(column, r.get(i)?));
+                }
+                Ok(serde_json::Value::Object(object))
+            })
+            .map_err(sql)?;
+        rows.map(|r| Ok(serde_json::from_value(r.map_err(sql)?)?))
+            .collect()
+    }
+
+    /// 删掉 `before_ms` 之前的请求日志（走 `at_ms` 的索引）。返回删了几条。
+    pub fn prune_router_requests(&self, before_ms: i64) -> Result<usize> {
+        self.conn
+            .execute("DELETE FROM router_requests WHERE at_ms < ?1", [before_ms])
+            .map_err(sql)
+    }
+
     pub fn migrate(&mut self) -> Result<Vec<String>> {
         if let Some(notes) = self.meta("legacy-v1")? {
             return Ok(serde_json::from_str(&notes)?);
@@ -714,6 +890,39 @@ struct LegacyProfile {
     timezone: Option<String>,
 }
 
+/// 对象里的一个字段换成 `router_requests` 的一格。`attempts` 存 JSON 文本，`streaming` 存 0 / 1。
+fn to_cell(column: &str, value: Option<&serde_json::Value>) -> Result<rusqlite::types::Value> {
+    use rusqlite::types::Value as Cell;
+    use serde_json::Value as Json;
+    Ok(match (column, value) {
+        ("attempts", Some(v)) => Cell::Text(serde_json::to_string(v)?),
+        ("attempts", None) => Cell::Text("[]".into()),
+        (_, None | Some(Json::Null)) => Cell::Null,
+        (_, Some(Json::Bool(b))) => Cell::Integer(i64::from(*b)),
+        (_, Some(Json::Number(n))) => match n.as_i64() {
+            Some(i) => Cell::Integer(i),
+            None => Cell::Real(n.as_f64().unwrap_or(f64::NAN)),
+        },
+        (_, Some(Json::String(s))) => Cell::Text(s.clone()),
+        (_, Some(other)) => Cell::Text(other.to_string()),
+    })
+}
+
+/// [`to_cell`] 反过来。
+fn from_cell(column: &str, cell: rusqlite::types::Value) -> serde_json::Value {
+    use rusqlite::types::Value as Cell;
+    use serde_json::Value as Json;
+    match (column, cell) {
+        ("attempts", Cell::Text(s)) => serde_json::from_str(&s).unwrap_or(Json::Array(vec![])),
+        ("streaming", Cell::Integer(i)) => Json::Bool(i != 0),
+        (_, Cell::Null) => Json::Null,
+        (_, Cell::Integer(i)) => Json::from(i),
+        (_, Cell::Real(f)) => serde_json::Number::from_f64(f).map_or(Json::Null, Json::Number),
+        (_, Cell::Text(s)) => Json::String(s),
+        (_, Cell::Blob(_)) => Json::Null,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config_io::{recover, replace, Journal};
@@ -916,6 +1125,163 @@ mod tests {
         .unwrap();
         let got: serde_json::Value = db.get("station_schedule", "codex").unwrap();
         assert_eq!(got["enabled"], true);
+        drop(db);
+        std::fs::remove_dir_all(p).unwrap();
+    }
+
+    fn sample_request(id: &str, at_ms: i64, client: &str, route: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id, "at_ms": at_ms, "client": client, "route_id": route,
+            "model": "claude-opus-5", "upstream_model": "relay-opus",
+            "status": 200, "first_token_ms": 812, "total_ms": 4031, "retry_after_ms": null,
+            "streaming": true,
+            "input_tokens": 12, "output_tokens": 7, "cache_read_tokens": 300,
+            "cache_write_tokens": 40, "cache_write_1h_tokens": 40,
+            "station_cost": 0.0123, "official_cost": 0.5,
+            "session_id": "s-1", "fault": null, "error": null,
+            "attempts": [
+                {"route_id": "a", "status": 502, "fault": "upstream-down", "ms": 31},
+                {"route_id": route, "status": 200, "fault": null, "ms": 4000}
+            ]
+        })
+    }
+
+    #[test]
+    fn router_requests_round_trip_every_column() {
+        // 列名跟字段名对不上的那一列会永远是 NULL —— 而读回来的那一格看起来只是「没记」。
+        let p = fixture();
+        let db = Repository::open_in(&p).unwrap();
+        let row = sample_request("1", 1_000, "claude-code", "b");
+        assert_eq!(db.insert_router_requests(&[row.clone()]).unwrap(), 1);
+        let back: Vec<serde_json::Value> = db
+            .router_requests(&RouterRequestQuery {
+                limit: 10,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(back, vec![row], "有一列没存进去或者读回来变了样");
+        // 每个字段都有对应的列（少一个就是上面那种静默的 NULL）。
+        let keys: Vec<&str> = back[0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys.len(), ROUTER_REQUEST_COLUMNS.len());
+        drop(db);
+        std::fs::remove_dir_all(p).unwrap();
+    }
+
+    #[test]
+    fn router_requests_filter_by_time_client_and_route_newest_first() {
+        let p = fixture();
+        let db = Repository::open_in(&p).unwrap();
+        let rows = [
+            sample_request("1", 1_000, "claude-code", "x"),
+            sample_request("2", 2_000, "codex", "y"),
+            sample_request("3", 3_000, "claude-code", "y"),
+            sample_request("4", 4_000, "claude-code", "x"),
+        ];
+        db.insert_router_requests(&rows).unwrap();
+        let ids = |q: RouterRequestQuery| -> Vec<String> {
+            db.router_requests::<serde_json::Value>(&q)
+                .unwrap()
+                .into_iter()
+                .map(|v| v["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let all = RouterRequestQuery {
+            limit: 100,
+            ..Default::default()
+        };
+        assert_eq!(ids(all.clone()), ["4", "3", "2", "1"], "要新的在前");
+        assert_eq!(
+            ids(RouterRequestQuery {
+                limit: 2,
+                ..all.clone()
+            }),
+            ["4", "3"]
+        );
+        assert_eq!(
+            ids(RouterRequestQuery {
+                client: Some("claude-code".into()),
+                since_ms: Some(2_000),
+                ..all.clone()
+            }),
+            ["4", "3"]
+        );
+        assert_eq!(
+            ids(RouterRequestQuery {
+                route_id: Some("y".into()),
+                ..all.clone()
+            }),
+            ["3", "2"]
+        );
+        // 同一个 id 再写一次是覆盖，不是第二行。
+        let mut again = rows[0].clone();
+        again["status"] = serde_json::json!(503);
+        db.insert_router_requests(&[again]).unwrap();
+        assert_eq!(ids(all.clone()).len(), 4);
+        // 裁旧的按时间走。
+        assert_eq!(db.prune_router_requests(2_500).unwrap(), 2);
+        assert_eq!(ids(all), ["4", "3"]);
+        drop(db);
+        std::fs::remove_dir_all(p).unwrap();
+    }
+
+    #[test]
+    fn migration_5_carries_the_old_request_logs_over() {
+        // 装着 0.14.0–0.25.6 的人：老日志一条都不许丢，新表里的形状跟
+        // `RouterRequest::from(RequestLog)` 一致（只试过一条线、没有 token）。
+        let p = fixture();
+        {
+            let db = Repository::open_in(&p).unwrap();
+            db.put(
+                "request_logs",
+                "old-1",
+                &serde_json::json!({
+                    "id": "old-1", "at_ms": 5, "route_id": "r", "client": "codex",
+                    "model": "gpt", "status": 502, "first_token_ms": 9, "total_ms": 40,
+                    "retry_after_ms": null
+                }),
+            )
+            .unwrap();
+            db.conn
+                .execute_batch("DROP TABLE router_requests; PRAGMA user_version=4;")
+                .unwrap();
+        }
+        let db = Repository::open_in(&p).unwrap();
+        assert_eq!(db.pragma_query_value_user_version().unwrap(), SCHEMA);
+        let rows: Vec<serde_json::Value> = db
+            .router_requests(&RouterRequestQuery {
+                limit: 10,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(rows.len(), 1, "老日志没搬过来");
+        let r = &rows[0];
+        assert_eq!(
+            (
+                r["id"].as_str(),
+                r["route_id"].as_str(),
+                r["status"].as_i64()
+            ),
+            (Some("old-1"), Some("r"), Some(502))
+        );
+        assert_eq!(r["total_ms"], 40);
+        assert_eq!(
+            r["input_tokens"],
+            serde_json::Value::Null,
+            "老日志没有 token —— 是「没记」，不是 0"
+        );
+        assert_eq!(r["streaming"], false);
+        assert_eq!(
+            r["attempts"],
+            serde_json::json!([{"route_id": "r", "status": 502, "fault": null, "ms": 40}])
+        );
+        // 老表还在（只读的后路）。
+        let old: Vec<serde_json::Value> = db.list("request_logs").unwrap();
+        assert_eq!(old.len(), 1);
         drop(db);
         std::fs::remove_dir_all(p).unwrap();
     }

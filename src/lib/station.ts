@@ -14,7 +14,7 @@ import { call } from "./ipc";
 import type { AuditRound } from "./generated/AuditRound";
 import type { DecisionView } from "./generated/DecisionView";
 import type { Prefs } from "./generated/Prefs";
-import type { RequestLog } from "./generated/RequestLog";
+import type { RouterRequest } from "./generated/RouterRequest";
 import type { RouteHealthView } from "./generated/RouteHealthView";
 import type { Client } from "./generated/Client";
 import type { RouterStatus } from "./generated/RouterStatus";
@@ -31,7 +31,7 @@ export type {
   AuditRound,
   DecisionView,
   Prefs,
-  RequestLog,
+  RouterRequest,
   Route,
   RouteHealthView,
   RouterStatus,
@@ -118,7 +118,7 @@ export const stationApi = {
 
   /** 落库并回最近若干条。 */
   logs: (limit?: number) =>
-    call<RequestLog[]>("station_logs", { limit: limit ?? null }),
+    call<RouterRequest[]>("station_logs", { limit: limit ?? null }),
 
   /** 拉一轮账单并聚合。**零成本** —— 读的是站点自己的日志，不打模型。 */
   refreshHealth: () => call<RouteHealthView[]>("station_refresh_health"),

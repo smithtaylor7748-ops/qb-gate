@@ -24,22 +24,37 @@
 //! 需要换端口时由调用方传 [`RouterConfig::port`],绑好之后
 //! [`RouterHandle::addr`] 给的是**真实绑上的地址**,不是请求的那个。
 
+//!
+//! # 目录（2026-10-17，中转站重构阶段 1）
+//!
+//! | 文件 | 管什么 |
+//! |---|---|
+//! | `mod.rs` | 路由的状态（[`RouterState`]）与各处共用的小工具：认软件、拼地址、转哪些头 |
+//! | `server.rs` | 监听、收连接、把一发请求分给下面两条路 |
+//! | `forward.rs` | **中转线路**：一发请求的重试循环（故障转移、熔断放行、首包 / 静默 / 非流式超时、2xx 里的错误、整流器重试、用量解析），照 cc-switch 的 `forward_with_retry_inner` 写 |
+//! | `official.rs` | **官方 Codex**（turn-state）：不进重试、不换线，原样直通 |
+//! | `log.rs` | 请求日志：每发一条 [`RouterRequest`]，有界缓冲，后台批量落库 |
+
 use crate::error::{GateError, Result};
-use futures_util::StreamExt;
-use http_body_util::{combinators::BoxBody, BodyExt, Full, StreamBody};
-use hyper::body::{Bytes, Frame, Incoming};
-use hyper::service::service_fn;
-use hyper::{Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
+use http_body_util::{combinators::UnsyncBoxBody, BodyExt, Full};
+use hyper::body::Bytes;
+use hyper::{Response, StatusCode};
 use qb_contract::domain::Client;
-use qb_station::router::{ClientRouter, RequestLog};
+use qb_proxy::model_mapper::ModelMapping;
+use qb_station::router::{ClientRouter, RouterRequest, RouterSettings};
 use qb_station::schedule::{Outcome, RouteBreaker};
-use qb_station::sse::StreamScanner;
 use qb_station::turnstate::{self, AccountKind, Injection, Policy, Store};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+
+mod forward;
+mod log;
+mod official;
+mod server;
+
+pub use log::{spawn_log_writer, LogSink};
+pub use server::serve;
 
 /// 默认端口。
 pub const DEFAULT_PORT: u16 = 15721;
@@ -68,13 +83,14 @@ const HOP_BY_HOP: &[&str] = &[
 const CLIENT_AUTH_HEADERS: &[&str] = &["authorization", "x-api-key", "api-key"];
 
 /// 上游凭证怎么带。
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum UpstreamAuth {
     /// `Authorization: Bearer <key>`
     Bearer(String),
     /// `x-api-key: <key>` —— Anthropic Messages 用这个。
     ApiKey(String),
     /// 不带 —— 上游自己不校验,或者由使用者在别处配好。
+    #[default]
     None,
     /// 官方 Codex turn-state 模式:**保留客户端自带的 OAuth,不剥不换**,
     /// 并对这条线启用 turn-state 采集 / 注入(见 [`RouterState::turnstate`]）。
@@ -86,13 +102,25 @@ pub enum UpstreamAuth {
 }
 
 /// 一条可以被转发到的线路。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Upstream {
     pub route_id: String,
     /// 上游基地址,例如 `https://example.com/v1`。
     pub base_url: String,
     pub auth: UpstreamAuth,
+    /// 这条线上把模型名换成什么（`Route.model_map`）。空的就原样发。
+    pub model_map: ModelMapping,
 }
+
+/// 内存里最多留几条最近的请求日志（界面「正在路由」那几行与单测用）。落库的在 `router_requests` 表。
+pub const RECENT_LOGS: usize = 200;
+
+/// 还没落库的日志最多攒多少条。后台写库卡住（库被锁、盘满）时丢最旧的、记一个数，
+/// 不让内存一直涨 —— 原来只在打开日志页时才落库，没打开时 `logs` 一直长。
+pub const MAX_UNFLUSHED_LOGS: usize = 5_000;
+
+/// 「这条线没有这个模型」记多久（sub2guard 的 `MISSING_TTL_S`）。中转站的渠道会临时下线某个模型。
+pub const MODEL_MISSING_TTL_MS: i64 = 6 * 3600 * 1000;
 
 /// 官方 Codex 的 turn-state 运行态。**一个 model 一份 [`Store`]。**
 ///
@@ -138,7 +166,18 @@ pub struct RouterState {
     switch: ClientRouter,
     upstreams: HashMap<String, Upstream>,
     breakers: HashMap<String, RouteBreaker>,
-    logs: Vec<RequestLog>,
+    /// 最近的请求日志（有界，[`RECENT_LOGS`]）。
+    logs: VecDeque<RouterRequest>,
+    /// 还没落库的（有界，[`MAX_UNFLUSHED_LOGS`]），后台写库任务来取。
+    unflushed: Vec<RouterRequest>,
+    /// 因为攒太多丢掉的条数（写库一直失败时才会有）。
+    dropped_logs: u64,
+    /// 每个软件的路由设置。没设过的按 [`RouterSettings::for_client`]。
+    settings: HashMap<Client, RouterSettings>,
+    /// 每个软件的派单顺序：当前那条失败时依次改用谁。当前那条不必在里面。
+    queue: HashMap<Client, Vec<String>>,
+    /// 「这条线没有这个模型」：`(线路, 模型) → 到什么时候为止跳过`。
+    missing_models: HashMap<(String, String), i64>,
     /// 官方 Codex 的 turn-state。
     turnstate: TurnState,
 }
@@ -186,6 +225,7 @@ impl RouterState {
             route_id: OFFICIAL_CODEX_ROUTE_ID.to_string(),
             base_url: OFFICIAL_CODEX_BASE.to_string(),
             auth: UpstreamAuth::OAuthPassthrough,
+            model_map: ModelMapping::default(),
         });
         self.set_now(Client::Codex, OFFICIAL_CODEX_ROUTE_ID);
     }
@@ -255,13 +295,143 @@ impl RouterState {
             .is_none_or(|b| !b.tripped(now_ms))
     }
 
-    /// 取走已经攒下的请求日志。落库由调用方做 —— 这一层不碰数据库。
-    pub fn drain_logs(&mut self) -> Vec<RequestLog> {
-        std::mem::take(&mut self.logs)
+    /// 取走还没落库的请求日志。落库由调用方做（后台写库任务，见 `log.rs`）—— 这一层不碰数据库。
+    pub fn drain_logs(&mut self) -> Vec<RouterRequest> {
+        std::mem::take(&mut self.unflushed)
     }
 
-    pub fn logs(&self) -> &[RequestLog] {
+    /// 最近的请求日志，旧的在前。
+    pub fn logs(&self) -> &VecDeque<RouterRequest> {
         &self.logs
+    }
+
+    /// 还没落库的条数。
+    pub fn pending_logs(&self) -> usize {
+        self.unflushed.len()
+    }
+
+    /// 攒太多丢掉过几条（写库一直失败才会有）。
+    pub fn dropped_logs(&self) -> u64 {
+        self.dropped_logs
+    }
+
+    /// 一发请求结束：进最近日志，也排进待落库。两边都有界。
+    pub(crate) fn push_log(&mut self, log: RouterRequest) {
+        self.logs.push_back(log.clone());
+        while self.logs.len() > RECENT_LOGS {
+            self.logs.pop_front();
+        }
+        self.unflushed.push(log);
+        if self.unflushed.len() > MAX_UNFLUSHED_LOGS {
+            let over = self.unflushed.len() - MAX_UNFLUSHED_LOGS;
+            self.unflushed.drain(..over);
+            self.dropped_logs += over as u64;
+        }
+    }
+
+    /// 这个软件的路由设置。
+    pub fn settings(&self, client: Client) -> RouterSettings {
+        self.settings
+            .get(&client)
+            .cloned()
+            .unwrap_or_else(|| RouterSettings::for_client(client))
+    }
+
+    /// 换一份路由设置。这个软件那几条线的熔断参数跟着换（不动它们现在的状态）。
+    pub fn set_settings(&mut self, settings: RouterSettings) {
+        let client = settings.client;
+        let ids = self.client_routes(client);
+        for id in ids {
+            if let Some(b) = self.breakers.get_mut(&id) {
+                b.set_settings(settings.breaker);
+            }
+        }
+        self.settings.insert(client, settings);
+    }
+
+    /// 这个软件的派单顺序（不含没有上游的线）。
+    pub fn queue(&self, client: Client) -> Vec<String> {
+        self.queue
+            .get(&client)
+            .map(|q| {
+                q.iter()
+                    .filter(|id| self.upstreams.contains_key(*id))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// 定这个软件的派单顺序。当前那条失败时，按这个顺序依次改用下一条。
+    pub fn set_queue(&mut self, client: Client, order: Vec<String>) {
+        self.queue.insert(client, order);
+    }
+
+    /// 这一发要依次试的线：当前那条打头（就是这一发绑到的那份拷贝），后面跟派单顺序里的其余几条
+    /// （去重、去掉没有上游的、去掉官方线）。自动故障转移关着时只有当前那一条。
+    ///
+    /// **不按 `max_attempts` 截断**：熔断着、被跳过的线不占次数，次数由重试循环自己数
+    /// （cc-switch 同样如此）。
+    pub(crate) fn candidates(&self, client: Client, first: &Upstream) -> Vec<Upstream> {
+        let mut lines = vec![first.clone()];
+        if self.settings(client).auto_failover {
+            for id in self.queue(client) {
+                let Some(u) = self.upstreams.get(&id) else {
+                    continue;
+                };
+                // ⛔ 官方线永不当替补：失败换过去等于把中转那一发带着官方身份打出去。
+                if matches!(u.auth, UpstreamAuth::OAuthPassthrough) {
+                    continue;
+                }
+                if !lines.iter().any(|l| l.route_id == id) {
+                    lines.push(u.clone());
+                }
+            }
+        }
+        lines
+    }
+
+    /// 这个软件名下的线路 id（按 `Route::make_id` 的前缀认）。
+    fn client_routes(&self, client: Client) -> Vec<String> {
+        let prefix = format!("{}\u{1f}", client_key(client));
+        self.upstreams
+            .keys()
+            .filter(|id| id.starts_with(&prefix))
+            .cloned()
+            .collect()
+    }
+
+    /// 这条线的熔断器，没有就按这个软件的参数建一个。
+    pub(crate) fn breaker_mut(&mut self, route_id: &str, client: Client) -> &mut RouteBreaker {
+        let settings = self.settings(client).breaker;
+        self.breakers
+            .entry(route_id.to_string())
+            .or_insert_with(|| RouteBreaker::with_settings(settings))
+    }
+
+    /// 「我充值了，立刻重测」：熔断中的线马上转半开。返回它原来是不是熔断着。
+    pub fn retest(&mut self, route_id: &str, now_ms: i64) -> bool {
+        self.breakers
+            .get_mut(route_id)
+            .is_some_and(|b| b.retest(now_ms))
+    }
+
+    /// 记下「这条线没有这个模型」，[`MODEL_MISSING_TTL_MS`] 内跳过。
+    pub(crate) fn mark_model_missing(&mut self, route_id: &str, model: &str, now_ms: i64) {
+        if model.is_empty() {
+            return;
+        }
+        self.missing_models.insert(
+            (route_id.to_string(), model.to_string()),
+            now_ms + MODEL_MISSING_TTL_MS,
+        );
+    }
+
+    /// 这条线现在要不要因为「没有这个模型」跳过。
+    pub(crate) fn model_missing(&self, route_id: &str, model: &str, now_ms: i64) -> bool {
+        self.missing_models
+            .get(&(route_id.to_string(), model.to_string()))
+            .is_some_and(|&until| now_ms < until)
     }
 
     // ---------------------------------------------------------- 官方 Codex turn-state
@@ -367,13 +537,28 @@ pub struct RouterHandle {
     pub addr: SocketAddr,
     pub state: Arc<Mutex<RouterState>>,
     stop: tokio::sync::watch::Sender<bool>,
+    /// 后台写库任务的停止开关（[`write_logs_to`](Self::write_logs_to) 之后才有）。
+    /// 跟着 handle 走：handle 被丢掉时它也被丢掉，写库任务把最后一批写掉再退出。
+    log_writer: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 impl RouterHandle {
     /// 停掉监听。已经在飞的请求会跑完 —— **半路掐断等于把使用者正在写的
-    /// 那一轮对话弄丢**,而停路由从来不是紧急操作。
+    /// 那一轮对话弄丢**,而停路由从来不是紧急操作。后台写库任务把最后一批写掉再停。
     pub fn stop(&self) {
         let _ = self.stop.send(true);
+        if let Some(w) = &self.log_writer {
+            let _ = w.send(true);
+        }
+    }
+
+    /// 起后台写库：每隔 `every` 把攒下的请求日志交给 `sink`（见 `log.rs`）。
+    /// 已经起过就换成新的那一份（旧的写完最后一批退出）。
+    pub fn write_logs_to(&mut self, sink: Arc<dyn LogSink>, every: std::time::Duration) {
+        if let Some(old) = self.log_writer.take() {
+            let _ = old.send(true);
+        }
+        self.log_writer = Some(spawn_log_writer(Arc::clone(&self.state), sink, every));
     }
 }
 
@@ -444,7 +629,9 @@ pub const OFFICIAL_CODEX_ROUTE_ID: &str = "qb-router-codex-official";
 /// 任何一头多一段 `/v1`,上游收到的就是 `.../codex/v1/responses`,404。
 pub const OFFICIAL_CODEX_BASE: &str = "https://chatgpt.com/backend-api/codex";
 
-type ProxyBody = BoxBody<Bytes, std::io::Error>;
+/// 回给客户端的响应体。`Unsync`：hyper 只要求它能跨线程搬（`Send`），流式响应里揣着
+/// 静默超时的计时器和这一发的收尾（`log::Record`），那些不必 `Sync`。
+type ProxyBody = UnsyncBoxBody<Bytes, std::io::Error>;
 
 /// 日志里 client 那一栏写什么。
 ///
@@ -464,7 +651,7 @@ fn text(status: StatusCode, body: &str) -> Response<ProxyBody> {
     let mut r = Response::new(
         Full::new(Bytes::from(body.to_owned()))
             .map_err(|e| match e {})
-            .boxed(),
+            .boxed_unsync(),
     );
     *r.status_mut() = status;
     r
@@ -561,411 +748,6 @@ pub fn model_of(body: &[u8]) -> String {
 pub fn forwardable(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     !HOP_BY_HOP.contains(&lower.as_str()) && !CLIENT_AUTH_HEADERS.contains(&lower.as_str())
-}
-
-/// 启动本机路由。
-///
-/// 绑不上端口时**如实报错**,把端口号写进错误里 —— 开源分发意味着
-/// 别人机器上什么都可能占着这个端口。
-pub async fn serve(
-    config: RouterConfig,
-    state: Arc<Mutex<RouterState>>,
-    client: reqwest::Client,
-) -> Result<RouterHandle> {
-    let want = config.bind();
-    let listener = tokio::net::TcpListener::bind(want).await.map_err(|e| {
-        GateError::Other(format!(
-            "本机路由绑不上 127.0.0.1:{} —— {e}。这个端口多半被别的程序占了,换一个再试。",
-            want.port()
-        ))
-    })?;
-    let addr = listener
-        .local_addr()
-        .map_err(|e| GateError::Other(format!("拿不到本机路由的真实端口：{e}")))?;
-
-    let (stop, mut stopped) = tokio::sync::watch::channel(false);
-    let accept_state = Arc::clone(&state);
-    tokio::spawn(async move {
-        loop {
-            let accepted = tokio::select! {
-                // 停的时候不再收新连接;已经在飞的那些自己跑完。
-                _ = stopped.changed() => break,
-                a = listener.accept() => a,
-            };
-            let Ok((stream, _)) = accepted else {
-                // 单次 accept 失败不该让整个路由停掉 —— 客户端会重连。
-                continue;
-            };
-            let state = Arc::clone(&accept_state);
-            let client = client.clone();
-            tokio::spawn(async move {
-                let svc = service_fn(move |req| proxy(req, Arc::clone(&state), client.clone()));
-                let _ = hyper::server::conn::http1::Builder::new()
-                    .serve_connection(TokioIo::new(stream), svc)
-                    .await;
-            });
-        }
-    });
-
-    Ok(RouterHandle { addr, state, stop })
-}
-
-/// 请求结束时把总耗时补回日志里。
-///
-/// 用 `Drop` 而不是在 handler 末尾写:响应体是流式的,handler 早就返回了,
-/// 真正的「这一发请求结束」是那个流被丢掉的时候。
-struct FinishLog {
-    state: Arc<Mutex<RouterState>>,
-    id: String,
-    started: Instant,
-    /// 哪个软件那一发 —— 收尾要还到它自己的计数上。
-    client: Client,
-    /// 这一发绑的线路 —— 流结束后按 SSE 结局补记健康度要用。
-    route_id: String,
-    /// Codex 的 2xx 流才有:顺流累积的 SSE 扫描器。
-    ///
-    /// **健康判定推迟到这里**:HTTP 200 但流里 `response.failed` / 断流的那种,
-    /// 只看状态码会误判成成功。`None` = 非 Codex 或非 2xx,健康早已按状态码记过。
-    scan: Arc<Mutex<Option<StreamScanner>>>,
-}
-
-impl Drop for FinishLog {
-    fn drop(&mut self) {
-        let elapsed = self.started.elapsed().as_millis() as u64;
-        // 流真的结束了才知道它的结局。取出扫描器折算成熔断器认识的结果。
-        let deferred = self
-            .scan
-            .lock()
-            .ok()
-            .and_then(|mut g| g.take())
-            .map(|s| s.finish().to_outcome());
-        if let Ok(mut s) = self.state.lock() {
-            s.switch.end(self.client);
-            if let Some(log) = s.logs.iter_mut().find(|l| l.id == self.id) {
-                log.total_ms = Some(elapsed);
-            }
-            if let Some(outcome) = deferred {
-                let now_ms = chrono::Utc::now().timestamp_millis();
-                s.breakers
-                    .entry(self.route_id.clone())
-                    .or_default()
-                    .record(outcome, now_ms);
-            }
-        }
-    }
-}
-
-async fn proxy(
-    req: Request<Incoming>,
-    state: Arc<Mutex<RouterState>>,
-    client: reqwest::Client,
-) -> std::result::Result<Response<ProxyBody>, std::convert::Infallible> {
-    let started = Instant::now();
-    let now_ms = chrono::Utc::now().timestamp_millis();
-
-    let raw_path = req
-        .uri()
-        .path_and_query()
-        .map(|p| p.as_str().to_string())
-        .unwrap_or_else(|| "/".into());
-    // 没有中转路径的软件（反重力）拿到的是 `NO_RELAY_PREFIX` 前缀。理论上永远
-    // 到不了这里（入口就拒绝建环境），真到了也不许落到别的软件的线上 —— 把原因说清楚。
-    if raw_path.starts_with(NO_RELAY_PREFIX) {
-        return Ok(text(
-            StatusCode::NOT_FOUND,
-            "这个软件没有中转路径：它的 API 端点写死在客户端自己的程序里，本机路由无法为它换上游。",
-        ));
-    }
-    // 先认这一发是哪个软件发来的,再按那个软件去绑线 ——
-    // 三个软件各有各的当前上游,认错软件就会打到别人的站上。
-    // 变量名叫 caller 不叫 client —— 这个函数的参数里已经有一个 reqwest::Client。
-    let (caller, path) = route_of(&raw_path);
-
-    // 这一发请求绑定一条线路。**拿到的是一份拷贝** —— 之后换上游与它无关。
-    let bound = {
-        let Ok(mut s) = state.lock() else {
-            return Ok(text(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "本机路由内部状态损坏",
-            ));
-        };
-        s.switch
-            .begin(caller)
-            .and_then(|id| s.upstreams.get(&id).cloned().map(|u| (id, u)))
-    };
-
-    let Some((route_id, upstream)) = bound else {
-        // 这个软件还没选上游。**如实报错,不制造死局,也不回落到别的软件的线** ——
-        // 回落会让它悄悄用上别人的 Key,账记在别人头上,而且完全看不出来。
-        if let Ok(mut s) = state.lock() {
-            s.switch.end(caller);
-        }
-        return Ok(text(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "本机路由还没有给这个软件选定上游线路：请在中转站页面切到它，选一条再启动。",
-        ));
-    };
-
-    let log_id = format!("{}-{}", now_ms, started.elapsed().as_nanos());
-    let method = req.method().clone();
-
-    // 官方 Codex turn-state 模式:保留客户端自带的 OAuth,不剥不换。见 `UpstreamAuth`。
-    let official = matches!(upstream.auth, UpstreamAuth::OAuthPassthrough);
-    // 客户端有没有自己带 turn-state —— 带了就保留它自己的,我们不覆盖。
-    let client_has_state = req.headers().contains_key(turnstate::HEADER);
-
-    // 头:丢掉逐跳头;中转模式还要丢掉客户端自带的凭证再换上这条线路自己的,
-    // 官方模式则保留客户端的 OAuth。
-    let mut headers = reqwest::header::HeaderMap::new();
-    for (name, value) in req.headers() {
-        let keep = if official {
-            !HOP_BY_HOP.contains(&name.as_str().to_ascii_lowercase().as_str())
-        } else {
-            forwardable(name.as_str())
-        };
-        if keep {
-            headers.insert(name.clone(), value.clone());
-        }
-    }
-    match &upstream.auth {
-        UpstreamAuth::Bearer(k) => {
-            if let Ok(v) = reqwest::header::HeaderValue::from_str(&format!("Bearer {k}")) {
-                headers.insert(reqwest::header::AUTHORIZATION, v);
-            }
-        }
-        UpstreamAuth::ApiKey(k) => {
-            if let Ok(v) = reqwest::header::HeaderValue::from_str(k) {
-                headers.insert("x-api-key", v);
-            }
-        }
-        // 官方模式用客户端自带的 OAuth,不注入;None 也不注入。
-        UpstreamAuth::None | UpstreamAuth::OAuthPassthrough => {}
-    }
-
-    let body = match req.into_body().collect().await {
-        Ok(b) => b.to_bytes(),
-        Err(e) => {
-            if let Ok(mut s) = state.lock() {
-                s.switch.end(caller);
-            }
-            return Ok(text(
-                StatusCode::BAD_REQUEST,
-                &format!("读不到客户端请求体：{e}"),
-            ));
-        }
-    };
-
-    // 模型名从请求体里抠 —— 日志表上「模型」那一栏要用。抠不出来就空着。
-    let model = model_of(&body);
-
-    // 官方 Codex:注入开着、客户端没带、库里有可用值时,补上一张 turn-state。
-    // 客户端自己带了就保留(见上面 `client_has_state`),不弄坏它自己的状态。
-    let injected = if official && caller == Client::Codex && !client_has_state {
-        state
-            .lock()
-            .ok()
-            .and_then(|mut s| s.turnstate_acquire(&model, now_ms))
-    } else {
-        None
-    };
-    if let Some(inj) = &injected {
-        if let Ok(v) = reqwest::header::HeaderValue::from_str(&inj.value) {
-            headers.insert(turnstate::HEADER, v);
-        }
-    }
-
-    // 转给上游的是**剥掉前缀之后**的路径（见 `route_of`）。不剥的话上游
-    // 收到的是 /v1/cd/v1/messages —— 404,而错误里完全看不出多了一段。
-    let url = join_url(&upstream.base_url, &path);
-    let sent = client
-        .request(method, &url)
-        .headers(headers)
-        .body(body)
-        .send()
-        .await;
-
-    let mut resp = match sent {
-        Ok(r) => r,
-        Err(e) => {
-            // 连不上或超时 —— 对熔断来说是同一档。登记 + 立刻按超时判健康。
-            record_log(
-                &state,
-                &log_id,
-                now_ms,
-                &route_id,
-                caller,
-                &model,
-                None,
-                None,
-                Outcome::timeout(),
-            );
-            record_breaker(&state, &route_id, Outcome::timeout(), now_ms);
-            if let Ok(mut s) = state.lock() {
-                s.switch.end(caller);
-            }
-            return Ok(text(StatusCode::BAD_GATEWAY, &format!("上游没回应：{e}")));
-        }
-    };
-
-    let status = resp.status().as_u16();
-    let retry = retry_after_ms(
-        resp.headers()
-            .get(reqwest::header::RETRY_AFTER)
-            .and_then(|v| v.to_str().ok()),
-    );
-    let outcome = Outcome::from_status(status, retry);
-
-    // 官方 Codex:把响应带回的 turn-state **被动采集**进来(免费),
-    // 并对我们注入过的那一发更新 strikes。这张头同时照常转回客户端,
-    // 让 Codex 自己的状态也接得上。
-    if official && caller == Client::Codex {
-        let returned = resp
-            .headers()
-            .get(turnstate::HEADER)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-        if let Ok(mut s) = state.lock() {
-            s.turnstate_offer(&model, &returned, now_ms);
-            if let Some(inj) = &injected {
-                s.turnstate_observe(&model, &returned, inj, now_ms);
-            }
-        }
-    }
-
-    let mut out = Response::builder().status(status);
-    for (name, value) in resp.headers() {
-        if forwardable(name.as_str()) {
-            out = out.header(name, value);
-        }
-    }
-
-    // 首字：拉出第一块再计时。流式接口的价值全在这个数上,
-    // 拿「响应头回来了」当首字会系统性地偏小。
-    let first = resp.chunk().await;
-    let first_token_ms = Some(started.elapsed().as_millis() as u64);
-
-    // ⛔ Codex 的 2xx 流:健康判定推迟到流结束。
-    //
-    // Codex 的 Responses 接口会在 HTTP 200 的 SSE 流里报 `response.failed` / 断流,
-    // 只看状态码会把这些记成成功、熔断永远不触发(见 `qb_station::sse` 模块头)。
-    // 所以这里先只登记请求,不动熔断;流结束时在 `FinishLog::drop` 按 SSE 结局补记。
-    //
-    // **只对 Codex。** 使用者明确要求不碰 Claude —— Claude Code / 桌面端一律维持原样:
-    // 立刻按状态码判健康,一个字节都不改。
-    let defer_health = caller == Client::Codex && (200..300).contains(&status);
-    record_log(
-        &state,
-        &log_id,
-        now_ms,
-        &route_id,
-        caller,
-        &model,
-        Some(status),
-        first_token_ms,
-        outcome,
-    );
-    if !defer_health {
-        record_breaker(&state, &route_id, outcome, now_ms);
-    }
-
-    // 顺流累积的 SSE 扫描器 —— 只对要推迟判定的那种流建。
-    let scan: Arc<Mutex<Option<StreamScanner>>> =
-        Arc::new(Mutex::new(defer_health.then(StreamScanner::new)));
-    if let Ok(Some(b)) = &first {
-        if let Ok(mut g) = scan.lock() {
-            if let Some(s) = g.as_mut() {
-                s.feed(b);
-            }
-        }
-    }
-
-    let finish = FinishLog {
-        state: Arc::clone(&state),
-        id: log_id,
-        started,
-        client: caller,
-        route_id: route_id.clone(),
-        scan: Arc::clone(&scan),
-    };
-
-    let head = match first {
-        Ok(Some(b)) => Some(Ok(Frame::data(b))),
-        Ok(None) => None,
-        Err(e) => Some(Err(std::io::Error::other(e.to_string()))),
-    };
-    let rest = resp.bytes_stream().map(move |c| match c {
-        Ok(b) => {
-            // 顺流喂给扫描器,不缓冲整条响应 —— 只留未终止的那一小段尾巴。
-            if let Ok(mut g) = scan.lock() {
-                if let Some(s) = g.as_mut() {
-                    s.feed(&b);
-                }
-            }
-            Ok(Frame::data(b))
-        }
-        Err(e) => Err(std::io::Error::other(e.to_string())),
-    });
-    // `finish` 被搬进流里：流被丢掉的那一刻才是这一发请求真的结束了。
-    let stream = futures_util::stream::iter(head).chain(rest).map(move |c| {
-        let _keep = &finish;
-        c
-    });
-
-    // 显式点名 BodyExt::boxed —— StreamExt 也有一个 boxed,重名。
-    let body = BodyExt::boxed(StreamBody::new(stream));
-    match out.body(body) {
-        Ok(r) => Ok(r),
-        Err(e) => Ok(text(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("拼不出响应：{e}"),
-        )),
-    }
-}
-
-/// 只登记这一发请求的日志行(不碰熔断)。
-///
-/// ⛔ 日志与熔断**分开**:Codex 的 2xx 流要先登记、把健康判定推迟到流结束
-/// (见 `proxy` 里的 `defer_health`);其它情况登记完紧接着 [`record_breaker`]。
-#[allow(clippy::too_many_arguments)]
-fn record_log(
-    state: &Arc<Mutex<RouterState>>,
-    id: &str,
-    at_ms: i64,
-    route_id: &str,
-    client: Client,
-    model: &str,
-    status: Option<u16>,
-    first_token_ms: Option<u64>,
-    outcome: Outcome,
-) {
-    let retry_after_ms = match outcome {
-        Outcome::RateLimited { retry_after_ms } => retry_after_ms,
-        _ => None,
-    };
-    let Ok(mut s) = state.lock() else { return };
-    s.logs.push(RequestLog {
-        id: id.to_string(),
-        at_ms,
-        route_id: route_id.to_string(),
-        // 这两栏原来是写死的空串 —— 日志表上「来源」和「模型」两列因此
-        // 永远是空的,而那看起来像「还没有请求」而不是「没记」。
-        client: client_key(client).to_string(),
-        model: model.to_string(),
-        status,
-        first_token_ms,
-        total_ms: None,
-        retry_after_ms,
-    });
-}
-
-/// 把一次结果记进这条线路的熔断器。
-fn record_breaker(state: &Arc<Mutex<RouterState>>, route_id: &str, outcome: Outcome, at_ms: i64) {
-    let Ok(mut s) = state.lock() else { return };
-    s.breakers
-        .entry(route_id.to_string())
-        .or_default()
-        .record(outcome, at_ms);
 }
 
 #[cfg(test)]
@@ -1177,6 +959,7 @@ mod tests {
             route_id: "r1".into(),
             base_url: "https://x.test".into(),
             auth: UpstreamAuth::None,
+            ..Default::default()
         });
         s.set_now(Client::ClaudeCode, "r1");
         s.request_switch(Client::ClaudeCode, "r2");
@@ -1208,6 +991,7 @@ mod tests {
             route_id: "relay-1".into(),
             base_url: "https://relay.test/v1".into(),
             auth: UpstreamAuth::Bearer("k".into()),
+            ..Default::default()
         }]);
         assert!(
             s.official_codex_armed(),
@@ -1228,6 +1012,7 @@ mod tests {
             route_id: "relay-1".into(),
             base_url: "https://relay.test/v1".into(),
             auth: UpstreamAuth::Bearer("k".into()),
+            ..Default::default()
         });
         s.arm_official_codex();
         s.disarm_official_codex();
@@ -1262,6 +1047,11 @@ mod tests {
     // 不动真 ACL、不碰真进程、不写 %LOCALAPPDATA%。而且非这么测不可 ——
     // 对 `join_url` 和 `forwardable` 各写一条断言,证明不了它们真的被接起来了。
     // 拼错一个字段、少插一个头,那些单测照样全绿。
+
+    use hyper::body::Incoming;
+    use hyper::service::service_fn;
+    use hyper::Request;
+    use hyper_util::rt::TokioIo;
 
     type Seen = Arc<Mutex<Vec<(String, hyper::header::HeaderMap)>>>;
 
@@ -1308,6 +1098,7 @@ mod tests {
                 route_id: "r1".into(),
                 base_url: format!("http://127.0.0.1:{}/v1", upstream.port()),
                 auth,
+                ..Default::default()
             });
             s.set_now(Client::ClaudeCode, "r1");
         }
@@ -1329,6 +1120,7 @@ mod tests {
                 route_id: "r1".into(),
                 base_url: format!("http://127.0.0.1:{}/v1", up.port()),
                 auth: UpstreamAuth::Bearer("real-key".into()),
+                ..Default::default()
             });
             s.set_now(Client::ClaudeCode, "r1");
         }
@@ -1490,6 +1282,7 @@ mod tests {
                     route_id: id.into(),
                     base_url: format!("http://127.0.0.1:{}/v1", addr.port()),
                     auth: UpstreamAuth::None,
+                    ..Default::default()
                 });
             }
             s.set_now(Client::ClaudeCode, "a");
@@ -1553,6 +1346,7 @@ mod tests {
                 route_id: "r1".into(),
                 base_url: format!("http://127.0.0.1:{}/v1", up.port()),
                 auth: UpstreamAuth::None,
+                ..Default::default()
             });
             s.set_now(Client::Codex, "r1");
         }
@@ -1694,6 +1488,7 @@ mod tests {
                 route_id: "official".into(),
                 base_url: format!("http://127.0.0.1:{}/v1", up.port()),
                 auth: UpstreamAuth::OAuthPassthrough,
+                ..Default::default()
             });
             s.set_now(Client::Codex, "official");
             s.turnstate_configure(true, TurnKind::Personal);
@@ -1778,6 +1573,7 @@ mod tests {
                 route_id: "official".into(),
                 base_url: format!("http://127.0.0.1:{}/v1", up.port()),
                 auth: UpstreamAuth::OAuthPassthrough,
+                ..Default::default()
             });
             s.set_now(Client::Codex, "official");
             s.turnstate_configure(true, TurnKind::Personal);
@@ -1838,6 +1634,7 @@ mod tests {
                 route_id: "relay".into(),
                 base_url: format!("http://127.0.0.1:{}/v1", up.port()),
                 auth: UpstreamAuth::Bearer("relay-key".into()),
+                ..Default::default()
             });
             s.set_now(Client::ClaudeCode, "relay");
             s.turnstate_configure(true, TurnKind::Personal);

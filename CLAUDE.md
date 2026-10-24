@@ -356,9 +356,39 @@ cargo run -p qb-app --example antigravity-hub-quota -- --account <槽位 id>
 `src-tauri/tests/architecture.rs` 的 `relay_breakers_can_never_reach_account_switching`
 钉着这件事。**别为了图省事把那条测试删掉或者往 `ALLOWED_SIDEWAYS` 里补一行。**
 
-路由器本身的三条硬约束（`crates/qb-app/src/local_router.rs`）：只绑回环、
+路由器本身的三条硬约束（`crates/qb-app/src/local_router/`，2026-10-24 拆成目录）：只绑回环、
 不改系统代理设置、不做链式转发。这三条是 DISCLAIMER 第 5.1 节的措辞依据 ——
 **动了其中任何一条，就要同步改那一节**，否则免责声明描述的是另一个软件。
+
+#### 本机路由的数据面（2026-10-24，中转站重构阶段 1，照搬 cc-switch v4.0.14）
+
+| 文件 | 管什么 |
+|---|---|
+| `mod.rs` | `RouterState`（当前上游、派单顺序、每个软件的路由设置、熔断器、缺模型记忆、日志缓冲）与共用小工具 |
+| `server.rs` | 监听、认软件、绑这个软件此刻的当前线路（拷贝）、收齐请求体，分给下面两条路 |
+| `forward.rs` | **中转线路**的重试循环（cc-switch `forward_with_retry_inner`） |
+| `official.rs` | **官方 Codex**（turn-state）：不进重试、不换线、不整流，原样直通 |
+| `log.rs` | 一发一条 `RouterRequest`，边转边解用量，后台每 5 秒批量落 `router_requests` |
+
+要守住的：
+
+1. **换线只发生在「交出回复之前」。** 交出去之后上游再断，只能如实断开 —— 再换一条线等于让客户端收到两段拼起来的回复。
+   `a_stream_that_breaks_after_it_was_handed_over_is_not_retried` 钉着。
+2. **换不换、伤不伤熔断，只由 `qb_proxy::classify` 一处定。** 400 / 405 / 413 / 422 这类请求自己的错**原样回、不换线、熔断记中性**
+   （`a_400_goes_straight_back_without_trying_another_line_or_hurting_the_breaker`）；404 / 409 / 451 换线但不伤熔断；
+   缺模型只跳过「这条线上的这个模型」6 小时。别在 `forward.rs` 里另写一份状态码判断。
+3. **官方线永不当替补、永不换线**（`the_official_codex_line_never_fails_over_to_a_relay`）。中转线失败换到官方线，
+   等于拿中转那一发带着官方身份打出去；官方线失败换到中转线，等于拿官方身份的请求去打中转的 Key。
+4. **全都熔断着时仍打当前那一条**，不凭空回 503 —— 原来就是这样，不制造死局。只有一条线时不问熔断放行，但照样记结果。
+5. **转给中转线路的请求一律 `accept-encoding: identity`**，reqwest 仍然不开 `gzip`（开了它会悄悄解压、改写流）。
+   要从响应里读用量、认出 2xx 里的错，就得拿到没压缩的字节。官方线照旧原样转客户端的头。
+6. **首包到了之后最多再压 10 秒**（`forward::MAX_HOLD`）等「第一个有内容的事件」，压满就照原样交出去。
+   别改成「等不到就判超时」：推理很久才出第一段的长回合开头只有心跳，那样会被当成故障换线。
+7. **静默超时不比客户端自己的短**：Codex 默认 300 秒（Codex 自己的 `stream_idle_timeout_ms`），Claude 180 秒（cc-switch）。
+8. **日志里不记正文、不记 Key**：`error` 那一栏对上游错误只写「类型（HTTP 状态码）」—— 上游的错误体可能把请求内容回显出来。
+9. **测试数只许涨**这条在这一步的对账：`a_codex_200_with_a_failed_sse_stream_is_counted_as_a_fault` 等老的端到端测试一条没删，
+   只给 `Upstream` 字面量补了 `..Default::default()`；`router_settings_default_to_cc_switch_s_per_app_table_with_failover_on`
+   里 Codex 静默超时那一项从 120 改写成 300（见第 7 条）。
 
 ### 体检的无凭据探测与一次性采集页（2026-09-24，使用者选的）
 
@@ -443,7 +473,7 @@ cargo run -p qb-install --example self-update-check -- --as <上一版> --downlo
 （「只改 GPT Codex，不改 Claude」「本机路由只路由 `127.0.0.1`，不属于当初决定不引入的那部分」）。
 代码在 `crates/qb-station/src/turnstate.rs`（外形解析 + active/ready，纯函数）、
 `crates/qb-station/src/sse.rs`（SSE 终止事件分类，纯函数）、
-`crates/qb-app/src/local_router.rs`（`UpstreamAuth::OAuthPassthrough` 官方模式 + 采集/注入）。
+`crates/qb-app/src/local_router/official.rs`（`UpstreamAuth::OAuthPassthrough` 官方模式 + 采集/注入）。
 
 六条硬约束，动了任何一条就要同步改 [DISCLAIMER.md](DISCLAIMER.md) §5.3 与 [ATTRIBUTION.md](ATTRIBUTION.md)：
 

@@ -69,6 +69,16 @@ MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件
 测试换成了 `f64` 精度与「Claude 不含缓存」两条，`error` 那条要联网的 reqwest 测试换成了 `response_parts` 的测试，
 `codex_compaction` 的两条 tokio 流测试随流式那一半留到阶段 3。
 
+**阶段 1 第二批（2026-10-24，本机路由的数据面，`crates/qb-app/src/local_router/`）**：
+
+| QB Gate 的文件 | cc-switch 的出处（`src-tauri/src/proxy/`） | 改了什么 |
+|---|---|---|
+| `local_router/forward.rs` | `forwarder.rs` 的 `forward_with_retry_inner`（重试循环）、`prepare_success_response_for_failover`（非流式整份读完）、`prime_streaming_response` / `validate_responses_stream_start`（首包前认错）、`handle_rectifier_retry_failure`、`media_retry_should_trigger`、`opaque_state_retry_rejection`、`map_reqwest_send_error`、`is_streaming_request` | 接到 QB Gate 自己的熔断（`qb-station::schedule::breaker`）、错误分类（`qb_proxy::classify`）、日志（`RouterRequest`）上；axum → hyper；Copilot / OAuth / Bedrock / Stack 的分支不搬；只有一条线时照样记熔断；全都熔断时仍打当前那条；整流每条线只试一次；首包到了之后最多再压 10 秒等有内容的事件（cc-switch 对原样转发的 Codex 只等首包）；转给中转线路的请求一律 `accept-encoding: identity` |
+| `local_router/log.rs` | `response_processor.rs` 的「边转发边收用量、流结束才算账」 | 不缓冲整条响应：SSE 只留未结束的那一小段，用量只留算 token 要用的那几个事件；落库改成后台批量写、内存有界 |
+
+`server.rs` / `official.rs` / `mod.rs` 是 QB Gate 原来的 `local_router.rs` 拆开的，不是搬来的。
+官方 Codex 那条线（turn-state）照旧不进重试、不换线 —— 跟 cc-switch 的 `provider_supports_failover` 同一个结论。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text
@@ -305,7 +315,7 @@ GPT **不换**（OpenAI 的刷新令牌会轮换，面板一换桌面端就被�
 - 许可：**GPL-3.0**，且依赖 **Mihomo（GPL-3.0）**。
 - 用在：官方 Codex 的 `X-Codex-Turn-State` 采集 / 注入
   （`crates/qb-station/src/turnstate.rs`），以及 SSE 终止事件分类
-  （`crates/qb-station/src/sse.rs`），二者都接进 `crates/qb-app/src/local_router.rs`。
+  （`crates/qb-station/src/sse.rs`），二者都接进 `crates/qb-app/src/local_router/`（2026-10-24 拆成目录，官方线在 `official.rs`）。
 
 **⛔ 一行源码都没抄,只按公开描述用 Rust 重写。** 理由是许可：本项目是
 **AGPL-3.0-only + 商业授权双授权**，而 ccodex 是第三方持有版权的 GPL 代码 ——

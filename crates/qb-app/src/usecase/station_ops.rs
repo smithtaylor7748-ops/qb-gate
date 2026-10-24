@@ -18,7 +18,9 @@
 use crate::domain::{Client, Credential, Provider};
 use crate::error::{GateError, Result};
 use crate::repository::Repository;
+use qb_platform::repository::RouterRequestQuery;
 use qb_station::health::{self, Windows};
+use qb_station::router::RouterRequest;
 use qb_station::schedule::{
     cheap_values, cost_per_token, rank, Candidate, CheapBasis, CheapInput, Prefs, Ranking, Schedule,
 };
@@ -667,11 +669,12 @@ pub async fn fetch_prices(
     (prices, problems)
 }
 
-/// 请求日志写进库,并按上限裁掉旧的。
+/// 请求日志留多少天，更早的落库时裁掉。
 ///
-/// 上限跟别的历史一样是**有意的**:请求日志涨得比谁都快,
-/// 不封顶的话库会一直长,而使用者根本不会去看三个月前那一条。
-pub const REQUEST_LOG_KEEP: usize = 2000;
+/// 上限跟别的历史一样是**有意的**:请求日志涨得比谁都快,不封顶的话库会一直长。
+/// 原来按条数留 2000 条（`request_logs` 只能全表读、逐条删）；新表按 `at_ms` 建了索引，
+/// 改按天留 —— 「最近 30 天花了多少」才有得算，用量页要的就是这个窗口。
+pub const ROUTER_REQUEST_KEEP_DAYS: i64 = 30;
 
 /// 智能调度落在哪张表：一个软件一行。
 const SCHEDULE_TABLE: &str = "station_schedule";
@@ -703,18 +706,110 @@ pub fn save_schedule(db: &Repository, schedule: &Schedule) -> Result<()> {
     db.put(SCHEDULE_TABLE, &schedule_key(schedule.client)?, schedule)
 }
 
-/// 把攒下的请求日志落库。
-pub fn persist_logs(
-    db: &qb_platform::repository::Repository,
-    logs: &[qb_station::router::RequestLog],
+/// 把攒下的请求日志落库：先补两种花费，再写，再裁掉 [`ROUTER_REQUEST_KEEP_DAYS`] 天以前的。
+///
+/// 线路的价从库里的 `station_routes` 现读（这一批里用到哪条读哪条，表很小）。
+pub fn persist_router_requests(
+    db: &Repository,
+    mut logs: Vec<RouterRequest>,
+    catalog: &pricing::Catalog,
+    now_ms: i64,
 ) -> Result<()> {
-    for log in logs {
-        db.put("request_logs", &log.id, log)?;
+    if logs.is_empty() {
+        return Ok(());
     }
-    db.prune("request_logs", REQUEST_LOG_KEEP, |_: &serde_json::Value| {
-        false
-    })?;
+    let routes: Vec<Route> = db.list("station_routes")?;
+    price_router_requests(&mut logs, &routes, catalog);
+    db.insert_router_requests(&logs)?;
+    db.prune_router_requests(now_ms - ROUTER_REQUEST_KEEP_DAYS * 24 * 3600 * 1000)?;
     Ok(())
+}
+
+/// 最近的请求日志，新的在前。可按软件 / 线路筛。
+pub fn router_requests(
+    db: &Repository,
+    client: Option<Client>,
+    route_id: Option<String>,
+    limit: u32,
+) -> Result<Vec<RouterRequest>> {
+    let client = client.map(schedule_key).transpose()?;
+    db.router_requests(&RouterRequestQuery {
+        since_ms: None,
+        client,
+        route_id,
+        limit,
+    })
+}
+
+/// 给每条日志补上两种花费（美元）。**取不到就是 `None`，不拿 0 顶上。**
+///
+/// - 站内：这条线自己公布的四类单价（[`pricing::StationRates::category_prices`]：sub2api 的绝对单价，
+///   或 New API 的倍率 × 它源码里写死的 2 美元 / 百万 token）。按次计价、不知道价、或者有 token
+///   的那一类没有价 → `None`。
+/// - 官方价折算：同样的 token 走官方 API 要多少（[`pricing::Catalog`]，按客户端请求里写的模型名查，
+///   查不到再试上游模型名）。只认美元价，不做汇率换算。**不是账单** —— 订阅不按这个收费。
+///
+/// Codex（OpenAI 协议）报上来的输入 token 含缓存读写，按 cc-switch 的口径先扣掉再按输入价算
+/// （[`qb_proxy::usage::calculator::CostCalculator::calculate_for_app`]）。
+pub fn price_router_requests(
+    logs: &mut [RouterRequest],
+    routes: &[Route],
+    catalog: &pricing::Catalog,
+) {
+    use qb_proxy::usage::calculator::{CostCalculator, ModelPricing};
+    use qb_proxy::usage::parser::TokenUsage;
+    let by_id: HashMap<&str, &Route> = routes.iter().map(|r| (r.id.as_str(), r)).collect();
+    for log in logs.iter_mut() {
+        let (Some(input), Some(output)) = (log.input_tokens, log.output_tokens) else {
+            continue;
+        };
+        let narrow = |v: Option<u64>| u32::try_from(v.unwrap_or(0)).unwrap_or(u32::MAX);
+        let usage = TokenUsage {
+            input_tokens: u32::try_from(input).unwrap_or(u32::MAX),
+            output_tokens: u32::try_from(output).unwrap_or(u32::MAX),
+            cache_read_tokens: narrow(log.cache_read_tokens),
+            cache_creation_tokens: narrow(log.cache_write_tokens),
+            cache_creation_1h_tokens: narrow(log.cache_write_1h_tokens),
+            ..Default::default()
+        };
+        // `calculate_for_app` 认的写法：Codex 的输入含缓存，Claude 的不含。
+        let app = if log.client == "codex" {
+            "codex"
+        } else {
+            "claude"
+        };
+
+        log.station_cost = by_id.get(log.route_id.as_str()).and_then(|route| {
+            let [p_in, p_read, p_write, p_out] = route.rates.category_prices();
+            let need = |price: Option<f64>, tokens: u32| match price {
+                Some(p) => Some(p),
+                None if tokens == 0 => Some(0.0),
+                None => None,
+            };
+            let pricing = ModelPricing::new(
+                need(p_in, usage.input_tokens)?,
+                need(p_out, usage.output_tokens)?,
+                need(p_read, usage.cache_read_tokens)?,
+                need(p_write, usage.cache_creation_tokens)?,
+            );
+            Some(CostCalculator::calculate_for_app(app, &usage, &pricing).total_cost)
+        });
+
+        log.official_cost = [log.model.as_str(), log.upstream_model.as_str()]
+            .into_iter()
+            .filter(|m| !m.is_empty())
+            .find_map(|m| catalog.resolve(m))
+            .filter(|p| p.currency.eq_ignore_ascii_case("USD"))
+            .map(|p| {
+                let pricing = ModelPricing::new(
+                    p.input.per_mtok,
+                    p.output.per_mtok,
+                    p.cache_read.per_mtok,
+                    p.cache_write.per_mtok,
+                );
+                CostCalculator::calculate_for_app(app, &usage, &pricing).total_cost
+            });
+    }
 }
 
 #[cfg(test)]
@@ -759,6 +854,126 @@ mod tests {
             windows: health::windows(&rows, now),
             error: None,
         }
+    }
+
+    fn priced_log(client: &str, route: &str, model: &str) -> RouterRequest {
+        RouterRequest {
+            id: format!("{route}-{model}"),
+            at_ms: 1_700_000_000_000,
+            client: client.into(),
+            route_id: route.into(),
+            model: model.into(),
+            input_tokens: Some(1_000_000),
+            output_tokens: Some(100_000),
+            cache_read_tokens: Some(0),
+            cache_write_tokens: Some(0),
+            cache_write_1h_tokens: Some(0),
+            ..Default::default()
+        }
+    }
+
+    fn usd(model: &str, input: f64, output: f64) -> FetchedPrice {
+        FetchedPrice {
+            model: model.into(),
+            input_per_mtok: input,
+            output_per_mtok: output,
+            cache_read_per_mtok: Some(input / 10.0),
+            cache_write_per_mtok: Some(input * 1.25),
+            cache_write_1h_per_mtok: None,
+            long_context: None,
+            currency: "USD".into(),
+            source_url: "https://example.test/pricing".into(),
+            fetched_at: "2026-10-24".into(),
+        }
+    }
+
+    #[test]
+    fn both_costs_are_filled_from_the_line_s_own_price_and_the_official_one() {
+        let mut sub2 = route("claude-code\u{1f}s\u{1f}", 1.0);
+        sub2.rates.input_price = Some(3.0);
+        sub2.rates.output_price = Some(15.0);
+        sub2.rates.cache_read_price = Some(0.3);
+        sub2.rates.cache_write_price = Some(3.75);
+        let mut logs = vec![priced_log("claude-code", &sub2.id, "claude-opus-5")];
+        let catalog = pricing::Catalog::new(vec![usd("claude-opus-5", 5.0, 25.0)]);
+        price_router_requests(&mut logs, &[sub2], &catalog);
+        // 1M 输入 × 3 + 0.1M 输出 × 15 = 4.5（站内）；按官方 5 / 25 = 7.5。
+        assert!((logs[0].station_cost.unwrap() - 4.5).abs() < 1e-9);
+        assert!((logs[0].official_cost.unwrap() - 7.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_cost_nobody_can_price_is_none_not_zero() {
+        // 线路没填价（按次 / 没检验过）、模型官方表里没有、日志里没 token —— 一律 None。
+        let unknown = route("claude-code\u{1f}u\u{1f}", 1.0);
+        let mut logs = vec![
+            priced_log("claude-code", &unknown.id, "relay-only-model"),
+            RouterRequest {
+                route_id: unknown.id.clone(),
+                model: "claude-opus-5".into(),
+                ..Default::default()
+            },
+        ];
+        let catalog = pricing::Catalog::new(vec![usd("claude-opus-5", 5.0, 25.0)]);
+        price_router_requests(&mut logs, &[unknown], &catalog);
+        assert_eq!(logs[0].station_cost, None, "线路没价却算出了站内花费");
+        assert_eq!(
+            logs[0].official_cost, None,
+            "认不出的模型拿别的价凑了一个数"
+        );
+        assert_eq!(
+            (logs[1].station_cost, logs[1].official_cost),
+            (None, None),
+            "没 token 的那一发不是 0 元，是没记"
+        );
+    }
+
+    #[test]
+    fn codex_input_tokens_include_the_cache_and_are_not_charged_twice() {
+        // OpenAI 协议的 input_tokens 含缓存读：不扣的话，缓存读那部分按输入价又收一遍。
+        let mut log = priced_log("codex", "codex\u{1f}x\u{1f}", "gpt-5.6-sol");
+        log.cache_read_tokens = Some(600_000);
+        log.output_tokens = Some(0);
+        let mut logs = vec![log];
+        let catalog = pricing::Catalog::new(vec![usd("gpt-5.6-sol", 4.0, 20.0)]);
+        price_router_requests(&mut logs, &[], &catalog);
+        // 0.4M 新输入 × 4 + 0.6M 缓存读 × 0.4 = 1.6 + 0.24。
+        assert!((logs[0].official_cost.unwrap() - 1.84).abs() < 1e-9);
+    }
+
+    #[test]
+    fn persisted_requests_read_back_newest_first_and_old_ones_are_pruned() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        let day = 24 * 3600 * 1000;
+        let now = 1_700_000_000_000i64;
+        let mut fresh = priced_log("codex", "codex\u{1f}a\u{1f}", "gpt");
+        fresh.id = "fresh".into();
+        fresh.at_ms = now - day;
+        let mut stale = fresh.clone();
+        stale.id = "stale".into();
+        stale.at_ms = now - (ROUTER_REQUEST_KEEP_DAYS + 1) * day;
+        let mut other = fresh.clone();
+        other.id = "other".into();
+        other.client = "claude-code".into();
+        other.at_ms = now - 2 * day;
+        persist_router_requests(
+            &db,
+            vec![stale, fresh.clone(), other],
+            &pricing::Catalog::new(vec![]),
+            now,
+        )
+        .unwrap();
+        let all = router_requests(&db, None, None, 10).unwrap();
+        assert_eq!(
+            all.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["fresh", "other"],
+            "{ROUTER_REQUEST_KEEP_DAYS} 天以前的没裁掉，或者顺序不对"
+        );
+        let codex = router_requests(&db, Some(Client::Codex), None, 10).unwrap();
+        assert_eq!(codex, vec![fresh], "按软件筛不对，或者读回来变了样");
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

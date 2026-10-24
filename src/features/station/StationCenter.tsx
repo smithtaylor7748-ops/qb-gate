@@ -52,7 +52,7 @@ import {
   stationApi,
   topupOf,
   type Prefs,
-  type RequestLog,
+  type RouterRequest,
   type Route,
   type RouteHealthView,
   type RouterStatus,
@@ -163,7 +163,7 @@ function StationBoard({
 
   const [status, setStatus] = useState<RouterStatus | null>(null);
   const [health, setHealth] = useState<Record<string, RouteHealthView>>({});
-  const [logs, setLogs] = useState<RequestLog[]>([]);
+  const [logs, setLogs] = useState<RouterRequest[]>([]);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const [stopping, setStopping] = useState<Client | null>(null);
@@ -1189,7 +1189,7 @@ function RouteRow({
 }: {
   route: Route;
   health?: RouteHealthView;
-  logs: RequestLog[];
+  logs: RouterRequest[];
   range: RangeId;
   /** 这一条是选中的上游（排队中的也算）。 */
   current: boolean;

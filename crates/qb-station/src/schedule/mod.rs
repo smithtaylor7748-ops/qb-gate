@@ -21,7 +21,7 @@ pub mod breaker;
 pub mod cheap;
 pub mod rank;
 
-pub use breaker::{Outcome, RouteBreaker, State};
+pub use breaker::{BreakerSettings, Outcome, Permit, RouteBreaker, State};
 pub use cheap::{cheap_values, cost_per_token, CheapBasis, CheapInput};
 pub use rank::{rank, AxisScore, FloorMiss, Ranking, Row, HYSTERESIS, INDISTINGUISHABLE_SPREAD};
 
