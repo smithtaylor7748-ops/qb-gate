@@ -13,8 +13,12 @@
 //! # 它为什么是一片叶子
 //!
 //! 这里只跟「一个地址 + 一种协议 + 一种凭证形态」打交道，不需要认识账户、门禁、装机。
+//!
+//! 2026-10-25 起（中转站重构阶段 4）多了 [`live`]：照搬 cc-switch 的配置写入引擎（保序补丁、关键字段），
+//! [`relay`] 里写中转环境的那几个函数改在它上面写。
 
 pub use qb_foundation::{error, paths};
 pub use qb_platform::{config_io, endpoint, secret};
 
+pub mod live;
 pub mod relay;

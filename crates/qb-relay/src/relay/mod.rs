@@ -126,52 +126,60 @@ pub struct ProviderMeta {
 
 /// 生成新的 `config.toml` 内容。
 ///
-/// 用 toml_edit 增量改而不是整个重新序列化，保住用户自己加的其他配置项 ——
-/// 覆盖式写入会把 `[projects.*]`、`[mcp_servers.*]`、`[plugins.*]` 这些
-/// 全抹掉。实机上这类段有三十多个。
-pub fn codex_config_toml(existing: &str, m: &ProviderMeta, key: Option<&str>) -> String {
-    let mut doc = existing
-        .parse::<toml_edit::DocumentMut>()
-        .unwrap_or_default();
+/// 增量改而不是整个重新序列化，保住用户自己加的其他配置项 —— 覆盖式写入会把 `[projects.*]`、
+/// `[mcp_servers.*]`、`[plugins.*]` 这些全抹掉。实机上这类段有三十多个。
+///
+/// 2026-10-25 起（中转站重构阶段 4）改在 cc-switch 的保序补丁上写（[`crate::live::patch::toml`]）：
+/// **原文件解析不了就报错、一个字都不写**。原来这里是 `unwrap_or_default()` —— 解析失败就从空文档开始写，
+/// 等于清空了那个配置（cc-switch 吃过两次这个亏，见 `live::patch` 顶上）。
+pub fn codex_config_toml(existing: &str, m: &ProviderMeta, key: Option<&str>) -> Result<String> {
+    let path = std::path::Path::new("config.toml");
+    let mut doc = crate::live::patch::toml::parse(path, Some(existing.as_bytes()))?;
+    ensure_provider_table(&mut doc, &m.slug);
+    codex_patch(m, key).apply_to(path, &mut doc)?;
+    Ok(doc.to_string())
+}
 
+/// `config.toml` 里这一次要改的键。只点名，不按前缀清 —— 中转环境里使用者自己在配置面板改过的键要留着。
+fn codex_patch(m: &ProviderMeta, key: Option<&str>) -> crate::live::patch::toml::TomlPatch {
+    use crate::live::patch::KeyPath;
+    use toml_edit::value;
     let slug = m.slug.as_str();
-    doc["model_provider"] = toml_edit::value(slug);
-    if let Some(model) = &m.model {
-        doc["model"] = toml_edit::value(model.as_str());
-    } else {
-        doc.remove("model");
+    let provider = |k: &str| KeyPath::new(&["model_providers", slug, k]);
+    let mut p = crate::live::patch::toml::TomlPatch::default();
+    p.set.push((KeyPath::new(&["model_provider"]), value(slug)));
+    match &m.model {
+        Some(model) => p
+            .set
+            .push((KeyPath::new(&["model"]), value(model.as_str()))),
+        None => p.remove.push(KeyPath::new(&["model"])),
     }
-
-    ensure_provider_table(&mut doc, slug);
-
-    let Some(t) = doc["model_providers"][slug].as_table_mut() else {
-        return doc.to_string();
-    };
-
-    t["name"] = toml_edit::value(m.name.as_str());
-    t["base_url"] = toml_edit::value(m.base_url.as_str());
-    t["wire_api"] = toml_edit::value(m.wire_api.as_str());
+    p.set.push((provider("name"), value(m.name.as_str())));
+    p.set
+        .push((provider("base_url"), value(m.base_url.as_str())));
+    p.set
+        .push((provider("wire_api"), value(m.wire_api.as_str())));
 
     // 换凭证形态时**必须把另一种清掉**。两种同时留在 provider 段里，
     // Codex 用哪个说不准，症状是「改了没生效」。
     match m.auth_style {
         AuthStyle::EnvKey => {
-            t["env_key"] = toml_edit::value("OPENAI_API_KEY");
-            t.remove("experimental_bearer_token");
+            p.set.push((provider("env_key"), value("OPENAI_API_KEY")));
+            p.remove.push(provider("experimental_bearer_token"));
         }
         AuthStyle::BearerToken => {
             if let Some(k) = key {
-                t["experimental_bearer_token"] = toml_edit::value(k);
+                p.set
+                    .push((provider("experimental_bearer_token"), value(k)));
             }
-            t.remove("env_key");
+            p.remove.push(provider("env_key"));
         }
         AuthStyle::None => {
-            t.remove("env_key");
-            t.remove("experimental_bearer_token");
+            p.remove.push(provider("env_key"));
+            p.remove.push(provider("experimental_bearer_token"));
         }
     }
-
-    doc.to_string()
+    p
 }
 
 /// 保证 `model_providers.<slug>` 是**标准表**（`[model_providers.x]`），
@@ -217,71 +225,53 @@ fn ensure_provider_table(doc: &mut toml_edit::DocumentMut, slug: &str) {
 /// `ANTHROPIC_API_KEY` 与 `ANTHROPIC_AUTH_TOKEN` **两个只留一个** ——
 /// 同时存在时 Claude Code 用哪个是不确定的，切换中转站后会出现
 /// 「改了没生效」这种最难查的症状。
+///
+/// 2026-10-25 起改在保序补丁上写（[`crate::live::patch::json`]）：键的顺序、缩进、换行照原文件；
+/// 解析不了、顶层或 `env` 不是对象就报错、不写。⛔ **不照搬 cc-switch 的「按 `ANTHROPIC_*` 前缀先清空」**：
+/// 中转环境的 `env` 里还有使用者在配置面板写的各档模型映射（`ANTHROPIC_DEFAULT_*_MODEL`），清了每次启动都会丢。
 pub fn claude_settings_json(existing: &str, m: &ProviderMeta, key: Option<&str>) -> Result<String> {
-    let mut doc = crate::config_io::object(existing)?;
-    if doc.get("env").is_some_and(|v| !v.is_object()) {
-        return Err(GateError::Other("env 必须是对象，原配置未改动".into()));
-    }
-    if doc.get("env").is_none() {
-        doc["env"] = serde_json::json!({});
-    }
-    let env = doc
-        .get_mut("env")
-        .and_then(|v| v.as_object_mut())
-        .expect("env object");
+    use crate::live::patch::LivePatch;
+    let path = std::path::Path::new("settings.json");
+    let bytes = claude_patch(m, key).apply(path, Some(existing.as_bytes()))?;
+    String::from_utf8(bytes).map_err(|e| GateError::Other(e.to_string()))
+}
 
-    env.insert(
-        "ANTHROPIC_BASE_URL".into(),
-        serde_json::Value::String(m.base_url.clone()),
-    );
-    if let Some(model) = &m.model {
-        env.insert(
-            "ANTHROPIC_MODEL".into(),
-            serde_json::Value::String(model.clone()),
-        );
-    } else {
-        env.remove("ANTHROPIC_MODEL");
+/// `settings.json` 的 `env` 里这一次要改的键（只点名）。
+fn claude_patch(m: &ProviderMeta, key: Option<&str>) -> crate::live::patch::json::JsonPatch {
+    use crate::live::patch::KeyPath;
+    use serde_json::Value;
+    let env = |k: &str| KeyPath::new(&["env", k]);
+    let mut p = crate::live::patch::json::JsonPatch::default();
+    p.set
+        .push((env("ANTHROPIC_BASE_URL"), Value::String(m.base_url.clone())));
+    match &m.model {
+        Some(model) => p
+            .set
+            .push((env("ANTHROPIC_MODEL"), Value::String(model.clone()))),
+        None => p.remove.push(env("ANTHROPIC_MODEL")),
     }
     // 留空 = 把这个变量**删掉**，而不是留着上一家的值。
     // 不删的话切换中转站之后，小模型还指着上一家的名字，后台请求会报一个
     // 跟你正在做的事毫无关系的错。
     match &m.small_fast_model {
-        Some(sm) if !sm.trim().is_empty() => {
-            env.insert(
-                "ANTHROPIC_SMALL_FAST_MODEL".into(),
-                serde_json::Value::String(sm.trim().to_string()),
-            );
-        }
-        _ => {
-            env.remove("ANTHROPIC_SMALL_FAST_MODEL");
-        }
+        Some(sm) if !sm.trim().is_empty() => p.set.push((
+            env("ANTHROPIC_SMALL_FAST_MODEL"),
+            Value::String(sm.trim().to_string()),
+        )),
+        _ => p.remove.push(env("ANTHROPIC_SMALL_FAST_MODEL")),
     }
-
-    env.remove("ANTHROPIC_API_KEY");
-    env.remove("ANTHROPIC_AUTH_TOKEN");
-    match m.auth_style {
-        AuthStyle::EnvKey => {
-            env.remove("ANTHROPIC_AUTH_TOKEN");
-            if let Some(k) = key {
-                env.insert(
-                    "ANTHROPIC_API_KEY".into(),
-                    serde_json::Value::String(k.to_string()),
-                );
-            }
-        }
-        AuthStyle::BearerToken => {
-            env.remove("ANTHROPIC_API_KEY");
-            if let Some(k) = key {
-                env.insert(
-                    "ANTHROPIC_AUTH_TOKEN".into(),
-                    serde_json::Value::String(k.to_string()),
-                );
-            }
-        }
-        AuthStyle::None => {}
+    // 两种凭证先都点名删，要留的那一种再 `set`（补丁里同一路径既删又设时以设为准，原位改值）。
+    p.remove.push(env("ANTHROPIC_API_KEY"));
+    p.remove.push(env("ANTHROPIC_AUTH_TOKEN"));
+    let credential = match m.auth_style {
+        AuthStyle::EnvKey => Some("ANTHROPIC_API_KEY"),
+        AuthStyle::BearerToken => Some("ANTHROPIC_AUTH_TOKEN"),
+        AuthStyle::None => None,
+    };
+    if let (Some(name), Some(k)) = (credential, key) {
+        p.set.push((env(name), Value::String(k.to_string())));
     }
-
-    Ok(serde_json::to_string_pretty(&doc)?)
+    p
 }
 
 /// 掩码，给界面显示用。
@@ -361,7 +351,8 @@ enabled = true
             existing,
             &meta(AuthStyle::BearerToken, WireApi::Responses),
             Some("sk-x"),
-        );
+        )
+        .unwrap();
         assert!(out.contains("model_reasoning_effort"));
         assert!(out.contains(r#"[projects.'c:\users\me\code']"#));
         assert!(out.contains("[mcp_servers.node_repl]"));
@@ -371,11 +362,12 @@ enabled = true
 
     #[test]
     fn codex_toml_writes_the_requested_wire_api() {
-        let out = codex_config_toml("", &meta(AuthStyle::EnvKey, WireApi::Responses), None);
+        let out =
+            codex_config_toml("", &meta(AuthStyle::EnvKey, WireApi::Responses), None).unwrap();
         assert!(out.contains(r#"wire_api = "responses""#));
         assert!(!out.contains(r#"wire_api = "chat""#));
 
-        let out = codex_config_toml("", &meta(AuthStyle::EnvKey, WireApi::Chat), None);
+        let out = codex_config_toml("", &meta(AuthStyle::EnvKey, WireApi::Chat), None).unwrap();
         assert!(out.contains(r#"wire_api = "chat""#));
     }
 
@@ -387,14 +379,16 @@ enabled = true
             "",
             &meta(AuthStyle::BearerToken, WireApi::Responses),
             Some("sk-x"),
-        );
+        )
+        .unwrap();
         assert!(with_bearer.contains("experimental_bearer_token"));
 
         let switched = codex_config_toml(
             &with_bearer,
             &meta(AuthStyle::EnvKey, WireApi::Responses),
             Some("sk-x"),
-        );
+        )
+        .unwrap();
         assert!(switched.contains("env_key"));
         assert!(
             !switched.contains("experimental_bearer_token"),
@@ -439,7 +433,8 @@ enabled = true
     fn fresh_config_uses_a_standard_table_not_an_inline_one() {
         // 链式索引在空文档上建出来的是内联表，而 as_table_mut() 对内联表
         // 返回 None —— 清凭证那步会静默失效。这个 bug 只在全新配置上出现。
-        let out = codex_config_toml("", &meta(AuthStyle::EnvKey, WireApi::Responses), None);
+        let out =
+            codex_config_toml("", &meta(AuthStyle::EnvKey, WireApi::Responses), None).unwrap();
         assert!(
             out.contains("[model_providers.myrelay]"),
             "写成了内联表：{out}"
@@ -453,7 +448,8 @@ enabled = true
     fn hand_written_inline_table_is_converted_and_still_editable() {
         // 用户手写成内联表的配置也得改得动。
         let existing = r#"model_providers = { myrelay = { name = "旧", base_url = "https://old", experimental_bearer_token = "sk-old" } }"#;
-        let out = codex_config_toml(existing, &meta(AuthStyle::EnvKey, WireApi::Responses), None);
+        let out = codex_config_toml(existing, &meta(AuthStyle::EnvKey, WireApi::Responses), None)
+            .unwrap();
         assert!(!out.contains("experimental_bearer_token"), "{out}");
         assert!(out.contains("env_key"));
         assert!(out.contains("https://api.example.com"));
@@ -466,8 +462,43 @@ enabled = true
         let out = claude_settings_json("{}", &m, Some("sk-should-not-appear")).unwrap();
         assert!(!out.contains("sk-should-not-appear"));
 
-        let out = codex_config_toml("", &meta(AuthStyle::None, WireApi::Responses), Some("sk-x"));
+        let out = codex_config_toml("", &meta(AuthStyle::None, WireApi::Responses), Some("sk-x"))
+            .unwrap();
         assert!(!out.contains("sk-x"));
         assert!(!out.contains("env_key"));
+    }
+
+    #[test]
+    fn a_config_that_does_not_parse_is_refused_not_rewritten_from_scratch() {
+        // 原来 `unwrap_or_default()`：解析失败就从空文档开始写 —— 那个配置里别的东西全没了。
+        let m = meta(AuthStyle::EnvKey, WireApi::Responses);
+        let err =
+            codex_config_toml("model = \"unterminated\n[mcp_servers.x", &m, None).unwrap_err();
+        assert!(err.to_string().contains("本次没有写入任何文件"), "{err}");
+        let err = claude_settings_json("{ \"env\": ", &m, None).unwrap_err();
+        assert!(err.to_string().contains("本次没有写入任何文件"), "{err}");
+        let err = claude_settings_json(r#"{"env":"not an object"}"#, &m, None).unwrap_err();
+        assert!(err.to_string().contains("env"), "{err}");
+    }
+
+    #[test]
+    fn claude_settings_keep_the_mapping_from_the_config_pane_and_the_key_order() {
+        // ⛔ 不按 `ANTHROPIC_*` 前缀先清空：配置面板写的各档模型映射在 env 里，每次启动都要留着。
+        let existing = "{\n    \"env\": {\n        \"ANTHROPIC_DEFAULT_OPUS_MODEL\": \"glm-5\",\n        \"ANTHROPIC_BASE_URL\": \"https://old\",\n        \"FOO\": \"bar\"\n    },\n    \"model\": \"opus\"\n}\n";
+        let m = meta(AuthStyle::EnvKey, WireApi::Responses);
+        let out = claude_settings_json(existing, &m, Some("sk-x")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"], "glm-5");
+        let keys: Vec<&String> = v["env"].as_object().unwrap().keys().collect();
+        assert_eq!(
+            keys[..3],
+            ["ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_BASE_URL", "FOO"],
+            "原位改值、键不挪位置"
+        );
+        assert!(
+            out.starts_with("{\n    \"env\""),
+            "缩进照原文件（四个空格）：{out}"
+        );
+        assert!(out.ends_with("}\n"), "末尾换行照原文件");
     }
 }

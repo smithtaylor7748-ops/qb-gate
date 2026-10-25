@@ -712,7 +712,8 @@ pub fn configuration_files(db: &Repository, e: &Environment) -> Result<Vec<Edit>
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
             }
-            let mut doc = crate::relay::codex_config_toml(&text, &m, None)
+            // 原配置解析不了时它报错、不写（阶段 4 起，原来会从空文档重写）。
+            let mut doc = crate::relay::codex_config_toml(&text, &m, None)?
                 .parse::<toml_edit::DocumentMut>()
                 .map_err(|e| GateError::Other(e.to_string()))?;
             // 中转环境一律 API-Key 模式：占位 Key 由路由换成线路自己的。官方 turn-state
@@ -807,32 +808,41 @@ pub fn desktop_gateway_json(
     base: &str,
     key: Option<&str>,
 ) -> Result<serde_json::Value> {
+    use crate::relay_live::patch::{json::JsonPatch, KeyPath};
     use serde_json::Value;
     // config_io::object 空文本回空对象、非对象直接报错 —— 两种都不用自己判。
     let mut root = config_io::object(existing)?;
-    let body = root
-        .as_object_mut()
-        .ok_or_else(|| GateError::Other("桌面端配置结构非法".into()))?;
-    body.insert("deploymentMode".into(), Value::String("3p".into()));
-    body.insert("inferenceProvider".into(), Value::String("gateway".into()));
-    body.insert(
-        "inferenceGatewayBaseUrl".into(),
+    let key_at = |k: &str| KeyPath::new(&[k]);
+    // 2026-10-25 起改在保序补丁上写（中转站重构阶段 4）：原位改值、删键用 `shift_remove` ——
+    // `preserve_order` 下 `Map::remove` 是 `swap_remove`，会把使用者最后一个键挪到被删的位置。
+    let mut patch = JsonPatch::default();
+    patch
+        .set
+        .push((key_at("deploymentMode"), Value::String("3p".into())));
+    patch
+        .set
+        .push((key_at("inferenceProvider"), Value::String("gateway".into())));
+    patch.set.push((
+        key_at("inferenceGatewayBaseUrl"),
         Value::String(base.trim_end_matches('/').to_string()),
-    );
+    ));
     // ⛔ 认证方式写死 bearer。桌面端把这一格当成「怎么拼鉴权头」,
     // 而本机路由会把客户端带上来的头整个丢掉换成上游那把 —— 两边都不看它,
     // 但留空会让桌面端不知道该怎么拼，于是一个头都不发。
-    body.insert(
-        "inferenceGatewayAuthScheme".into(),
+    patch.set.push((
+        key_at("inferenceGatewayAuthScheme"),
         Value::String("bearer".into()),
-    );
+    ));
     match key {
-        Some(k) => body.insert("inferenceGatewayApiKey".into(), Value::String(k.into())),
+        Some(k) => patch
+            .set
+            .push((key_at("inferenceGatewayApiKey"), Value::String(k.into()))),
         // 没有 Key 就把这一格删掉,**别留一个空串** —— 空串会让桌面端
         // 发一个 `Authorization: Bearer ` 的空头,上游回 401,
         // 而错误信息看起来像 Key 不对。
-        None => body.remove("inferenceGatewayApiKey"),
-    };
+        None => patch.remove.push(key_at("inferenceGatewayApiKey")),
+    }
+    patch.apply_to(std::path::Path::new(DESKTOP_CONFIG_FILE), &mut root)?;
     Ok(root)
 }
 

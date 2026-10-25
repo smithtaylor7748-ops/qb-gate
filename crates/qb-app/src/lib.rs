@@ -46,6 +46,9 @@ pub use qb_platform::{
 // 依赖本来就在 Cargo.toml 里（诊断用得到），这里补上再导出。
 pub use qb_probe::probe;
 pub use qb_relay::relay;
+// 配置写入引擎（中转站重构阶段 4，照搬 cc-switch 的 `live/`）。名字带 `relay_` 前缀：
+// 模块名在 workspace 里要全局唯一（`architecture.rs` 把同名模块合成一个点）。
+pub use qb_relay::live as relay_live;
 pub use qb_sysenv::sysenv;
 
 pub mod browser_probe;

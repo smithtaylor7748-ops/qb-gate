@@ -15,3 +15,7 @@ serde.workspace = true
 serde_json.workspace = true
 toml_edit.workspace = true
 ts-rs.workspace = true
+# 配置写入引擎（中转站重构阶段 4，照搬 cc-switch v4.0.14 的 `live/`）：计划里记写前 / 写后内容的 hash，
+# 补丁错误用 thiserror 写。两个都早就在 workspace 里。
+sha2.workspace = true
+thiserror.workspace = true

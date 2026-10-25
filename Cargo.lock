@@ -3312,6 +3312,8 @@ dependencies = [
  "qb-platform",
  "serde",
  "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
  "toml_edit 0.22.27",
  "ts-rs",
 ]

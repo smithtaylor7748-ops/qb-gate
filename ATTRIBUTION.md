@@ -94,6 +94,18 @@ MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件
 Gemini CLI 这个客户端在阶段 4）。`convert/mod.rs` 顶上逐个写明了。
 官方 Codex 那条线（turn-state）照旧不进重试、不换线 —— 跟 cc-switch 的 `provider_supports_failover` 同一个结论。
 
+**阶段 4 第一批（2026-10-25，配置写入引擎 P2，`crates/qb-relay/src/live/`）**：
+
+| QB Gate 的文件 | cc-switch 的出处（`src-tauri/src/`） | 改了什么 |
+|---|---|---|
+| `qb-relay/src/live/patch/{mod,json,toml,dotenv}.rs` | `live/patch/` 同名 | `From<LiveWriteError> for AppError`（中英两份文案）换成 `for GateError`（只留中文）；`Guarded` 指向本 crate 的 `engine::digest` |
+| `qb-relay/src/live/floor.rs` | `live/floor.rs` | 测试读的前端镜像 `claudeKeyFields.json`（cc-switch `tests/config/`）一起搬到同目录 |
+| `qb-relay/src/live/engine.rs` | `live/engine.rs` 的 `digest` / `read_current` / `Planned` / `plan` / `lock_app` 与它们的测试 | **不搬** `DeviceStore`、`stage`、`ensure_first_write_backup`：写盘交给 QB Gate 自己的两阶段提交 `config_io::commit`（写前核对字节、日志里加密留原内容、换上后再核对）；加了 `Planned::into_edit`。测试的临时目录改用 `temp_dir` |
+
+没搬的：`live/residue.rs`（清 cc-switch 旧版自己写过的残留值，QB Gate 没写过）、`live/project/*`（cc-switch 供应商行的投影，QB Gate 没有那种行）。
+`relay::codex_config_toml` / `claude_settings_json` 与 `workspace::desktop_gateway_json` 改在这套补丁上写：原文件解析不了就报错、不写（原来 Codex 那份会从空文档重写）；
+**不照搬「按 `ANTHROPIC_*` 前缀先清空」**，中转环境里配置面板写的模型映射要留着。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text
