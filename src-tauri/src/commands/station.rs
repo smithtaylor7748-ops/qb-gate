@@ -631,6 +631,39 @@ pub async fn station_endpoints_test(
     Ok(EndpointTestView { main, endpoints: e })
 }
 
+// ------------------------------------------------------------------ 共存型工具（阶段 4，写真 Key）
+
+/// 这条线在五个共存型工具（OpenCode、MiniMax Code、OpenClaw、Hermes、Pi）里各是什么样子。只读文件，不写。
+#[tauri::command]
+pub fn station_coexist_status(
+    route_id: String,
+) -> Result<Vec<qb_app::usecase::coexist_ops::CoexistStatus>> {
+    let db = crate::repository::Repository::open()?;
+    qb_app::usecase::coexist_ops::status(&db, &route_id)
+}
+
+/// 把这条线写进（或更新）一个共存型工具。⛔ 站点地址和**真 Key** 明文写进那个工具自己的配置（使用者定的）。
+#[tauri::command]
+pub fn station_coexist_write(
+    route_id: String,
+    tool: qb_app::relay::coexist::CoexistTool,
+) -> Result<Vec<qb_app::usecase::coexist_ops::CoexistStatus>> {
+    let db = crate::repository::Repository::open()?;
+    qb_app::usecase::coexist_ops::write(&db, &route_id, tool)?;
+    qb_app::usecase::coexist_ops::status(&db, &route_id)
+}
+
+/// 把 QB Gate 写进去的那一条删掉（使用者自己的供应商不碰）。
+#[tauri::command]
+pub fn station_coexist_remove(
+    route_id: String,
+    tool: qb_app::relay::coexist::CoexistTool,
+) -> Result<Vec<qb_app::usecase::coexist_ops::CoexistStatus>> {
+    let db = crate::repository::Repository::open()?;
+    qb_app::usecase::coexist_ops::remove(&db, &route_id, tool)?;
+    qb_app::usecase::coexist_ops::status(&db, &route_id)
+}
+
 /// 一个软件的派单队列：上次选中的那条 + 手动排的顺序。
 #[tauri::command]
 pub fn station_dispatch_queue(client: Client) -> Result<qb_station::router::DispatchQueue> {

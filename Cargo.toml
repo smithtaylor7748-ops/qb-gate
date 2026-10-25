@@ -97,6 +97,11 @@ bytes = "1"
 futures = "0.3"
 async-stream = "0.3"
 url = "2"
+# 共存型工具的配置（中转站重构阶段 4，照搬 cc-switch v4.0.14 的 `jsonc_document.rs`）：OpenCode 的 `opencode.jsonc`、
+# OpenClaw 的 `openclaw.json` 是带注释的 JSONC / JSON5。`json5`（ISC）读语义，`json-five`（Apache-2.0）按原样改写 ——
+# 只改点名的键，注释、空行、键的写法照原文件。两个都是 cc-switch 用的同一个版本。
+json5 = "0.4.1"
+json-five = "0.3.1"
 # 反重力汉化引擎（0.26.0）要跟 Hub 的 Chrome DevTools 协议说话，那是本机回环上的
 # `ws://127.0.0.1`。只开最小 feature：不带 TLS —— 回环上没有 TLS，也不想为此多拉一套证书栈。
 # MIT，crates.io，`cargo deny` 的 licenses / sources 都过。

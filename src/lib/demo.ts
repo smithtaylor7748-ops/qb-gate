@@ -31,6 +31,8 @@ import type { ListenScope } from "./generated/ListenScope";
 import type { RouterNetworkView } from "./generated/RouterNetworkView";
 import type { RouterSettings } from "./generated/RouterSettings";
 import type { StationEndpoints } from "./generated/StationEndpoints";
+import type { CoexistStatus } from "./generated/CoexistStatus";
+import type { CoexistTool } from "./generated/CoexistTool";
 /**
  * 演示数据 —— 只给截图和界面预览用。
  *
@@ -1993,6 +1995,24 @@ const stationEndpoints: Record<string, StationEndpoints> = {
 };
 const demoEndpointsOf = (providerId: string): StationEndpoints =>
   (stationEndpoints[providerId] ??= { provider_id: providerId, endpoints: [] });
+/** 共存型工具（阶段 4）：哪条线写进了哪个工具（`线路|工具`）。演示里 Hermes 当没装，好让「没找到」也看得见。 */
+const demoCoexistWritten = new Set<string>();
+const DEMO_COEXIST_TOOLS: Array<[CoexistTool, string, string]> = [
+  ["open-code", "OpenCode", ".config\\opencode\\opencode.json"],
+  ["minimax-code", "MiniMax Code", ".minimax\\config.yaml"],
+  ["open-claw", "OpenClaw", ".openclaw\\openclaw.json"],
+  ["hermes", "Hermes", ".hermes\\config.yaml"],
+  ["pi", "Pi", ".pi\\agent\\models.json"],
+];
+const demoCoexistOf = (routeId: string): CoexistStatus[] =>
+  DEMO_COEXIST_TOOLS.map(([tool, label, rel]) => ({
+    tool,
+    label,
+    path: `C:\\Users\\demo\\${rel}`,
+    installed: tool !== "hermes",
+    written: demoCoexistWritten.has(`${routeId}|${tool}`),
+    problem: null,
+  }));
 /** 演示里的路由口令。一眼看得出是演示用的，别像真的。 */
 const DEMO_ROUTER_KEY = "qbr-demo-not-a-real-key-0000";
 /** 本机路由的网络设置（R6）。默认只本机、直连 —— 跟真后端没存过时一样。 */
@@ -2884,6 +2904,18 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       main: { url: "", latency_ms: 120, status: 404, error: null },
       endpoints: { ...e, endpoints: [...e.endpoints] },
     };
+  },
+  // 共存型工具（阶段 4）：演示里只在内存里记一下写没写，路径照真后端在 Windows 上的样子编。
+  station_coexist_status: (args) => demoCoexistOf(String(args?.routeId ?? "")),
+  station_coexist_write: (args) => {
+    const id = String(args?.routeId ?? "");
+    demoCoexistWritten.add(`${id}|${String(args?.tool)}`);
+    return demoCoexistOf(id);
+  },
+  station_coexist_remove: (args) => {
+    const id = String(args?.routeId ?? "");
+    demoCoexistWritten.delete(`${id}|${String(args?.tool)}`);
+    return demoCoexistOf(id);
   },
   // 聚合模型的预览（阶段 3）。id 照后端的格式拼；桌面端的数字在演示里是假的（真后端按 key 和模型名散列）。
   station_aggregate_models: (args) => {

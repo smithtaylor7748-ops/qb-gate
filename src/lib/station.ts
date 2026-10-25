@@ -40,9 +40,13 @@ import type { AggregateModel } from "./generated/AggregateModel";
 import type { AggregateSettings } from "./generated/AggregateSettings";
 import type { EndpointTestView } from "./generated/EndpointTestView";
 import type { StationEndpoints } from "./generated/StationEndpoints";
+import type { CoexistStatus } from "./generated/CoexistStatus";
+import type { CoexistTool } from "./generated/CoexistTool";
 
 export type {
   AggregateModel,
+  CoexistStatus,
+  CoexistTool,
   AggregateSettings,
   EndpointTestView,
   StationEndpoints,
@@ -175,6 +179,17 @@ export const stationApi = {
   /** 测速：不带 Key、不花钱，只在点的时候跑；设了出站代理就经它测。 */
   testEndpoints: (providerId: string) =>
     call<EndpointTestView>("station_endpoints_test", { providerId }),
+  /**
+   * 共存型工具（阶段 4）：OpenCode、MiniMax Code、OpenClaw、Hermes、Pi 里各有没有这条线。只读。
+   * ⛔ 这五个不经本机路由，写入写的是**真 Key**（明文进它们自己的配置）。
+   */
+  coexistStatus: (routeId: string) =>
+    call<CoexistStatus[]>("station_coexist_status", { routeId }),
+  coexistWrite: (routeId: string, tool: CoexistTool) =>
+    call<CoexistStatus[]>("station_coexist_write", { routeId, tool }),
+  /** 只删 QB Gate 写的那一条。 */
+  coexistRemove: (routeId: string, tool: CoexistTool) =>
+    call<CoexistStatus[]>("station_coexist_remove", { routeId, tool }),
   /** 派单队列：上次选中的那条 + 手动排的顺序（当前那条失败时依次改用谁）。 */
   dispatchQueue: (client: Client) =>
     call<DispatchQueue>("station_dispatch_queue", { client }),

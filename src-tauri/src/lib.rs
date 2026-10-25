@@ -172,6 +172,10 @@ pub fn run() {
             commands::station::station_endpoint_remove,
             commands::station::station_endpoint_promote,
             commands::station::station_endpoints_test,
+            // 把线路写进共存型工具（中转站重构阶段 4，写真 Key）。
+            commands::station::station_coexist_status,
+            commands::station::station_coexist_write,
+            commands::station::station_coexist_remove,
             commands::station::station_dispatch_queue,
             commands::station::station_dispatch_queue_save,
             commands::station::station_route_retest,

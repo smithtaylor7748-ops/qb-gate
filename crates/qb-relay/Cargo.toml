@@ -19,3 +19,7 @@ ts-rs.workspace = true
 # 补丁错误用 thiserror 写。两个都早就在 workspace 里。
 sha2.workspace = true
 thiserror.workspace = true
+# 共存型工具的配置（阶段 4）：JSONC / JSON5 按原样改写，YAML 按顶层小节替换（`serde_yaml_ng` 早就在 workspace 里）。
+json5.workspace = true
+json-five.workspace = true
+serde_yaml_ng.workspace = true

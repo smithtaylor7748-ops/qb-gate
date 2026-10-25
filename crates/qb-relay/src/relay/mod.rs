@@ -25,6 +25,8 @@
 //!
 //! 两条都有单测钉着，见文件末尾。
 
+/// 共存型工具（OpenCode、MiniMax Code、OpenClaw、Hermes、Pi）的配置写法（中转站重构阶段 4，写真 Key）。
+pub mod coexist;
 /// Gemini CLI、Grok Build 两档中转命令行的配置写法（中转站重构阶段 4）。
 pub mod command_line;
 pub mod presets;

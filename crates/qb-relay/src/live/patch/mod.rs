@@ -8,6 +8,8 @@
 pub mod dotenv;
 pub mod json;
 pub mod toml;
+/// YAML 按顶层小节替换（QB Gate 阶段 4，取自 cc-switch `hermes_config.rs`；不实现 [`LivePatch`]，按文本换）。
+pub mod yaml;
 
 use std::fmt;
 use std::path::{Path, PathBuf};

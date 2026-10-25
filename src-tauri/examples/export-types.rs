@@ -286,6 +286,8 @@ fn main() {
         qb_gate_lib::commands::station::DispatchView::export_all_to(&root)?;
         // 站点的备用地址与测速（中转站重构阶段 4，多端点）。
         qb_gate_lib::commands::station::EndpointTestView::export_all_to(&root)?;
+        // 共存型工具（阶段 4）。
+        qb_app::usecase::coexist_ops::CoexistStatus::export_all_to(&root)?;
         // 官方 Codex turn-state 的界面状态（导出名 TurnStateStatus / TurnStateModelStatus）。
         qb_gate_lib::turnstate::Status::export_all_to(&root)?;
         qb_gate_lib::turnstate::ModelStatus::export_all_to(&root)?;

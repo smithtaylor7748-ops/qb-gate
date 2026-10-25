@@ -7,6 +7,8 @@
 
 pub mod account_ops;
 pub mod account_probe;
+/// 把线路写进共存型工具（中转站重构阶段 4，写真 Key）。
+pub mod coexist_ops;
 pub mod egress_checks;
 pub mod gate_ops;
 pub mod hook_ops;

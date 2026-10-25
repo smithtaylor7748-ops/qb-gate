@@ -1169,6 +1169,30 @@ Electron 里注 JS、扫 Chrome 的 Cookies、改防火墙与代理），删不�
 客户端只在启动时读一次配置 —— 六条线轮着走用的是同一份 settings.json。
 做成一条线一份的话，改另外五条完全没有反应，而没有任何地方说得清为什么。
 
+## ⛔ Key 不出后端 —— 只管经本机路由的五个软件；共存型工具写的是真 Key
+
+「真 Key 只在后端、客户端配置里只有占位串」这条规矩**只对经本机路由的五个软件成立**：
+Claude Code、Codex、Claude 桌面端、Gemini CLI、Grok Build（`Client::ALL`）。它们的配置里永远是
+`local_router::ROUTER_KEY`，真 Key 由路由在转发时换上（上一节）。
+
+**共存型工具是唯一的例外**（2026-10-25 使用者定的，照 cc-switch 的 C3 / C4）：OpenCode、MiniMax Code、OpenClaw、
+Hermes、Pi 不经本机路由，`usecase::coexist_ops::write` 把站点地址和这条线绑着的**真 Key 明文**写进它们自己的配置
+（`relay::coexist` 定位置和形状）。守住的边界：
+
+- **只在使用者点「写入」并在面板里再确认一次时写**（确认那一行写着要改哪个文件，`StationCoexistPanel`）；
+  不随保存线路、换 Key、启动面板自动写或自动更新 —— 换了 Key 要回来再点「更新」，界面写着；
+- **只动 `qb-gate-` 开头的那一条**（`coexist::ID_PREFIX`），使用者自己配的供应商、别的字段一个不碰；
+  JSONC / JSON5 走 `live::jsonc_document` 保留注释和格式，YAML 只换那一节；原文件解析不了就**停**，不覆盖；
+- 工具的配置目录不在（多半没装）就**拒绝**，不替它建；
+- 写盘走 `config_io::commit`（写前核对没被外部改过、日志里留原内容、失败回滚），审计日志只记工具和线路，不记 Key；
+- **新加的任何「往别的软件配置里写东西」的功能都默认占位 Key + 本机路由。** 要再开一个写真 Key 的口子，
+  得像这次一样由使用者明说，并在同一个提交里改这一节和 DISCLAIMER §5.1。
+
+钉着这件事的是 `relay::coexist` 的单测（`only_qb_gate_entries_are_touched_and_broken_files_are_refused`、
+`opencode_keeps_comments_and_the_user_s_own_providers` 等）、`coexist_ops` 的
+`writes_only_where_the_tool_is_installed_and_removes_only_its_own_entry`（目录不在就拒绝、只删自己那一条，
+在临时目录里跑，不碰真用户目录）和 `StationCoexistPanel.test.tsx`（不确认不写）。
+
 ---
 
 ### 桌面端走的是它自己的「第三方网关」模式，不是环境变量里的 base_url

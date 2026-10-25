@@ -4,6 +4,7 @@
 //! - [`patch`]：按格式保序改写（JSON、TOML、`.env`），**解析不了就停，绝不退回空文档**；
 //! - [`floor`]：每个客户端的关键字段（请求发到哪、凭什么鉴权、哪个模型、哪种协议）的谓词和清单；
 //! - [`engine`]：写锁与计划（读字节 → 在内存里算出新内容），写盘交给 `config_io::commit`。
+//! - [`jsonc_document`]：带注释的 JSONC / JSON5 按原样改写（cc-switch 根目录的同名文件，共存型工具用）。
 //!
 //! # 跟 cc-switch 不一样的地方
 //!
@@ -15,4 +16,5 @@
 
 pub mod engine;
 pub mod floor;
+pub mod jsonc_document;
 pub mod patch;

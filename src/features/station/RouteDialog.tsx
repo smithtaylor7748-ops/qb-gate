@@ -50,6 +50,7 @@ import {
 } from "../../lib/station";
 import { Button, Modal } from "../../ui";
 import ConfigPane from "./ConfigPane";
+import StationCoexistPanel from "./StationCoexistPanel";
 import StationEndpointsPanel from "./StationEndpointsPanel";
 import {
   mappedCount,
@@ -691,6 +692,14 @@ export default function RouteDialog({
           <summary>配置文件 · {CLIENT_NAME[owner]} 共用</summary>
           <ConfigPane client={owner} />
         </details>
+
+        {/* ------------------------------------------------ 共存型工具（阶段 4，写真 Key）：线路已经存在时才有 */}
+        {editing && (
+          <details className="qb-st-adv">
+            <summary>写进其他工具 · OpenCode / OpenClaw / Hermes 等</summary>
+            <StationCoexistPanel routeId={editing.id} />
+          </details>
+        )}
 
         {/* ------------------------------------------------ 模型映射（这条线） */}
         <details className="qb-st-adv">

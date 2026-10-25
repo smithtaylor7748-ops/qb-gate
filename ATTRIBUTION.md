@@ -129,6 +129,15 @@ cc-switch 的 `gemini_config.rs`（`.env` 里的 `GOOGLE_GEMINI_BASE_URL` / `GEM
 **跟 cc-switch 不一样**：Gemini CLI 的配置写进 QB Gate 自己的中转环境目录（`GEMINI_CLI_HOME` 指向它），不写 `~\.gemini`；
 真 Key 不进这两个软件的配置（占位 Key，本机路由换上）；它们不归门禁管、不持租约。
 
+**阶段 4 第五批（2026-10-25，共存型工具 C3 / C4）**：`qb-relay/src/live/jsonc_document.rs` 搬自 cc-switch 的
+`src-tauri/src/jsonc_document.rs`（MIT 头保留；报错换成 `GateError`），依赖跟着带进 `json5` 与 `json-five`。
+`qb-relay/src/relay/coexist.rs` 改写自 cc-switch 的 `opencode_config.rs`、`openclaw_config.rs`、`hermes_config.rs`、
+`mcode_config.rs`（MiniMax Code）、`pi_config/` 里「供应商写到哪、长什么样」那一半（OpenCode 的 `provider.<id>` 与 `@ai-sdk/*` 包名、
+OpenClaw 的 `models.providers`、Hermes 的 `custom_providers` 列表与 `api_mode`、MiniMax Code 的 `custom_provider` 与
+`MINIMAX_DATA_DIR` / `MAVIS_DATA_DIR`、Pi 的 `~/.pi/agent/models.json`）；YAML 只换顶层那一节（`live/patch/yaml.rs`，QB Gate 自己写的）。
+**跟 cc-switch 一样写真 Key**（使用者定的，仓库 `CLAUDE.md`「Key 不出后端」一节）；**跟它不一样**：只动 `qb-gate-` 开头的那一条、
+工具没装不替它建目录、每次写入再确认一次，不做它的「当前供应商」切换与 MCP / 技能同步。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text
