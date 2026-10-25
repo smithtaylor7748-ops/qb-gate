@@ -12,6 +12,10 @@
  * 很多要登录后台才看得到 —— 预置一个记错的地址，使用者会当成官方推荐，
  * 排查时先怀疑自己的 Key 而不是怀疑地址。这句话也写在界面上。
  *
+ * 2026-10-25 起（中转站重构阶段 4）预设多了 cc-switch 搬来的官方类那几十条（只要官方 / 国内官方 / 云厂商 / 本地，
+ * 合作伙伴和推广参数都剥了，见 `relay::presets`）：胶囊上面加了筛选框；选了预设之后，模型映射**还空着**才按它预填
+ * （填过的不动），有拿 Key 的地址就给一个链接。
+ *
  * # ⛔ 协议和倍率都自动来，手填只是兜底
  *
  * ⚡ 那个按钮探三种协议 + 拉 `/api/pricing`，两步都不花钱。手填的两项
@@ -25,6 +29,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 import type { Client } from "../../lib/generated/Client";
 import type { Credential } from "../../lib/generated/Credential";
@@ -50,6 +55,7 @@ import {
   modelMapOf,
   NO_TIERS,
   pairsText,
+  tiersFromPreset,
   tiersOf,
   type Tiers,
 } from "./modelMap";
@@ -144,6 +150,9 @@ export default function RouteDialog({
   const [probeError, setProbeError] = useState<string | null>(null);
 
   const [presets, setPresets] = useState<Preset[]>([]);
+  const [presetFilter, setPresetFilter] = useState("");
+  /** 刚点的那个预设（给「去拿 Key」链接和占位提醒用）。改了地址就不算了。 */
+  const [chosen, setChosen] = useState<Preset | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -173,6 +182,8 @@ export default function RouteDialog({
     setAdvanced(false);
     setKey("");
     setFullUrl(false);
+    setPresetFilter("");
+    setChosen(null);
     if (editing) {
       const p = providers.find((x) => x.id === editing.station_id);
       setName(p?.name ?? editing.station_id);
@@ -223,10 +234,24 @@ export default function RouteDialog({
     setName(p.name);
     setBaseUrl(p.base_url);
     if (p.website) setWebsite(p.website);
-    // ⛔ 预设只填地址和名字。它**不填协议** —— 预设知道的是「官方端点长什么样」，
+    setChosen(p);
+    // 模型映射：还空着才按预设填（阶段 4，cc-switch 的预设带着各档模型名）。使用者填过的一格都不动。
+    if (mappedCount(tiers, pairs) === 0) setTiers(tiersFromPreset(p.models));
+    // ⛔ 预设只填地址、名字和模型名。它**不填协议** —— 预设知道的是「官方端点长什么样」，
     // 不是「你这条线通不通」。协议由 ⚡ 探出来，探不到就留「不知道」。
     setProbe(null);
   };
+  const shownPresets = useMemo(() => {
+    const q = presetFilter.trim().toLowerCase();
+    return q
+      ? presets.filter(
+          (p) =>
+            p.name.toLowerCase().includes(q) ||
+            p.base_url.toLowerCase().includes(q),
+        )
+      : presets;
+  }, [presets, presetFilter]);
+  const chosenNow = chosen && chosen.base_url === baseUrl ? chosen : null;
 
   const runProbe = async () => {
     setProbing(true);
@@ -380,6 +405,15 @@ export default function RouteDialog({
     >
       <div className="qb-st-form">
         {/* ------------------------------------------------ 预设胶囊 */}
+        {presets.length > 8 && (
+          <input
+            className="qb-st-presetfilter"
+            value={presetFilter}
+            aria-label="筛选预设"
+            placeholder={`筛选 ${presets.length} 个官方预设（名字或地址）`}
+            onChange={(e) => setPresetFilter(e.target.value)}
+          />
+        )}
         <div className="qb-st-presets">
           <button
             className="chip"
@@ -387,24 +421,48 @@ export default function RouteDialog({
             onClick={() => {
               setBaseUrl("");
               setName("");
+              setChosen(null);
             }}
           >
             自定义配置
           </button>
-          {presets.map((p) => (
+          {shownPresets.map((p) => (
             <button
               key={p.id}
               className="chip"
               aria-pressed={p.base_url === baseUrl}
-              title={p.note}
+              title={`${p.note} · ${p.base_url}`}
               onClick={() => applyPreset(p)}
             >
               ★ {p.name}
             </button>
           ))}
+          {shownPresets.length === 0 && (
+            <span className="qb-st-note">没有匹配「{presetFilter}」的预设</span>
+          )}
         </div>
+        {chosenNow?.needs_edit && (
+          <p className="qb-st-nudge">
+            <span aria-hidden="true">⚠</span>
+            <span>
+              这个地址里有 <code>YOUR_…</code> 占位，要换成你自己的资源名 / 账号
+              ID 才能用。
+            </span>
+          </p>
+        )}
+        {chosenNow?.api_key_url && (
+          <p className="qb-st-hint">
+            🔑{" "}
+            <button
+              className="qb-linkish"
+              onClick={() => void openUrl(chosenNow.api_key_url!)}
+            >
+              去 {chosenNow.name} 的后台拿 Key ↗
+            </button>
+          </p>
+        )}
         <p className="qb-st-hint">
-          💡 第三方中转站不在预设里 ——
+          💡 预设只有厂商官方端点，第三方中转站不在里面 ——
           各家地址自己在变、很多要登录后台才看得到。 预置一个记错的地址，
           你会当成官方推荐，排查时先怀疑自己的 Key。
         </p>

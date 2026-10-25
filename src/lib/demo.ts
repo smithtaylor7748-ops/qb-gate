@@ -833,17 +833,47 @@ const installProbe: InstallProbe = {
   ],
 };
 
+// 阶段 4 起预设多了 cc-switch 那份带的几项（分类、拿 Key 的地址、各档模型名……）。演示里第一条带着各档模型名，
+// 点了它模型映射会被预填 —— 跟真后端那几十条一个形状。
+const PRESET_EXTRAS = {
+  api_key_url: null,
+  api_format: null,
+  models: {
+    default: null,
+    haiku: null,
+    sonnet: null,
+    opus: null,
+    fable: null,
+    subagent: null,
+  },
+  supports_1m: false,
+  catalog: [],
+  endpoint_candidates: [],
+  models_url: null,
+  needs_edit: false,
+} satisfies Partial<Preset>;
 const presets: Preset[] = [
   {
-    id: "demo-preset",
+    id: "claude-code/demo-preset",
     name: "示例预设",
     target: "claude-code",
-    base_url: "https://api.example.com/v1",
+    base_url: "https://api.example.com/anthropic",
     wire_api: "responses",
     auth_style: "bearer_token",
-    model: "claude-sonnet-4-5",
+    model: "example-pro",
     website: "https://example.com",
     note: "示例数据，不是任何真实服务。",
+    ...PRESET_EXTRAS,
+    category: "cn_official",
+    api_key_url: "https://example.com/keys",
+    api_format: "anthropic",
+    models: {
+      ...PRESET_EXTRAS.models,
+      default: "example-pro",
+      sonnet: "example-pro",
+      opus: "example-pro",
+      haiku: "example-flash",
+    },
   },
   {
     id: "demo-preset-codex",
@@ -855,6 +885,8 @@ const presets: Preset[] = [
     model: "gpt-5-codex",
     website: "https://example.com",
     note: "示例数据，不是任何真实服务。",
+    ...PRESET_EXTRAS,
+    category: "own",
   },
 ];
 

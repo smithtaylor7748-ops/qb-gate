@@ -4,7 +4,23 @@
  * 读写都在这里，表单（`RouteDialog.tsx`）只管画。
  */
 
+import type { PresetModels } from "../../lib/generated/PresetModels";
 import type { RouteModelMap } from "../../lib/generated/RouteModelMap";
+
+/**
+ * 预设里各档的模型名换成表单那几格（中转站重构阶段 4：cc-switch 的预设带着各档模型名）。
+ * 预设没写的那一档留空。
+ */
+export function tiersFromPreset(m: PresetModels): Tiers {
+  return {
+    opus: m.opus ?? "",
+    sonnet: m.sonnet ?? "",
+    haiku: m.haiku ?? "",
+    fable: m.fable ?? "",
+    subagent: m.subagent ?? "",
+    default: m.default ?? "",
+  };
+}
 
 /** 档位那几格（`RouteModelMap` 里除 `exact` 以外的）。空串 = 没填。 */
 export type Tiers = Record<

@@ -106,6 +106,14 @@ Gemini CLI 这个客户端在阶段 4）。`convert/mod.rs` 顶上逐个写明�
 `relay::codex_config_toml` / `claude_settings_json` 与 `workspace::desktop_gateway_json` 改在这套补丁上写：原文件解析不了就报错、不写（原来 Codex 那份会从空文档重写）；
 **不照搬「按 `ANTHROPIC_*` 前缀先清空」**，中转环境里配置面板写的模型映射要留着。
 
+**阶段 4 第二批（2026-10-25，预设 P1，`crates/qb-relay/src/relay/presets/*.json`）**：数据取自 cc-switch 前端的
+`src/config/claudeProviderPresets.ts`、`claudeDesktopProviderPresets.ts`、`codexProviderPresets.ts`，由 QB Gate 自己写的
+`scripts/import-ccswitch-presets.mjs` **静态解析**生成（只读语法树、不执行它的代码；里面照 cc-switch 原文重写了
+`generateThirdPartyConfig`、`modelCatalog`、`passthroughRoutes` / `mappedRoutes` / `brandedRoutes` 几个帮手函数）。
+使用者定的筛法：只要官方类（official / cn_official / cloud_provider / local），聚合平台、第三方中转、商业合作伙伴整条不搬，
+网址里的推广参数（aff / ref / invite* / ch / track_id / utm_*）剥掉，模型名末尾的 `[1M]` 剥掉另记一个标记。
+每个数据文件顶上写着出处、许可和筛法；Claude Code 的关键字段镜像 `claudeKeyFields.json` 同批搬进 `live/`。图标没搬（来源核不清）。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text

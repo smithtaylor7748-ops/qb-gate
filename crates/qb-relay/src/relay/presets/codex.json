@@ -1,0 +1,1925 @@
+{
+  "source": "cc-switch v4.0.14 src/config/codexProviderPresets.ts（提交 5de6feb4e5adda61f4ad824ce0df2c449245f447）",
+  "license": "MIT, Copyright (c) 2025 Jason Young — 见 ATTRIBUTION.md",
+  "generated_by": "scripts/import-ccswitch-presets.mjs（静态解析，不执行源码）",
+  "filter": "只要 official / cn_official / cloud_provider / local；不要合作伙伴、隐藏、OAuth、没有固定地址的；网址剥掉推广参数",
+  "skipped": [],
+  "presets": [
+    {
+      "id": "kimi",
+      "name": "Kimi",
+      "category": "cn_official",
+      "website": "https://platform.kimi.com",
+      "api_key_url": "https://platform.kimi.com/console/api-keys",
+      "base_url": "https://api.moonshot.cn/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "kimi-k3",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "kimi-k3",
+          "display_name": "Kimi K3",
+          "context_window": 1048576
+        },
+        {
+          "model": "kimi-k2.7-code",
+          "display_name": "Kimi K2.7 Code",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.moonshot.cn/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "kimi-global",
+      "name": "Kimi Global",
+      "category": "cn_official",
+      "website": "https://platform.kimi.ai",
+      "api_key_url": "https://platform.kimi.ai/console/api-keys",
+      "base_url": "https://api.moonshot.ai/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "kimi-k3",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "kimi-k3",
+          "display_name": "Kimi K3",
+          "context_window": 1048576
+        },
+        {
+          "model": "kimi-k2.7-code",
+          "display_name": "Kimi K2.7 Code",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.moonshot.ai/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "kimi-for-coding",
+      "name": "Kimi For Coding",
+      "category": "cn_official",
+      "website": "https://www.kimi.com/code/",
+      "api_key_url": "https://www.kimi.com/code/",
+      "base_url": "https://api.kimi.com/coding/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "kimi-for-coding",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "kimi-for-coding",
+          "display_name": "Kimi For Coding (K2.8 Preview)",
+          "context_window": 1048576
+        },
+        {
+          "model": "kimi-for-coding-highspeed",
+          "display_name": "Kimi For Coding HighSpeed",
+          "context_window": 262144
+        },
+        {
+          "model": "k3",
+          "display_name": "Kimi K3",
+          "context_window": 1048576
+        },
+        {
+          "model": "k3-256k",
+          "display_name": "Kimi K3 256K",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.kimi.com/coding/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "kimi-for-coding-global",
+      "name": "Kimi For Coding Global",
+      "category": "cn_official",
+      "website": "https://www.kimi.ai/code",
+      "api_key_url": "https://www.kimi.ai/code",
+      "base_url": "https://api.kimi.ai/coding/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "kimi-for-coding",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "kimi-for-coding",
+          "display_name": "Kimi For Coding",
+          "context_window": 1048576
+        },
+        {
+          "model": "kimi-for-coding-highspeed",
+          "display_name": "Kimi For Coding HighSpeed",
+          "context_window": 262144
+        },
+        {
+          "model": "k3",
+          "display_name": "Kimi K3",
+          "context_window": 1048576
+        },
+        {
+          "model": "k3-256k",
+          "display_name": "Kimi K3 256K",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.kimi.ai/coding/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "category": "cn_official",
+      "website": "https://platform.deepseek.com",
+      "api_key_url": "https://platform.deepseek.com/api_keys",
+      "base_url": "https://api.deepseek.com",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "deepseek-flash",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "deepseek-flash",
+          "display_name": "DeepSeek V4.1 Flash",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "context_window": 1048576
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.deepseek.com"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "zhipu-glm",
+      "name": "Zhipu GLM",
+      "category": "cn_official",
+      "website": "https://open.bigmodel.cn",
+      "api_key_url": "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+      "base_url": "https://open.bigmodel.cn/api/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "glm-5.3",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "glm-5.3",
+          "display_name": "GLM-5.3",
+          "context_window": 1048576
+        },
+        {
+          "model": "glm-5.3-flash",
+          "display_name": "GLM-5.3-Flash",
+          "context_window": 1048576
+        },
+        {
+          "model": "glm-5-turbo",
+          "display_name": "GLM-5-Turbo",
+          "context_window": 204800
+        }
+      ],
+      "endpoint_candidates": [
+        "https://open.bigmodel.cn/api/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "zhipu-glm-en",
+      "name": "Zhipu GLM en",
+      "category": "cn_official",
+      "website": "https://z.ai",
+      "api_key_url": "https://z.ai/subscribe?ic=8JVLJQFSKB",
+      "base_url": "https://api.z.ai/api/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "glm-5.3",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "glm-5.3",
+          "display_name": "GLM-5.3",
+          "context_window": 1048576
+        },
+        {
+          "model": "glm-5.3-flash",
+          "display_name": "GLM-5.3-Flash",
+          "context_window": 1048576
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.z.ai/api/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "baidu-qianfan",
+      "name": "Baidu Qianfan",
+      "category": "cn_official",
+      "website": "https://cloud.baidu.com/product/qianfan_modelbuilder",
+      "api_key_url": "https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application",
+      "base_url": "https://qianfan.baidubce.com/v2",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "deepseek-v4-pro",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "context_window": 1048576
+        }
+      ],
+      "endpoint_candidates": [
+        "https://qianfan.baidubce.com/v2"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "baidu-qianfan-coding-plan",
+      "name": "Baidu Qianfan Coding Plan",
+      "category": "cn_official",
+      "website": "https://cloud.baidu.com/product/qianfan_modelbuilder",
+      "api_key_url": "https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application",
+      "base_url": "https://qianfan.baidubce.com/v2/coding",
+      "api_format": "openai_chat",
+      "auth_field": null,
+      "models": {
+        "default": "qianfan-code-latest",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "qianfan-code-latest",
+          "display_name": "Qianfan Code Latest",
+          "context_window": 131072
+        }
+      ],
+      "endpoint_candidates": [
+        "https://qianfan.baidubce.com/v2/coding"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "baidu-qianfan-token-plan",
+      "name": "Baidu Qianfan Token Plan",
+      "category": "cn_official",
+      "website": "https://cloud.baidu.com/product/codingplan.html",
+      "api_key_url": "https://console.bce.baidu.com/qianfan/resource/token-plan",
+      "base_url": "https://qianfan.baidubce.com/v2/tokenplan/personal",
+      "api_format": "openai_chat",
+      "auth_field": null,
+      "models": {
+        "default": "deepseek-v4-pro",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-flash-0731",
+          "display_name": "DeepSeek V4 Flash 0731",
+          "context_window": 1048576
+        },
+        {
+          "model": "glm-5.2",
+          "display_name": "GLM-5.2",
+          "context_window": 1048576
+        },
+        {
+          "model": "glm-5.1",
+          "display_name": "GLM-5.1",
+          "context_window": 198000
+        },
+        {
+          "model": "kimi-k2.6",
+          "display_name": "Kimi K2.6",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "https://qianfan.baidubce.com/v2/tokenplan/personal"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "ai",
+      "name": "千问AI平台",
+      "category": "cn_official",
+      "website": "https://platform.qianwenai.com",
+      "api_key_url": "https://platform.qianwenai.com/home/api-keys",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "qwen3.8-max",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "qwen3.8-max",
+          "display_name": "Qwen3.8 Max",
+          "context_window": 983616
+        },
+        {
+          "model": "qwen3.8-2.4t-a95b",
+          "display_name": "Qwen3.8 2.4T A95B",
+          "context_window": 983616
+        },
+        {
+          "model": "qwen3.8-27b",
+          "display_name": "Qwen3.8 27B",
+          "context_window": 983616
+        }
+      ],
+      "endpoint_candidates": [
+        "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "ai-token-plan",
+      "name": "千问AI平台 Token Plan",
+      "category": "cn_official",
+      "website": "https://platform.qianwenai.com/pricing/token-plan",
+      "api_key_url": "https://platform.qianwenai.com/home/api-keys",
+      "base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "qwen3.8-max",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "qwen3.8-max",
+          "display_name": "Qwen3.8 Max",
+          "context_window": 983616
+        },
+        {
+          "model": "qwen3.8-flash",
+          "display_name": "Qwen3.8 Flash",
+          "context_window": 983616
+        }
+      ],
+      "endpoint_candidates": [
+        "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "qwencloud",
+      "name": "QwenCloud",
+      "category": "cn_official",
+      "website": "https://home.qwencloud.com",
+      "api_key_url": "https://home.qwencloud.com/api-keys",
+      "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "qwen3.8-max",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "qwen3.8-max",
+          "display_name": "Qwen3.8 Max",
+          "context_window": 983616
+        },
+        {
+          "model": "qwen3.8-flash",
+          "display_name": "Qwen3.8 Flash",
+          "context_window": 983616
+        },
+        {
+          "model": "qwen3.7-max",
+          "display_name": "Qwen3.7 Max",
+          "context_window": 1000000
+        },
+        {
+          "model": "qwen3.8-2.4t-a95b",
+          "display_name": "Qwen3.8 2.4T A95B",
+          "context_window": 983616
+        },
+        {
+          "model": "qwen3.8-27b",
+          "display_name": "Qwen3.8 27B",
+          "context_window": 983616
+        }
+      ],
+      "endpoint_candidates": [
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "qwencloud-for-coding",
+      "name": "QwenCloud For Coding",
+      "category": "cn_official",
+      "website": "https://www.qwencloud.com",
+      "api_key_url": "https://home.qwencloud.com/api-keys",
+      "base_url": "https://coding-intl.dashscope.aliyuncs.com/v1",
+      "api_format": "openai_chat",
+      "auth_field": null,
+      "models": {
+        "default": "qwen3.7-plus",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "qwen3.7-plus",
+          "display_name": "Qwen3.7 Plus",
+          "context_window": 1000000
+        },
+        {
+          "model": "qwen3.6-plus",
+          "display_name": "Qwen3.6 Plus",
+          "context_window": 1000000
+        },
+        {
+          "model": "qwen3-coder-plus",
+          "display_name": "Qwen3 Coder Plus",
+          "context_window": 131072
+        }
+      ],
+      "endpoint_candidates": [
+        "https://coding-intl.dashscope.aliyuncs.com/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "qwencloud-token-plan",
+      "name": "QwenCloud Token Plan",
+      "category": "cn_official",
+      "website": "https://www.qwencloud.com/pricing/token-plan",
+      "api_key_url": "https://home.qwencloud.com/api-keys",
+      "base_url": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "qwen3.8-max",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "qwen3.8-max",
+          "display_name": "Qwen3.8 Max",
+          "context_window": 983616
+        },
+        {
+          "model": "qwen3.8-flash",
+          "display_name": "Qwen3.8 Flash",
+          "context_window": 983616
+        },
+        {
+          "model": "qwen3.7-max",
+          "display_name": "Qwen3.7 Max",
+          "context_window": 1000000
+        }
+      ],
+      "endpoint_candidates": [
+        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "tencent-hunyuan",
+      "name": "Tencent Hunyuan",
+      "category": "cn_official",
+      "website": "https://cloud.tencent.com/product/tokenhub",
+      "api_key_url": "https://console.cloud.tencent.com/tokenhub/apikey",
+      "base_url": "https://tokenhub.tencentmaas.com/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "hy3",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "hy3",
+          "display_name": "Hy3",
+          "context_window": 256000
+        },
+        {
+          "model": "hy4-preview",
+          "display_name": "Hy4 Preview",
+          "context_window": 960000
+        },
+        {
+          "model": "hy3-preview",
+          "display_name": "Hy3 Preview",
+          "context_window": 256000
+        }
+      ],
+      "endpoint_candidates": [
+        "https://tokenhub.tencentmaas.com/v1",
+        "https://tokenhub.tencentmaas.cn/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "tencent-token-plan",
+      "name": "Tencent Token Plan",
+      "category": "cn_official",
+      "website": "https://cloud.tencent.com/product/tokenhub",
+      "api_key_url": "https://console.cloud.tencent.com/tokenhub/tokenplan",
+      "base_url": "https://api.lkeap.cloud.tencent.com/plan/v3",
+      "api_format": "openai_chat",
+      "auth_field": null,
+      "models": {
+        "default": "tc-code-latest",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "tc-code-latest",
+          "display_name": "Auto",
+          "context_window": 196608
+        },
+        {
+          "model": "deepseek-v4-flash-202605",
+          "display_name": "DeepSeek V4 Flash",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-pro-202606",
+          "display_name": "DeepSeek V4 Pro",
+          "context_window": 1048576
+        },
+        {
+          "model": "minimax-m2.7",
+          "display_name": "MiniMax M2.7",
+          "context_window": 200000
+        },
+        {
+          "model": "glm-5",
+          "display_name": "GLM-5",
+          "context_window": 200000
+        },
+        {
+          "model": "glm-5.1",
+          "display_name": "GLM-5.1",
+          "context_window": 200000
+        },
+        {
+          "model": "glm-5.2",
+          "display_name": "GLM-5.2",
+          "context_window": 1048576
+        },
+        {
+          "model": "hy3",
+          "display_name": "Hy3",
+          "context_window": 256000
+        },
+        {
+          "model": "hy3-preview",
+          "display_name": "Hy3 Preview",
+          "context_window": 256000
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.lkeap.cloud.tencent.com/plan/v3"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "tencent-token-plan-intl",
+      "name": "Tencent Token Plan (Intl)",
+      "category": "cn_official",
+      "website": "https://www.tencentcloud.com/products/tokenhub",
+      "api_key_url": "https://console.tencentcloud.com/tokenhub/tokenplan",
+      "base_url": "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      "api_format": "openai_chat",
+      "auth_field": null,
+      "models": {
+        "default": "auto",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "auto",
+          "display_name": "Auto",
+          "context_window": 196608
+        },
+        {
+          "model": "glm-5.2",
+          "display_name": "GLM-5.2",
+          "context_window": 1048576
+        },
+        {
+          "model": "kimi-k2.6",
+          "display_name": "Kimi K2.6",
+          "context_window": 262144
+        },
+        {
+          "model": "deepseek-v4-pro-202606",
+          "display_name": "DeepSeek V4 Pro",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-flash-202605",
+          "display_name": "DeepSeek V4 Flash",
+          "context_window": 1048576
+        },
+        {
+          "model": "minimax-m3",
+          "display_name": "MiniMax M3",
+          "context_window": 1048576
+        }
+      ],
+      "endpoint_candidates": [
+        "https://tokenhub-intl.tencentcloudmaas.com/plan/v3"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "tencent-token-plan-enterprise-pro",
+      "name": "Tencent Token Plan Enterprise Pro",
+      "category": "cn_official",
+      "website": "https://cloud.tencent.com/product/tokenhub",
+      "api_key_url": "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+      "base_url": "https://tokenhub.tencentmaas.com/plan/v3",
+      "api_format": "openai_chat",
+      "auth_field": null,
+      "models": {
+        "default": "auto",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "auto",
+          "display_name": "Auto",
+          "context_window": 196608
+        },
+        {
+          "model": "glm-5.3",
+          "display_name": "GLM-5.3",
+          "context_window": 1048576
+        },
+        {
+          "model": "glm-5.2",
+          "display_name": "GLM-5.2",
+          "context_window": 1048576
+        },
+        {
+          "model": "glm-5",
+          "display_name": "GLM-5",
+          "context_window": 200000
+        },
+        {
+          "model": "glm-5.1",
+          "display_name": "GLM-5.1",
+          "context_window": 200000
+        },
+        {
+          "model": "glm-5-turbo",
+          "display_name": "GLM-5 Turbo",
+          "context_window": 200000
+        },
+        {
+          "model": "kimi-k2.7-code",
+          "display_name": "Kimi K2.7 Code",
+          "context_window": 262144
+        },
+        {
+          "model": "kimi-k2.7-code-highspeed",
+          "display_name": "Kimi K2.7 Code HighSpeed",
+          "context_window": 262144
+        },
+        {
+          "model": "kimi-k2.6",
+          "display_name": "Kimi K2.6",
+          "context_window": 262144
+        },
+        {
+          "model": "minimax-m2.7",
+          "display_name": "MiniMax M2.7",
+          "context_window": 200000
+        },
+        {
+          "model": "minimax-m3",
+          "display_name": "MiniMax M3",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-flash-0731",
+          "display_name": "DeepSeek V4 Flash 0731 GA",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-pro-0813",
+          "display_name": "DeepSeek V4 Pro 0813 GA",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-flash-202605",
+          "display_name": "DeepSeek V4 Flash Official",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-pro-202606",
+          "display_name": "DeepSeek V4 Pro Official",
+          "context_window": 1048576
+        }
+      ],
+      "endpoint_candidates": [
+        "https://tokenhub.tencentmaas.com/plan/v3",
+        "https://tokenhub-intl.tencentmaas.com/plan/v3"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "tencent-token-plan-enterprise-pro-intl",
+      "name": "Tencent Token Plan Enterprise Pro (Intl)",
+      "category": "cn_official",
+      "website": "https://www.tencentcloud.com/products/tokenhub",
+      "api_key_url": "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+      "base_url": "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      "api_format": "openai_chat",
+      "auth_field": null,
+      "models": {
+        "default": "auto",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "auto",
+          "display_name": "Auto",
+          "context_window": 196608
+        },
+        {
+          "model": "glm-5.3",
+          "display_name": "GLM-5.3",
+          "context_window": 1048576
+        },
+        {
+          "model": "glm-5.2",
+          "display_name": "GLM-5.2",
+          "context_window": 1048576
+        },
+        {
+          "model": "minimax-m3",
+          "display_name": "MiniMax M3",
+          "context_window": 1048576
+        },
+        {
+          "model": "kimi-k2.7-code",
+          "display_name": "Kimi K2.7 Code",
+          "context_window": 262144
+        },
+        {
+          "model": "kimi-k2.7-code-highspeed",
+          "display_name": "Kimi K2.7 Code HighSpeed",
+          "context_window": 262144
+        },
+        {
+          "model": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-flash-0731",
+          "display_name": "DeepSeek V4 Flash 0731 GA",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-pro-0813",
+          "display_name": "DeepSeek V4 Pro 0813 GA",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-flash-202605",
+          "display_name": "DeepSeek V4 Flash Official",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-pro-202606",
+          "display_name": "DeepSeek V4 Pro Official",
+          "context_window": 1048576
+        }
+      ],
+      "endpoint_candidates": [
+        "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        "https://tokenhub.tencentcloudmaas.com/plan/v3"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "tencent-token-plan-enterprise-lite",
+      "name": "Tencent Token Plan Enterprise Lite",
+      "category": "cn_official",
+      "website": "https://cloud.tencent.com/product/tokenhub",
+      "api_key_url": "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+      "base_url": "https://tokenhub.tencentmaas.com/plan/v3",
+      "api_format": "openai_chat",
+      "auth_field": null,
+      "models": {
+        "default": "auto",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "auto",
+          "display_name": "Auto",
+          "context_window": 196608
+        }
+      ],
+      "endpoint_candidates": [
+        "https://tokenhub.tencentmaas.com/plan/v3",
+        "https://tokenhub-intl.tencentmaas.com/plan/v3"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "tencent-token-plan-enterprise-lite-intl",
+      "name": "Tencent Token Plan Enterprise Lite (Intl)",
+      "category": "cn_official",
+      "website": "https://www.tencentcloud.com/products/tokenhub",
+      "api_key_url": "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+      "base_url": "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+      "api_format": "openai_chat",
+      "auth_field": null,
+      "models": {
+        "default": "auto",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "auto",
+          "display_name": "Auto",
+          "context_window": 196608
+        }
+      ],
+      "endpoint_candidates": [
+        "https://tokenhub-intl.tencentcloudmaas.com/plan/v3",
+        "https://tokenhub.tencentcloudmaas.com/plan/v3"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "stepfun-api",
+      "name": "StepFun API",
+      "category": "cn_official",
+      "website": "https://platform.stepfun.com",
+      "api_key_url": "https://platform.stepfun.com/interface-key",
+      "base_url": "https://api.stepfun.com/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "step-3.7-flash",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "step-3.7-flash",
+          "display_name": "Step 3.7 Flash",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.stepfun.com/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "stepfun-api-en",
+      "name": "StepFun API en",
+      "category": "cn_official",
+      "website": "https://platform.stepfun.ai",
+      "api_key_url": "https://platform.stepfun.ai/interface-key",
+      "base_url": "https://api.stepfun.ai/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "step-3.7-flash",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "step-3.7-flash",
+          "display_name": "Step 3.7 Flash",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.stepfun.ai/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "stepfun",
+      "name": "StepFun",
+      "category": "cn_official",
+      "website": "https://platform.stepfun.com/step-plan",
+      "api_key_url": "https://platform.stepfun.com/interface-key",
+      "base_url": "https://api.stepfun.com/step_plan/v1",
+      "api_format": "openai_chat",
+      "auth_field": null,
+      "models": {
+        "default": "step-3.7-flash",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "step-3.7-flash",
+          "display_name": "Step 3.7 Flash",
+          "context_window": 262144
+        },
+        {
+          "model": "step-3.5-flash-2603",
+          "display_name": "Step 3.5 Flash 2603",
+          "context_window": 262144
+        },
+        {
+          "model": "step-3.5-flash",
+          "display_name": "Step 3.5 Flash",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.stepfun.com/step_plan/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "stepfun-en",
+      "name": "StepFun en",
+      "category": "cn_official",
+      "website": "https://platform.stepfun.ai/step-plan",
+      "api_key_url": "https://platform.stepfun.ai/interface-key",
+      "base_url": "https://api.stepfun.ai/step_plan/v1",
+      "api_format": "openai_chat",
+      "auth_field": null,
+      "models": {
+        "default": "step-3.7-flash",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "step-3.7-flash",
+          "display_name": "Step 3.7 Flash",
+          "context_window": 262144
+        },
+        {
+          "model": "step-3.5-flash-2603",
+          "display_name": "Step 3.5 Flash 2603",
+          "context_window": 262144
+        },
+        {
+          "model": "step-3.5-flash",
+          "display_name": "Step 3.5 Flash",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.stepfun.ai/step_plan/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "streamlake",
+      "name": "StreamLake",
+      "category": "cn_official",
+      "website": "https://www.streamlake.com",
+      "api_key_url": "https://console.streamlake.com/console/wanqing/api-key",
+      "base_url": "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "kat-coder-pro-v2.5",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "kat-coder-pro-v2.5",
+          "display_name": "KAT-Coder Pro V2.5",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "streamlake-en",
+      "name": "StreamLake en",
+      "category": "cn_official",
+      "website": "https://console.streamlake.ai",
+      "api_key_url": "https://console.streamlake.ai/console/api-key",
+      "base_url": "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "kat-coder-pro-v2.5",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "kat-coder-pro-v2.5",
+          "display_name": "KAT-Coder Pro V2.5",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "https://vanchin.streamlake.ai/api/gateway/v1/endpoints"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "longcat",
+      "name": "Longcat",
+      "category": "cn_official",
+      "website": "https://longcat.chat/platform",
+      "api_key_url": "https://longcat.chat/platform/api_keys",
+      "base_url": "https://api.longcat.chat/openai/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "LongCat-2.0",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "LongCat-2.0",
+          "display_name": "LongCat 2.0",
+          "context_window": 1048576
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.longcat.chat/openai/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "minimax",
+      "name": "MiniMax",
+      "category": "cn_official",
+      "website": "https://platform.minimax.cn",
+      "api_key_url": "https://platform.minimax.cn/subscribe/token-plan",
+      "base_url": "https://api.minimax.cn/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "MiniMax-M3",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "MiniMax-M3",
+          "display_name": "MiniMax-M3",
+          "context_window": 1000000
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.minimax.cn/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "minimax-en",
+      "name": "MiniMax en",
+      "category": "cn_official",
+      "website": "https://platform.minimax.io",
+      "api_key_url": "https://platform.minimax.io/subscribe/coding-plan",
+      "base_url": "https://api.minimax.io/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "MiniMax-M3",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "MiniMax-M3",
+          "display_name": "MiniMax-M3",
+          "context_window": 1000000
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.minimax.io/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "astron-coding-plan",
+      "name": "Astron Coding Plan",
+      "category": "cn_official",
+      "website": "https://maas.xfyun.cn/packageSubscription",
+      "api_key_url": "https://maas.xfyun.cn/packageSubscription",
+      "base_url": "https://maas-coding-api.cn-huabei-1.xf-yun.com/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "astron-code-latest",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "astron-code-latest",
+          "display_name": "Astron Code Latest",
+          "context_window": 92160
+        }
+      ],
+      "endpoint_candidates": [
+        "https://maas-coding-api.cn-huabei-1.xf-yun.com/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "bailing",
+      "name": "BaiLing",
+      "category": "cn_official",
+      "website": "https://developer.ant-ling.com/zh-CN/docs/",
+      "api_key_url": "https://chat.ant-ling.com/open",
+      "base_url": "https://api.ant-ling.com/v1",
+      "api_format": "openai_chat",
+      "auth_field": null,
+      "models": {
+        "default": "Ling-2.6-1T",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "Ling-2.6-1T",
+          "display_name": "Ling-2.6-1T",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.ant-ling.com/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "xiaomi-mimo",
+      "name": "Xiaomi MiMo",
+      "category": "cn_official",
+      "website": "https://platform.xiaomimimo.com",
+      "api_key_url": "https://platform.xiaomimimo.com/#/console/api-keys",
+      "base_url": "https://api.xiaomimimo.com/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "mimo-v2.6-pro",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "mimo-v2.6-pro",
+          "display_name": "MiMo V2.6 Pro",
+          "context_window": 1048576
+        },
+        {
+          "model": "mimo-v2.6-flash",
+          "display_name": "MiMo V2.6 Flash",
+          "context_window": 1048576
+        },
+        {
+          "model": "mimo-v2.6-pro-ultraspeed",
+          "display_name": "MiMo V2.6 Pro UltraSpeed",
+          "context_window": 1048576
+        },
+        {
+          "model": "mimo-v2.5-pro",
+          "display_name": "MiMo V2.5 Pro",
+          "context_window": 1048576
+        },
+        {
+          "model": "mimo-v2.5",
+          "display_name": "MiMo V2.5",
+          "context_window": 1048576
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.xiaomimimo.com/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "xiaomi-mimo-token-plan-china",
+      "name": "Xiaomi MiMo Token Plan (China)",
+      "category": "cn_official",
+      "website": "https://platform.xiaomimimo.com/#/token-plan",
+      "api_key_url": "https://platform.xiaomimimo.com/#/console/plan-manage",
+      "base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "mimo-v2.6-pro",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "mimo-v2.6-pro",
+          "display_name": "MiMo V2.6 Pro",
+          "context_window": 1048576
+        },
+        {
+          "model": "mimo-v2.6-flash",
+          "display_name": "MiMo V2.6 Flash",
+          "context_window": 1048576
+        },
+        {
+          "model": "mimo-v2.5-pro",
+          "display_name": "MiMo V2.5 Pro",
+          "context_window": 1048576
+        },
+        {
+          "model": "mimo-v2.5",
+          "display_name": "MiMo V2.5",
+          "context_window": 1048576
+        }
+      ],
+      "endpoint_candidates": [
+        "https://token-plan-cn.xiaomimimo.com/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "ollama-cloud",
+      "name": "Ollama Cloud",
+      "category": "cloud_provider",
+      "website": "https://ollama.com",
+      "api_key_url": "https://ollama.com/settings/keys",
+      "base_url": "https://ollama.com/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "glm-5.3",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "glm-5.3",
+          "display_name": "GLM-5.3",
+          "context_window": 1048576
+        },
+        {
+          "model": "glm-5.3-flash",
+          "display_name": "GLM-5.3-Flash",
+          "context_window": 1048576
+        },
+        {
+          "model": "kimi-k3",
+          "display_name": "Kimi K3",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-pro:0813",
+          "display_name": "DeepSeek V4 Pro",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4.1-flash",
+          "display_name": "DeepSeek V4.1 Flash",
+          "context_window": 1048576
+        }
+      ],
+      "endpoint_candidates": [
+        "https://ollama.com/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "category": "local",
+      "website": "https://ollama.com",
+      "api_key_url": null,
+      "base_url": "http://localhost:11434/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "gpt-oss:20b",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "gpt-oss:20b",
+          "display_name": "GPT-OSS 20B",
+          "context_window": 131072
+        },
+        {
+          "model": "gpt-oss:120b",
+          "display_name": "GPT-OSS 120B",
+          "context_window": 131072
+        },
+        {
+          "model": "qwen3.5",
+          "display_name": "Qwen3.5",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "http://localhost:11434/v1",
+        "http://127.0.0.1:11434/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "lm-studio",
+      "name": "LM Studio",
+      "category": "local",
+      "website": "https://lmstudio.ai",
+      "api_key_url": null,
+      "base_url": "http://localhost:1234/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "openai/gpt-oss-20b",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "openai/gpt-oss-20b",
+          "display_name": "GPT-OSS 20B",
+          "context_window": 131072
+        }
+      ],
+      "endpoint_candidates": [
+        "http://localhost:1234/v1",
+        "http://127.0.0.1:1234/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "llama-cpp",
+      "name": "llama.cpp",
+      "category": "local",
+      "website": "https://github.com/ggml-org/llama.cpp",
+      "api_key_url": null,
+      "base_url": "http://127.0.0.1:9931/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+          "display_name": "Qwen3-Coder 30B A3B",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "http://127.0.0.1:9931/v1",
+        "http://127.0.0.1:8080/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "vllm",
+      "name": "vLLM",
+      "category": "local",
+      "website": "https://vllm.ai",
+      "api_key_url": null,
+      "base_url": "http://localhost:8000/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "Qwen/Qwen3.6-27B",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "Qwen/Qwen3.6-27B",
+          "display_name": "Qwen3.6 27B",
+          "context_window": 262144
+        }
+      ],
+      "endpoint_candidates": [
+        "http://localhost:8000/v1",
+        "http://127.0.0.1:8000/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "meta-model-api",
+      "name": "Meta Model API",
+      "category": "cn_official",
+      "website": "https://dev.meta.ai",
+      "api_key_url": "https://dev.meta.ai",
+      "base_url": "https://api.meta.ai/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "muse-wonder-1.0",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "muse-wonder-1.0",
+          "display_name": "Muse Wonder 1.0",
+          "context_window": 1048576
+        },
+        {
+          "model": "muse-spark-1.3",
+          "display_name": "Muse Spark 1.3",
+          "context_window": 1048576
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.meta.ai/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "sambanova",
+      "name": "SambaNova",
+      "category": "cloud_provider",
+      "website": "https://sambanova.ai",
+      "api_key_url": "https://cloud.sambanova.ai/apis",
+      "base_url": "https://api.sambanova.ai/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "MiniMax-M3",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "MiniMax-M3",
+          "display_name": "MiniMax-M3",
+          "context_window": 1048576
+        },
+        {
+          "model": "gpt-oss-120b",
+          "display_name": "gpt-oss-120b",
+          "context_window": 131072
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.sambanova.ai/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "digitalocean",
+      "name": "DigitalOcean",
+      "category": "cloud_provider",
+      "website": "https://www.digitalocean.com/products/ai-platform",
+      "api_key_url": "https://cloud.digitalocean.com/model-studio/manage-keys",
+      "base_url": "https://inference.do-ai.run/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "openai-gpt-6-1-sol",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "openai-gpt-6-1-sol",
+          "display_name": "GPT-6.1 Sol",
+          "context_window": 272000
+        },
+        {
+          "model": "glm-5.3",
+          "display_name": "GLM-5.3",
+          "context_window": 1048576
+        },
+        {
+          "model": "deepseek-v4-pro-0813",
+          "display_name": "DeepSeek V4 Pro 0813",
+          "context_window": 1048576
+        }
+      ],
+      "endpoint_candidates": [
+        "https://inference.do-ai.run/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "fireworks-ai",
+      "name": "Fireworks AI",
+      "category": "cloud_provider",
+      "website": "https://fireworks.ai",
+      "api_key_url": "https://app.fireworks.ai/settings/users/api-keys",
+      "base_url": "https://api.fireworks.ai/inference/v1",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "accounts/fireworks/models/glm-5p3",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [
+        {
+          "model": "accounts/fireworks/models/glm-5p3",
+          "display_name": "GLM 5.3",
+          "context_window": 1048576
+        },
+        {
+          "model": "accounts/fireworks/models/kimi-k3",
+          "display_name": "Kimi K3",
+          "context_window": 1048576
+        },
+        {
+          "model": "accounts/fireworks/models/deepseek-v4p1-flash",
+          "display_name": "DeepSeek V4.1 Flash",
+          "context_window": 1000000
+        },
+        {
+          "model": "accounts/fireworks/models/glm-5p3-flash",
+          "display_name": "GLM 5.3 Flash",
+          "context_window": 1048576
+        }
+      ],
+      "endpoint_candidates": [
+        "https://api.fireworks.ai/inference/v1"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "cloudflare-ai-gateway",
+      "name": "Cloudflare AI Gateway",
+      "category": "cloud_provider",
+      "website": "https://developers.cloudflare.com/ai-gateway/",
+      "api_key_url": "https://dash.cloudflare.com/profile/api-tokens",
+      "base_url": "https://gateway.ai.cloudflare.com/v1/YOUR_ACCOUNT_ID/default/openai",
+      "api_format": "openai_responses",
+      "auth_field": null,
+      "models": {
+        "default": "gpt-6.1-sol",
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": true
+    }
+  ]
+}

@@ -6,8 +6,30 @@ import {
   NO_TIERS,
   pairsText,
   parsePairs,
+  tiersFromPreset,
   tiersOf,
 } from "./modelMap";
+
+describe("预设预填模型映射", () => {
+  it("预设写了的档位填进去，没写的留空", () => {
+    expect(
+      tiersFromPreset({
+        default: "deepseek-v4-pro",
+        haiku: "deepseek-flash",
+        sonnet: "deepseek-v4-pro",
+        opus: "deepseek-v4-pro",
+        fable: null,
+        subagent: null,
+      }),
+    ).toEqual({
+      ...NO_TIERS,
+      default: "deepseek-v4-pro",
+      haiku: "deepseek-flash",
+      sonnet: "deepseek-v4-pro",
+      opus: "deepseek-v4-pro",
+    });
+  });
+});
 
 describe("线路的模型映射表单", () => {
   it("逐个指定认几种常见的箭头，空行跳过、两边去空白", () => {

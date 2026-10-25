@@ -1,0 +1,1046 @@
+{
+  "source": "cc-switch v4.0.14 src/config/claudeProviderPresets.ts（提交 5de6feb4e5adda61f4ad824ce0df2c449245f447）",
+  "license": "MIT, Copyright (c) 2025 Jason Young — 见 ATTRIBUTION.md",
+  "generated_by": "scripts/import-ccswitch-presets.mjs（静态解析，不执行源码）",
+  "filter": "只要 official / cn_official / cloud_provider / local；不要合作伙伴、隐藏、OAuth、没有固定地址的；网址剥掉推广参数",
+  "skipped": [
+    "Claude Official：没有固定地址",
+    "Microsoft Foundry：没有固定地址",
+    "Cloudflare AI Gateway：没有固定地址",
+    "AWS Bedrock (AKSK)：没有固定地址",
+    "AWS Bedrock (API Key)：没有固定地址"
+  ],
+  "presets": [
+    {
+      "id": "kimi",
+      "name": "Kimi",
+      "category": "cn_official",
+      "website": "https://platform.kimi.com",
+      "api_key_url": null,
+      "base_url": "https://api.moonshot.cn/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "kimi-k2.7-code",
+        "haiku": "kimi-k2.7-code",
+        "sonnet": "kimi-k2.7-code",
+        "opus": "kimi-k2.7-code",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "kimi-global",
+      "name": "Kimi Global",
+      "category": "cn_official",
+      "website": "https://platform.kimi.ai",
+      "api_key_url": null,
+      "base_url": "https://api.moonshot.ai/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "kimi-k2.7-code",
+        "haiku": "kimi-k2.7-code",
+        "sonnet": "kimi-k2.7-code",
+        "opus": "kimi-k2.7-code",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "kimi-for-coding",
+      "name": "Kimi For Coding",
+      "category": "cn_official",
+      "website": "https://www.kimi.com/code/",
+      "api_key_url": null,
+      "base_url": "https://api.kimi.com/coding/",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "kimi-for-coding",
+        "haiku": "kimi-for-coding",
+        "sonnet": "kimi-for-coding",
+        "opus": "kimi-for-coding",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "262144"
+      },
+      "needs_edit": false
+    },
+    {
+      "id": "kimi-for-coding-global",
+      "name": "Kimi For Coding Global",
+      "category": "cn_official",
+      "website": "https://www.kimi.ai/code",
+      "api_key_url": null,
+      "base_url": "https://api.kimi.ai/coding/",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "kimi-for-coding",
+        "haiku": "kimi-for-coding",
+        "sonnet": "kimi-for-coding",
+        "opus": "kimi-for-coding",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "262144",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "262144"
+      },
+      "needs_edit": false
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "category": "cn_official",
+      "website": "https://platform.deepseek.com",
+      "api_key_url": null,
+      "base_url": "https://api.deepseek.com/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "deepseek-v4-pro",
+        "haiku": "deepseek-flash",
+        "sonnet": "deepseek-v4-pro",
+        "opus": "deepseek-v4-pro",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": "https://api.deepseek.com/models",
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "tencent-token-plan",
+      "name": "Tencent Token Plan",
+      "category": "cn_official",
+      "website": "https://cloud.tencent.com/product/tokenhub",
+      "api_key_url": "https://console.cloud.tencent.com/tokenhub/tokenplan",
+      "base_url": "https://api.lkeap.cloud.tencent.com/plan/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "tc-code-latest",
+        "haiku": "tc-code-latest",
+        "sonnet": "tc-code-latest",
+        "opus": "tc-code-latest",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://api.lkeap.cloud.tencent.com/plan/anthropic"
+      ],
+      "models_url": "https://api.lkeap.cloud.tencent.com/plan/v3/models",
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "tencent-token-plan-intl",
+      "name": "Tencent Token Plan (Intl)",
+      "category": "cn_official",
+      "website": "https://www.tencentcloud.com/products/tokenhub",
+      "api_key_url": "https://console.tencentcloud.com/tokenhub/tokenplan",
+      "base_url": "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "auto",
+        "haiku": "auto",
+        "sonnet": "auto",
+        "opus": "auto",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "tencent-token-plan-enterprise-pro",
+      "name": "Tencent Token Plan Enterprise Pro",
+      "category": "cn_official",
+      "website": "https://cloud.tencent.com/product/tokenhub",
+      "api_key_url": "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+      "base_url": "https://tokenhub.tencentmaas.com/plan/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "auto",
+        "haiku": "auto",
+        "sonnet": "auto",
+        "opus": "auto",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://tokenhub.tencentmaas.com/plan/anthropic",
+        "https://tokenhub-intl.tencentmaas.com/plan/anthropic"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "tencent-token-plan-enterprise-pro-intl",
+      "name": "Tencent Token Plan Enterprise Pro (Intl)",
+      "category": "cn_official",
+      "website": "https://www.tencentcloud.com/products/tokenhub",
+      "api_key_url": "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+      "base_url": "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "auto",
+        "haiku": "auto",
+        "sonnet": "auto",
+        "opus": "auto",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+        "https://tokenhub.tencentcloudmaas.com/plan/anthropic"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "tencent-token-plan-enterprise-lite",
+      "name": "Tencent Token Plan Enterprise Lite",
+      "category": "cn_official",
+      "website": "https://cloud.tencent.com/product/tokenhub",
+      "api_key_url": "https://console.cloud.tencent.com/tokenhub/tokenplan-e",
+      "base_url": "https://tokenhub.tencentmaas.com/plan/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "auto",
+        "haiku": "auto",
+        "sonnet": "auto",
+        "opus": "auto",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://tokenhub.tencentmaas.com/plan/anthropic",
+        "https://tokenhub-intl.tencentmaas.com/plan/anthropic"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "tencent-token-plan-enterprise-lite-intl",
+      "name": "Tencent Token Plan Enterprise Lite (Intl)",
+      "category": "cn_official",
+      "website": "https://www.tencentcloud.com/products/tokenhub",
+      "api_key_url": "https://console.tencentcloud.com/tokenhub/tokenplan-e",
+      "base_url": "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "auto",
+        "haiku": "auto",
+        "sonnet": "auto",
+        "opus": "auto",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic",
+        "https://tokenhub.tencentcloudmaas.com/plan/anthropic"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "zhipu-glm",
+      "name": "Zhipu GLM",
+      "category": "cn_official",
+      "website": "https://open.bigmodel.cn",
+      "api_key_url": "https://www.bigmodel.cn/claude-code?ic=RRVJPB5SII",
+      "base_url": "https://open.bigmodel.cn/api/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "glm-5.3",
+        "haiku": "glm-5.3",
+        "sonnet": "glm-5.3",
+        "opus": "glm-5.3",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "zhipu-glm-en",
+      "name": "Zhipu GLM en",
+      "category": "cn_official",
+      "website": "https://z.ai",
+      "api_key_url": "https://z.ai/subscribe?ic=8JVLJQFSKB",
+      "base_url": "https://api.z.ai/api/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "glm-5.3",
+        "haiku": "glm-5.3",
+        "sonnet": "glm-5.3",
+        "opus": "glm-5.3",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "baidu-qianfan-coding-plan",
+      "name": "Baidu Qianfan Coding Plan",
+      "category": "cn_official",
+      "website": "https://cloud.baidu.com/product/qianfan_modelbuilder",
+      "api_key_url": "https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application",
+      "base_url": "https://qianfan.baidubce.com/anthropic/coding",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "qianfan-code-latest",
+        "haiku": "qianfan-code-latest",
+        "sonnet": "qianfan-code-latest",
+        "opus": "qianfan-code-latest",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://qianfan.baidubce.com/anthropic/coding"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "baidu-qianfan-token-plan",
+      "name": "Baidu Qianfan Token Plan",
+      "category": "cn_official",
+      "website": "https://cloud.baidu.com/product/codingplan.html",
+      "api_key_url": "https://console.bce.baidu.com/qianfan/resource/token-plan",
+      "base_url": "https://qianfan.baidubce.com/anthropic/tokenplan/personal",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "deepseek-v4-pro",
+        "haiku": "deepseek-v4-pro",
+        "sonnet": "deepseek-v4-pro",
+        "opus": "deepseek-v4-pro",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://qianfan.baidubce.com/anthropic/tokenplan/personal"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "ai",
+      "name": "千问AI平台",
+      "category": "cn_official",
+      "website": "https://platform.qianwenai.com",
+      "api_key_url": "https://platform.qianwenai.com/home/api-keys",
+      "base_url": "https://dashscope.aliyuncs.com/apps/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "qwen3.8-max",
+        "haiku": "qwen3.8-flash",
+        "sonnet": "qwen3.7-plus",
+        "opus": "qwen3.8-max",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "983616"
+      },
+      "needs_edit": false
+    },
+    {
+      "id": "ai-coding-plan",
+      "name": "千问AI平台 Coding Plan",
+      "category": "cn_official",
+      "website": "https://bailian.console.aliyun.com",
+      "api_key_url": null,
+      "base_url": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": null,
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "ai-token-plan",
+      "name": "千问AI平台 Token Plan",
+      "category": "cn_official",
+      "website": "https://platform.qianwenai.com/pricing/token-plan",
+      "api_key_url": "https://platform.qianwenai.com/home/api-keys",
+      "base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "qwen3.8-max",
+        "haiku": "qwen3.8-flash",
+        "sonnet": "qwen3.7-plus",
+        "opus": "qwen3.8-max",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "983616"
+      },
+      "needs_edit": false
+    },
+    {
+      "id": "qwencloud",
+      "name": "QwenCloud",
+      "category": "cn_official",
+      "website": "https://home.qwencloud.com",
+      "api_key_url": "https://home.qwencloud.com/api-keys",
+      "base_url": "https://dashscope-intl.aliyuncs.com/apps/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "qwen3.8-max",
+        "haiku": "qwen3.8-flash",
+        "sonnet": "qwen3.7-plus",
+        "opus": "qwen3.8-max",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "qwencloud-for-coding",
+      "name": "QwenCloud For Coding",
+      "category": "cn_official",
+      "website": "https://www.qwencloud.com",
+      "api_key_url": "https://home.qwencloud.com/api-keys",
+      "base_url": "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "qwen3.7-plus",
+        "haiku": "qwen3.7-plus",
+        "sonnet": "qwen3.7-plus",
+        "opus": "qwen3.7-plus",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "qwencloud-token-plan",
+      "name": "QwenCloud Token Plan",
+      "category": "cn_official",
+      "website": "https://www.qwencloud.com/pricing/token-plan",
+      "api_key_url": "https://home.qwencloud.com/api-keys",
+      "base_url": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "qwen3.8-max",
+        "haiku": "qwen3.8-flash",
+        "sonnet": "qwen3.7-plus",
+        "opus": "qwen3.8-max",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "983616"
+      },
+      "needs_edit": false
+    },
+    {
+      "id": "stepfun",
+      "name": "StepFun",
+      "category": "cn_official",
+      "website": "https://platform.stepfun.com/step-plan",
+      "api_key_url": "https://platform.stepfun.com/interface-key",
+      "base_url": "https://api.stepfun.com/step_plan",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "step-3.5-flash-2603",
+        "haiku": "step-3.5-flash-2603",
+        "sonnet": "step-3.5-flash-2603",
+        "opus": "step-3.5-flash-2603",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://api.stepfun.com/step_plan"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "stepfun-en",
+      "name": "StepFun en",
+      "category": "cn_official",
+      "website": "https://platform.stepfun.ai/step-plan",
+      "api_key_url": "https://platform.stepfun.ai/interface-key",
+      "base_url": "https://api.stepfun.ai/step_plan",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "step-3.5-flash-2603",
+        "haiku": "step-3.5-flash-2603",
+        "sonnet": "step-3.5-flash-2603",
+        "opus": "step-3.5-flash-2603",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://api.stepfun.ai/step_plan"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "streamlake",
+      "name": "StreamLake",
+      "category": "cn_official",
+      "website": "https://www.streamlake.com",
+      "api_key_url": "https://console.streamlake.com/console/wanqing/api-key",
+      "base_url": "https://wanqing.streamlakeapi.com/api/gateway/v1/endpoints/kat-coder-pro-v2.5/claude-code-proxy",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "kat-coder-pro-v2.5",
+        "haiku": "kat-coder-pro-v2.5",
+        "sonnet": "kat-coder-pro-v2.5",
+        "opus": "kat-coder-pro-v2.5",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "streamlake-en",
+      "name": "StreamLake en",
+      "category": "cn_official",
+      "website": "https://console.streamlake.ai",
+      "api_key_url": "https://console.streamlake.ai/console/api-key",
+      "base_url": "https://vanchin.streamlake.ai/api/gateway/v1/endpoints/kat-coder-pro-v2.5/claude-code-proxy",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "kat-coder-pro-v2.5",
+        "haiku": "kat-coder-pro-v2.5",
+        "sonnet": "kat-coder-pro-v2.5",
+        "opus": "kat-coder-pro-v2.5",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "longcat",
+      "name": "Longcat",
+      "category": "cn_official",
+      "website": "https://longcat.chat/platform",
+      "api_key_url": "https://longcat.chat/platform/api_keys",
+      "base_url": "https://api.longcat.chat/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "LongCat-2.0",
+        "haiku": "LongCat-2.0",
+        "sonnet": "LongCat-2.0",
+        "opus": "LongCat-2.0",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {
+        "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "131072"
+      },
+      "needs_edit": false
+    },
+    {
+      "id": "minimax",
+      "name": "MiniMax",
+      "category": "cn_official",
+      "website": "https://platform.minimax.cn",
+      "api_key_url": "https://platform.minimax.cn/subscribe/token-plan",
+      "base_url": "https://api.minimax.cn/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "MiniMax-M3",
+        "haiku": "MiniMax-M3",
+        "sonnet": "MiniMax-M3",
+        "opus": "MiniMax-M3",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"
+      },
+      "needs_edit": false
+    },
+    {
+      "id": "minimax-en",
+      "name": "MiniMax en",
+      "category": "cn_official",
+      "website": "https://platform.minimax.io",
+      "api_key_url": "https://platform.minimax.io/subscribe/coding-plan",
+      "base_url": "https://api.minimax.io/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "MiniMax-M3",
+        "haiku": "MiniMax-M3",
+        "sonnet": "MiniMax-M3",
+        "opus": "MiniMax-M3",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"
+      },
+      "needs_edit": false
+    },
+    {
+      "id": "bailing",
+      "name": "BaiLing",
+      "category": "cn_official",
+      "website": "https://developer.ant-ling.com/zh-CN/docs/",
+      "api_key_url": "https://chat.ant-ling.com/open",
+      "base_url": "https://api.ant-ling.com/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "Ling-2.6-1T",
+        "haiku": "Ling-2.6-1T",
+        "sonnet": "Ling-2.6-1T",
+        "opus": "Ling-2.6-1T",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "ollama-cloud",
+      "name": "Ollama Cloud",
+      "category": "cloud_provider",
+      "website": "https://ollama.com",
+      "api_key_url": "https://ollama.com/settings/keys",
+      "base_url": "https://ollama.com",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_API_KEY",
+      "models": {
+        "default": "glm-5.3",
+        "haiku": "glm-5.3-flash",
+        "sonnet": "glm-5.3",
+        "opus": "kimi-k3",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://ollama.com"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "category": "local",
+      "website": "https://ollama.com",
+      "api_key_url": null,
+      "base_url": "http://localhost:11434",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_API_KEY",
+      "models": {
+        "default": "qwen3.5",
+        "haiku": "qwen3.5",
+        "sonnet": "qwen3.5",
+        "opus": "qwen3.5",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [
+        "http://localhost:11434",
+        "http://127.0.0.1:11434"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "lm-studio",
+      "name": "LM Studio",
+      "category": "local",
+      "website": "https://lmstudio.ai",
+      "api_key_url": null,
+      "base_url": "http://localhost:1234",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "openai/gpt-oss-20b",
+        "haiku": "openai/gpt-oss-20b",
+        "sonnet": "openai/gpt-oss-20b",
+        "opus": "openai/gpt-oss-20b",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [
+        "http://localhost:1234",
+        "http://127.0.0.1:1234"
+      ],
+      "models_url": null,
+      "extra_env": {
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "131072"
+      },
+      "needs_edit": false
+    },
+    {
+      "id": "llama-cpp",
+      "name": "llama.cpp",
+      "category": "local",
+      "website": "https://github.com/ggml-org/llama.cpp",
+      "api_key_url": null,
+      "base_url": "http://127.0.0.1:9931",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        "haiku": "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        "sonnet": "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        "opus": "ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [
+        "http://127.0.0.1:9931",
+        "http://127.0.0.1:8080"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "vllm",
+      "name": "vLLM",
+      "category": "local",
+      "website": "https://vllm.ai",
+      "api_key_url": null,
+      "base_url": "http://localhost:8000",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "Qwen/Qwen3.6-27B",
+        "haiku": "Qwen/Qwen3.6-27B",
+        "sonnet": "Qwen/Qwen3.6-27B",
+        "opus": "Qwen/Qwen3.6-27B",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "meta-model-api",
+      "name": "Meta Model API",
+      "category": "cn_official",
+      "website": "https://dev.meta.ai",
+      "api_key_url": "https://dev.meta.ai",
+      "base_url": "https://api.meta.ai",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "muse-wonder-1.0",
+        "haiku": "muse-spark-1.3",
+        "sonnet": "muse-spark-1.3",
+        "opus": "muse-wonder-1.0",
+        "fable": null,
+        "subagent": "muse-spark-1.3"
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://api.meta.ai"
+      ],
+      "models_url": null,
+      "extra_env": {
+        "ENABLE_TOOL_SEARCH": "true",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1048576"
+      },
+      "needs_edit": false
+    },
+    {
+      "id": "sambanova",
+      "name": "SambaNova",
+      "category": "cloud_provider",
+      "website": "https://sambanova.ai",
+      "api_key_url": "https://cloud.sambanova.ai/apis",
+      "base_url": "https://api.sambanova.ai",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "MiniMax-M3",
+        "haiku": "MiniMax-M3",
+        "sonnet": "MiniMax-M3",
+        "opus": "MiniMax-M3",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://api.sambanova.ai"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "digitalocean",
+      "name": "DigitalOcean",
+      "category": "cloud_provider",
+      "website": "https://www.digitalocean.com/products/ai-platform",
+      "api_key_url": "https://cloud.digitalocean.com/model-studio/manage-keys",
+      "base_url": "https://inference.do-ai.run",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": null,
+        "haiku": null,
+        "sonnet": null,
+        "opus": null,
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": false,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://inference.do-ai.run"
+      ],
+      "models_url": null,
+      "extra_env": {
+        "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1"
+      },
+      "needs_edit": false
+    },
+    {
+      "id": "fireworks-ai",
+      "name": "Fireworks AI",
+      "category": "cloud_provider",
+      "website": "https://fireworks.ai",
+      "api_key_url": "https://app.fireworks.ai/settings/users/api-keys",
+      "base_url": "https://api.fireworks.ai/inference",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "accounts/fireworks/models/glm-5p3",
+        "haiku": "accounts/fireworks/models/deepseek-v4p1-flash",
+        "sonnet": "accounts/fireworks/models/glm-5p3",
+        "opus": "accounts/fireworks/models/kimi-k3",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [
+        "https://api.fireworks.ai/inference"
+      ],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "xiaomi-mimo",
+      "name": "Xiaomi MiMo",
+      "category": "cn_official",
+      "website": "https://platform.xiaomimimo.com",
+      "api_key_url": "https://platform.xiaomimimo.com/#/console/api-keys",
+      "base_url": "https://api.xiaomimimo.com/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "mimo-v2.6-pro",
+        "haiku": "mimo-v2.6-pro",
+        "sonnet": "mimo-v2.6-pro",
+        "opus": "mimo-v2.6-pro",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    },
+    {
+      "id": "xiaomi-mimo-token-plan-china",
+      "name": "Xiaomi MiMo Token Plan (China)",
+      "category": "cn_official",
+      "website": "https://platform.xiaomimimo.com/#/token-plan",
+      "api_key_url": "https://platform.xiaomimimo.com/#/console/plan-manage",
+      "base_url": "https://token-plan-cn.xiaomimimo.com/anthropic",
+      "api_format": "anthropic",
+      "auth_field": "ANTHROPIC_AUTH_TOKEN",
+      "models": {
+        "default": "mimo-v2.6-pro",
+        "haiku": "mimo-v2.6-pro",
+        "sonnet": "mimo-v2.6-pro",
+        "opus": "mimo-v2.6-pro",
+        "fable": null,
+        "subagent": null
+      },
+      "supports_1m": true,
+      "catalog": [],
+      "endpoint_candidates": [],
+      "models_url": null,
+      "extra_env": {},
+      "needs_edit": false
+    }
+  ]
+}

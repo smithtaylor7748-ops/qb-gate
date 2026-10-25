@@ -1392,11 +1392,18 @@
   background: var(--surface-2);
 }
 
-/* 预设胶囊。⛔ 一个第三方中转站都没有 —— 见组件头。 */
+/* 预设胶囊。⛔ 一个第三方中转站都没有 —— 见组件头。
+   阶段 4 起有几十个（cc-switch 的官方类）：限高、超出滚动，上面一个筛选框。 */
 .qb-st-presets {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  max-height: 132px;
+  overflow-y: auto;
+}
+.qb-st-presetfilter {
+  width: 100%;
+  box-sizing: border-box;
 }
 .qb-st-presets .chip {
   font: inherit;
