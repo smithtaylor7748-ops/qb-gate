@@ -144,7 +144,14 @@ fn status_of(state: &AppState, client: Client) -> RouterStatus {
 
 /// 三个软件。**顺序固定** —— 界面上那三个分页照这个顺序排，
 /// 而排序一变，截图对比就会红一次而没人说得清为什么变了。
-const ALL_CLIENTS: &[Client] = &[Client::ClaudeCode, Client::ClaudeDesktop, Client::Codex];
+const ALL_CLIENTS: &[Client] = &[
+    Client::ClaudeCode,
+    Client::ClaudeDesktop,
+    Client::Codex,
+    // 阶段 4 的两档中转命令行，排在后面：前三个分页的顺序不变。
+    Client::GeminiCli,
+    Client::GrokBuild,
+];
 
 /// 软件名在 IPC 上的写法。跟 `Client` 的 serde kebab-case **是同一个字符串** ——
 /// 另写一份映射就会漂，而漂了之后前端按软件取当前上游会静默取不到。
@@ -156,6 +163,8 @@ fn client_key(c: Client) -> &'static str {
         // 反重力没有中转路径，不在 `ALL_CLIENTS` 里；给个名字只是让 match 完整。
         Client::Antigravity => "antigravity",
         Client::AntigravityIde => "antigravity-ide",
+        Client::GeminiCli => "gemini-cli",
+        Client::GrokBuild => "grok-build",
     }
 }
 
@@ -916,9 +925,10 @@ pub async fn station_launch(
     )
     .await;
     let session = task.finish(result)?;
-    let target = crate::launch::LaunchTarget::of(client);
-    if target.gated() {
-        crate::app::start_watchdog(target.watch_mode(), &state, Some(app.clone()));
+    if let Some(target) = crate::launch::LaunchTarget::of(client) {
+        if target.gated() {
+            crate::app::start_watchdog(target.watch_mode(), &state, Some(app.clone()));
+        }
     }
     crate::operations::changed(&crate::events::ui(&app), "session", &session.id);
     Ok(session)
@@ -1041,6 +1051,15 @@ fn client_config_path(client: Client) -> Result<(std::path::PathBuf, &'static st
         Client::Codex => (dir.join("config.toml"), "toml"),
         Client::ClaudeDesktop => (dir.join(qb_app::workspace::DESKTOP_CONFIG_FILE), "desktop"),
         Client::ClaudeCode => (dir.join("settings.json"), "json"),
+        // 阶段 4 的两档：只给编辑器，没有快捷开关（那几个开关是 Claude Code / Codex 的键）。
+        Client::GeminiCli => (dir.join(".gemini").join("settings.json"), "plain-json"),
+        Client::GrokBuild => (
+            dirs::home_dir()
+                .ok_or_else(|| GateError::Other("找不到用户目录".into()))?
+                .join(".grok")
+                .join("config.toml"),
+            "plain-toml",
+        ),
         // `router_environment` 在上一行已经拒绝了反重力；到不了这里。
         Client::Antigravity | Client::AntigravityIde => {
             return Err(GateError::Other("反重力没有中转路径".into()))
@@ -1075,7 +1094,7 @@ pub fn station_client_config(client: Client) -> Result<ClientConfig> {
 #[tauri::command]
 pub fn station_client_config_save(client: Client, text: String) -> Result<ClientConfig> {
     let (path, format) = client_config_path(client)?;
-    if format != "toml" {
+    if !format.ends_with("toml") {
         // 存之前先校验。存一份坏 JSON 进去，客户端启动时会直接崩，
         // 而错误信息在客户端那边，面板上什么都看不到。
         crate::config_io::object(&text)?;

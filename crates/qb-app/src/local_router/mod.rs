@@ -90,7 +90,8 @@ const HOP_BY_HOP: &[&str] = &[
 ///
 /// 不丢的话,客户端里残留的旧 Key 会跟着请求一起上去 —— 上游可能用它而不是我们的,
 /// 于是「换了线路但账还记在旧 Key 上」,排查时完全看不出来。
-const CLIENT_AUTH_HEADERS: &[&str] = &["authorization", "x-api-key", "api-key"];
+/// `x-goog-api-key` 是 Gemini CLI 带的（阶段 4）。
+const CLIENT_AUTH_HEADERS: &[&str] = &["authorization", "x-api-key", "api-key", "x-goog-api-key"];
 
 /// 上游凭证怎么带。
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -148,17 +149,26 @@ pub fn api_format(
     }
 }
 
-/// 一条线的上游实际说什么协议：写了就是写的那个，没写跟客户端一样（Claude 两个是 Anthropic、Codex 是 Responses）。
+/// 一条线的上游实际说什么协议：写了就是写的那个，没写跟客户端一样（Claude 两个是 Anthropic、Codex 是 Responses；
+/// 阶段 4 起 Grok Build 是 Responses、Gemini CLI 是 Gemini 原生）。
 pub fn speaks(route: &qb_station::station::route::Route) -> qb_proxy::convert::plan::ApiFormat {
-    use qb_proxy::convert::plan::ApiFormat;
     route
         .upstream_format
         .map(api_format)
-        .unwrap_or(if route.client == Client::Codex {
-            ApiFormat::OpenaiResponses
-        } else {
-            ApiFormat::Anthropic
-        })
+        .unwrap_or_else(|| native_format(route.client))
+}
+
+/// 这个软件自己说的协议（线路没写协议时就是它，原样转发）。
+pub fn native_format(client: Client) -> qb_proxy::convert::plan::ApiFormat {
+    use qb_proxy::convert::plan::ApiFormat;
+    match client {
+        Client::Codex | Client::GrokBuild => ApiFormat::OpenaiResponses,
+        Client::GeminiCli => ApiFormat::GeminiNative,
+        Client::ClaudeCode
+        | Client::ClaudeDesktop
+        | Client::Antigravity
+        | Client::AntigravityIde => ApiFormat::Anthropic,
+    }
 }
 
 impl Upstream {
@@ -758,8 +768,10 @@ pub fn admit(
             "本机路由没有设路由口令，不接受从别的机器来的请求。",
         ));
     };
-    let presented = headers
-        .get("x-api-key")
+    // Gemini CLI 把 Key 放在 `x-goog-api-key` 里（阶段 4）：别的机器上的 Gemini CLI 把口令填成 API Key 就是它。
+    let presented = ["x-api-key", "x-goog-api-key"]
+        .iter()
+        .find_map(|name| headers.get(*name))
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
         .or_else(|| {
@@ -850,6 +862,10 @@ pub fn client_base_url(client: Client, port: u16) -> String {
         // Models and auxiliary requests do not identify their client by endpoint.
         Client::Codex => format!("{base}{CODEX_PREFIX}"),
         Client::ClaudeDesktop => format!("{base}{DESKTOP_PREFIX}"),
+        // 阶段 4：Gemini CLI 拿的是 `GOOGLE_GEMINI_BASE_URL`（它自己再接 `/v1beta/...`），
+        // Grok Build 的模型表 `base_url` 要带 `/v1`（它自己只接 `/responses`）。
+        Client::GeminiCli => format!("{base}{GEMINI_PREFIX}"),
+        Client::GrokBuild => format!("{base}{GROK_PREFIX}/v1"),
         // 反重力没有中转路径（端点写死在它自己的 app.asar 里），`workspace::environment_save`
         // 与 `router_environment` 在入口就拒绝，这一支**永远不该被写进任何配置**。
         // 仍给一个一眼认得出来源的路径，而不是静默套用别的软件的前缀：万一哪天漏到
@@ -908,6 +924,8 @@ fn client_key(c: Client) -> &'static str {
         Client::Codex => "codex",
         Client::Antigravity => "antigravity",
         Client::AntigravityIde => "antigravity-ide",
+        Client::GeminiCli => "gemini-cli",
+        Client::GrokBuild => "grok-build",
     }
 }
 
@@ -951,6 +969,38 @@ pub fn join_url(base: &str, path_and_query: &str) -> String {
 /// 之间同名，不能根据协议路径猜身份；旧版无前缀 Responses 路径仍兼容。
 const DESKTOP_PREFIX: &str = "/cd";
 const CODEX_PREFIX: &str = "/codex";
+/// Gemini CLI 的中转那一档（阶段 4）。
+const GEMINI_PREFIX: &str = "/gemini";
+/// Grok Build 的中转那一档（阶段 4）。
+const GROK_PREFIX: &str = "/grok";
+
+/// `path` 以 `prefix` 开头、后面紧跟 `/` 或者到头（`/cdx` 不算 `/cd`）：剥掉前缀之后的那一段。
+fn strip_client_prefix<'a>(path: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = path.strip_prefix(prefix)?;
+    if rest.is_empty() {
+        Some("/")
+    } else if rest.starts_with('/') || rest.starts_with('?') {
+        Some(rest)
+    } else {
+        None
+    }
+}
+
+/// 去掉查询串里的某一个参数（Gemini 的 `?key=`：那是客户端带来的占位 Key，路由换成线路自己的鉴权头）。
+fn drop_query_param(path: &str, name: &str) -> String {
+    let Some((bare, query)) = path.split_once('?') else {
+        return path.to_string();
+    };
+    let kept: Vec<&str> = query
+        .split('&')
+        .filter(|pair| !pair.is_empty() && pair.split('=').next() != Some(name))
+        .collect();
+    if kept.is_empty() {
+        bare.to_string()
+    } else {
+        format!("{bare}?{}", kept.join("&"))
+    }
+}
 
 /// 从请求路径认出这一发是哪个软件发来的,并给出**要转发给上游的路径**。
 ///
@@ -959,6 +1009,8 @@ const CODEX_PREFIX: &str = "/codex";
 /// | `/cd/v1/messages` | Claude 桌面端 | `/v1/messages` |
 /// | `/v1/messages` | Claude Code | 原样 |
 /// | `/codex/v1/...` | Codex | `/v1/...` |
+/// | `/gemini/v1beta/...` | Gemini CLI（阶段 4） | `/v1beta/...`，去掉查询串里的 `key` |
+/// | `/grok/v1/...` | Grok Build（阶段 4） | `/v1/...` |
 /// | `/v1/responses` · `/v1/chat/completions` | 旧版 Codex | 原样 |
 /// | 其它 | Claude Code（兜底） | 原样 |
 ///
@@ -973,6 +1025,12 @@ const CODEX_PREFIX: &str = "/codex";
 /// 一律拒绝会让那些请求全挂;而认错软件的代价只是日志上那一栏归错类,
 /// 不影响这一发请求本身打到哪。两害相权取轻。
 pub fn route_of(path: &str) -> (Client, String) {
+    if let Some(rest) = strip_client_prefix(path, GEMINI_PREFIX) {
+        return (Client::GeminiCli, drop_query_param(rest, "key"));
+    }
+    if let Some(rest) = strip_client_prefix(path, GROK_PREFIX) {
+        return (Client::GrokBuild, rest.to_string());
+    }
     if let Some(rest) = path.strip_prefix(CODEX_PREFIX) {
         if rest.is_empty() || rest.starts_with('/') {
             return (
@@ -1058,12 +1116,25 @@ mod tests {
     /// 曲线图统统串到另一条线上,而每一发请求都成功,看不出任何异常。
     #[test]
     fn the_base_url_we_hand_out_is_the_one_route_of_reads_back() {
-        for client in [Client::ClaudeCode, Client::ClaudeDesktop, Client::Codex] {
+        // 阶段 4 起多了 Gemini CLI、Grok Build 两档（交接文档 §5.4：两头对着改，这条测试扩到新前缀）。
+        for client in [
+            Client::ClaudeCode,
+            Client::ClaudeDesktop,
+            Client::Codex,
+            Client::GeminiCli,
+            Client::GrokBuild,
+        ] {
             let base = client_base_url(client, DEFAULT_PORT);
-            // 客户端会在 base 后面接上它自己那条路径。
-            let path = match client {
-                Client::Codex => "/v1/responses",
-                _ => "/v1/messages",
+            // 客户端会在 base 后面接上它自己那条路径；转给上游的是剥掉软件前缀之后的那一段。
+            let (path, upstream) = match client {
+                Client::Codex => ("/v1/responses", "/v1/responses"),
+                Client::GeminiCli => (
+                    "/v1beta/models/gemini-3-pro:streamGenerateContent?alt=sse",
+                    "/v1beta/models/gemini-3-pro:streamGenerateContent?alt=sse",
+                ),
+                // Grok 的 base 自己带着 `/v1`，它只接 `/responses`。
+                Client::GrokBuild => ("/responses", "/v1/responses"),
+                _ => ("/v1/messages", "/v1/messages"),
             };
             let full = format!("{base}{path}");
             let after_host = full
@@ -1071,8 +1142,25 @@ mod tests {
                 .expect("base 必须只绑回环");
             let (got, forward) = route_of(after_host);
             assert_eq!(got, client, "{full} 被认成了 {got:?}");
-            assert_eq!(forward, path, "{full} 转给上游时前缀没剥干净");
+            assert_eq!(forward, upstream, "{full} 转给上游时前缀没剥干净");
         }
+    }
+
+    #[test]
+    fn a_key_in_the_gemini_query_string_never_reaches_the_upstream() {
+        // 客户端带来的是占位 Key；放进查询串转出去的话，站点的访问日志里就有它（而且站点会拿它鉴权失败）。
+        let (client, forward) =
+            route_of("/gemini/v1beta/models/m:generateContent?key=qb-gate-local-router&alt=sse");
+        assert_eq!(client, Client::GeminiCli);
+        assert_eq!(forward, "/v1beta/models/m:generateContent?alt=sse");
+        assert_eq!(
+            route_of("/gemini/v1beta/models?key=x").1,
+            "/v1beta/models",
+            "只剩 key 一个参数时连问号一起去掉"
+        );
+        // `/grokx` 不是 `/grok`、`/geminis` 不是 `/gemini`。
+        assert_eq!(route_of("/grokx/v1/messages").0, Client::ClaudeCode);
+        assert_eq!(route_of("/geminis/v1/messages").0, Client::ClaudeCode);
     }
 
     /// 反重力没有中转路径。它拿到的 base_url 必须**一眼认得出是「没有路」**，

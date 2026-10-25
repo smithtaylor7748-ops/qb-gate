@@ -220,6 +220,9 @@ pub fn router_environment_id(client: Client) -> String {
         Client::ClaudeCode => "claude-code",
         Client::ClaudeDesktop => "claude-desktop",
         Client::Codex => "codex",
+        // 阶段 4 的两档中转命令行。
+        Client::GeminiCli => "gemini-cli",
+        Client::GrokBuild => "grok-build",
         // 永远建不出来（`router_environment` 入口就拒绝），id 只是让报错里有个名字。
         Client::Antigravity => "antigravity",
         Client::AntigravityIde => "antigravity-ide",
@@ -281,6 +284,8 @@ pub fn router_environment(client: Client) -> Result<Environment> {
             Client::Codex => "Codex · 走本机路由",
             Client::ClaudeDesktop => "Claude 桌面端 · 走本机路由",
             Client::ClaudeCode => "Claude Code · 走本机路由",
+            Client::GeminiCli => "Gemini CLI · 走本机路由",
+            Client::GrokBuild => "Grok Build · 走本机路由",
             // 上面 `reject_if_no_relay_path` 已经拦下；这一支只是让 match 完整。
             Client::Antigravity | Client::AntigravityIde => "反重力 · 没有中转路径",
         }
@@ -290,13 +295,16 @@ pub fn router_environment(client: Client) -> Result<Environment> {
         credential_id: None,
         model: String::new(),
         small_model: String::new(),
-        wire_api: if client == Client::Codex {
+        wire_api: if matches!(client, Client::Codex | Client::GrokBuild) {
             "responses"
         } else {
             "chat"
         }
         .into(),
-        auth_style: if client == Client::Codex {
+        auth_style: if matches!(
+            client,
+            Client::Codex | Client::GrokBuild | Client::GeminiCli
+        ) {
             "env_key"
         } else {
             "bearer_token"
@@ -331,6 +339,8 @@ pub fn router_environment(client: Client) -> Result<Environment> {
 /// | Claude Code | **不带** | 它自己往后面接 `/v1/messages` |
 /// | Claude 桌面端 | **不带** | 同上 —— 它把 `inferenceGatewayBaseUrl` 当前缀，自己接 `/v1/...` |
 /// | Codex | 带 | 它按 OpenAI 那套，base 就到 `/v1` 为止 |
+/// | Grok Build（阶段 4） | 带 | 同 Codex，它只接 `/responses` |
+/// | Gemini CLI（阶段 4） | **不带** | `GOOGLE_GEMINI_BASE_URL` 是前缀，它自己接 `/v1beta/...` |
 ///
 /// ⛔ 桌面端这一档 0.17.0 之前落在 Codex 那个分支上(多接了一个 `/v1`)。
 /// 当时看不出症状,因为桌面端根本起不来;现在起得来了,多一段就是 404,
@@ -338,7 +348,10 @@ pub fn router_environment(client: Client) -> Result<Environment> {
 pub fn client_base(raw: &str, client: Client) -> Result<String> {
     let base = crate::endpoint::endpoint_base(raw)?;
     Ok(
-        if matches!(client, Client::ClaudeCode | Client::ClaudeDesktop) {
+        if matches!(
+            client,
+            Client::ClaudeCode | Client::ClaudeDesktop | Client::GeminiCli
+        ) {
             base.strip_suffix("/v1").unwrap_or(&base).to_string()
         } else if base.ends_with("/v1") {
             base
@@ -770,12 +783,50 @@ pub fn configuration_files(db: &Repository, e: &Environment) -> Result<Vec<Edit>
                 body: Some(serde_json::to_vec_pretty(&body)?),
             });
         }
+        // 阶段 4：Gemini CLI 的配置在中转环境自己的目录里（启动时 `GEMINI_CLI_HOME` 指向它），
+        // ⛔ 不碰官方 Gemini 槽位的目录。
+        Client::GeminiCli => {
+            let key = key.as_deref().unwrap_or(crate::local_router::ROUTER_KEY);
+            let gemini = dir.join(".gemini");
+            edits.push(text_edit(gemini.join(".env"), |text| {
+                crate::relay::command_line::gemini_env(text, &m.base_url, key)
+            })?);
+            edits.push(text_edit(
+                gemini.join("settings.json"),
+                crate::relay::command_line::gemini_settings,
+            )?);
+        }
+        // Grok Build 没有能挪配置目录的环境变量：写它自己的 `~\.grok\config.toml`，只动 `[model."qb-gate"]`
+        // 那一张表和 `models.default`（`relay::command_line` 顶上写了为什么）。
+        Client::GrokBuild => {
+            let key = key.as_deref().unwrap_or(crate::local_router::ROUTER_KEY);
+            let path = dirs::home_dir()
+                .ok_or_else(|| GateError::Other("找不到用户目录，写不了 Grok Build 的配置".into()))?
+                .join(".grok")
+                .join("config.toml");
+            edits.push(text_edit(path, |text| {
+                crate::relay::command_line::grok_config_toml(text, &m.base_url, key, &e.model)
+            })?);
+        }
         Client::Antigravity | Client::AntigravityIde => {
             // `environment_save` 在入口就拒绝了这两档；到这里说明有人绕过了入口，照样拒绝。
             reject_if_no_relay_path(e.client)?;
         }
     }
     Ok(edits)
+}
+
+/// 读一个文本配置、按 `next` 算出新内容，做成一条改动（计划时读到的字节就是提交前要核对的那份）。
+fn text_edit(path: PathBuf, next: impl FnOnce(&str) -> Result<String>) -> Result<Edit> {
+    let old = config_io::read_optional(&path)?;
+    let text = String::from_utf8(old.clone().unwrap_or_default())
+        .map_err(|e| GateError::Other(e.to_string()))?;
+    let body = next(&text)?;
+    Ok(Edit {
+        path,
+        expected: old,
+        body: Some(body.into_bytes()),
+    })
 }
 
 /// 桌面端那份配置文件叫什么。
@@ -885,15 +936,63 @@ pub fn apply(id: &str) -> Result<Environment> {
     apply_in(&db, id)
 }
 
+/// 配置清单（`environments.hashes`）里认得的文件。键是存进库里的写法，值是它相对什么目录。
+///
+/// ⛔ 库里存的键**只许是这几个**：读回来时按键拼路径，认不出的一律拒绝 —— 不然库里写一个任意路径，
+/// 「检查配置有没有被外部改过」就成了读任意文件的口子。原来只有环境目录下的四个文件名；
+/// 阶段 4 加了 Gemini CLI 的两个（在环境目录的 `.gemini\` 下）和 Grok Build 的那一个（在使用者目录下）。
+const MANIFEST_IN_ENV_DIR: &[&str] = &[
+    "settings.json",
+    "config.toml",
+    DESKTOP_CONFIG_FILE,
+    "auth.json",
+    ".gemini/.env",
+    ".gemini/settings.json",
+];
+const MANIFEST_GROK: &str = "~/.grok/config.toml";
+
+/// 一个配置文件在清单里记成什么。环境目录下的记相对路径（`/` 分隔，顶层的就是文件名，跟原来一样）；
+/// Grok Build 那份记 [`MANIFEST_GROK`]；别的记文件名（读回来时会被拒，等于「不认得」）。
+fn manifest_key(env_dir: &Path, path: &Path) -> String {
+    if let Ok(rel) = path.strip_prefix(env_dir) {
+        return rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+    }
+    if dirs::home_dir().is_some_and(|h| path == h.join(".grok").join("config.toml")) {
+        return MANIFEST_GROK.to_string();
+    }
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// 清单里的键换回路径。认不出的是 `None`。
+fn manifest_path(env_dir: &Path, key: &str) -> Option<PathBuf> {
+    if MANIFEST_IN_ENV_DIR.contains(&key) {
+        return Some(
+            key.split('/')
+                .fold(env_dir.to_path_buf(), |p, seg| p.join(seg)),
+        );
+    }
+    if key == MANIFEST_GROK {
+        return dirs::home_dir().map(|h| h.join(".grok").join("config.toml"));
+    }
+    None
+}
+
 fn apply_in(db: &Repository, id: &str) -> Result<Environment> {
     let mut e: Environment = db.get("environments", id)?;
     let edits = configuration_files(db, &e)?;
+    let env_dir = crate::config_io::environment_dir(&db.root, &e.id)?;
     let hashes: BTreeMap<String, String> = edits
         .iter()
         .filter_map(|e| {
             e.body.as_ref().map(|b| {
                 (
-                    e.path.file_name().unwrap().to_string_lossy().to_string(),
+                    manifest_key(&env_dir, &e.path),
                     hex::encode(Sha256::digest(b)),
                 )
             })
@@ -922,20 +1021,12 @@ fn configuration_state(db: &Repository, e: &Environment) -> Result<String> {
         )
         .map_err(|e| GateError::Database(e.to_string()))?;
     let hashes: BTreeMap<String, String> = serde_json::from_str(&hashes)?;
+    let env_dir = crate::config_io::environment_dir(&db.root, &e.id)?;
     for (name, hash) in hashes {
-        if ![
-            "settings.json",
-            "config.toml",
-            DESKTOP_CONFIG_FILE,
-            "auth.json",
-        ]
-        .contains(&name.as_str())
-        {
+        let Some(path) = manifest_path(&env_dir, &name) else {
             return Err(GateError::Other("配置清单文件名无效".into()));
-        }
-        let bytes = config_io::read_optional(
-            &crate::config_io::environment_dir(&db.root, &e.id)?.join(name),
-        )?;
+        };
+        let bytes = config_io::read_optional(&path)?;
         if bytes
             .as_ref()
             .map(|b| hex::encode(Sha256::digest(b)))
@@ -1149,6 +1240,85 @@ pub fn codex_official_dirs(slot_id: &str) -> Result<(PathBuf, PathBuf)> {
     })
 }
 
+/// 阶段 4 的两档中转命令行（Gemini CLI、Grok Build）：配置写好（`apply`），起一个带窗口的命令行。
+///
+/// 不走 [`crate::launch::LaunchTarget`]：它们只走中转、不带官方身份，门禁也没给它们上锁 —— 不验 IP、不持租约、
+/// IP 变了也不收（`gated = false`）。会话照样登记，中转站页看得到它在跑、停得掉。
+fn launch_relay_only(
+    client: Client,
+    kind: IdentityKind,
+    id: &str,
+    working_dir: Option<String>,
+) -> Result<Session> {
+    if kind != IdentityKind::Relay {
+        return Err(GateError::Other(
+            "这个软件只走中转：QB Gate 不替它起官方身份".into(),
+        ));
+    }
+    let working_dir = working_dir
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().display().to_string());
+    if !Path::new(&working_dir).is_dir() {
+        return Err(GateError::Other("工作目录不存在".into()));
+    }
+    let db = Repository::open()?;
+    let stored: Environment = db.get("environments", id)?;
+    if stored.client != client {
+        return Err(GateError::Other("客户端与中转环境不匹配".into()));
+    }
+    let e = apply(id)?;
+    let (exe, env) = match client {
+        Client::GeminiCli => {
+            let cli = crate::plugins::sillytavern::find_official_gemini()?;
+            let p: Provider = db.get("providers", &e.provider_id)?;
+            (
+                cli.node,
+                vec![
+                    (
+                        crate::sessions::GEMINI_CLI_ENTRY_ENV.to_string(),
+                        cli.entry.display().to_string(),
+                    ),
+                    // ⛔ 指向中转环境自己的目录，不是官方 Gemini 槽位的目录。
+                    ("GEMINI_CLI_HOME".to_string(), e.config_dir.clone()),
+                    // `.env` 里已经写了这两项；环境变量再给一份，压过使用者全局设的同名变量。
+                    ("GOOGLE_GEMINI_BASE_URL".to_string(), env_base(&p, &e)?),
+                    (
+                        "GEMINI_API_KEY".to_string(),
+                        crate::local_router::ROUTER_KEY.to_string(),
+                    ),
+                ],
+            )
+        }
+        Client::GrokBuild => (find_on_path(&["grok.exe", "grok.cmd"]).ok_or_else(|| {
+            GateError::NotFound(
+                "Grok Build（grok）。装好、让它在 PATH 里之后再点启动；指到本机路由的配置已经写进 ~\\.grok\\config.toml".into(),
+            )
+        })?, Vec::new()),
+        _ => unreachable!("只有中转那一档的两个软件走这里"),
+    };
+    crate::sessions::start(
+        LaunchContext {
+            client,
+            identity_kind: kind,
+            identity_id: id.into(),
+            config_dir: e.config_dir.clone(),
+            working_dir,
+        },
+        &exe,
+        env,
+        false,
+        e.revision,
+    )
+}
+
+/// 在 `PATH` 里找第一个存在的文件（按 `names` 的先后、目录的先后）。
+fn find_on_path(names: &[&str]) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .flat_map(|dir| names.iter().map(move |n| dir.join(n)))
+        .find(|p| p.is_file())
+}
+
 /// Windows 的「拒绝访问」有三副面孔：本地化文案、英文文案、HRESULT。任一命中都算。
 fn looks_like_access_denied(msg: &str) -> bool {
     msg.contains("0x80070005") || msg.contains("Access is denied") || msg.contains("拒绝访问")
@@ -1169,7 +1339,14 @@ pub async fn launch(
         // 反重力没有中转路径；`environment_save` 已经拦下建环境，这里再兜一道。
         reject_if_no_relay_path(client)?;
     }
-    let target = crate::launch::LaunchTarget::of(client);
+    if client.is_relay_only() {
+        return launch_relay_only(client, kind, id, working_dir);
+    }
+    // 阶段 4 的两档中转软件（Gemini CLI、Grok Build）不走这里：它们没有启动目标、不持门禁租约，
+    // 由 `usecase::relay_cli` 起一个带窗口的命令行。
+    let target = crate::launch::LaunchTarget::of(client).ok_or_else(|| {
+        GateError::Other("这个软件只走中转，从中转站页启动（它不经门禁、不持租约）".into())
+    })?;
     let exe = crate::launch::resolve(target)?;
     // ⛔ 桌面端是 Electron 单实例：已经在跑的时候再起一遍，只会把旧窗口
     // 拉到前面，**新给的环境变量一个都不生效**。不拦的话症状是
@@ -1242,6 +1419,10 @@ pub async fn launch(
                 // 函数开头已经拒绝了反重力的中转身份；这里只是让 match 完整。
                 Client::Antigravity | Client::AntigravityIde => {
                     return Err(GateError::Other("反重力没有中转路径".into()))
+                }
+                // 函数开头已经交给 `launch_relay_only` 了。
+                Client::GeminiCli | Client::GrokBuild => {
+                    return launch_relay_only(client, kind, id, Some(working_dir))
                 }
             }
             .into(),
@@ -1522,6 +1703,9 @@ mod tests {
                 Client::ClaudeCode => "CLAUDE_CONFIG_DIR",
                 // 反重力不传配置目录变量（单一身份，起的就是本机那份）。
                 Client::Antigravity | Client::AntigravityIde => "",
+                // 阶段 4：Gemini CLI 的中转目录走 `GEMINI_CLI_HOME`（`launch_relay_only`）；Grok 没有目录变量。
+                Client::GeminiCli => "GEMINI_CLI_HOME",
+                Client::GrokBuild => "",
             }
         };
         assert_eq!(keys(Client::ClaudeDesktop), "CLAUDE_USER_DATA_DIR");
@@ -1677,7 +1861,14 @@ mod tests {
             topup_per_usd: None,
         };
         db.put("providers", "p", &provider).unwrap();
-        for client in [Client::ClaudeCode, Client::ClaudeDesktop, Client::Codex] {
+        // 阶段 4 起多了 Gemini CLI（它的两份配置都在中转环境目录里）。Grok Build 不在这里：
+        // 它写的是真实的 `~\.grok\config.toml`，单测不碰真实状态（写法在 `relay::command_line` 里测）。
+        for client in [
+            Client::ClaudeCode,
+            Client::ClaudeDesktop,
+            Client::Codex,
+            Client::GeminiCli,
+        ] {
             let id = router_environment_id(client);
             let dir = config_io::environment_dir(&root, &id).unwrap();
             let env = Environment {
@@ -1703,6 +1894,8 @@ mod tests {
                 Client::ClaudeCode => "settings.json",
                 Client::ClaudeDesktop => DESKTOP_CONFIG_FILE,
                 Client::Codex => "config.toml",
+                Client::GeminiCli => ".gemini/settings.json",
+                Client::GrokBuild => unreachable!("写的是真实的 ~/.grok，单测不碰"),
                 Client::Antigravity | Client::AntigravityIde => unreachable!("没有中转路径"),
             };
             let path = dir.join(name);
@@ -1724,7 +1917,15 @@ mod tests {
             } else {
                 "keep_me"
             }));
-            assert!(after.contains("127.0.0.1"));
+            if client == Client::GeminiCli {
+                // Gemini CLI 的地址在 `.env` 里，`settings.json` 只选认证方式。
+                assert!(after.contains("gemini-api-key"));
+                let env_file = std::fs::read_to_string(dir.join(".gemini").join(".env")).unwrap();
+                assert!(env_file.contains("GOOGLE_GEMINI_BASE_URL=http://127.0.0.1"));
+                assert!(env_file.contains(crate::local_router::ROUTER_KEY));
+            } else {
+                assert!(after.contains("127.0.0.1"));
+            }
             if client == Client::Codex {
                 let auth = dir.join("auth.json");
                 let saved = std::fs::read_to_string(&auth).unwrap();
@@ -1739,6 +1940,36 @@ mod tests {
         }
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn manifest_keys_round_trip_and_unknown_ones_are_refused() {
+        let env = Path::new("C:/state/environments/qb-router-gemini-cli");
+        for (path, key) in [
+            (env.join("settings.json"), "settings.json"),
+            (env.join(".gemini").join(".env"), ".gemini/.env"),
+            (
+                env.join(".gemini").join("settings.json"),
+                ".gemini/settings.json",
+            ),
+        ] {
+            assert_eq!(manifest_key(env, &path), key);
+            assert_eq!(manifest_path(env, key).unwrap(), path);
+        }
+        if let Some(home) = dirs::home_dir() {
+            let grok = home.join(".grok").join("config.toml");
+            assert_eq!(manifest_key(env, &grok), MANIFEST_GROK);
+            assert_eq!(manifest_path(env, MANIFEST_GROK).unwrap(), grok);
+        }
+        // 库里写一个任意路径，不许拿它去读文件。
+        for bad in [
+            "../../secret.txt",
+            "C:/Windows/win.ini",
+            ".gemini/../x",
+            "notes.txt",
+        ] {
+            assert!(manifest_path(env, bad).is_none(), "{bad}");
+        }
     }
 
     #[test]

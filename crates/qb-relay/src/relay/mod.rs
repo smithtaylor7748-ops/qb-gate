@@ -25,6 +25,8 @@
 //!
 //! 两条都有单测钉着，见文件末尾。
 
+/// Gemini CLI、Grok Build 两档中转命令行的配置写法（中转站重构阶段 4）。
+pub mod command_line;
 pub mod presets;
 
 use crate::error::{GateError, Result};

@@ -125,6 +125,9 @@ const CLIENTS: { id: Client; name: string; short: string }[] = [
   { id: "claude-code", name: "Claude Code", short: "Claude Code" },
   { id: "claude-desktop", name: "Claude 桌面端", short: "桌面端" },
   { id: "codex", name: "Codex 桌面端", short: "Codex 桌面端" },
+  // 阶段 4 的两档中转命令行（排在后面，前三个分页的位置不变）。
+  { id: "gemini-cli", name: "Gemini CLI", short: "Gemini CLI" },
+  { id: "grok-build", name: "Grok Build", short: "Grok Build" },
 ];
 
 export default function StationCenter() {

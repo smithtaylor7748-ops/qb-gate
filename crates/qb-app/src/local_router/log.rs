@@ -301,6 +301,8 @@ fn usage_event(client: Client, event: &Value) -> bool {
         Client::ClaudeCode | Client::ClaudeDesktop => {
             matches!(kind, "message_start" | "message_delta")
         }
+        // Gemini CLI（阶段 4）：Gemini 原生流的每一块都可能带 `usageMetadata`，最后一块是全量。
+        Client::GeminiCli => event.get("usageMetadata").is_some_and(|u| !u.is_null()),
         _ => {
             kind == "response.completed"
                 || kind == "image_generation.completed"
@@ -311,13 +313,14 @@ fn usage_event(client: Client, event: &Value) -> bool {
     }
 }
 
-/// 流式用量。Claude 按 Anthropic 事件解，其余按 Codex（Responses / Chat）自动认。
+/// 流式用量。Claude 按 Anthropic 事件解，Gemini CLI 按 Gemini 原生（阶段 4），其余按 Codex（Responses / Chat）自动认。
 pub(crate) fn parse_stream_usage(client: Client, events: &[Value]) -> Option<TokenUsage> {
     if events.is_empty() {
         return None;
     }
     match client {
         Client::ClaudeCode | Client::ClaudeDesktop => TokenUsage::from_claude_stream_events(events),
+        Client::GeminiCli => TokenUsage::from_gemini_stream_chunks(events),
         _ => TokenUsage::from_codex_stream_events_auto(events),
     }
     .filter(TokenUsage::has_billable_tokens)
@@ -328,6 +331,7 @@ pub(crate) fn parse_body_usage(client: Client, body: &[u8]) -> Option<TokenUsage
     let value: Value = serde_json::from_slice(body).ok()?;
     match client {
         Client::ClaudeCode | Client::ClaudeDesktop => TokenUsage::from_claude_response(&value),
+        Client::GeminiCli => TokenUsage::from_gemini_response(&value),
         _ => TokenUsage::from_codex_response_auto(&value),
     }
     .filter(TokenUsage::has_billable_tokens)

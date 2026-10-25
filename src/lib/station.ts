@@ -379,19 +379,36 @@ export const UPSTREAM_FORMAT_LABEL: Record<UpstreamFormat, string> = {
   gemini_native: "Gemini 原生",
 };
 
-/** 这个软件自己说的协议 —— 线路没写协议时就是它，原样转发。 */
+/** 说 Responses 的那几个软件（Codex，阶段 4 起还有 Grok Build）：转换的几对跟 Codex 一样。 */
+function speaksResponses(client: Client): boolean {
+  return client === "codex" || client === "grok-build";
+}
+
+/** 这个软件自己说的协议 —— 线路没写协议时就是它，原样转发。跟 Rust 侧 `local_router::native_format` 一致。 */
 export function nativeFormat(client: Client): UpstreamFormat {
-  return client === "codex" ? "openai_responses" : "anthropic";
+  if (speaksResponses(client)) return "openai_responses";
+  if (client === "gemini-cli") return "gemini_native";
+  return "anthropic";
 }
 
 /**
- * 这个软件能转换到哪几种上游协议（cc-switch 搬来的那几对）。Codex 没有转 Gemini 的那一对 ——
+ * 这个软件能转换到哪几种上游协议（cc-switch 搬来的那几对）。Codex / Grok Build 没有转 Gemini 的那一对 ——
  * 后端选到这一对会直接跳过这条线（`convert::plan::select` 的 `Unsupported`）。
+ * Gemini CLI（阶段 4）一对都没有：只能原样转发给 Gemini 原生上游（cc-switch 的 Gemini 路由同样只透传）。
  */
 export function convertibleFormats(client: Client): UpstreamFormat[] {
-  return client === "codex"
-    ? ["openai_chat", "anthropic"]
-    : ["openai_responses", "openai_chat", "gemini_native"];
+  if (speaksResponses(client)) return ["openai_chat", "anthropic"];
+  if (client === "gemini-cli") return [];
+  return ["openai_responses", "openai_chat", "gemini_native"];
+}
+
+/** 这个软件能不能用聚合模型（聚合 id 的编法只有 Claude Code、桌面端、Codex 三种，见 `qb_proxy::aggregate`）。 */
+export function aggregateSupported(client: Client): boolean {
+  return (
+    client === "claude-code" ||
+    client === "claude-desktop" ||
+    client === "codex"
+  );
 }
 
 /** 这条线要不要本机路由转换协议：写了协议、而且跟软件自己说的不一样。不转回 `null`。 */
@@ -409,7 +426,9 @@ export function suggestUpstreamFormat(
   client: Client,
   p: Protocols,
 ): UpstreamFormat | null {
-  const native = client === "codex" ? p.openai_responses : p.anthropic;
+  // Gemini 原生不在探测的三种里，也没有可以转换的那几对：不建议。
+  if (client === "gemini-cli") return null;
+  const native = speaksResponses(client) ? p.openai_responses : p.anthropic;
   if (native !== false) return null;
   const probed: Partial<Record<UpstreamFormat, boolean | null>> = {
     anthropic: p.anthropic,

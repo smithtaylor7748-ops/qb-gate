@@ -469,11 +469,7 @@ impl ProbeTarget {
         Self {
             route_id: route_id.to_string(),
             client,
-            speaks: if client == Client::Codex {
-                ApiFormat::OpenaiResponses
-            } else {
-                ApiFormat::Anthropic
-            },
+            speaks: crate::local_router::native_format(client),
             base_url: base_url.to_string(),
             key: key.to_string(),
             mapping: Upstream::default(),

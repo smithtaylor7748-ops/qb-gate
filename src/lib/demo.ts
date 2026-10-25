@@ -1949,7 +1949,8 @@ const stationCurrent: Record<string, string> = {
  * 存了就真的存进这里 —— 只回固定值的话，改完点保存弹回旧值，看起来像没存上。
  */
 const routerSettingsOf = (client: string): RouterSettings => {
-  const codex = client === "codex";
+  // Grok Build 跟 Codex 同一套（阶段 4，见 `RouterSettings::for_client`）。
+  const codex = client === "codex" || client === "grok-build";
   return {
     client: client as RouterSettings["client"],
     auto_failover: true,
@@ -2607,6 +2608,22 @@ const stationSchedules = [
     last_note: "",
     dispatch: { margin: 0.08, min_samples: 3, confirm: 2 },
   },
+  // 阶段 4 的两档中转命令行（跟真后端的 `ALL_CLIENTS` 一样排在后面）。
+  ...(["gemini-cli", "grok-build"] as const).map((client) => ({
+    client,
+    enabled: false,
+    prefs: {
+      axes: ["stable"],
+      floors: {
+        min_success_rate: null,
+        max_ttft_p95_ms: null,
+        max_rate: null,
+      },
+    },
+    last_switch_ms: null,
+    last_note: "",
+    dispatch: { margin: 0.08, min_samples: 3, confirm: 2 },
+  })),
 ];
 
 /** 演示用的那份 settings.json。⛔ 里面没有任何真实路径或 Key。 */
@@ -2653,6 +2670,29 @@ function clientConfigOf(client: string) {
       path: dir + "\\qb-router-claude-desktop\\claude_desktop_config.json",
       text: DEMO_DESKTOP_CONFIG,
       format: "desktop",
+    };
+  // 阶段 4 的两档中转命令行：只给编辑器（跟真后端同一组格式标签）。
+  if (client === "gemini-cli")
+    return {
+      path: dir + "\\qb-router-gemini-cli\\.gemini\\settings.json",
+      text: '{\n  "security": {\n    "auth": {\n      "selectedType": "gemini-api-key"\n    }\n  }\n}',
+      format: "plain-json",
+    };
+  if (client === "grok-build")
+    return {
+      path: "C:\\Users\\demo\\.grok\\config.toml",
+      text: [
+        "[models]",
+        'default = "qb-gate"',
+        "",
+        '[model."qb-gate"]',
+        'name = "QB Gate 本机路由"',
+        'model = "grok-4.5"',
+        'base_url = "http://127.0.0.1:15721/grok/v1"',
+        'api_key = "qb-gate-local-router"',
+        'api_backend = "responses"',
+      ].join("\n"),
+      format: "plain-toml",
     };
   return {
     path: dir + "\\qb-router-claude-code\\settings.json",

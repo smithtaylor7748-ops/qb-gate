@@ -265,6 +265,9 @@ impl Route {
             // 与 serde 一致的段，免得哪天有人绕过入口时 id 段是空的、两条线路撞成一条。
             Client::Antigravity => "antigravity",
             Client::AntigravityIde => "antigravity-ide",
+            // 阶段 4 的两档中转软件。
+            Client::GeminiCli => "gemini-cli",
+            Client::GrokBuild => "grok-build",
         };
         format!("{c}\u{1f}{station_id}\u{1f}{group}")
     }

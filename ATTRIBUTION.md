@@ -121,6 +121,14 @@ Gemini CLI 这个客户端在阶段 4）。`convert/mod.rs` 顶上逐个写明�
 **跟 cc-switch 不一样**：它只让人挑一个地址用；QB Gate 让备用地址参与故障转移（主地址根本连不上时同一发改打它们，
 `local_router::forward::try_line`），挑地址变成「设为主地址」（换站点的 `base_url`）。界面 `StationEndpointsPanel.tsx` 照它的交互重做。
 
+**阶段 4 第四批（2026-10-25，Gemini CLI 与 Grok Build 两档中转，C1 / C2）**：`qb-relay/src/relay/command_line.rs` 改写自
+cc-switch 的 `gemini_config.rs`（`.env` 里的 `GOOGLE_GEMINI_BASE_URL` / `GEMINI_API_KEY`、`settings.json` 的
+`security.auth.selectedType = "gemini-api-key"`）与 `live/project/grok.rs` 的 `GrokProjection::proxy_contract`（`[model."<名称>"]`
+整表 + `models.default`，接口类型 `responses`）。本机路由的 `/gemini`（Gemini 原生、只透传）与 `/grok`（Responses、转换同 Codex）
+照 cc-switch `proxy/server.rs` 的路由表与 `handlers.rs` 的 `handle_gemini`；接线、鉴权头、日志都是 QB Gate 原来那一套。
+**跟 cc-switch 不一样**：Gemini CLI 的配置写进 QB Gate 自己的中转环境目录（`GEMINI_CLI_HOME` 指向它），不写 `~\.gemini`；
+真 Key 不进这两个软件的配置（占位 Key，本机路由换上）；它们不归门禁管、不持租约。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text

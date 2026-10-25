@@ -161,6 +161,8 @@ export const CLIENT_NAMES: Record<Client, string> = {
   codex: "Codex",
   antigravity: "反重力",
   "antigravity-ide": "反重力 IDE",
+  "gemini-cli": "Gemini CLI",
+  "grok-build": "Grok Build",
 };
 export const KIND_NAMES = {
   application: "应用集成",

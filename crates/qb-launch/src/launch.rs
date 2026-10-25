@@ -27,13 +27,19 @@ impl LaunchTarget {
     /// 门禁开关、看门狗档位三样都从这里分叉。各映射各的，漏掉的那一处
     /// 就会悄悄接错档 —— `session_launch` 原来就硬写着 `WatchMode::Cli`，
     /// 经它启动的桌面端挂的是命令行那一档。
-    pub fn of(client: crate::domain::Client) -> Self {
+    ///
+    /// 阶段 4 加的两档中转软件（Gemini CLI、Grok Build，[`Client::is_relay_only`]）**没有启动目标**（`None`）：
+    /// 它们不归门禁管、不持租约，起的是一个带窗口的命令行（`usecase::relay_cli`），不走这一张表后面那一套。
+    ///
+    /// [`Client::is_relay_only`]: crate::domain::Client::is_relay_only
+    pub fn of(client: crate::domain::Client) -> Option<Self> {
         match client {
-            crate::domain::Client::ClaudeCode => LaunchTarget::ClaudeCode,
-            crate::domain::Client::ClaudeDesktop => LaunchTarget::ClaudeDesktop,
-            crate::domain::Client::Codex => LaunchTarget::Codex,
-            crate::domain::Client::Antigravity => LaunchTarget::Antigravity,
-            crate::domain::Client::AntigravityIde => LaunchTarget::AntigravityIde,
+            crate::domain::Client::ClaudeCode => Some(LaunchTarget::ClaudeCode),
+            crate::domain::Client::ClaudeDesktop => Some(LaunchTarget::ClaudeDesktop),
+            crate::domain::Client::Codex => Some(LaunchTarget::Codex),
+            crate::domain::Client::Antigravity => Some(LaunchTarget::Antigravity),
+            crate::domain::Client::AntigravityIde => Some(LaunchTarget::AntigravityIde),
+            crate::domain::Client::GeminiCli | crate::domain::Client::GrokBuild => None,
         }
     }
 
@@ -333,12 +339,15 @@ mod tests {
         );
         assert_eq!(
             LaunchTarget::of(crate::domain::Client::Antigravity),
-            LaunchTarget::Antigravity
+            Some(LaunchTarget::Antigravity)
         );
         assert_eq!(
             LaunchTarget::of(crate::domain::Client::AntigravityIde),
-            LaunchTarget::AntigravityIde
+            Some(LaunchTarget::AntigravityIde)
         );
+        // 阶段 4 的两档中转软件没有启动目标：不归门禁、不持租约。
+        assert_eq!(LaunchTarget::of(crate::domain::Client::GeminiCli), None);
+        assert_eq!(LaunchTarget::of(crate::domain::Client::GrokBuild), None);
         assert_ne!(
             LaunchTarget::Antigravity.holder(),
             LaunchTarget::AntigravityIde.holder()

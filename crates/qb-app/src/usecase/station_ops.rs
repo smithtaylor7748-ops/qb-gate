@@ -1200,7 +1200,14 @@ const ROUTER_SETTINGS_TABLE: &str = "router_settings";
 const DISPATCH_TABLE: &str = "dispatch_queue";
 
 /// 有中转路径的三个软件。反重力没有（`workspace::reject_if_no_relay_path`）。
-pub const RELAY_CLIENTS: [Client; 3] = [Client::ClaudeCode, Client::ClaudeDesktop, Client::Codex];
+pub const RELAY_CLIENTS: [Client; 5] = [
+    Client::ClaudeCode,
+    Client::ClaudeDesktop,
+    Client::Codex,
+    // 阶段 4 的两档中转命令行。
+    Client::GeminiCli,
+    Client::GrokBuild,
+];
 
 /// 读一个软件的本机路由设置。**没存过 = 默认那一份**（[`RouterSettings::for_client`]）；
 /// 别的失败照实报（跟 [`load_schedule`] 同一条规矩）。

@@ -285,13 +285,15 @@ impl RouterSettings {
     /// | | 最多试几条 | 首包 | 静默 | 非流式 | 错误率 / 最少样本 |
     /// |---|---|---|---|---|---|
     /// | Claude Code / 桌面端 | 6 | 90 | 180 | 600 | 0.7 / 15 |
-    /// | Codex | 3 | 60 | **300** | 600 | 0.6 / 10 |
+    /// | Codex、Grok Build | 3 | 60 | **300** | 600 | 0.6 / 10 |
+    /// | Gemini CLI | 同 Claude Code | | | | |
     ///
     /// 只有一处跟 cc-switch 不一样：Codex 的静默超时它是 120 秒，这里取 Codex 自己的默认
     /// （`stream_idle_timeout_ms` = 300 秒）。推理很久才出下一段的长回合会安静好几分钟，
     /// 路由比客户端自己先掐断，等于替它做了一个它没要的决定（原来路由根本没有静默超时）。
+    /// Grok Build（阶段 4）也说 Responses、也跑长推理，取 Codex 那一套。
     pub fn for_client(client: Client) -> Self {
-        let codex = client == Client::Codex;
+        let codex = matches!(client, Client::Codex | Client::GrokBuild);
         Self {
             client,
             auto_failover: true,

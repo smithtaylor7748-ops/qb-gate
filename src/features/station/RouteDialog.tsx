@@ -84,14 +84,23 @@ const CLIENT_NAME: Record<Client, string> = {
   "claude-code": "Claude Code",
   "claude-desktop": "Claude 桌面端",
   codex: "Codex",
+  // 阶段 4 的两档中转命令行。
+  "gemini-cli": "Gemini CLI",
+  "grok-build": "Grok Build",
   // 反重力没有中转路径（后端入口拒绝），线路对话框永远不会拿到它；键只是让 Record 完整。
   antigravity: "反重力",
   "antigravity-ide": "反重力 IDE",
 };
 
-/** 这个软件该看哪一侧的预设。 */
-function presetTarget(client: Client): "codex" | "claude-code" {
-  return client === "codex" ? "codex" : "claude-code";
+/**
+ * 这个软件该看哪一侧的预设。Grok Build（阶段 4）跟 Codex 一样说 Responses，用 Codex 那一份；
+ * Gemini CLI 没有预设（cc-switch 的 Gemini 预设里没有一条是官方类，使用者定了只搬官方类）。
+ */
+function presetTarget(client: Client): "codex" | "claude-code" | null {
+  if (client === "gemini-cli") return null;
+  return client === "codex" || client === "grok-build"
+    ? "codex"
+    : "claude-code";
 }
 
 export default function RouteDialog({
@@ -166,9 +175,14 @@ export default function RouteDialog({
 
   useEffect(() => {
     if (!open) return;
+    const target = presetTarget(owner);
+    if (!target) {
+      setPresets([]);
+      return;
+    }
     let dropped = false;
     void api
-      .relayPresets(presetTarget(owner))
+      .relayPresets(target)
       .then((p) => !dropped && setPresets(p))
       .catch(() => {});
     return () => {

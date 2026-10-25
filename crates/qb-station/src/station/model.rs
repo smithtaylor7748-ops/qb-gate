@@ -53,9 +53,13 @@ impl Protocols {
         match client {
             crate::domain::Client::ClaudeCode
             | crate::domain::Client::ClaudeDesktop
-            | crate::domain::Client::Codex => {
+            | crate::domain::Client::Codex
+            | crate::domain::Client::GrokBuild => {
                 any_of([self.anthropic, self.openai_chat, self.openai_responses])
             }
+            // Gemini CLI 说 Gemini 原生协议，探测不测这一种（阶段 4）：**不猜**，一律「不知道」，
+            // 线路的协议由使用者在线路上写（Gemini 那一档没有转换，只能原样转发给 Gemini 原生上游）。
+            crate::domain::Client::GeminiCli => None,
             // 反重力没有中转路径（端点写死在客户端里），**不是「还没探」，是「探了也没用」**：
             // 回 `Some(false)`，界面上如实显示成「不支持」而不是「未检测」。
             crate::domain::Client::Antigravity | crate::domain::Client::AntigravityIde => {
@@ -71,7 +75,11 @@ impl Protocols {
                 self.anthropic
             }
             // Codex 原样转发只认 Responses；Chat 要转换（阶段 3 之前 Chat 也算，那时本机路由原样转发 Chat 请求）。
-            crate::domain::Client::Codex => self.openai_responses,
+            // Grok Build 同样说 Responses（阶段 4）。
+            crate::domain::Client::Codex | crate::domain::Client::GrokBuild => {
+                self.openai_responses
+            }
+            crate::domain::Client::GeminiCli => None,
             crate::domain::Client::Antigravity | crate::domain::Client::AntigravityIde => {
                 Some(false)
             }

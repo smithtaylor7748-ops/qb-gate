@@ -219,7 +219,11 @@ pub(super) async fn relay(
     record.log.streaming = streaming;
     let mut sessions = Sessions::default();
     if let Some(body) = &json {
-        let format = if is_claude(caller) { "claude" } else { "codex" };
+        let format = match caller {
+            Client::ClaudeCode | Client::ClaudeDesktop => "claude",
+            Client::GrokBuild => "grokbuild",
+            _ => "codex",
+        };
         let found = session::extract_session_id(&inbound.headers, body, format);
         // 只记客户端自己带来的。生成出来的那种每发都不一样，记了只会把一段对话拆成几百段。
         record.log.session_id = found.client_provided.then(|| found.session_id.clone());
@@ -472,6 +476,18 @@ async fn plan_line(
     body: &Outgoing,
 ) -> std::result::Result<LinePlan, ProxyError> {
     let inbound = ctx.inbound;
+    // Gemini CLI 那一档（阶段 4）只有原样转发：cc-switch 的 Gemini 路由也只透传给 Gemini 原生上游，
+    // 没有「Gemini 转别家」的转换。线路标成别的协议就跳过这条、不伤熔断（跟 Codex 标成 Gemini 那一对同一个处置）。
+    if inbound.caller == Client::GeminiCli
+        && line
+            .format
+            .is_some_and(|f| f != plan::ApiFormat::GeminiNative)
+    {
+        return Err(ProxyError::ConfigError(
+            "Gemini CLI 说的是 Gemini 原生协议，这条线标成了别的协议 —— 这一对转不了，换一条线或改线路协议"
+                .into(),
+        ));
+    }
     let claude = is_claude(inbound.caller);
     let conversion = plan::select(claude, &inbound.path, line.format)
         .map_err(|plan::Unsupported(why)| ProxyError::ConfigError(why.to_string()))?;
@@ -1387,8 +1403,8 @@ fn respond_ok(
         }
         SuccessBody::Stream { primed, rest } => {
             // ⛔ Codex 的流:健康判定推迟到流结束（HTTP 200 的 SSE 里会报 `response.failed`），
-            // 名额也到那时才还。Claude 的流照旧在交出去时按状态码记「好」。
-            let defer = caller == Client::Codex && routed;
+            // 名额也到那时才还。Claude 的流照旧在交出去时按状态码记「好」。Grok Build 也说 Responses（阶段 4），同 Codex。
+            let defer = matches!(caller, Client::Codex | Client::GrokBuild) && routed;
             let mut watch = StreamWatch::new(caller);
             if defer {
                 watch = watch.defer_health(&line.route_id, permit);
@@ -2782,5 +2798,115 @@ mod tests {
             "站点答了 502 还去打备用地址"
         );
         assert_eq!(b_hits.lock().unwrap().len(), 1, "该按故障转移换下一条线");
+    }
+
+    // ---- 阶段 4 的两档中转命令行（Gemini CLI、Grok Build）
+
+    const GEMINI_OK: &str = r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2,"totalTokenCount":7}}"#;
+
+    /// Gemini 原生上游：基地址不带 `/v1`（Gemini CLI 自己接 `/v1beta/...`），鉴权头是 `x-goog-api-key`。
+    fn gemini_line(id: &str, addr: SocketAddr) -> Upstream {
+        Upstream {
+            route_id: id.into(),
+            base_url: format!("http://127.0.0.1:{}", addr.port()),
+            auth: UpstreamAuth::GoogleApiKey(format!("g-key-{id}")),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn gemini_cli_is_passed_through_with_the_line_s_own_key_and_no_placeholder() {
+        let (a, hits, heads) = stub_full(Script::json(200, GEMINI_OK)).await;
+        let (b, _) = stub(Script::json(200, GEMINI_OK)).await;
+        let h = two_lines(
+            Client::GeminiCli,
+            gemini_line("a", a),
+            gemini_line("b", b),
+            |_| {},
+        )
+        .await;
+        let (status, _, body) = send(
+            &h,
+            "/gemini/v1beta/models/gemini-3-pro:generateContent?key=qb-gate-local-router",
+            &[("x-goog-api-key", ROUTER_KEY)],
+            r#"{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}"#,
+        )
+        .await;
+        assert_eq!((status, body.as_str()), (200, GEMINI_OK), "原样转发");
+        let (path, sent) = hits.lock().unwrap()[0].clone();
+        assert_eq!(
+            path, "/v1beta/models/gemini-3-pro:generateContent",
+            "前缀和占位 Key 都要剥掉"
+        );
+        assert!(sent.contains("\"contents\""));
+        let head = &heads.lock().unwrap()[0];
+        assert_eq!(head["x-goog-api-key"], "g-key-a", "换成这条线自己的 Key");
+        assert_eq!(
+            head.get_all("x-goog-api-key").iter().count(),
+            1,
+            "客户端的占位 Key 没剥掉"
+        );
+        let log = last_log(&h).await;
+        assert_eq!(log.client, "gemini-cli");
+        assert_eq!(
+            (log.input_tokens, log.output_tokens),
+            (Some(5), Some(2)),
+            "Gemini 的用量没解出来"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_gemini_cli_line_marked_with_another_protocol_is_skipped_without_hurting_its_breaker()
+    {
+        let (a, a_hits) = stub(Script::json(200, CHAT_OK)).await;
+        let (b, b_hits) = stub(Script::json(200, GEMINI_OK)).await;
+        let chat = speaking(
+            ApiFormat::OpenaiChat,
+            UpstreamAuth::Bearer("k".into()),
+            gemini_line("a", a),
+        );
+        let h = two_lines(Client::GeminiCli, chat, gemini_line("b", b), |_| {}).await;
+        let (status, _, _) = send(
+            &h,
+            "/gemini/v1beta/models/m:generateContent",
+            &[],
+            r#"{"contents":[]}"#,
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert!(
+            a_hits.lock().unwrap().is_empty(),
+            "Gemini CLI 没有转 Chat 这一对"
+        );
+        assert_eq!(b_hits.lock().unwrap().len(), 1);
+        let now = chrono::Utc::now().timestamp_millis();
+        assert!(
+            h.state.lock().unwrap().usable("a", now),
+            "这条线自己没坏，熔断不该记它"
+        );
+    }
+
+    #[tokio::test]
+    async fn grok_build_converts_like_codex_through_an_anthropic_line() {
+        let (a, hits, _) = stub_full(Script::json(200, ANTHROPIC_MESSAGE)).await;
+        let (b, _) = stub(Script::json(200, RESPONSES_OK)).await;
+        let a_line = speaking(
+            ApiFormat::Anthropic,
+            UpstreamAuth::ApiKey("k".into()),
+            line("a", a),
+        );
+        let h = two_lines(Client::GrokBuild, a_line, line("b", b), |_| {}).await;
+        let (status, _, body) = send(&h, "/grok/v1/responses", &[], CODEX_REQUEST).await;
+        assert_eq!(status, 200, "{body}");
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            v["object"], "response",
+            "Grok 收到的要是 Responses 的形状：{body}"
+        );
+        assert!(
+            hits.lock().unwrap()[0].0.ends_with("/v1/messages"),
+            "该转成 Anthropic Messages"
+        );
+        assert_eq!(last_log(&h).await.client, "grok-build");
     }
 }

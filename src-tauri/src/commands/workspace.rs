@@ -47,10 +47,12 @@ pub async fn session_launch(
     let session = task.finish(result)?;
     // 只要这个可执行文件归门禁管（= 起的时候拿了租约），就得有看门狗盯着 ——
     // 中转会话不收，但它持着的租约同样要在 IP 变了之后被收回并重新上锁。
-    let target = crate::launch::LaunchTarget::of(client);
-    if target.gated() {
-        // 档位跟着启动目标走，不能硬写 Cli —— 桌面端那一档的口径不一样。
-        crate::app::start_watchdog(target.watch_mode(), &state, Some(app.clone()));
+    // 只走中转的两档（阶段 4）没有启动目标，`workspace::launch` 已经拒绝了，走不到这里。
+    if let Some(target) = crate::launch::LaunchTarget::of(client) {
+        if target.gated() {
+            // 档位跟着启动目标走，不能硬写 Cli —— 桌面端那一档的口径不一样。
+            crate::app::start_watchdog(target.watch_mode(), &state, Some(app.clone()));
+        }
     }
     operations::changed(&events::ui(&app), "session", &session.id);
     Ok(session)

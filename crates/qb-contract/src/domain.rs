@@ -29,6 +29,16 @@ pub enum Client {
     /// 跟 Hub 用同一个 Google 账户往外发请求，所以门禁要一起管；启动、上锁、
     /// 收进程都是独立的可执行文件，故独立成一档。中转侧同样显式拒绝。
     AntigravityIde,
+    /// Gemini CLI 的**中转那一档**（2026-10-25，中转站重构阶段 4，cc-switch 的 C1）：说 Gemini 原生协议，
+    /// 经本机路由 `/gemini` 打这一档自己的线路池。
+    ///
+    /// ⛔ 跟 `qb-accounts` 里的官方 Gemini 槽位**是两回事**：官方那一半走 Google 登录、`GEMINI_CLI_HOME`
+    /// 指向槽位目录；这一档的 `GEMINI_CLI_HOME` 指向中转环境自己的目录，一个字不碰官方槽位。
+    /// 不归门禁管：只走中转、不带官方身份（门禁也没给 Gemini CLI 上锁）。
+    GeminiCli,
+    /// Grok Build（xAI 的命令行工具）的中转那一档（cc-switch 的 C2）：说 Responses 协议，经本机路由 `/grok`。
+    /// QB Gate 不管它的官方登录；不归门禁管。
+    GrokBuild,
 }
 
 impl Client {
@@ -36,6 +46,12 @@ impl Client {
     /// 「没有中转路径」的拒绝、看门狗档位都按这一组走。
     pub fn is_antigravity(self) -> bool {
         matches!(self, Client::Antigravity | Client::AntigravityIde)
+    }
+
+    /// 只有中转那一档、QB Gate 不替它起官方身份的软件（阶段 4 加的两档）。它们不走 `LaunchTarget`、
+    /// 不持门禁租约：起的是一个带窗口的命令行，配置指到本机路由。
+    pub fn is_relay_only(self) -> bool {
+        matches!(self, Client::GeminiCli | Client::GrokBuild)
     }
 }
 

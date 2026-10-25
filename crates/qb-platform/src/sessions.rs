@@ -111,7 +111,11 @@ pub fn start(
         &args,
         &context.working_dir,
         &sanitized_environment(std::env::vars(), env),
-        context.client == Client::ClaudeCode,
+        // 命令行客户端要一个看得见的窗口：Claude Code，以及阶段 4 的两档中转命令行（Gemini CLI、Grok Build）。
+        matches!(
+            context.client,
+            Client::ClaudeCode | Client::GeminiCli | Client::GrokBuild
+        ),
         // 托管会话一律绑定生命周期，与「收不收」无关。
         true,
         None,
@@ -173,7 +177,15 @@ pub fn start(
 /// 面板自己的名字，IDE 不认它 —— 它只是把目录搬到「按 client 给参数的那一处」的载体。
 pub const ANTIGRAVITY_IDE_USER_DATA_ENV: &str = "QB_ANTIGRAVITY_IDE_USER_DATA_DIR";
 
+/// Gemini CLI 的入口脚本（`…\@google\gemini-cli\bundle\gemini.js`）从编排层传到 [`desktop_arguments`] 用的 env 键
+/// （阶段 4，Gemini CLI 的中转那一档）：可执行文件是 `node`，脚本是它的第一个参数。同上，CLI 不认这个名字。
+pub const GEMINI_CLI_ENTRY_ENV: &str = "QB_GEMINI_CLI_ENTRY";
+
 /// 起客户端时要多带的命令行参数。**只有这里给参数**，别在调用方另拼一份。
+///
+/// # Gemini CLI（阶段 4）
+///
+/// 起的是 `node <入口脚本>`：脚本路径由 [`GEMINI_CLI_ENTRY_ENV`] 带过来。
 ///
 /// # Codex 桌面端
 ///
@@ -194,6 +206,13 @@ pub const ANTIGRAVITY_IDE_USER_DATA_ENV: &str = "QB_ANTIGRAVITY_IDE_USER_DATA_DI
 /// - 使用者装了第三方汉化壳时 `launcher()` 起的是那层壳，壳**有可能不把这个参数传给里层**。
 ///   那种情况下端口文件不会出现 —— 界面上要说成一句可操作的话，不是静默。
 pub fn desktop_arguments(client: Client, env: &[(String, String)]) -> Vec<String> {
+    if client == Client::GeminiCli {
+        return env
+            .iter()
+            .find(|(k, _)| k == GEMINI_CLI_ENTRY_ENV)
+            .map(|(_, entry)| vec![entry.clone()])
+            .unwrap_or_default();
+    }
     if client == Client::AntigravityIde {
         // 0.30.0：有激活槽位时把它的用户数据目录交给 IDE（VS Code 标准开关）。
         // 目录由编排层放进 env 里带过来 —— 跟 Codex 的 `CODEX_ELECTRON_USER_DATA_PATH` 同一个搬法。
@@ -1131,6 +1150,22 @@ mod tests {
             "Hub 没有槽位"
         );
         assert!(desktop_arguments(Client::Codex, &env).is_empty());
+    }
+
+    /// 阶段 4：Gemini CLI 的中转那一档起的是 `node <入口脚本>`，脚本从 env 里那一个键来；别的 client 不吃它。
+    #[test]
+    fn gemini_cli_gets_its_entry_script_as_the_only_argument() {
+        let env = vec![(
+            GEMINI_CLI_ENTRY_ENV.to_string(),
+            "C:\\npm\\node_modules\\@google\\gemini-cli\\bundle\\gemini.js".to_string(),
+        )];
+        assert_eq!(
+            desktop_arguments(Client::GeminiCli, &env),
+            vec!["C:\\npm\\node_modules\\@google\\gemini-cli\\bundle\\gemini.js"]
+        );
+        assert!(desktop_arguments(Client::GeminiCli, &[]).is_empty());
+        assert!(desktop_arguments(Client::ClaudeCode, &env).is_empty());
+        assert!(desktop_arguments(Client::GrokBuild, &env).is_empty());
     }
 
     /// 把 shell 当启动目标会毁掉它的开关 —— 这条钉住那道拦截。

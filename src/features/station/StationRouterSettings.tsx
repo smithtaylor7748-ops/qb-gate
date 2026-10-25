@@ -26,6 +26,7 @@ import type { Client } from "../../lib/generated/Client";
 import type { RouterStatus } from "../../lib/generated/RouterStatus";
 import {
   aggregateHowTo,
+  aggregateSupported,
   convertedFormat,
   parseModelList,
   stationApi,
@@ -419,116 +420,126 @@ export default function StationRouterSettings({
         />
       </div>
 
-      {/* ------------------------------------------------ 聚合模型（阶段 3） */}
-      <h4 className="qb-st-sect">聚合模型</h4>
-      <label className="qb-st-check">
-        <input
-          type="checkbox"
-          checked={agg.enabled}
-          onChange={(e) => setAgg({ enabled: e.target.checked })}
-        />
-        把勾上的几条线的模型一起列给这个软件：选哪个模型，那一发就直达那条线
-      </label>
-      <p className="qb-st-note">
-        模型 id 带 <code>qbg</code>{" "}
-        前缀，跟普通模型名分得开；不带前缀的照旧按派单走。
-        <b>选中的那一发只打那一条线：不换线、不记熔断。</b>
-        那条线移出名单或删掉之后，带着旧 id 的请求直接报错，不会悄悄改用别的线
-        （那等于拿别家的钱、别家的模型回答）。{aggregateHowTo(client)}
-      </p>
-      {routes.length > 0 && (
-        <div className="qb-st-tw">
-          <table>
-            <thead>
-              <tr>
-                <th>聚合</th>
-                <th>线路</th>
-                <th>
-                  发布哪些模型（逗号分隔；空 = 用这条线模型映射的目标模型）
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {routes.map((r) => {
-                const on = agg.members.includes(r.id);
-                return (
-                  <tr key={r.id}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        aria-label={`把「${label(r)}」放进聚合`}
-                        checked={on}
-                        onChange={(e) => toggleMember(r.id, e.target.checked)}
-                      />
-                    </td>
-                    <td>
-                      {label(r)}
-                      {convertedFormat(r) && (
-                        <span className="qb-st-pill qb-st-pill--accent">
-                          转换
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      <input
-                        value={modelText[r.id] ?? ""}
-                        disabled={!on}
-                        aria-label={`「${label(r)}」发布的模型`}
-                        placeholder={
-                          mappedTargets(r) || "例如 glm-5[1M], glm-4.7"
-                        }
-                        onChange={(e) =>
-                          setModelText({ ...modelText, [r.id]: e.target.value })
-                        }
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {agg.enabled && (
-        <div>
-          <span className="qb-st-k">现在发布的（保存后刷新）</span>
-          {published.length === 0 ? (
-            <p className="qb-st-note">
-              还没有：勾上线、保存。没配 Key
-              的线、没写模型又没配模型映射的线发布不了模型。
-            </p>
-          ) : (
+      {/* ------------------------------------------------ 聚合模型（阶段 3）：只有 Claude Code、桌面端、Codex 有 */}
+      {aggregateSupported(client) && (
+        <>
+          <h4 className="qb-st-sect">聚合模型</h4>
+          <label className="qb-st-check">
+            <input
+              type="checkbox"
+              checked={agg.enabled}
+              onChange={(e) => setAgg({ enabled: e.target.checked })}
+            />
+            把勾上的几条线的模型一起列给这个软件：选哪个模型，那一发就直达那条线
+          </label>
+          <p className="qb-st-note">
+            模型 id 带 <code>qbg</code>{" "}
+            前缀，跟普通模型名分得开；不带前缀的照旧按派单走。
+            <b>选中的那一发只打那一条线：不换线、不记熔断。</b>
+            那条线移出名单或删掉之后，带着旧 id
+            的请求直接报错，不会悄悄改用别的线
+            （那等于拿别家的钱、别家的模型回答）。{aggregateHowTo(client)}
+          </p>
+          {routes.length > 0 && (
             <div className="qb-st-tw">
               <table>
                 <thead>
                   <tr>
-                    <th>模型 id</th>
-                    <th>显示名</th>
-                    <th />
+                    <th>聚合</th>
+                    <th>线路</th>
+                    <th>
+                      发布哪些模型（逗号分隔；空 = 用这条线模型映射的目标模型）
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {published.map((m) => (
-                    <tr key={m.id}>
-                      <td>
-                        <code>{m.id}</code>
-                      </td>
-                      <td className="qb-st-dim">{m.display_name}</td>
-                      <td>
-                        <button
-                          className="qb-st-iconbtn"
-                          onClick={() => void copy(m.id)}
-                        >
-                          复制
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {routes.map((r) => {
+                    const on = agg.members.includes(r.id);
+                    return (
+                      <tr key={r.id}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            aria-label={`把「${label(r)}」放进聚合`}
+                            checked={on}
+                            onChange={(e) =>
+                              toggleMember(r.id, e.target.checked)
+                            }
+                          />
+                        </td>
+                        <td>
+                          {label(r)}
+                          {convertedFormat(r) && (
+                            <span className="qb-st-pill qb-st-pill--accent">
+                              转换
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          <input
+                            value={modelText[r.id] ?? ""}
+                            disabled={!on}
+                            aria-label={`「${label(r)}」发布的模型`}
+                            placeholder={
+                              mappedTargets(r) || "例如 glm-5[1M], glm-4.7"
+                            }
+                            onChange={(e) =>
+                              setModelText({
+                                ...modelText,
+                                [r.id]: e.target.value,
+                              })
+                            }
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
-        </div>
+          {agg.enabled && (
+            <div>
+              <span className="qb-st-k">现在发布的（保存后刷新）</span>
+              {published.length === 0 ? (
+                <p className="qb-st-note">
+                  还没有：勾上线、保存。没配 Key
+                  的线、没写模型又没配模型映射的线发布不了模型。
+                </p>
+              ) : (
+                <div className="qb-st-tw">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>模型 id</th>
+                        <th>显示名</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {published.map((m) => (
+                        <tr key={m.id}>
+                          <td>
+                            <code>{m.id}</code>
+                          </td>
+                          <td className="qb-st-dim">{m.display_name}</td>
+                          <td>
+                            <button
+                              className="qb-st-iconbtn"
+                              onClick={() => void copy(m.id)}
+                            >
+                              复制
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {error && (

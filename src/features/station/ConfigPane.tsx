@@ -135,10 +135,13 @@ export default function ConfigPane({ client }: { client: Client }) {
   // 三个软件三份文件，三种界面。⛔ 桌面端不能跟 Claude Code 共用那一套 ——
   // 六个快捷开关和模型映射写的全是 Claude Code 的环境变量，桌面端不读，
   // 勾了会往它的配置里塞一堆没人认的键，而界面上看起来一切正常。
-  const problem = format !== "toml" ? jsonProblem(text) : null;
+  // 阶段 4：Gemini CLI（`plain-json`）、Grok Build（`plain-toml`）只给编辑器 —— 那几个开关是 Claude Code / Codex 的键。
+  const toml = format === "toml" || format === "plain-toml";
+  const problem = toml ? null : jsonProblem(text);
   const dirty = text !== saved;
   const json = format === "json";
   const desktop = format === "desktop";
+  const plain = format === "plain-json" || format === "plain-toml";
 
   return (
     <div className="qb-st-cfg">
@@ -240,6 +243,11 @@ export default function ConfigPane({ client }: { client: Client }) {
         </>
       ) : desktop ? (
         <DesktopNote />
+      ) : plain ? (
+        <p className="qb-st-note">
+          这个软件没有快捷开关，直接改下面的配置。指到本机路由的那几项（地址、占位
+          Key）每次启动都会写回去，别的照你改的留着。
+        </p>
       ) : (
         <CodexSwitches
           text={text}
