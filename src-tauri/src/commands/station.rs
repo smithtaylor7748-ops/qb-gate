@@ -664,6 +664,109 @@ pub fn station_coexist_remove(
     qb_app::usecase::coexist_ops::status(&db, &route_id)
 }
 
+// ------------------------------------------------------------------ 阶段 4 · C5 四个小件
+
+/// 把 Claude Code 的线路复制一份给桌面端（同站点、同分组、同一把 Key，Key 还在后端）。回新加的那几条。
+#[tauri::command]
+pub fn station_import_desktop_routes(app: tauri::AppHandle) -> Result<Vec<Route>> {
+    use tauri::Manager;
+    let db = crate::repository::Repository::open()?;
+    let added = station_ops::import_desktop_routes(&db)?;
+    if !added.is_empty() {
+        load_upstreams(&app.state::<AppState>())?;
+    }
+    Ok(added)
+}
+
+/// 中转环境和各个官方目录的 Claude Code 跳没跳首次确认。只读。
+#[tauri::command]
+pub fn claude_onboarding_status() -> Result<Vec<qb_app::usecase::claude_code_ops::OnboardingTarget>>
+{
+    qb_app::usecase::claude_code_ops::onboarding_status(&crate::repository::Repository::open()?)
+}
+
+/// 设 / 撤「跳过首次确认」。官方那几份只有点名到才改；撤销只撤面板自己设的。
+#[tauri::command]
+pub fn claude_onboarding_set(
+    target: String,
+    skip: bool,
+) -> Result<Vec<qb_app::usecase::claude_code_ops::OnboardingTarget>> {
+    qb_app::usecase::claude_code_ops::onboarding_set(
+        &crate::repository::Repository::open()?,
+        &target,
+        skip,
+    )
+}
+
+/// 各个编辑器里的 Claude Code 插件联动了没有。只读。
+#[tauri::command]
+pub fn claude_vscode_status() -> Result<Vec<qb_app::usecase::claude_code_ops::EditorLink>> {
+    qb_app::usecase::claude_code_ops::vscode_status(&crate::repository::Repository::open()?)
+}
+
+/// 让这个编辑器里的 Claude Code 插件走中转环境（只写占位 Key）。
+#[tauri::command]
+pub fn claude_vscode_link(
+    editor: String,
+) -> Result<Vec<qb_app::usecase::claude_code_ops::EditorLink>> {
+    qb_app::usecase::claude_code_ops::vscode_link(&crate::repository::Repository::open()?, &editor)
+}
+
+#[tauri::command]
+pub fn claude_vscode_unlink(
+    editor: String,
+) -> Result<Vec<qb_app::usecase::claude_code_ops::EditorLink>> {
+    qb_app::usecase::claude_code_ops::vscode_unlink(
+        &crate::repository::Repository::open()?,
+        &editor,
+    )
+}
+
+/// 各个 Codex 目录里的会话分桶。会话多的时候要扫一阵，放在后台线程。
+#[tauri::command]
+pub async fn codex_history_status(
+) -> Result<Vec<qb_app::usecase::codex_history_ops::CodexHistoryHome>> {
+    tauri::async_runtime::spawn_blocking(|| {
+        qb_app::usecase::codex_history_ops::status(&crate::repository::Repository::open()?)
+    })
+    .await
+    .map_err(|e| GateError::Other(e.to_string()))?
+}
+
+/// 把勾选的那几个桶并进当前那个。⛔ 先备份；官方目录也一样要使用者逐个勾。
+#[tauri::command]
+pub async fn codex_history_merge(
+    home: String,
+    from: Vec<String>,
+) -> Result<Vec<qb_app::usecase::codex_history_ops::CodexHistoryHome>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        qb_app::usecase::codex_history_ops::merge(
+            &crate::repository::Repository::open()?,
+            &home,
+            from,
+        )
+    })
+    .await
+    .map_err(|e| GateError::Other(e.to_string()))?
+}
+
+/// 按账本还原一次并桶。
+#[tauri::command]
+pub async fn codex_history_restore(
+    home: String,
+    backup: String,
+) -> Result<Vec<qb_app::usecase::codex_history_ops::CodexHistoryHome>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        qb_app::usecase::codex_history_ops::restore(
+            &crate::repository::Repository::open()?,
+            &home,
+            &backup,
+        )
+    })
+    .await
+    .map_err(|e| GateError::Other(e.to_string()))?
+}
+
 /// 一个软件的派单队列：上次选中的那条 + 手动排的顺序。
 #[tauri::command]
 pub fn station_dispatch_queue(client: Client) -> Result<qb_station::router::DispatchQueue> {

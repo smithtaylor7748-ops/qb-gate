@@ -33,11 +33,14 @@ import {
 import {
   Check,
   ChevronRight,
+  Download,
   Fingerprint,
+  History,
   Play,
   Shuffle,
   SlidersHorizontal,
   Square,
+  Wrench,
   X,
   Zap,
 } from "lucide-react";
@@ -79,6 +82,8 @@ import StationSchedule from "./StationSchedule";
 import StationAudit from "./StationAudit";
 import StationLogs from "./StationLogs";
 import StationTurnState from "./StationTurnState";
+import StationClaudeCodeExtras from "./StationClaudeCodeExtras";
+import StationCodexHistory from "./StationCodexHistory";
 import RouteDialog from "./RouteDialog";
 
 /** 三个维度在界面上叫什么。跟调度设置弹窗里那份是同一套写法。 */
@@ -236,6 +241,10 @@ function StationBoard({
   const [schedOpen, setSchedOpen] = useState(false);
   const [routerOpen, setRouterOpen] = useState(false);
   const [turnOpen, setTurnOpen] = useState(false);
+  /** 阶段 4 · C5：Claude Code 的两个小件、Codex 会话归桶。 */
+  const [extrasOpen, setExtrasOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [logOpen, setLogOpen] = useState<Route | null>(null);
   const [auditOpen, setAuditOpen] = useState<Route | null>(null);
   const [auditBusy, setAuditBusy] = useState(false);
@@ -975,6 +984,65 @@ function StationBoard({
             <ChevronRight size={14} className="chev" aria-hidden="true" />
           </button>
 
+          {/* 阶段 4 · C5：每个软件各自那一件。 */}
+          {client === "claude-code" && (
+            <button
+              type="button"
+              className="qb-st-schedcfg"
+              onClick={() => setExtrasOpen(true)}
+            >
+              <span className="qb-st-sheen" aria-hidden="true" />
+              <Wrench size={14} aria-hidden="true" />
+              首次确认 · VS Code 插件
+              <ChevronRight size={14} className="chev" aria-hidden="true" />
+            </button>
+          )}
+          {client === "claude-desktop" && (
+            <button
+              type="button"
+              className="qb-st-schedcfg"
+              disabled={importing}
+              title="同一个站点、同一个分组、同一把 Key 复制一份给桌面端；已经有的跳过"
+              onClick={() => {
+                setImporting(true);
+                void stationApi
+                  .importDesktopRoutes()
+                  .then((added) => {
+                    if (added.length === 0)
+                      toast.info(
+                        "没有要导入的：Claude Code 的线路桌面端都有了（或者还没绑 Key）",
+                      );
+                    else
+                      toast.ok(`从 Claude Code 导入了 ${added.length} 条线路`);
+                    onChanged();
+                  })
+                  .catch((e: unknown) =>
+                    toast.error(
+                      `导入失败：${e instanceof Error ? e.message : String(e)}`,
+                    ),
+                  )
+                  .finally(() => setImporting(false));
+              }}
+            >
+              <span className="qb-st-sheen" aria-hidden="true" />
+              <Download size={14} aria-hidden="true" />
+              从 Claude Code 导入线路
+              <ChevronRight size={14} className="chev" aria-hidden="true" />
+            </button>
+          )}
+          {client === "codex" && (
+            <button
+              type="button"
+              className="qb-st-schedcfg"
+              onClick={() => setHistoryOpen(true)}
+            >
+              <span className="qb-st-sheen" aria-hidden="true" />
+              <History size={14} aria-hidden="true" />
+              会话归桶 · 找回老会话
+              <ChevronRight size={14} className="chev" aria-hidden="true" />
+            </button>
+          )}
+
           {/* turn-state 只对官方 Codex 有意义,别的软件不显示这个入口。 */}
           {client === "codex" && (
             <button
@@ -1156,6 +1224,24 @@ function StationBoard({
           label={(r) => `${siteName(r.station_id)} · ${r.group || "默认分组"}`}
           onSaved={() => void refreshStatus()}
         />
+      </Modal>
+
+      <Modal
+        open={extrasOpen}
+        onClose={() => setExtrasOpen(false)}
+        title="Claude Code · 首次确认与 VS Code 插件"
+        size="form"
+      >
+        {extrasOpen && <StationClaudeCodeExtras />}
+      </Modal>
+
+      <Modal
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        title="Codex · 会话归桶"
+        size="huge"
+      >
+        {historyOpen && <StationCodexHistory />}
       </Modal>
 
       <Modal

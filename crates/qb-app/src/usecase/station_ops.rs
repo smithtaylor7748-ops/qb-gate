@@ -101,6 +101,30 @@ pub fn sources(db: &Repository, routes: &[Route]) -> Vec<BillingSource> {
     routes.iter().filter_map(|r| source(db, r).ok()).collect()
 }
 
+/// 把 Claude Code 的线路复制一份给桌面端（中转站重构阶段 4，cc-switch 的 `import_claude_desktop_providers_from_claude`）。
+///
+/// 同一个站点、同一个分组、同一把 Key（Key 还在后端，桌面端照样经本机路由、配置里是占位串）；
+/// 倍率、检验结果、模型映射、上游协议一起带过去 —— 两个软件说的都是 Anthropic 协议，映射按档位认，桌面端也认得。
+/// 桌面端已经有同一条线的跳过；没绑 Key 的不带（桌面端拿它也用不了）。返回新加的那几条。
+///
+/// **跟 cc-switch 不一样**：它在导入时按模型名判断「直连还是代理」；QB Gate 的桌面端只走本机路由，不分两档。
+pub fn import_desktop_routes(db: &Repository) -> Result<Vec<Route>> {
+    let routes: Vec<Route> = db.list("station_routes").unwrap_or_default();
+    let mut added = Vec::new();
+    for r in routes.iter().filter(|r| r.client == Client::ClaudeCode) {
+        let id = Route::make_id(Client::ClaudeDesktop, &r.station_id, &r.group);
+        if routes.iter().any(|x| x.id == id) || source(db, r).is_err() {
+            continue;
+        }
+        let mut copy = r.clone();
+        copy.id = id;
+        copy.client = Client::ClaudeDesktop;
+        db.put("station_routes", &copy.id, &copy)?;
+        added.push(copy);
+    }
+    Ok(added)
+}
+
 /// Keep broken routes visible, with an actionable reason instead of blank metrics.
 pub fn route_health<'a>(
     db: &Repository,
@@ -2713,6 +2737,63 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("不属于"));
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn claude_code_routes_copy_to_the_desktop_once_and_only_with_a_key() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        let provider = Provider {
+            id: "site".into(),
+            name: "Fixture".into(),
+            base_url: "https://fixture.invalid/v1".into(),
+            website: String::new(),
+            note: String::new(),
+            tags: vec![],
+            favorite: false,
+            revision: 1,
+            topup_per_usd: None,
+        };
+        db.put("providers", "site", &provider).unwrap();
+        db.set_credential(
+            &Credential {
+                id: "k".into(),
+                provider_id: "site".into(),
+                label: "k".into(),
+                masked: "***".into(),
+                available: true,
+                revision: 1,
+            },
+            &crate::secret::seal("fixture-key").unwrap(),
+        )
+        .unwrap();
+        let mut keyed = Route::new(Client::ClaudeCode, "site", "a");
+        keyed.credential_id = Some("k".into());
+        keyed.model_map.opus = Some("glm-5".into());
+        let bare = Route::new(Client::ClaudeCode, "site", "b");
+        let codex = Route::new(Client::Codex, "site", "c");
+        for r in [&keyed, &bare, &codex] {
+            db.put("station_routes", &r.id, r).unwrap();
+        }
+
+        let added = import_desktop_routes(&db).unwrap();
+        assert_eq!(added.len(), 1, "没绑 Key 的、Codex 的都不带：{added:?}");
+        assert_eq!(added[0].client, Client::ClaudeDesktop);
+        assert_eq!(added[0].group, "a");
+        assert_eq!(
+            added[0].credential_id.as_deref(),
+            Some("k"),
+            "同一把 Key（还在后端）"
+        );
+        assert_eq!(added[0].model_map.opus.as_deref(), Some("glm-5"));
+        assert!(
+            import_desktop_routes(&db).unwrap().is_empty(),
+            "导过的不再导"
+        );
+        let all: Vec<Route> = db.list("station_routes").unwrap();
+        assert_eq!(all.len(), 4, "原来的线一条不动");
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
     }

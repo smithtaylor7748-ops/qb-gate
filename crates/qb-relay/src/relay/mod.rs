@@ -30,6 +30,8 @@ pub mod coexist;
 /// Gemini CLI、Grok Build 两档中转命令行的配置写法（中转站重构阶段 4）。
 pub mod command_line;
 pub mod presets;
+/// VS Code 里的 Claude Code 插件走本机路由（中转站重构阶段 4，占位 Key）。
+pub mod vscode;
 
 use crate::error::{GateError, Result};
 use serde::{Deserialize, Serialize};

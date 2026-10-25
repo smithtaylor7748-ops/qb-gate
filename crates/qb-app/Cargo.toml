@@ -43,3 +43,7 @@ ts-rs.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
+
+[dev-dependencies]
+# 单测里读回 JSONC（VS Code 设置带注释，serde_json 读不了）。
+json5.workspace = true

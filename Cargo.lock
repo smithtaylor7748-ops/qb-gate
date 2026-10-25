@@ -3137,6 +3137,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "json5",
  "qb-accounts",
  "qb-contract",
  "qb-extensions",

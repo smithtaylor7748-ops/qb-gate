@@ -33,6 +33,9 @@ import type { RouterSettings } from "./generated/RouterSettings";
 import type { StationEndpoints } from "./generated/StationEndpoints";
 import type { CoexistStatus } from "./generated/CoexistStatus";
 import type { CoexistTool } from "./generated/CoexistTool";
+import type { OnboardingTarget } from "./generated/OnboardingTarget";
+import type { EditorLink } from "./generated/EditorLink";
+import type { CodexHistoryHome } from "./generated/CodexHistoryHome";
 /**
  * 演示数据 —— 只给截图和界面预览用。
  *
@@ -2013,6 +2016,71 @@ const demoCoexistOf = (routeId: string): CoexistStatus[] =>
     written: demoCoexistWritten.has(`${routeId}|${tool}`),
     problem: null,
   }));
+/** 阶段 4 · C5 的演示数据：中转环境还没跳过首次确认，官方默认目录是使用者自己走完的。 */
+const demoOnboarding: OnboardingTarget[] = [
+  {
+    id: "relay",
+    label: "中转环境（Claude Code · 走本机路由）",
+    path: "C:\\Users\\demo\\AppData\\Local\\qb-gate\\environments\\qb-router-claude-code\\.claude.json",
+    official: false,
+    skipped: false,
+    ours: false,
+    problem: null,
+  },
+  {
+    id: "default",
+    label: "官方 · 默认目录",
+    path: "C:\\Users\\demo\\.claude.json",
+    official: true,
+    skipped: true,
+    ours: false,
+    problem: null,
+  },
+];
+const demoEditors: EditorLink[] = [
+  {
+    editor: "Code",
+    label: "VS Code",
+    path: "C:\\Users\\demo\\AppData\\Roaming\\Code\\User\\settings.json",
+    installed: true,
+    linked: false,
+    problem: null,
+  },
+  {
+    editor: "Cursor",
+    label: "Cursor",
+    path: "C:\\Users\\demo\\AppData\\Roaming\\Cursor\\User\\settings.json",
+    installed: false,
+    linked: false,
+    problem: null,
+  },
+];
+const demoCodexHomes: CodexHistoryHome[] = [
+  {
+    id: "relay",
+    label: "中转环境（Codex · 走本机路由）",
+    path: "C:\\Users\\demo\\AppData\\Local\\qb-gate\\environments\\qb-router-codex",
+    official: false,
+    exists: true,
+    current: "qb-gate",
+    buckets: [{ provider: "ccswitch", sessions: 12, threads: 12 }],
+    compressed: 3,
+    backups: [],
+    problem: null,
+  },
+  {
+    id: "default",
+    label: "官方 · 默认目录",
+    path: "C:\\Users\\demo\\.codex",
+    official: true,
+    exists: true,
+    current: "openai",
+    buckets: [],
+    compressed: 0,
+    backups: [],
+    problem: null,
+  },
+];
 /** 演示里的路由口令。一眼看得出是演示用的，别像真的。 */
 const DEMO_ROUTER_KEY = "qbr-demo-not-a-real-key-0000";
 /** 本机路由的网络设置（R6）。默认只本机、直连 —— 跟真后端没存过时一样。 */
@@ -2916,6 +2984,75 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     const id = String(args?.routeId ?? "");
     demoCoexistWritten.delete(`${id}|${String(args?.tool)}`);
     return demoCoexistOf(id);
+  },
+  // 阶段 4 · C5 四个小件。演示里都只在内存里记。
+  station_import_desktop_routes: () => {
+    const added: Array<(typeof stationRoutes)[number]> = [];
+    for (const r of stationRoutes.filter(
+      (x) => x.client === "claude-code" && x.credential_id,
+    )) {
+      const id = `claude-desktop\u001f${r.station_id}\u001f${r.group}`;
+      if (stationRoutes.some((x) => x.id === id)) continue;
+      const copy = { ...r, id, client: "claude-desktop" as const };
+      stationRoutes.push(copy);
+      added.push(copy);
+    }
+    return added;
+  },
+  claude_onboarding_status: () => demoOnboarding.map((t) => ({ ...t })),
+  claude_onboarding_set: (args) => {
+    const t = demoOnboarding.find((x) => x.id === args?.target);
+    if (!t) throw new Error("不认得这个目标");
+    if (args?.skip) {
+      if (!t.skipped) Object.assign(t, { skipped: true, ours: true });
+    } else {
+      if (t.skipped && !t.ours)
+        throw new Error(
+          `${t.label} 的首次确认是 Claude Code 自己记下的，面板不动它`,
+        );
+      Object.assign(t, { skipped: false, ours: false });
+    }
+    return demoOnboarding.map((x) => ({ ...x }));
+  },
+  claude_vscode_status: () => demoEditors.map((e) => ({ ...e })),
+  claude_vscode_link: (args) => {
+    const e = demoEditors.find((x) => x.editor === args?.editor);
+    if (!e?.installed)
+      throw new Error("没找到这个编辑器的用户设置目录：多半还没装");
+    e.linked = true;
+    return demoEditors.map((x) => ({ ...x }));
+  },
+  claude_vscode_unlink: (args) => {
+    const e = demoEditors.find((x) => x.editor === args?.editor);
+    if (e) e.linked = false;
+    return demoEditors.map((x) => ({ ...x }));
+  },
+  codex_history_status: () => structuredClone(demoCodexHomes),
+  codex_history_merge: (args) => {
+    const h = demoCodexHomes.find((x) => x.id === args?.home);
+    const from = (args?.from as string[] | undefined) ?? [];
+    if (!h || from.length === 0) throw new Error("没勾要并进来的桶");
+    const moved = h.buckets.filter((b) => from.includes(b.provider));
+    h.buckets = h.buckets.filter((b) => !from.includes(b.provider));
+    h.backups.unshift({
+      id: `demo-${Date.now()}`,
+      at_ms: Date.now(),
+      from,
+      to: h.current,
+      sessions: moved.reduce((n, b) => n + b.sessions, 0),
+      threads: moved.reduce((n, b) => n + b.threads, 0),
+      restored: false,
+    });
+    return structuredClone(demoCodexHomes);
+  },
+  codex_history_restore: (args) => {
+    const h = demoCodexHomes.find((x) => x.id === args?.home);
+    const b = h?.backups.find((x) => x.id === args?.backup);
+    if (!h || !b || b.restored) throw new Error("找不到这份备份");
+    b.restored = true;
+    for (const p of b.from)
+      h.buckets.push({ provider: p, sessions: b.sessions, threads: b.threads });
+    return structuredClone(demoCodexHomes);
   },
   // 聚合模型的预览（阶段 3）。id 照后端的格式拼；桌面端的数字在演示里是假的（真后端按 key 和模型名散列）。
   station_aggregate_models: (args) => {

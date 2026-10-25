@@ -305,7 +305,7 @@ fn to_yaml(v: &Value) -> Result<serde_yaml_ng::Value> {
 // ------------------------------------------------------------------ 读写
 
 /// 在一份 JSONC / JSON5 里把 `path` 那一处设成 `value`（`None` = 删掉），按原样改写。
-fn jsonc_set(existing: &str, path: &[&str], value: Option<Value>) -> Result<String> {
+pub(crate) fn jsonc_set(existing: &str, path: &[&str], value: Option<Value>) -> Result<String> {
     let source = if existing.trim().is_empty() {
         "{}\n"
     } else {

@@ -42,11 +42,17 @@ import type { EndpointTestView } from "./generated/EndpointTestView";
 import type { StationEndpoints } from "./generated/StationEndpoints";
 import type { CoexistStatus } from "./generated/CoexistStatus";
 import type { CoexistTool } from "./generated/CoexistTool";
+import type { OnboardingTarget } from "./generated/OnboardingTarget";
+import type { EditorLink } from "./generated/EditorLink";
+import type { CodexHistoryHome } from "./generated/CodexHistoryHome";
 
 export type {
   AggregateModel,
   CoexistStatus,
   CoexistTool,
+  OnboardingTarget,
+  EditorLink,
+  CodexHistoryHome,
   AggregateSettings,
   EndpointTestView,
   StationEndpoints,
@@ -190,6 +196,29 @@ export const stationApi = {
   /** 只删 QB Gate 写的那一条。 */
   coexistRemove: (routeId: string, tool: CoexistTool) =>
     call<CoexistStatus[]>("station_coexist_remove", { routeId, tool }),
+
+  // ---- 阶段 4 · C5 四个小件
+  /** 把 Claude Code 的线路复制一份给桌面端（同站点、同分组、同一把 Key）。回新加的那几条。 */
+  importDesktopRoutes: () => call<Route[]>("station_import_desktop_routes"),
+  /** 中转环境和各个官方目录的 Claude Code 跳没跳首次确认。 */
+  onboardingStatus: () => call<OnboardingTarget[]>("claude_onboarding_status"),
+  /** 官方那几份只有点名到才改；撤销只撤面板自己设的。 */
+  setOnboarding: (target: string, skip: boolean) =>
+    call<OnboardingTarget[]>("claude_onboarding_set", { target, skip }),
+  /** 各个编辑器里的 Claude Code 插件联动了没有。 */
+  vscodeStatus: () => call<EditorLink[]>("claude_vscode_status"),
+  /** 让插件走中转环境：编辑器设置里加两条变量（只有占位 Key）、关掉登录提示。 */
+  vscodeLink: (editor: string) =>
+    call<EditorLink[]>("claude_vscode_link", { editor }),
+  vscodeUnlink: (editor: string) =>
+    call<EditorLink[]>("claude_vscode_unlink", { editor }),
+  /** 各个 Codex 目录里的会话分桶。 */
+  codexHistory: () => call<CodexHistoryHome[]>("codex_history_status"),
+  /** ⛔ 先备份再改；`from` 是使用者逐个勾的桶。 */
+  codexHistoryMerge: (home: string, from: string[]) =>
+    call<CodexHistoryHome[]>("codex_history_merge", { home, from }),
+  codexHistoryRestore: (home: string, backup: string) =>
+    call<CodexHistoryHome[]>("codex_history_restore", { home, backup }),
   /** 派单队列：上次选中的那条 + 手动排的顺序（当前那条失败时依次改用谁）。 */
   dispatchQueue: (client: Client) =>
     call<DispatchQueue>("station_dispatch_queue", { client }),
