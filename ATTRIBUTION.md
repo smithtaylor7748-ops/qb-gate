@@ -61,13 +61,13 @@ MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件
 | `qb-proxy/src/thinking_rectifier.rs` · `thinking_budget_rectifier.rs` · `thinking_optimizer.rs` · `cache_injector.rs` · `tool_media.rs` | 同名（`proxy/`） | `log::` → `tracing::`、路径 |
 | `qb-proxy/src/media_sanitizer.rs` | `proxy/media_sanitizer.rs` | 入参从整条 `Provider` 改成它的能力声明 JSON |
 | `qb-proxy/src/opaque_state_rectifier.rs` | `proxy/opaque_state_rectifier.rs` | 子 agent 读不到任务时的那句说明指路到 QB Gate（原文指向 cc-switch 自己的设置页） |
-| `qb-proxy/src/codex_compaction.rs` | `proxy/providers/codex_compaction.rs` | 只搬纯函数那一半；流式那一半（要 `async-stream`）跟协议转换一起在阶段 3 搬。`ccswitch-compaction-v1:` 前缀照原样保留 —— 它写进 Codex 自己的会话历史，两边认得对方包的摘要 |
+| `qb-proxy/src/codex_compaction.rs` | `proxy/providers/codex_compaction.rs` | 只搬纯函数那一半（Chat / Anthropic 两种转换器在用）；流式那一半 `create_native_compaction_sse_stream`（原生 Responses 中转线上的压缩回合）**阶段 3 也没搬**：Codex 只对名叫 `OpenAI` 的 provider 发压缩请求，QB Gate 写的中转环境叫「本机路由」，这条路走不到 —— 阶段 4 配置写入要是改了 provider 名，同一个提交里搬上（仓库 `CLAUDE.md` 第 20 条）。`ccswitch-compaction-v1:` 前缀照原样保留 —— 它写进 Codex 自己的会话历史，两边认得对方包的摘要 |
 | `qb-proxy/src/envelope.rs` | `proxy/forwarder.rs` 的四个私有函数（2xx 里的错误信封） | 搬出来成公开函数；另加一个 cc-switch 没有的 `inspect_anthropic_start_event` |
 | `qb-proxy/src/classify.rs` | `proxy/forwarder.rs` 的 `categorize_proxy_error` 的状态码分桶 | 跟 QB Gate 自己的熔断三档、sub2guard 的报错文字表合成一张（见下面 sub2guard 那一节） |
 
 测试跟着文件一起搬（qb-proxy 261 条）；跟 cc-switch 对不上的只有：`calculator` 的两条 `Decimal` / `cost_multiplier`
 测试换成了 `f64` 精度与「Claude 不含缓存」两条，`error` 那条要联网的 reqwest 测试换成了 `response_parts` 的测试，
-`codex_compaction` 的两条 tokio 流测试随流式那一半留到阶段 3。
+`codex_compaction` 的两条 tokio 流测试随流式那一半没搬（见上表）。
 
 **阶段 1 第二批（2026-10-24，本机路由的数据面，`crates/qb-app/src/local_router/`）**：
 
@@ -77,6 +77,21 @@ MIT 要求保留版权声明与许可声明，已在 `src/lib/signals.ts` 文件
 | `local_router/log.rs` | `response_processor.rs` 的「边转发边收用量、流结束才算账」 | 不缓冲整条响应：SSE 只留未结束的那一小段，用量只留算 token 要用的那几个事件；落库改成后台批量写、内存有界 |
 
 `server.rs` / `official.rs` / `mod.rs` 是 QB Gate 原来的 `local_router.rs` 拆开的，不是搬来的。
+
+**阶段 3（2026-10-25，协议转换全套与聚合模型）**：
+
+| QB Gate 的文件 | cc-switch 的出处（`src-tauri/src/`） | 改了什么 |
+|---|---|---|
+| `qb-proxy/src/convert/` 下 `transform*.rs` · `streaming*.rs` · `inline_think.rs` · `reasoning_bridge.rs` · `responses_late_arguments.rs` · `codex_chat_common.rs` · `codex_chat_history.rs` · `codex_responses_sse.rs` · `gemini_schema.rs` · `gemini_shadow.rs` · `models/*` | 同名（`proxy/providers/`） | 只改路径（`crate::proxy::*` → 本 crate 的对应模块，`json_canonical` → `qb_foundation`）和日志宏（`log::` → `tracing::`）；测试一起搬 |
+| `qb-proxy/src/convert/error_mapper.rs` · `gemini_url.rs` | `proxy/error_mapper.rs` · `proxy/gemini_url.rs` | 同上 |
+| `qb-proxy/src/convert/sse_aggregate.rs` | `proxy/handlers.rs` 里把整段 SSE 聚合成一份 JSON 的几个函数（cc-switch #2234 的兜底嗅探）与它们的测试 | 抽成单独的文件；`axum::http::HeaderMap` → `http::HeaderMap`（同一个类型） |
+| `qb-proxy/src/convert/plan.rs` | `proxy/providers/claude.rs` · `codex.rs` 里跟转换有关的那一半（`get_claude_api_format`、`transform_claude_request_for_api_format`、DeepSeek / MiMo 的 thinking 历史规范化、Codex 转 Chat 的 reasoning 参数、`strip_codex_hosted_web_search`、`inject_codex_chat_prompt_cache_key`），以及 `forwarder.rs` 的地址改写与转换时的头规则 | **改写**，不是照搬：按线路自己的 `upstream_format` 与地址判断，不读 cc-switch 的供应商配置；Copilot / Codex OAuth / xAI OAuth 三支不搬；改写后的路径一律带 `/v1`（跟客户端发来的路径同一种写法，基地址末尾已有 `/v1` 时由 `local_router::join_url` 去重） |
+| `qb-proxy/src/aggregate.rs` | `mode/stack.rs`（id 编解码、key 分配、报错的话、模型发现的回答）、`proxy/handlers.rs` 的 `is_claude_model_discovery` / `stack_miss_body` | 前缀 `ccs` → `qbg`（不冒用 CC Switch 的名字）；key 由线路的站点名 → 站点域名 → 分组名生成（线路没有图标）；名单存在本机路由设置里，不写客户端配置（那是阶段 4） |
+| `qb-app/src/local_router/aggregate.rs` | `mode/stack.rs` 的 `resolve` / `resolve_desktop` / `published_members`，`proxy/handlers.rs` 的 `resolve_stack_target` / `handle_models` | 名单从 cc-switch 的设备状态改成 `RouterSettings.aggregate`；不带前缀的照旧走派单（cc-switch 发给「默认那家」）；官方 Codex 当前时直接拒绝带前缀的模型（cc-switch 剥身份头后照转） |
+
+没搬的：`copilot_auth.rs`、`copilot_model_map.rs`、`codex_oauth_auth.rs`、`xai_oauth_auth.rs`、`proxy/copilot_optimizer.rs`，
+以及 `gemini.rs` / `auth.rs` / `adapter.rs`（cc-switch 的 Gemini CLI 客户端与鉴权抽象；QB Gate 的鉴权在 `local_router::UpstreamAuth`，
+Gemini CLI 这个客户端在阶段 4）。`convert/mod.rs` 顶上逐个写明了。
 官方 Codex 那条线（turn-state）照旧不进重试、不换线 —— 跟 cc-switch 的 `provider_supports_failover` 同一个结论。
 
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：

@@ -10,7 +10,7 @@
 
 use crate::app::AppState;
 use crate::error::{GateError, Result};
-use qb_app::local_router::{self, RouterConfig, Upstream, UpstreamAuth};
+use qb_app::local_router::{self, RouterConfig, Upstream};
 use qb_app::usecase::station_billing::{self, StationBillingSettings};
 use qb_app::usecase::station_ops;
 use qb_contract::domain::Client;
@@ -165,24 +165,26 @@ fn client_key(c: Client) -> &'static str {
 fn load_upstreams(state: &AppState) -> Result<usize> {
     let db = crate::repository::Repository::open()?;
     let routes: Vec<Route> = db.list("station_routes")?;
+    let providers: Vec<qb_contract::domain::Provider> = db.list("providers")?;
     let upstreams: Vec<_> = routes
         .iter()
         .filter_map(|route| {
             let source = station_ops::source(&db, route).ok()?;
-            Some(
-                Upstream {
-                    route_id: source.route_id,
-                    base_url: source.base_url,
-                    auth: if route.client == Client::Codex {
-                        UpstreamAuth::Bearer(source.key)
-                    } else {
-                        UpstreamAuth::ApiKey(source.key)
-                    },
-                    ..Default::default()
-                }
-                // 这条线自己的模型映射（2026-10-24 起）。`upstream_format` 阶段 1 还不读：只有原样转发。
-                .with_model_map(&route.model_map),
-            )
+            let site = providers
+                .iter()
+                .find(|p| p.id == route.station_id)
+                .map_or(route.station_id.as_str(), |p| p.name.as_str());
+            let group = if route.group.is_empty() {
+                "默认分组"
+            } else {
+                route.group.as_str()
+            };
+            // 上游协议、模型映射挂上，鉴权头跟着上游协议走（中转站重构阶段 3：`upstream_format` 生效，
+            // 跟客户端不一样时本机路由两头转换）。线路名只给聚合模型的显示名用（跟界面上同一个写法）。
+            Some(Upstream {
+                label: format!("{site} · {group}"),
+                ..Upstream::relay(route, source.base_url, source.key)
+            })
         })
         .collect();
     let n = upstreams.len();
@@ -488,13 +490,29 @@ pub fn station_router_settings_save(
         ));
     }
     let db = crate::repository::Repository::open()?;
-    station_ops::save_router_settings(&db, &settings)?;
+    // 存下的那份可能跟传来的不一样：聚合模型的 key 由后端分、只增不减（`station_ops::settle_aggregate`）。
+    let settings = station_ops::save_router_settings(&db, &settings)?;
     state
         .station
         .lock()
         .map_err(|_| GateError::Other("中转站状态损坏".into()))?
         .set_settings(settings.clone());
     Ok(settings)
+}
+
+/// 一个软件的聚合模型此刻发布哪些（路由设置弹窗里的预览；本机路由答模型发现时发的就是这一份）。
+/// 先按库重装一遍上游：线路刚改过名、换过 Key 也算数。没开聚合时是空的。
+#[tauri::command]
+pub fn station_aggregate_models(
+    state: State<'_, AppState>,
+    client: Client,
+) -> Result<Vec<qb_station::router::AggregateModel>> {
+    load_upstreams(&state)?;
+    Ok(state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?
+        .aggregate_models(client))
 }
 
 /// 一个软件的派单队列：上次选中的那条 + 手动排的顺序。

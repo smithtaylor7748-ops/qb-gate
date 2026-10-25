@@ -1,7 +1,8 @@
 //! 监听、收连接、把一发请求分给两条路：中转线路（[`forward`](super::forward)）、
 //! 官方 Codex（[`official`](super::official)）。
 //!
-//! 这一层只做三件事：认软件、绑这个软件此刻的当前线路、收齐请求体。**绑定拿的是一份拷贝** ——
+//! 这一层只做四件事：认软件、绑这个软件此刻的当前线路、收齐请求体、问聚合模型那一层
+//! （[`aggregate::decide`](super::aggregate::decide)：本机自己答，或者换成名单里那一条）。**绑定拿的是一份拷贝** ——
 //! 之后换上游与这一发无关（`qb_station::router::UpstreamSwitch` 的规矩）。
 
 use super::log::Record;
@@ -185,7 +186,7 @@ async fn handle(
     // 模型名从请求体里抠 —— 日志表上「模型」那一栏要用。抠不出来就空着。
     record.log.model = model_of(&body);
 
-    let inbound = Inbound {
+    let mut inbound = Inbound {
         caller,
         method: parts.method,
         path,
@@ -195,7 +196,17 @@ async fn handle(
         now_ms,
     };
 
+    // 聚合模型（中转站重构阶段 3）：模型发现本机自己答；带保留前缀的模型直达名单里那一条（不换线、不碰熔断），
+    // 解不出来报错、不回落。跟聚合无关的照旧往下走。
+    let official = matches!(upstream.auth, UpstreamAuth::OAuthPassthrough);
+    let (upstream, mode) = match aggregate::decide(&state, &mut inbound, &mut record, official) {
+        aggregate::Decision::Pass => (upstream, forward::Mode::Routed),
+        aggregate::Decision::Answer(response) => return Ok(response),
+        aggregate::Decision::Pinned(line) => (line, forward::Mode::Pinned),
+    };
+
     // 官方 Codex turn-state 模式:保留客户端自带的 OAuth,不剥不换、不进重试。见 `UpstreamAuth`。
+    // 聚合选中的线永远是中转线路（`aggregate::relayable`），到不了这一支。
     let response = if matches!(upstream.auth, UpstreamAuth::OAuthPassthrough) {
         // ⛔ 官方线只给本机用（`admit` 的第三条）。口令对了也不行。
         if let Err((status, why)) = admit(peer, &inbound.headers, key.as_deref(), true) {
@@ -211,7 +222,7 @@ async fn handle(
             Ok(s) => s.relay_http(&http),
             Err(_) => http.clone(),
         };
-        forward::relay(&state, &relay_http, inbound, upstream, record).await
+        forward::relay(&state, &relay_http, inbound, upstream, record, mode).await
     };
     Ok(response)
 }

@@ -99,6 +99,8 @@ pub(crate) struct Record {
     pub log: RouterRequest,
     /// 交给客户端的那个流（有的话）。流结束时从这里读用量与结局。
     pub watch: Option<Arc<Mutex<StreamWatch>>>,
+    /// 要不要入队落库。本机自己答的（聚合模型的模型发现，`aggregate::decide`）不落：一条线都没打。
+    logged: bool,
 }
 
 impl Record {
@@ -114,7 +116,13 @@ impl Record {
             started,
             log,
             watch: None,
+            logged: true,
         }
+    }
+
+    /// 这一发不进请求日志（在飞计数照样减）。
+    pub(crate) fn unlogged(&mut self) {
+        self.logged = false;
     }
 }
 
@@ -161,7 +169,9 @@ impl Drop for Record {
             }
         }
         s.switch.end(self.client);
-        s.push_log(std::mem::take(&mut self.log));
+        if self.logged {
+            s.push_log(std::mem::take(&mut self.log));
+        }
     }
 }
 

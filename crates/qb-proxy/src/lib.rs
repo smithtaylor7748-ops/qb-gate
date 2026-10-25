@@ -17,6 +17,8 @@
 //! | [`usage`] | 响应里用了多少 token、按价目算多少钱 |
 //! | [`session`] | 这一发属于哪段对话 |
 //! | [`sse_text`] | SSE 流怎么切块、跨块的 UTF-8 怎么拼 |
+//! | [`convert`] | 客户端跟线路上游说的协议不一样时，请求和响应怎么换（阶段 3） |
+//! | [`aggregate`] | 聚合模型的 id 怎么编、怎么解、解不出来回什么（阶段 3） |
 //!
 //! # 来源
 //!
@@ -33,10 +35,12 @@
 //! `qb-app::local_router`。⛔ 也不认识官方账户：这里决定的是「换下一条中转线」，
 //! 物理上够不着账户槽位（`architecture.rs` 的 `proxy_logic_can_never_reach_account_switching`）。
 
+pub mod aggregate;
 pub mod body_filter;
 pub mod cache_injector;
 pub mod classify;
 pub mod codex_compaction;
+pub mod convert;
 pub mod envelope;
 pub mod media_sanitizer;
 pub mod model_capabilities;

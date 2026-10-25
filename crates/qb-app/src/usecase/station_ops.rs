@@ -1212,14 +1212,90 @@ pub fn load_router_settings(db: &Repository, client: Client) -> Result<RouterSet
     Ok(s)
 }
 
-/// 存一个软件的本机路由设置。先 [`RouterSettings::validate`]，不合格就整份不存。
-pub fn save_router_settings(db: &Repository, settings: &RouterSettings) -> Result<()> {
+/// 存一个软件的本机路由设置。先理顺聚合名单（[`settle_aggregate`]），再 [`RouterSettings::validate`]，
+/// 不合格就整份不存。返回真正存下的那份（聚合模型的 key 是这里分的，界面要读回去）。
+pub fn save_router_settings(db: &Repository, settings: &RouterSettings) -> Result<RouterSettings> {
+    let mut settings = settings.clone();
+    settle_aggregate(db, &mut settings)?;
     settings.validate().map_err(GateError::Other)?;
     db.put(
         ROUTER_SETTINGS_TABLE,
         &schedule_key(settings.client)?,
-        settings,
-    )
+        &settings,
+    )?;
+    Ok(settings)
+}
+
+/// 聚合名单（中转站重构阶段 3）存之前理一遍：
+///
+/// - **key 登记簿以库里那份为准、只增不减**，界面传来的 `keys` 不认：key 一旦换了指向，客户端带着的旧 id
+///   会被悄悄发到另一条线（cc-switch 的 `allocate_key` 同样只增不减）；
+/// - 名单只收这个软件自己的线（混进别的软件的、官方 Codex 那条，整份拒绝 —— 跟派单顺序同一条规矩）；去空、去重；
+/// - 名单里还没 key 的按站点名 → 站点域名 → 分组名分一个（中文名转不出 key，就往后取）；
+/// - 每条线发布的模型去空白、去重，只留名单里那些线的。
+fn settle_aggregate(db: &Repository, settings: &mut RouterSettings) -> Result<()> {
+    let client = settings.client;
+    let prefix = format!("{}\u{1f}", schedule_key(client)?);
+    let stored = load_router_settings(db, client)?.aggregate;
+    let a = &mut settings.aggregate;
+    let mut members: Vec<String> = Vec::new();
+    for id in std::mem::take(&mut a.members) {
+        let id = id.trim().to_string();
+        if id.is_empty() || members.contains(&id) {
+            continue;
+        }
+        if !id.starts_with(&prefix) {
+            return Err(GateError::Other(format!(
+                "聚合名单里混进了别的软件的线（{id}）：每个软件只能聚合自己的中转线"
+            )));
+        }
+        members.push(id);
+    }
+    a.models = std::mem::take(&mut a.models)
+        .into_iter()
+        .filter(|(id, _)| members.contains(id))
+        .map(|(id, list)| {
+            let mut clean: Vec<String> = Vec::new();
+            for m in list {
+                let m = m.trim().to_string();
+                if !m.is_empty() && !clean.contains(&m) {
+                    clean.push(m);
+                }
+            }
+            (id, clean)
+        })
+        .filter(|(_, list)| !list.is_empty())
+        .collect();
+    a.keys = stored.keys;
+    let fresh: Vec<&String> = members
+        .iter()
+        .filter(|id| !a.keys.values().any(|r| r == *id))
+        .collect();
+    if !fresh.is_empty() {
+        let routes: Vec<Route> = db.list("station_routes")?;
+        let providers: Vec<Provider> = db.list("providers")?;
+        for id in fresh {
+            let route = routes.iter().find(|r| &r.id == id);
+            let provider = route.and_then(|r| providers.iter().find(|p| p.id == r.station_id));
+            let name = provider.map(|p| p.name.as_str()).unwrap_or("");
+            let host = provider.map(|p| host_hint(&p.base_url)).unwrap_or("");
+            let group = route.map(|r| r.group.as_str()).unwrap_or("");
+            qb_proxy::aggregate::allocate_key(&mut a.keys, id, &[name, host, group]);
+        }
+    }
+    a.members = members;
+    Ok(())
+}
+
+/// 站点地址里拿来生成聚合 key 的那一段：主机名去掉 `api.` / `www.` 和顶级域（`https://api.kimi.com/v1` → `kimi`）。
+fn host_hint(base_url: &str) -> &str {
+    let rest = base_url.split_once("://").map_or(base_url, |(_, r)| r);
+    let host = rest.split(['/', ':', '?']).next().unwrap_or("");
+    let host = host
+        .strip_prefix("api.")
+        .or_else(|| host.strip_prefix("www."))
+        .unwrap_or(host);
+    host.rsplit_once('.').map_or(host, |(name, _)| name)
 }
 
 /// 读一个软件的派单队列。没存过 = 空的（没有上次选中的那条、没有顺序）。
@@ -2222,6 +2298,105 @@ mod tests {
             .is_empty());
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn aggregate_keys_are_handed_out_by_the_backend_and_never_move() {
+        // key 换了指向，客户端带着的旧 id 会被悄悄发到另一条线 —— 所以界面传来的 keys 一概不认。
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        for (id, name, url) in [
+            ("kimi", "Kimi", "https://api.kimi.com/v1"),
+            ("zp", "智谱", "https://open.bigmodel.cn/api/anthropic"),
+        ] {
+            let provider = Provider {
+                id: id.into(),
+                name: name.into(),
+                base_url: url.into(),
+                website: String::new(),
+                note: String::new(),
+                tags: vec![],
+                favorite: false,
+                revision: 1,
+                topup_per_usd: None,
+            };
+            db.put("providers", id, &provider).unwrap();
+            let r = Route::new(Client::ClaudeCode, id, "默认");
+            db.put("station_routes", &r.id, &r).unwrap();
+        }
+        let kimi = Route::make_id(Client::ClaudeCode, "kimi", "默认");
+        let zp = Route::make_id(Client::ClaudeCode, "zp", "默认");
+
+        let mut s = RouterSettings::for_client(Client::ClaudeCode);
+        s.aggregate.enabled = true;
+        s.aggregate.members = vec![kimi.clone(), " ".into(), zp.clone(), kimi.clone()];
+        s.aggregate.keys.insert("forged".into(), zp.clone());
+        s.aggregate.models.insert(
+            zp.clone(),
+            vec![" glm-5[1M] ".into(), "glm-5[1M]".into(), "".into()],
+        );
+        s.aggregate
+            .models
+            .insert("not-a-member".into(), vec!["x".into()]);
+        let saved = save_router_settings(&db, &s).unwrap();
+        assert_eq!(
+            saved.aggregate.members,
+            [kimi.clone(), zp.clone()],
+            "去空、去重"
+        );
+        assert_eq!(saved.aggregate.keys.get("kimi"), Some(&kimi), "按站点名分");
+        assert_eq!(
+            saved.aggregate.keys.get("open-bigmodel"),
+            Some(&zp),
+            "中文名转不出就用域名"
+        );
+        assert!(
+            !saved.aggregate.keys.contains_key("forged"),
+            "界面传来的 key 进了登记簿"
+        );
+        assert_eq!(saved.aggregate.models.len(), 1, "名单外的线的模型列表留着");
+        assert_eq!(saved.aggregate.models[&zp], ["glm-5[1M]"]);
+        assert_eq!(
+            load_router_settings(&db, Client::ClaudeCode).unwrap(),
+            saved
+        );
+
+        // 移出名单再加回来：还是原来那个 key（旧会话里的 id 继续有效）；移出期间 key 也不让给别人。
+        let mut out = saved.clone();
+        out.aggregate.members = vec![zp.clone()];
+        out.aggregate.keys.clear();
+        let out = save_router_settings(&db, &out).unwrap();
+        assert_eq!(
+            out.aggregate.keys.get("kimi"),
+            Some(&kimi),
+            "移出名单就删了登记"
+        );
+        let mut back = out.clone();
+        back.aggregate.members.push(kimi.clone());
+        let back = save_router_settings(&db, &back).unwrap();
+        assert_eq!(back.aggregate.keys, saved.aggregate.keys);
+
+        // 别的软件的线、官方 Codex 那条：整份拒绝。
+        for foreign in [
+            Route::make_id(Client::Codex, "kimi", "默认"),
+            crate::local_router::OFFICIAL_CODEX_ROUTE_ID.to_string(),
+        ] {
+            let mut bad = back.clone();
+            bad.aggregate.members.push(foreign.clone());
+            let err = save_router_settings(&db, &bad).unwrap_err();
+            assert!(err.to_string().contains("别的软件"), "{foreign}: {err}");
+        }
+        assert_eq!(load_router_settings(&db, Client::ClaudeCode).unwrap(), back);
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn host_hints_keep_only_the_distinctive_part_of_a_station_address() {
+        assert_eq!(host_hint("https://api.kimi.com/v1"), "kimi");
+        assert_eq!(host_hint("https://www.relay.example/v1"), "relay");
+        assert_eq!(host_hint("http://127.0.0.1:3000"), "127.0.0");
+        assert_eq!(host_hint("relay.test"), "relay");
     }
 
     #[test]

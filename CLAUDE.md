@@ -386,7 +386,8 @@ cargo run -p qb-app --example antigravity-hub-quota -- --account <槽位 id>
 | 文件 | 管什么 |
 |---|---|
 | `mod.rs` | `RouterState`（当前上游、派单顺序、每个软件的路由设置、熔断器、缺模型记忆、日志缓冲）与共用小工具 |
-| `server.rs` | 监听、认软件、绑这个软件此刻的当前线路（拷贝）、收齐请求体，分给下面两条路 |
+| `server.rs` | 监听、认软件、绑这个软件此刻的当前线路（拷贝）、收齐请求体、问聚合模型那一层，分给下面两条路 |
+| `aggregate.rs` | 聚合模型（阶段 3）：模型发现本机自己答；带前缀的模型直达名单里那一条，解不出来报错、不回落 |
 | `forward.rs` | **中转线路**的重试循环（cc-switch `forward_with_retry_inner`） |
 | `official.rs` | **官方 Codex**（turn-state）：不进重试、不换线、不整流，原样直通 |
 | `log.rs` | 一发一条 `RouterRequest`，边转边解用量，后台每 5 秒批量落 `router_requests` |
@@ -412,7 +413,7 @@ cargo run -p qb-app --example antigravity-hub-quota -- --account <槽位 id>
    里 Codex 静默超时那一项从 120 改写成 300（见第 7 条）。
 10. **模型映射挂在线路上、只改顶层 `model` 一个字段**（`Route.model_map` → `Upstream::with_model_map`）：先逐个指定、再档位、最后兜底；
     换线之后用的是那条线自己的那份。**官方线不换模型名**。`qb-station::RouteModelMap` 与 `qb-proxy::ModelMapping`
-    同在第 3 层、互不依赖，换算放在 `qb-app`（别往 `ALLOWED_SIDEWAYS` 里补边）。`Route.upstream_format` 阶段 1 存得下但不读。
+    同在第 3 层、互不依赖，换算放在 `qb-app`（别往 `ALLOWED_SIDEWAYS` 里补边）。`Route.upstream_format` 阶段 3 起生效，见下面「协议转换与聚合模型」。
 11. **路由设置与派单队列是落盘的承诺**（迁移 6：`router_settings`、`dispatch_queue`，一个软件一行，主键是软件名）。
     读的是库里那份、存了立刻 `set_settings` / `set_queue` 到路由器上；只改界面 state 的话路由和界面会漂开。
     不合格的设置**整份拒绝、不夹到范围里**（`RouterSettings::validate`）；派单顺序混进别的软件的线整份拒绝。
@@ -423,6 +424,44 @@ cargo run -p qb-app --example antigravity-hub-quota -- --account <槽位 id>
     token / 首字 / 花费只记在最后回话的那条上；请求本身的问题、客户端断开、这条线不接、缺模型、本机这一侧**不记**
     （跟熔断那边记中性一致），整流前那一次也不记。有本机证据的线这一跳**不去拉账单**。
     ⛔ 请求日志弹窗里那张「站点账单口径」的卡（`station_refresh_health` → `route_health`）照旧只看账单 —— 两种口径不混在一张卡上。
+
+#### 协议转换与聚合模型（2026-10-25，中转站重构阶段 3，照搬 cc-switch v4.0.14）
+
+转换全套在 `qb-proxy::convert`（cc-switch `proxy/providers/*` 原文件名照搬），判断与改写的入口是 `convert::plan`，
+`forward.rs` 只接线；聚合模型的 id 编解码在 `qb-proxy::aggregate`，名单解析与每发请求的判断在 `local_router/aggregate.rs`。
+
+13. **线路的「上游协议」没写 = 跟软件一样 = 原样转发**，请求一个字节都不改（只有 cc-switch 原生透传分支里那几样修补：
+    Claude 给 Anthropic 上游的 DeepSeek 类历史规范化、Codex 给 Responses 上游的 xAI 改写与迟到参数修补）。
+    写了且跟软件不一样才转换：Claude 两个 → Responses / Chat / Gemini 原生；Codex → Chat / Anthropic。
+    **Codex 转 Gemini 没有这一对**：选到它回 `ConfigError`，跳过这条线、不伤熔断（`a_codex_line_marked_gemini_is_skipped_without_hurting_its_breaker`）。
+14. **鉴权头跟着上游说的协议走**（`Upstream::relay`）：Anthropic 用 `x-api-key`，OpenAI 两种用 Bearer，Gemini 用 `x-goog-api-key`。
+    测活（`station_liveness`）按同一个协议打同一个路径、带同一种头 —— 测活跟真实流量走两条路，测活就测不出真实流量的死活。
+15. **出错按客户端那一侧的格式回**（`convert::error_mapper`）：Claude 收 Anthropic 的错误信封，Codex 收 OpenAI 的。
+    转换的线答了解不开的东西，按「这条线坏了」换下一条（`a_converted_line_that_answers_garbage_hands_over_to_the_next_line`）。
+16. **官方 Codex 那条线永远不转换、不聚合**：它就是 Responses，走 `official.rs` 原样直通。
+17. **转换要跨请求记的两样东西只在内存里**（`RouterState` 的 `gemini_shadow` / `codex_chat_history`）：面板重启就清空，
+    最多那一轮少带一点上下文。别落盘 —— 里面是对话内容。
+18. **`Protocols::supports` 是「能直通或能转换」，`Protocols::native` 才是「能直通」**（阶段 3 之前 `supports` 的意思）。
+    线路出现在哪个软件分页看前者；探完协议「上游协议」建议填什么看后者（直通**明确**不行、别的探通了才建议转换，探不出来不猜）。
+19. **聚合模型（cc-switch 的 Stack）**：名单里每条线的模型以带 `qbg` 前缀的 id 发布（Claude Code `qbg-claude-<key>--<模型>`、
+    Codex `qbg-<key>/<模型>`、桌面端 `claude-fable-qbg-<6 位数字>`），选中的那一发**只打那一条：不换线、不读也不写熔断**
+    （`an_aggregated_line_that_fails_neither_fails_over_nor_trips_its_breaker`）；不带前缀的照旧走派单。
+    - **带前缀却解不出来一律 400，不回落**（`an_aggregated_id_that_cannot_be_resolved_is_refused_without_touching_any_line`）：
+      回落等于拿别家的钱、别家的模型回答，使用者看不出来。聚合关了也一样报错。
+    - **key 由后端分、只增不减**（`station_ops::settle_aggregate`，`aggregate_keys_are_handed_out_by_the_backend_and_never_move`）：
+      界面传来的 `keys` 一概不认；移出名单、删掉线路都不删登记 —— key 换了指向，客户端带着的旧 id 会被悄悄发到另一条线。
+      名单只收这个软件自己的线，混进别的软件的、官方 Codex 那条，整份拒绝。
+    - **Claude 两个的模型发现（`GET /v1/models` 带 `anthropic-version`）聚合开着时本机自己答、不联网、不进请求日志**
+      （`model_discovery_is_answered_locally_only_while_aggregation_is_on`）：落了日志会给当前那条记一发假的「秒回」，混进第 12 条的证据。
+      聚合关着照旧转给上游。
+    - ⛔ **官方 Codex 是当前那条时，带前缀的模型一律拒绝**（`aggregated_models_are_refused_while_the_official_codex_line_is_current`）：
+      Codex 这时带着官方登录的 `chatgpt-account-id` 等身份头，转去中转站就把官方身份交给了第三方。
+    - 阶段 3 **不写客户端的配置**：Codex 的模型目录、桌面端的模型条目、Claude Code 的网关模型发现开关都是阶段 4（配置写入引擎）的事；
+      现在要在客户端里手填 id（设置弹窗里有复制按钮）。
+20. **Codex 远程压缩（V2）的原生 Responses 那一半没搬**（cc-switch `codex_compaction::create_native_compaction_sse_stream`）：
+    Codex 只对名叫 `OpenAI` 的 provider 发压缩触发，QB Gate 写的中转环境 provider 叫「本机路由」，这条路现在走不到。
+    阶段 4 配置写入引擎要是改了 provider 名，**同一个提交里把它搬上**，否则 Codex 压缩时会直接 Fatal。
+    Chat / Anthropic 两种转换里的压缩处理已经搬了（在转换器里）。Copilot / Codex OAuth / xAI OAuth 的专用分支一概不搬（`convert/mod.rs` 写明了每一处）。
 
 ### 体检的无凭据探测与一次性采集页（2026-09-24，使用者选的）
 

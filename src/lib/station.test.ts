@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { StationRates } from "./generated/StationRates";
 import {
   NEW_API_USD_PER_MTOK,
+  convertedFormat,
   modelRateLabel,
+  parseModelList,
+  suggestUpstreamFormat,
   topupOf,
+  type Route,
   type StationModel,
 } from "./station";
 
@@ -74,5 +78,68 @@ describe("topupOf", () => {
     expect(topupOf({ topup_per_usd: 0 })).toBe(1);
     expect(topupOf({ topup_per_usd: Number.NaN })).toBe(1);
     expect(topupOf({ topup_per_usd: 7 })).toBe(7);
+  });
+});
+
+// 中转站重构阶段 3：线路的上游协议跟软件不一样时，本机路由两头转换。
+describe("suggestUpstreamFormat", () => {
+  const p = (
+    anthropic: boolean | null,
+    openai_chat: boolean | null,
+    openai_responses: boolean | null,
+  ) => ({ anthropic, openai_chat, openai_responses });
+
+  it("does not suggest anything while the client's own protocol works or is unknown", () => {
+    expect(
+      suggestUpstreamFormat("claude-code", p(true, true, true)),
+    ).toBeNull();
+    expect(
+      suggestUpstreamFormat("claude-code", p(null, true, null)),
+    ).toBeNull();
+    expect(suggestUpstreamFormat("codex", p(true, true, null))).toBeNull();
+  });
+
+  it("suggests the conversion when the native protocol is refused and another works", () => {
+    expect(suggestUpstreamFormat("claude-code", p(false, true, true))).toBe(
+      "openai_responses",
+    );
+    expect(suggestUpstreamFormat("claude-desktop", p(false, true, false))).toBe(
+      "openai_chat",
+    );
+    expect(suggestUpstreamFormat("codex", p(true, null, false))).toBe(
+      "anthropic",
+    );
+    expect(suggestUpstreamFormat("codex", p(true, true, false))).toBe(
+      "openai_chat",
+    );
+    expect(suggestUpstreamFormat("codex", p(false, false, false))).toBeNull();
+  });
+});
+
+describe("convertedFormat", () => {
+  const route = (
+    client: Route["client"],
+    upstream_format: Route["upstream_format"],
+  ) => ({ client, upstream_format }) as Route;
+
+  it("marks only lines whose upstream speaks something else than the client", () => {
+    expect(convertedFormat(route("claude-code", null))).toBeNull();
+    expect(convertedFormat(route("claude-code", "anthropic"))).toBeNull();
+    expect(convertedFormat(route("codex", "openai_responses"))).toBeNull();
+    expect(convertedFormat(route("claude-code", "openai_chat"))).toBe(
+      "openai_chat",
+    );
+    expect(convertedFormat(route("codex", "anthropic"))).toBe("anthropic");
+  });
+});
+
+describe("parseModelList", () => {
+  it("splits on commas and new lines, trims and drops repeats", () => {
+    expect(parseModelList("glm-5[1M], glm-4.7\nglm-4.7 ，kimi-k3、 ")).toEqual([
+      "glm-5[1M]",
+      "glm-4.7",
+      "kimi-k3",
+    ]);
+    expect(parseModelList("   ")).toEqual([]);
   });
 });

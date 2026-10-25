@@ -48,10 +48,12 @@ import type { Floors } from "../../lib/generated/Floors";
 import type { Provider } from "../../lib/generated/Provider";
 import type { Schedule } from "../../lib/generated/Schedule";
 import {
+  convertedFormat,
   OUTPUT_MARKUP_TOLERANCE,
   rateCell,
   stationApi,
   topupOf,
+  UPSTREAM_FORMAT_LABEL,
   type Prefs,
   type RouterRequest,
   type Route,
@@ -1293,6 +1295,15 @@ function RouteRow({
           )}
         {!route.credential_id && (
           <span className="qb-st-pill qb-st-pill--unknown">没绑令牌</span>
+        )}
+        {/* 阶段 3：上游说的协议跟软件不一样，本机路由两头转换 —— 标出来，别让人以为是原样转发。 */}
+        {convertedFormat(route) && (
+          <span
+            className="qb-st-pill qb-st-pill--accent"
+            title="这条线的上游说的协议跟这个软件不一样：本机路由把请求换过去、回复换回来"
+          >
+            转换 → {UPSTREAM_FORMAT_LABEL[convertedFormat(route)!]}
+          </span>
         )}
         <AuditPill route={route} />
         {current && !sched && (

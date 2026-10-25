@@ -1842,7 +1842,10 @@ const stationRoutes = [
     nominal_rate: 0.12,
     latest_mult: null,
     last_audit_ms: null,
-    protocols: { anthropic: true, openai_chat: null, openai_responses: null },
+    // 协议转换（阶段 3）的演示：这个分组只说 OpenAI Chat，桌面端那头说 Anthropic ——
+    // 线路标成 Chat，本机路由两头转换，线路行上挂「转换 → OpenAI Chat」。
+    protocols: { anthropic: false, openai_chat: true, openai_responses: null },
+    upstream_format: "openai_chat",
     // 同一家站点，所以也是绝对单价那一套。**没检验过，所以不知道是哪个模型的** ——
     // 这一条在界面上要显示成「算不出倍率」，不是「免费」。
     rates: {
@@ -1934,6 +1937,7 @@ const routerSettingsOf = (client: string): RouterSettings => {
       media_fallback: true,
       media_heuristic: true,
     },
+    aggregate: { enabled: false, members: [], models: {}, keys: {} },
   };
 };
 const stationRouterSettings: Record<string, RouterSettings> = {};
@@ -2731,8 +2735,49 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   },
   station_router_settings_save: (args) => {
     const s = args?.settings as RouterSettings;
-    stationRouterSettings[s.client] = { ...s };
-    return { ...s };
+    // 跟真后端一样：聚合 key 的登记簿只增不减、界面传来的不认；名单里没 key 的按站点 id 分一个。
+    const before =
+      stationRouterSettings[s.client] ?? routerSettingsOf(s.client);
+    const keys = { ...before.aggregate.keys };
+    for (const id of s.aggregate.members) {
+      if (Object.values(keys).includes(id)) continue;
+      const base = id.split(US)[1] || "line";
+      let key = base;
+      for (let n = 2; key in keys; n++) key = `${base}-${n}`;
+      keys[key] = id;
+    }
+    const saved = { ...s, aggregate: { ...s.aggregate, keys } };
+    stationRouterSettings[s.client] = saved;
+    return { ...saved };
+  },
+  // 聚合模型的预览（阶段 3）。id 照后端的格式拼；桌面端的数字在演示里是假的（真后端按 key 和模型名散列）。
+  station_aggregate_models: (args) => {
+    const who = String(args?.client ?? "claude-code");
+    const a = (stationRouterSettings[who] ?? routerSettingsOf(who)).aggregate;
+    if (!a.enabled) return [];
+    const out: Array<Record<string, unknown>> = [];
+    for (const id of a.members) {
+      const key = Object.entries(a.keys).find(([, r]) => r === id)?.[0];
+      const route = stationRoutes.find((r) => r.id === id);
+      if (!key || !route) continue;
+      (a.models[id] ?? []).forEach((upstream, i) => {
+        const model = upstream.replace(/\[1m\]$/i, "");
+        const one_m = model !== upstream;
+        out.push({
+          route_id: id,
+          id:
+            who === "codex"
+              ? `qbg-${key}/${model}`
+              : who === "claude-desktop"
+                ? `claude-fable-qbg-${String(100000 + ((key.length * 7919 + i * 104729) % 900000))}`
+                : `qbg-claude-${key}--${model}${one_m ? "[1M]" : ""}`,
+          upstream,
+          display_name: `${model}（${route.station_id} · ${route.group}）`,
+          one_m,
+        });
+      });
+    }
+    return out;
   },
   station_dispatch_queue: (args) =>
     demoQueueOf(String(args?.client ?? "claude-code")),

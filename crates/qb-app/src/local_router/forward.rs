@@ -39,6 +39,9 @@ use futures_util::{Stream, StreamExt};
 use http_body_util::StreamBody;
 use hyper::body::Frame;
 use qb_proxy::classify::{self, BreakerVerdict, Fault};
+use qb_proxy::convert::codex_chat_history::{self, CodexChatHistoryStore};
+use qb_proxy::convert::gemini_shadow::GeminiShadowStore;
+use qb_proxy::convert::plan::{self, Conversion, NativeRepair, ResponseContext};
 use qb_proxy::proxy_error::{describe_error_chain, ProxyError};
 use qb_proxy::sse_text::{append_utf8_safe, take_sse_block};
 use qb_proxy::types::RectifierConfig;
@@ -69,7 +72,19 @@ const FREE: Permit = Permit {
     half_open: false,
 };
 
-type UpstreamStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
+/// 上游的流（原样的、修补过的、或者转换成客户端那一侧协议的）。错误一律先换成不带地址的说法
+/// （见 [`upstream_stream`]）。
+type UpstreamStream =
+    Pin<Box<dyn Stream<Item = std::result::Result<Bytes, std::io::Error>> + Send>>;
+
+/// reqwest 的响应流换成 [`UpstreamStream`]。⛔ 错误先 `without_url()`：reqwest 的错误文字里带着整个请求地址，
+/// 这句话会顺着转换器进日志、回给客户端。
+fn upstream_stream(
+    resp: reqwest::Response,
+) -> impl Stream<Item = std::result::Result<Bytes, std::io::Error>> + Send + 'static {
+    resp.bytes_stream()
+        .map(|r| r.map_err(|e| std::io::Error::other(describe_error_chain(&e.without_url()))))
+}
 
 /// 发给一条线的请求体。没改动时就是客户端原来那串字节（不重新序列化）。
 #[derive(Clone)]
@@ -102,6 +117,8 @@ struct Success {
     headers: reqwest::header::HeaderMap,
     first_ms: Option<u64>,
     body: SuccessBody,
+    /// 体是本机路由重新拼的（协议转换过）：上游的 `content-type` / `content-encoding` 不再对得上，换成这个。
+    content_type: Option<&'static str>,
 }
 
 enum SuccessBody {
@@ -142,22 +159,35 @@ impl Failure {
     }
 }
 
-/// 一发请求走中转线路。`first` 是 [`server`](super::server) 绑到的当前那条。
+/// 一发请求怎么走。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Mode {
+    /// 派单队列：当前那条打头，失败按队列往下试，记熔断。
+    Routed,
+    /// 聚合模型选中的那一条（阶段 3）：**只打这一条、不换线、不读也不写熔断**，模型名已经解好了、不再映射
+    /// （cc-switch 的 Stack 请求同样如此 —— 换线等于拿别家的钱、别家的模型回答）。
+    Pinned,
+}
+
+/// 一发请求走中转线路。`first` 是 [`server`](super::server) 绑到的当前那条（聚合模型选中的那条）。
 pub(super) async fn relay(
     state: &Arc<Mutex<RouterState>>,
     http: &reqwest::Client,
     inbound: Inbound,
     first: Upstream,
     mut record: Record,
+    mode: Mode,
 ) -> Response<ProxyBody> {
     let caller = inbound.caller;
     let model = record.log.model.clone();
+    let routed = mode == Mode::Routed;
     let (settings, mut lines) = match state.lock() {
-        Ok(s) => (s.settings(caller), s.candidates(caller, &first)),
+        Ok(s) if routed => (s.settings(caller), s.candidates(caller, &first)),
+        Ok(s) => (s.settings(caller), vec![first.clone()]),
         Err(_) => return text(StatusCode::INTERNAL_SERVER_ERROR, "本机路由内部状态损坏"),
     };
     // 缺模型的线 6 小时内跳过；全都缺就一条不跳 —— 宁可让它自己报错，也不凭空制造死局。
-    if let Ok(s) = state.lock() {
+    if let (true, Ok(s)) = (routed, state.lock()) {
         let kept: Vec<Upstream> = lines
             .iter()
             .filter(|u| !s.model_missing(&u.route_id, &model, inbound.now_ms))
@@ -173,16 +203,37 @@ pub(super) async fn relay(
         .filter(Value::is_object);
     let streaming = is_streaming(&inbound, json.as_ref());
     record.log.streaming = streaming;
+    let mut sessions = Sessions::default();
     if let Some(body) = &json {
         let format = if is_claude(caller) { "claude" } else { "codex" };
         let found = session::extract_session_id(&inbound.headers, body, format);
         // 只记客户端自己带来的。生成出来的那种每发都不一样，记了只会把一段对话拆成几百段。
-        record.log.session_id = found.client_provided.then_some(found.session_id);
+        record.log.session_id = found.client_provided.then(|| found.session_id.clone());
+        sessions = Sessions {
+            client_provided: found.client_provided,
+            id: found.session_id,
+        };
     }
+    let stores = match state.lock() {
+        Ok(s) => Stores {
+            gemini_shadow: Arc::clone(&s.gemini_shadow),
+            codex_chat_history: Arc::clone(&s.codex_chat_history),
+        },
+        Err(_) => return text(StatusCode::INTERNAL_SERVER_ERROR, "本机路由内部状态损坏"),
+    };
+    let ctx = LineCtx {
+        http,
+        inbound: &inbound,
+        original: json.as_ref(),
+        sessions: &sessions,
+        stores: &stores,
+        settings: &settings,
+        streaming,
+    };
     let rectifier = rectifier_config(settings.rectifier);
 
-    // 只有一条线时不问熔断（cc-switch 同样如此）：问了，熔断着的那一条也只能是它。
-    let bypass = lines.len() == 1;
+    // 只有一条线时不问熔断（cc-switch 同样如此）：问了，熔断着的那一条也只能是它。聚合模型选中的那条一律不问。
+    let bypass = lines.len() == 1 || !routed;
     let max_attempts = settings.max_attempts.max(1) as usize;
     let mut attempted = 0usize;
     let mut last: Option<(Failure, Fault)> = None;
@@ -216,7 +267,7 @@ pub(super) async fn relay(
 
     while let Some((line, permit)) = queue.pop() {
         if attempted >= max_attempts {
-            if let Ok(mut s) = state.lock() {
+            if let (true, Ok(mut s)) = (routed, state.lock()) {
                 s.breaker_mut(&line.route_id, caller).release(permit);
             }
             break;
@@ -224,13 +275,17 @@ pub(super) async fn relay(
         attempted += 1;
         record.log.route_id = line.route_id.clone();
 
-        let (mut body, upstream_model) = line_body(json.as_ref(), &inbound.body, &line, &rectifier);
-        record.log.upstream_model = upstream_model;
+        let (mut body, upstream_model) =
+            line_body(json.as_ref(), &inbound.body, &line, &rectifier, routed);
+        if routed {
+            record.log.upstream_model = upstream_model;
+        }
 
         let tried = Instant::now();
-        let mut result = attempt(http, &inbound, &line, &body, &settings, streaming).await;
+        let mut result = try_line(&ctx, &line, &body).await;
 
         // 整流：改一下请求再打同一条线一次。不换线、不伤熔断；每条线最多一次。
+        // 整流改的是客户端那一侧的请求（转换之前的），改完重新转换。
         if let Attempt::Failed(failure) = &result {
             if let Some((fixed, why)) =
                 rectify(caller, &inbound.path, &body, &failure.error, &rectifier)
@@ -247,7 +302,7 @@ pub(super) async fn relay(
                     ms: tried.elapsed().as_millis() as u64,
                 });
                 body = fixed;
-                result = attempt(http, &inbound, &line, &body, &settings, streaming).await;
+                result = try_line(&ctx, &line, &body).await;
             }
         }
 
@@ -261,7 +316,7 @@ pub(super) async fn relay(
                 });
                 record.log.fault = None;
                 record.log.error = None;
-                return respond_ok(state, caller, &line, permit, ok, record, &settings);
+                return respond_ok(state, caller, &line, permit, ok, record, &settings, routed);
             }
             Attempt::Failed(failure) => {
                 let class = classify::classify(&failure.error, failure.retry_after_ms);
@@ -272,7 +327,7 @@ pub(super) async fn relay(
                     ms: tried.elapsed().as_millis() as u64,
                 });
                 let now_ms = chrono::Utc::now().timestamp_millis();
-                if let Ok(mut s) = state.lock() {
+                if let (true, Ok(mut s)) = (routed, state.lock()) {
                     if class.fault == Fault::ModelMissing {
                         s.mark_model_missing(&line.route_id, &model, now_ms);
                     }
@@ -288,7 +343,7 @@ pub(super) async fn relay(
                     class.fault.label(),
                     failure.error
                 );
-                let go_on = class.retry_next && settings.auto_failover;
+                let go_on = class.retry_next && settings.auto_failover && routed;
                 last = Some((failure, class.fault));
                 if !go_on {
                     break;
@@ -319,6 +374,156 @@ pub(super) async fn relay(
         );
     };
     respond_failure(failure, fault, record)
+}
+
+/// 这一发的会话 id。
+#[derive(Debug, Default)]
+struct Sessions {
+    /// 客户端自己带来的（不是生成的）。只有这种能拿去当上游的缓存键。
+    client_provided: bool,
+    /// 会话 id（客户端没带就是生成的）。Gemini 的影子记录按它分会话。
+    id: String,
+}
+
+/// 协议转换要跨请求记住的东西（[`RouterState`] 里那两个的引用）。
+struct Stores {
+    gemini_shadow: Arc<GeminiShadowStore>,
+    codex_chat_history: Arc<CodexChatHistoryStore>,
+}
+
+/// 一发请求里每条线都一样的那些东西。
+struct LineCtx<'a> {
+    http: &'a reqwest::Client,
+    inbound: &'a Inbound,
+    /// 客户端发来的那份请求体（模型映射、转换之前的）。
+    original: Option<&'a Value>,
+    sessions: &'a Sessions,
+    stores: &'a Stores,
+    settings: &'a RouterSettings,
+    streaming: bool,
+}
+
+/// 这条线这一发：选了哪种转换、发什么、打哪儿、响应怎么换回去。
+struct LinePlan {
+    conversion: Conversion,
+    url: String,
+    outgoing: Outgoing,
+    /// Codex → Anthropic 时模型名带 `[1m]`：加 `anthropic-beta: context-1m-2025-08-07`。
+    anthropic_one_m: bool,
+    /// Codex 原样转发给 Responses 上游时响应要做的修补。
+    native: NativeRepair,
+    /// 转换时响应换回去要的东西。原样转发是 `None`。
+    response: Option<ResponseContext>,
+}
+
+/// 选转换、改请求、打这条线一次。
+async fn try_line(ctx: &LineCtx<'_>, line: &Upstream, body: &Outgoing) -> Attempt {
+    match plan_line(ctx, line, body).await {
+        Ok(plan) => attempt(ctx, line, &plan).await,
+        Err(error) => Failure::local(error),
+    }
+}
+
+/// 这条线这一发怎么发（`qb_proxy::convert::plan` 做判断与改写，这里只接线）。
+///
+/// - 选不出转换（Codex 的线标成 Gemini 原生）：`ConfigError` —— 换下一条、不伤熔断（[`Fault::Infra`]）。
+/// - 原样转发：Claude 给 Anthropic 上游先做 DeepSeek 那一类历史规范化；Codex 给 Responses 上游做 xAI 改写 /
+///   迟到参数修补（cc-switch 原生透传分支里的那几件事）。都不适用时请求一个字节都不改。
+/// - 转换：请求体换成上游的协议、路径和地址跟着换；Codex 转 Chat 之前先把上一回合的函数调用补回去。
+async fn plan_line(
+    ctx: &LineCtx<'_>,
+    line: &Upstream,
+    body: &Outgoing,
+) -> std::result::Result<LinePlan, ProxyError> {
+    let inbound = ctx.inbound;
+    let claude = is_claude(inbound.caller);
+    let conversion = plan::select(claude, &inbound.path, line.format)
+        .map_err(|plan::Unsupported(why)| ProxyError::ConfigError(why.to_string()))?;
+
+    if conversion.is_passthrough() {
+        let mut outgoing = body.clone();
+        let mut native = NativeRepair::None;
+        if let Some(json) = body.json.as_ref() {
+            if claude {
+                let mut v = json.clone();
+                if plan::normalize_anthropic_messages_for_upstream(&mut v, &line.base_url) {
+                    outgoing = Outgoing::from_json(v, &body.bytes);
+                }
+            } else if plan::is_codex_responses_endpoint(&inbound.path) {
+                let mut v = json.clone();
+                native = plan::prepare_codex_native(&mut v, &line.base_url, &line.route_id)?;
+                if &v != json {
+                    outgoing = Outgoing::from_json(v, &body.bytes);
+                }
+            }
+        }
+        return Ok(LinePlan {
+            conversion,
+            url: join_url(&line.base_url, &inbound.path),
+            outgoing,
+            anthropic_one_m: false,
+            native,
+            response: None,
+        });
+    }
+
+    let Some(mut value) = body.json.clone() else {
+        return Err(ProxyError::InvalidRequest(format!(
+            "请求体不是 JSON 对象，没法按「{}」换协议",
+            conversion.label()
+        )));
+    };
+    if conversion == Conversion::ResponsesToChat {
+        let restored = ctx
+            .stores
+            .codex_chat_history
+            .enrich_request(&mut value)
+            .await;
+        if restored > 0 {
+            tracing::debug!("本机路由：Codex 转 Chat 前补回了 {restored} 条上一回合的函数调用");
+        }
+    }
+    let fallback;
+    let original = match ctx.original {
+        Some(o) => o,
+        None => {
+            fallback = value.clone();
+            &fallback
+        }
+    };
+    let client_model = original.get("model").and_then(Value::as_str);
+    let info = plan::LineInfo {
+        route_id: &line.route_id,
+        base_url: &line.base_url,
+        client_session_id: ctx
+            .sessions
+            .client_provided
+            .then_some(ctx.sessions.id.as_str()),
+        session_id: &ctx.sessions.id,
+    };
+    let response = ResponseContext::new(conversion, original, &line.route_id, &ctx.sessions.id);
+    let prepared = plan::prepare_request(
+        conversion,
+        &inbound.path,
+        value,
+        client_model,
+        &info,
+        Some(ctx.stores.gemini_shadow.as_ref()),
+    )?;
+    tracing::debug!(
+        "本机路由：{} 走「{}」，打 {}",
+        line.route_id,
+        conversion.label(),
+        prepared.endpoint
+    );
+    Ok(LinePlan {
+        conversion,
+        url: plan::upstream_url(conversion, &line.base_url, &prepared.endpoint, join_url),
+        outgoing: Outgoing::from_json(prepared.body, &body.bytes),
+        anthropic_one_m: prepared.anthropic_one_m,
+        native: NativeRepair::None,
+        response: Some(response),
+    })
 }
 
 /// 这一发是不是流式。cc-switch 的 `is_streaming_request`。
@@ -390,6 +595,7 @@ fn line_body(
     raw: &Bytes,
     line: &Upstream,
     cfg: &RectifierConfig,
+    map: bool,
 ) -> (Outgoing, String) {
     let Some(original) = json else {
         return (
@@ -408,7 +614,11 @@ fn line_body(
         .get("model")
         .and_then(Value::as_str)
         .map(str::to_string);
-    if let Some(mapped) = requested.as_deref().and_then(|m| line.map_model(m)) {
+    if let Some(mapped) = requested
+        .as_deref()
+        .filter(|_| map)
+        .and_then(|m| line.map_model(m))
+    {
         tracing::debug!(
             "本机路由：{} 上的模型 {:?} → {mapped}",
             line.route_id,
@@ -495,26 +705,66 @@ fn rectify(
 }
 
 /// 转给中转线路的头：丢逐跳头、丢客户端自带的凭证换上这条线自己的，`accept-encoding` 换成 identity。
-fn relay_headers(incoming: &hyper::HeaderMap, auth: &UpstreamAuth) -> reqwest::header::HeaderMap {
+///
+/// 协议转换时照 cc-switch 的 forwarder 再改几处：
+/// - Claude 转 OpenAI / Gemini：`anthropic-version` / `anthropic-beta` 不带（上游不认 Anthropic 的头）；
+/// - Codex 转 Anthropic：Codex / OpenAI SDK 的会话与身份头一概不带（[`plan::is_codex_client_fingerprint_header`]），
+///   `accept` 换成 `application/json`（Codex 发的是 `text/event-stream`，严格的 Anthropic 网关回 406），
+///   补 `anthropic-version: 2023-06-01`，模型名带过 `[1m]` 的加 `anthropic-beta: context-1m-2025-08-07`。
+fn relay_headers(
+    incoming: &hyper::HeaderMap,
+    auth: &UpstreamAuth,
+    conversion: Conversion,
+    anthropic_one_m: bool,
+) -> reqwest::header::HeaderMap {
+    use reqwest::header::{HeaderValue, ACCEPT};
+    let to_other_protocol =
+        matches!(conversion, Conversion::ClaudeTo(f) if f != plan::ApiFormat::Anthropic);
+    let to_anthropic = conversion == Conversion::ResponsesToAnthropic;
     let mut headers = reqwest::header::HeaderMap::new();
     for (name, value) in incoming {
-        if forwardable(name.as_str()) && name != reqwest::header::ACCEPT_ENCODING {
-            headers.insert(name.clone(), value.clone());
+        let n = name.as_str();
+        if !forwardable(n) || name == reqwest::header::ACCEPT_ENCODING {
+            continue;
+        }
+        if to_other_protocol && matches!(n, "anthropic-version" | "anthropic-beta") {
+            continue;
+        }
+        if to_anthropic && (plan::is_codex_client_fingerprint_header(n) || name == ACCEPT) {
+            continue;
+        }
+        headers.insert(name.clone(), value.clone());
+    }
+    if to_anthropic {
+        headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+        headers
+            .entry("anthropic-version")
+            .or_insert(HeaderValue::from_static("2023-06-01"));
+        if anthropic_one_m {
+            headers.insert(
+                "anthropic-beta",
+                HeaderValue::from_static("context-1m-2025-08-07"),
+            );
         }
     }
     headers.insert(
         reqwest::header::ACCEPT_ENCODING,
-        reqwest::header::HeaderValue::from_static("identity"),
+        HeaderValue::from_static("identity"),
     );
     match auth {
         UpstreamAuth::Bearer(k) => {
-            if let Ok(v) = reqwest::header::HeaderValue::from_str(&format!("Bearer {k}")) {
+            if let Ok(v) = HeaderValue::from_str(&format!("Bearer {k}")) {
                 headers.insert(reqwest::header::AUTHORIZATION, v);
             }
         }
         UpstreamAuth::ApiKey(k) => {
-            if let Ok(v) = reqwest::header::HeaderValue::from_str(k) {
+            if let Ok(v) = HeaderValue::from_str(k) {
                 headers.insert("x-api-key", v);
+            }
+        }
+        UpstreamAuth::GoogleApiKey(k) => {
+            if let Ok(v) = HeaderValue::from_str(k) {
+                headers.insert("x-goog-api-key", v);
             }
         }
         // 官方线不会走到这里（见 `server`）；`None` 不注入。
@@ -546,19 +796,18 @@ fn secs(n: u32) -> Option<Duration> {
 }
 
 /// 打一条线一次。
-async fn attempt(
-    http: &reqwest::Client,
-    inbound: &Inbound,
-    line: &Upstream,
-    body: &Outgoing,
-    settings: &RouterSettings,
-    streaming: bool,
-) -> Attempt {
-    let url = join_url(&line.base_url, &inbound.path);
-    let mut request = http
-        .request(inbound.method.clone(), &url)
-        .headers(relay_headers(&inbound.headers, &line.auth))
-        .body(body.bytes.clone());
+async fn attempt(ctx: &LineCtx<'_>, line: &Upstream, plan: &LinePlan) -> Attempt {
+    let (inbound, settings, streaming) = (ctx.inbound, ctx.settings, ctx.streaming);
+    let mut request = ctx
+        .http
+        .request(inbound.method.clone(), &plan.url)
+        .headers(relay_headers(
+            &inbound.headers,
+            &line.auth,
+            plan.conversion,
+            plan.anthropic_one_m,
+        ))
+        .body(plan.outgoing.bytes.clone());
     let non_streaming = secs(settings.non_streaming_timeout_secs);
     let first_byte = secs(settings.first_byte_timeout_secs);
     if !streaming {
@@ -586,7 +835,7 @@ async fn attempt(
     };
 
     let status = resp.status().as_u16();
-    let headers = resp.headers().clone();
+    let mut headers = resp.headers().clone();
     let retry = retry_after_ms(
         headers
             .get(reqwest::header::RETRY_AFTER)
@@ -600,30 +849,65 @@ async fn attempt(
             Ok(b) => b,
             Err(e) => return Failure::local(e),
         };
+        let text = readable(&headers, &body);
+        // 转换时错误体换成客户端那一侧认得的形状；分类照旧看上游的原话。
+        let reply_body = match text
+            .as_deref()
+            .and_then(|t| plan::client_error_body(plan.conversion, t))
+        {
+            Some(reshaped) => {
+                json_headers(&mut headers);
+                Bytes::from(reshaped.to_string())
+            }
+            None => body,
+        };
         return Attempt::Failed(Failure {
-            error: ProxyError::UpstreamError {
-                status,
-                body: readable(&headers, &body),
-            },
+            error: ProxyError::UpstreamError { status, body: text },
             retry_after_ms: retry,
             reply: Reply::Upstream {
                 status,
                 headers,
-                body,
+                body: reply_body,
             },
         });
     }
 
-    let is_json = headers
+    let content_type = headers
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|t| t.contains("json"));
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let is_json = content_type.contains("json");
+
+    if let Some(rctx) = &plan.response {
+        return converted(
+            ctx,
+            plan.conversion,
+            rctx,
+            resp,
+            status,
+            headers,
+            first_byte,
+        )
+        .await;
+    }
+
     if streaming && !is_json {
-        return prime(resp, inbound, first_byte).await;
+        let native = if plan::is_codex_responses_endpoint(&inbound.path) {
+            &plan.native
+        } else {
+            &NativeRepair::None
+        };
+        let stream: UpstreamStream = match native {
+            NativeRepair::None => Box::pin(upstream_stream(resp)),
+            repair => plan::repair_native_stream(repair, upstream_stream(resp)),
+        };
+        return prime(status, headers, stream, inbound, first_byte, None).await;
     }
 
     // 非流式（或者流式请求却回了一整份 JSON）：读完再交，2xx 里的错误信封在这里认出来。
-    let body = match read_whole(&mut resp, inbound.started, &mut first_ms, non_streaming).await {
+    let mut body = match read_whole(&mut resp, inbound.started, &mut first_ms, non_streaming).await
+    {
         Ok(b) => b,
         Err(e) => return Failure::local(e),
     };
@@ -650,11 +934,121 @@ async fn attempt(
             });
         }
     }
+    let mut rebuilt = None;
+    if let Some(fixed) = plan::repair_native_whole(&plan.native, &body) {
+        body = fixed;
+        rebuilt = Some("application/json");
+    }
     Attempt::Done(Success {
         status,
         headers,
         first_ms,
         body: SuccessBody::Whole(body),
+        content_type: rebuilt,
+    })
+}
+
+/// 上游的 `content-type` / `content-encoding` 不再对得上（体是重新拼的 JSON）。
+fn json_headers(headers: &mut reqwest::header::HeaderMap) {
+    headers.remove(reqwest::header::CONTENT_ENCODING);
+    headers.insert(
+        reqwest::header::CONTENT_TYPE,
+        reqwest::header::HeaderValue::from_static("application/json"),
+    );
+}
+
+/// 协议转换的成功响应：换回客户端那一侧的协议。
+///
+/// - 走流式转换器（[`ResponseContext::stream_upstream`]）：转好的流照客户端那一侧的协议「预热」——
+///   交出去之前出的错（转换器把上游的报错换成了客户端那一侧的 `error` 事件）照样能换线；
+///   Codex 转 Chat 的流顺手把这一回合的函数调用记下来（下一回合要补回去）。
+/// - 整份：解析（没标类型的 SSE 先聚合）→ 转换 → 记函数调用；转不过去算这条线失败（上游回的东西对不上协议，
+///   多半是 2xx 里藏着错）。Codex 转 Anthropic 时客户端要流、上游却整份回了 JSON：拆成 Responses 的事件交出去。
+async fn converted(
+    ctx: &LineCtx<'_>,
+    conversion: Conversion,
+    rctx: &ResponseContext,
+    mut resp: reqwest::Response,
+    status: u16,
+    headers: reqwest::header::HeaderMap,
+    first_byte: Option<Duration>,
+) -> Attempt {
+    let inbound = ctx.inbound;
+    let content_type = headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let is_json = content_type.contains("json");
+    let is_sse = content_type.contains("event-stream");
+
+    if rctx.stream_upstream(ctx.streaming, is_sse, is_json) {
+        let mut stream = plan::convert_stream(
+            rctx,
+            upstream_stream(resp),
+            Some(Arc::clone(&ctx.stores.gemini_shadow)),
+        );
+        if conversion == Conversion::ResponsesToChat {
+            stream = Box::pin(codex_chat_history::record_responses_sse_stream(
+                stream,
+                Arc::clone(&ctx.stores.codex_chat_history),
+            ));
+        }
+        return prime(
+            status,
+            headers,
+            stream,
+            inbound,
+            first_byte,
+            Some("text/event-stream"),
+        )
+        .await;
+    }
+
+    let mut first_ms = None;
+    let non_streaming = secs(ctx.settings.non_streaming_timeout_secs);
+    let body = match read_whole(&mut resp, inbound.started, &mut first_ms, non_streaming).await {
+        Ok(b) => b,
+        Err(e) => return Failure::local(e),
+    };
+    let fail = |error: ProxyError| {
+        tracing::warn!("本机路由：「{}」响应转换失败：{error}", conversion.label());
+        Attempt::Failed(Failure {
+            error,
+            retry_after_ms: None,
+            reply: Reply::Local,
+        })
+    };
+    let parsed = match plan::parse_whole(rctx, &headers, &body) {
+        Ok(v) => v,
+        Err(e) => return fail(e),
+    };
+    if conversion == Conversion::ResponsesToAnthropic && ctx.streaming {
+        let events = plan::anthropic_message_as_responses_events(rctx, &parsed);
+        return Attempt::Done(Success {
+            status,
+            headers,
+            first_ms,
+            body: SuccessBody::Stream {
+                primed: events,
+                rest: Box::pin(futures_util::stream::empty()),
+            },
+            content_type: Some("text/event-stream"),
+        });
+    }
+    let out = match plan::convert_parsed(rctx, parsed, Some(ctx.stores.gemini_shadow.as_ref())) {
+        Ok(v) => v,
+        Err(e) => return fail(e),
+    };
+    if conversion == Conversion::ResponsesToChat {
+        ctx.stores.codex_chat_history.record_response(&out).await;
+    }
+    Attempt::Done(Success {
+        status,
+        headers,
+        first_ms,
+        body: SuccessBody::Whole(Bytes::from(out.to_string())),
+        content_type: Some("application/json"),
     })
 }
 
@@ -756,17 +1150,19 @@ async fn read_whole(
 ///   cc-switch 对原样转发的 Codex 只等首包、不看内容；这里多看一眼是为了在交出去之前认出
 ///   「一开头就报错」的那种（那种错是上游一收到请求就报的，不用等生成），但不能因此拖住
 ///   推理很久才出第一段的长回合 —— 所以压得住的只有这几秒，不是整个首包超时。
+///
+/// 协议转换时传进来的是**转好的**流（客户端那一侧的协议），`content_type` 是转好之后的类型。
 async fn prime(
-    resp: reqwest::Response,
+    status: u16,
+    headers: reqwest::header::HeaderMap,
+    mut stream: UpstreamStream,
     inbound: &Inbound,
     first_byte: Option<Duration>,
+    content_type: Option<&'static str>,
 ) -> Attempt {
-    let status = resp.status().as_u16();
-    let headers = resp.headers().clone();
     let anthropic = is_claude(inbound.caller);
     let responses = !anthropic && is_responses(&inbound.path);
     let mut deadline = first_byte.map(|t| tokio::time::Instant::now() + t);
-    let mut stream: UpstreamStream = Box::pin(resp.bytes_stream());
     let mut primed: Vec<Bytes> = Vec::new();
     let mut held = 0usize;
     let mut first_ms = None;
@@ -834,10 +1230,7 @@ async fn prime(
                 }
             }
             Some(Err(e)) => {
-                return Failure::local(ProxyError::ForwardFailed(format!(
-                    "读取流式响应失败: {}",
-                    describe_error_chain(&e.without_url())
-                )))
+                return Failure::local(ProxyError::ForwardFailed(format!("读取流式响应失败: {e}")))
             }
             Some(Ok(chunk)) => chunk,
         };
@@ -897,10 +1290,12 @@ async fn prime(
             primed,
             rest: stream,
         },
+        content_type,
     })
 }
 
 /// 成功：记熔断、填日志、把响应交出去。
+#[allow(clippy::too_many_arguments)]
 fn respond_ok(
     state: &Arc<Mutex<RouterState>>,
     caller: Client,
@@ -909,12 +1304,15 @@ fn respond_ok(
     ok: Success,
     mut record: Record,
     settings: &RouterSettings,
+    // 聚合模型选中的那条（`Mode::Pinned`）不写熔断。
+    routed: bool,
 ) -> Response<ProxyBody> {
     let Success {
         status,
         headers,
         first_ms,
         body,
+        content_type,
     } = ok;
     record.log.status = Some(status);
     record.log.first_token_ms = first_ms;
@@ -923,9 +1321,14 @@ fn respond_ok(
 
     let mut out = Response::builder().status(status);
     for (name, value) in &headers {
-        if forwardable(name.as_str()) {
+        let rebuilt = content_type.is_some()
+            && (name == reqwest::header::CONTENT_TYPE || name == reqwest::header::CONTENT_ENCODING);
+        if forwardable(name.as_str()) && !rebuilt {
             out = out.header(name, value);
         }
+    }
+    if let Some(ct) = content_type {
+        out = out.header(hyper::header::CONTENT_TYPE, ct);
     }
 
     let body = match body {
@@ -933,7 +1336,7 @@ fn respond_ok(
             if let Some(usage) = parse_body_usage(caller, &bytes) {
                 fill_usage(&mut record.log, &usage);
             }
-            if let Ok(mut s) = state.lock() {
+            if let (true, Ok(mut s)) = (routed, state.lock()) {
                 s.breaker_mut(&line.route_id, caller)
                     .record_after(permit, Outcome::Ok, now_ms);
             }
@@ -943,11 +1346,11 @@ fn respond_ok(
         SuccessBody::Stream { primed, rest } => {
             // ⛔ Codex 的流:健康判定推迟到流结束（HTTP 200 的 SSE 里会报 `response.failed`），
             // 名额也到那时才还。Claude 的流照旧在交出去时按状态码记「好」。
-            let defer = caller == Client::Codex;
+            let defer = caller == Client::Codex && routed;
             let mut watch = StreamWatch::new(caller);
             if defer {
                 watch = watch.defer_health(&line.route_id, permit);
-            } else if let Ok(mut s) = state.lock() {
+            } else if let (true, Ok(mut s)) = (routed, state.lock()) {
                 s.breaker_mut(&line.route_id, caller)
                     .record_after(permit, Outcome::Ok, now_ms);
             }
@@ -1033,7 +1436,7 @@ fn respond_failure(failure: Failure, fault: Fault, mut record: Record) -> Respon
 /// 把上游的流接给客户端：边转边看（用量、Codex 的结局），两块之间超过 `idle` 就断开。
 ///
 /// `record` 被搬进流里：**流被丢掉的那一刻**才是这一发请求真的结束了（`Record` 的 Drop 收尾）。
-pub(super) fn stream_body<S>(
+pub(super) fn stream_body<S, E>(
     primed: Vec<Bytes>,
     rest: S,
     watch: StreamWatch,
@@ -1041,7 +1444,8 @@ pub(super) fn stream_body<S>(
     idle: Option<Duration>,
 ) -> ProxyBody
 where
-    S: Stream<Item = reqwest::Result<Bytes>> + Send + 'static,
+    S: Stream<Item = std::result::Result<Bytes, E>> + Send + 'static,
+    E: std::fmt::Display,
 {
     let watch = Arc::new(Mutex::new(watch));
     if let Ok(mut w) = watch.lock() {
@@ -1161,8 +1565,18 @@ mod tests {
 
     type StubBody = UnsyncBoxBody<Bytes, std::io::Error>;
 
+    /// 收到的每一发的请求头（协议转换的测试要看鉴权头、Anthropic 的头带没带）。
+    type Heads = Arc<Mutex<Vec<hyper::HeaderMap>>>;
+
     async fn stub(script: Script) -> (SocketAddr, Hits) {
+        let (addr, hits, _) = stub_full(script).await;
+        (addr, hits)
+    }
+
+    async fn stub_full(script: Script) -> (SocketAddr, Hits, Heads) {
         let hits: Hits = Arc::new(Mutex::new(Vec::new()));
+        let heads: Heads = Arc::new(Mutex::new(Vec::new()));
+        let heard = Arc::clone(&heads);
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("假上游绑不上回环");
@@ -1171,12 +1585,15 @@ mod tests {
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
                 let seen = Arc::clone(&seen);
+                let heard = Arc::clone(&heard);
                 let script = script.clone();
                 tokio::spawn(async move {
                     let svc = service_fn(move |req: Request<Incoming>| {
                         let seen = Arc::clone(&seen);
+                        let heard = Arc::clone(&heard);
                         let script = script.clone();
                         async move {
+                            heard.lock().unwrap().push(req.headers().clone());
                             let path = req
                                 .uri()
                                 .path_and_query()
@@ -1223,7 +1640,7 @@ mod tests {
                 });
             }
         });
-        (addr, hits)
+        (addr, hits, heads)
     }
 
     fn line(id: &str, addr: SocketAddr) -> Upstream {
@@ -1783,5 +2200,496 @@ mod tests {
             .unwrap();
         assert_eq!(resp.text().await.unwrap(), CLAUDE_OK);
         assert_eq!(last_log(&h).await.output_tokens, Some(4));
+    }
+
+    // ---------------------------------------------------------------- 协议转换（阶段 3）
+
+    use qb_proxy::convert::plan::ApiFormat;
+
+    const CHAT_OK: &str = r#"{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-5","choices":[{"index":0,"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}"#;
+    const CHAT_SSE: [&str; 3] = [
+        "data: {\"id\":\"c1\",\"model\":\"gpt-5\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"}}]}\n\n",
+        "data: {\"id\":\"c1\",\"model\":\"gpt-5\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":1}}\n\n",
+        "data: [DONE]\n\n",
+    ];
+    const ANTHROPIC_MESSAGE: &str = r#"{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn","usage":{"input_tokens":7,"output_tokens":3}}"#;
+    const CODEX_REQUEST: &str = r#"{"model":"claude-opus-5","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":false}"#;
+    const RESPONSES_OK: &str = r#"{"id":"resp_1","object":"response","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1}}"#;
+
+    fn speaking(format: ApiFormat, auth: UpstreamAuth, l: Upstream) -> Upstream {
+        Upstream {
+            format: Some(format),
+            auth,
+            ..l
+        }
+    }
+
+    async fn send(
+        h: &RouterHandle,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> (u16, String, String) {
+        let mut req = reqwest::Client::new()
+            .post(format!("{}{path}", h.base_url()))
+            .header("content-type", "application/json")
+            .body(body.to_string());
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        let resp = req.send().await.expect("打不通本机路由");
+        let status = resp.status().as_u16();
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        (status, ct, resp.text().await.unwrap_or_default())
+    }
+
+    #[tokio::test]
+    async fn claude_through_a_chat_line_gets_an_anthropic_message_back() {
+        let (a, hits, heads) = stub_full(Script::json(200, CHAT_OK)).await;
+        let (b, _) = stub(Script::json(200, CLAUDE_OK)).await;
+        let a_line = speaking(
+            ApiFormat::OpenaiChat,
+            UpstreamAuth::Bearer("key-a".into()),
+            line("a", a),
+        );
+        let h = two_lines(Client::ClaudeCode, a_line, line("b", b), |_| {}).await;
+
+        let (status, ct, body) = send(
+            &h,
+            "/v1/messages?beta=true",
+            &[
+                ("anthropic-version", "2023-06-01"),
+                ("anthropic-beta", "claude-code-20250219"),
+                ("x-api-key", "client-own-key"),
+            ],
+            r#"{"model":"claude-opus-5","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}"#,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert!(ct.contains("application/json"), "{ct}");
+        let message: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(message["type"], "message", "{body}");
+        assert_eq!(message["content"][0]["text"], "hi there");
+
+        let (path, sent) = hits.lock().unwrap()[0].clone();
+        assert_eq!(
+            path, "/v1/chat/completions",
+            "去掉了 ?beta=true，打 Chat 的路径"
+        );
+        let sent: Value = serde_json::from_str(&sent).unwrap();
+        assert_eq!(sent["messages"][0]["role"], "user");
+        let head = heads.lock().unwrap()[0].clone();
+        assert_eq!(
+            head["authorization"], "Bearer key-a",
+            "OpenAI 协议用 Bearer"
+        );
+        for gone in ["x-api-key", "anthropic-version", "anthropic-beta"] {
+            assert!(
+                head.get(gone).is_none(),
+                "{gone} 不该带给 OpenAI 协议的上游"
+            );
+        }
+        let log = last_log(&h).await;
+        assert!(log.ok());
+        assert_eq!((log.input_tokens, log.output_tokens), (Some(5), Some(2)));
+    }
+
+    #[tokio::test]
+    async fn claude_streaming_through_a_chat_line_gets_anthropic_events() {
+        let (a, hits) = stub(Script::sse(CHAT_SSE.to_vec())).await;
+        let (b, _) = stub(Script::json(200, CLAUDE_OK)).await;
+        let a_line = speaking(
+            ApiFormat::OpenaiChat,
+            UpstreamAuth::Bearer("k".into()),
+            line("a", a),
+        );
+        let h = two_lines(Client::ClaudeCode, a_line, line("b", b), |_| {}).await;
+        let (status, ct, body) = send(
+            &h,
+            "/v1/messages",
+            &[],
+            r#"{"model":"claude-opus-5","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hello"}]}"#,
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert!(ct.contains("text/event-stream"), "{ct}");
+        assert!(body.contains("message_start"), "{body}");
+        assert!(body.contains("\"text\":\"hi\""), "{body}");
+        assert!(body.contains("message_stop"), "{body}");
+        let sent: Value = serde_json::from_str(&hits.lock().unwrap()[0].1).unwrap();
+        assert_eq!(
+            sent["stream_options"]["include_usage"], true,
+            "流式要让上游吐 usage，不然 token 漏记"
+        );
+        assert_eq!(last_log(&h).await.output_tokens, Some(1));
+    }
+
+    #[tokio::test]
+    async fn an_upstream_error_comes_back_to_claude_in_anthropic_shape() {
+        let (a, _) = stub(Script::json(
+            400,
+            r#"{"error":{"message":"Invalid model","type":"invalid_request_error"}}"#,
+        ))
+        .await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let a_line = speaking(
+            ApiFormat::OpenaiChat,
+            UpstreamAuth::Bearer("k".into()),
+            line("a", a),
+        );
+        let h = two_lines(Client::ClaudeCode, a_line, line("b", b), |_| {}).await;
+        let (status, ct, body) = send(
+            &h,
+            "/v1/messages",
+            &[],
+            r#"{"model":"m","max_tokens":8,"messages":[]}"#,
+        )
+        .await;
+        assert_eq!(status, 400);
+        assert!(ct.contains("application/json"), "{ct}");
+        let err: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(err["type"], "error", "{body}");
+        assert_eq!(err["error"]["message"], "Invalid model");
+        assert!(b_hits.lock().unwrap().is_empty(), "400 仍然不换线");
+        assert_eq!(
+            last_log(&h).await.fault.as_deref(),
+            Some("client-request"),
+            "分类看的是上游原话"
+        );
+    }
+
+    #[tokio::test]
+    async fn codex_through_an_anthropic_line_gets_a_response_object_and_sheds_its_fingerprint() {
+        let (a, hits, heads) = stub_full(Script::json(200, ANTHROPIC_MESSAGE)).await;
+        let (b, _) = stub(Script::json(200, RESPONSES_OK)).await;
+        let a_line = speaking(
+            ApiFormat::Anthropic,
+            UpstreamAuth::ApiKey("key-a".into()),
+            line("a", a),
+        );
+        let h = two_lines(Client::Codex, a_line, line("b", b), |_| {}).await;
+        let (status, _, body) = send(
+            &h,
+            "/codex/v1/responses",
+            &[
+                ("originator", "codex_cli_rs"),
+                ("x-stainless-os", "Windows"),
+            ],
+            CODEX_REQUEST,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        let resp: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(resp["object"], "response", "{body}");
+        assert!(body.contains("done"), "{body}");
+        assert_eq!(hits.lock().unwrap()[0].0, "/v1/messages");
+        let head = heads.lock().unwrap()[0].clone();
+        assert_eq!(head["x-api-key"], "key-a");
+        assert_eq!(head["anthropic-version"], "2023-06-01");
+        assert_eq!(head["accept"], "application/json");
+        assert!(
+            head.get("originator").is_none(),
+            "Codex 的身份头不该带给 Anthropic 网关"
+        );
+        assert!(head.get("x-stainless-os").is_none());
+        assert!(head.get("authorization").is_none());
+        let log = last_log(&h).await;
+        assert_eq!((log.input_tokens, log.output_tokens), (Some(7), Some(3)));
+    }
+
+    #[tokio::test]
+    async fn codex_streaming_through_a_chat_line_gets_responses_events() {
+        let (a, hits) = stub(Script::sse(CHAT_SSE.to_vec())).await;
+        let (b, _) = stub(Script::json(200, RESPONSES_OK)).await;
+        let a_line = speaking(
+            ApiFormat::OpenaiChat,
+            UpstreamAuth::Bearer("k".into()),
+            line("a", a),
+        );
+        let h = two_lines(Client::Codex, a_line, line("b", b), |_| {}).await;
+        let (status, ct, body) = send(
+            &h,
+            "/codex/v1/responses",
+            &[],
+            r#"{"model":"glm-5","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":true}"#,
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert!(ct.contains("text/event-stream"), "{ct}");
+        assert!(body.contains("response.created"), "{body}");
+        assert!(body.contains("response.completed"), "{body}");
+        assert_eq!(hits.lock().unwrap()[0].0, "/v1/chat/completions");
+        assert!(last_log(&h).await.ok());
+    }
+
+    #[tokio::test]
+    async fn a_codex_line_marked_gemini_is_skipped_without_hurting_its_breaker() {
+        let (a, a_hits) = stub(Script::json(200, RESPONSES_OK)).await;
+        let (b, b_hits) = stub(Script::json(200, RESPONSES_OK)).await;
+        let a_line = speaking(
+            ApiFormat::GeminiNative,
+            UpstreamAuth::GoogleApiKey("k".into()),
+            line("a", a),
+        );
+        let h = two_lines(Client::Codex, a_line, line("b", b), |_| {}).await;
+        let (status, _, _) = send(&h, "/codex/v1/responses", &[], CODEX_REQUEST).await;
+        assert_eq!(status, 200);
+        assert!(
+            a_hits.lock().unwrap().is_empty(),
+            "转不了的那一对不该发出去"
+        );
+        assert_eq!(b_hits.lock().unwrap().len(), 1);
+        let log = last_log(&h).await;
+        assert_eq!(log.attempts[0].fault.as_deref(), Some("infra"));
+        let now = chrono::Utc::now().timestamp_millis();
+        assert_eq!(h.state.lock().unwrap().breaker_state(now)["a"].0, 1.0);
+    }
+
+    #[tokio::test]
+    async fn claude_through_a_gemini_line_uses_generate_content_and_the_google_key() {
+        let (a, hits, heads) = stub_full(Script::json(
+            200,
+            r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"hello"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":1}}"#,
+        ))
+        .await;
+        let (b, _) = stub(Script::json(200, CLAUDE_OK)).await;
+        let a_line = Upstream {
+            base_url: format!("http://127.0.0.1:{}", a.port()),
+            ..speaking(
+                ApiFormat::GeminiNative,
+                UpstreamAuth::GoogleApiKey("g-key".into()),
+                line("a", a),
+            )
+        };
+        let h = two_lines(Client::ClaudeCode, a_line, line("b", b), |_| {}).await;
+        let (status, _, body) = send(
+            &h,
+            "/v1/messages",
+            &[],
+            r#"{"model":"gemini-2.5-pro","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}"#,
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        let message: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(message["content"][0]["text"], "hello", "{body}");
+        let path = hits.lock().unwrap()[0].0.clone();
+        assert!(
+            path.ends_with("/models/gemini-2.5-pro:generateContent"),
+            "{path}"
+        );
+        assert_eq!(heads.lock().unwrap()[0]["x-goog-api-key"], "g-key");
+    }
+
+    #[tokio::test]
+    async fn a_converted_line_that_answers_garbage_hands_over_to_the_next_line() {
+        let (a, _) = stub(Script::json(200, "<html>not json</html>")).await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let a_line = speaking(
+            ApiFormat::OpenaiChat,
+            UpstreamAuth::Bearer("k".into()),
+            line("a", a),
+        );
+        let h = two_lines(Client::ClaudeCode, a_line, line("b", b), |_| {}).await;
+        let (status, _, body) = send(
+            &h,
+            "/v1/messages",
+            &[],
+            r#"{"model":"m","max_tokens":8,"messages":[]}"#,
+        )
+        .await;
+        assert_eq!((status, body.as_str()), (200, CLAUDE_OK));
+        assert_eq!(b_hits.lock().unwrap().len(), 1);
+    }
+
+    // ---- 聚合模型（阶段 3，改写自 cc-switch `forwarder.rs` 的 `codex_stack` 与 `handlers.rs` 的 Stack 测试）
+
+    /// 聚合开着，名单里只有 `b`（key `zhipu`），发布 `glm-5[1M]`；`gone` 是移出名单的那条线的 key。
+    fn aggregate_on(s: &mut RouterSettings) {
+        s.aggregate.enabled = true;
+        s.aggregate.members = vec!["b".into()];
+        s.aggregate
+            .models
+            .insert("b".into(), vec!["glm-5[1M]".into()]);
+        s.aggregate.keys.insert("zhipu".into(), "b".into());
+        s.aggregate.keys.insert("gone".into(), "a".into());
+    }
+
+    #[tokio::test]
+    async fn an_aggregated_model_goes_straight_to_its_line_under_its_upstream_name() {
+        let (a, a_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), aggregate_on).await;
+        let (status, _) = post(
+            &h,
+            "/v1/messages",
+            r#"{"model":"qbg-claude-zhipu--glm-5","max_tokens":8}"#,
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert!(a_hits.lock().unwrap().is_empty(), "聚合模型打到了当前那条");
+        let sent: Value = serde_json::from_str(&b_hits.lock().unwrap()[0].1).unwrap();
+        assert_eq!(sent["model"], "glm-5", "发往上游的要剥掉 [1M]、换成上游名");
+        assert_eq!(sent["max_tokens"], 8, "别的字段丢了");
+        let log = last_log(&h).await;
+        assert_eq!(log.route_id, "b");
+        assert_eq!(log.model, "qbg-claude-zhipu--glm-5");
+        assert_eq!(log.upstream_model, "glm-5");
+    }
+
+    #[tokio::test]
+    async fn an_aggregated_line_that_fails_neither_fails_over_nor_trips_its_breaker() {
+        // 换线 = 拿别家的钱、别家的模型回答；熔断它 = 普通请求也跟着躲开一条其实没事的线。
+        let (a, a_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let (b, b_hits) = stub(Script::json(502, r#"{"error":{"message":"bad gateway"}}"#)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), aggregate_on).await;
+        let n = qb_station::schedule::breaker::TRIP_AFTER_CONSECUTIVE_ERRORS * 2;
+        for _ in 0..n {
+            let (status, _) =
+                post(&h, "/v1/messages", r#"{"model":"qbg-claude-zhipu--glm-5"}"#).await;
+            assert_eq!(status, 502, "聚合模型那条的失败要照实回");
+        }
+        assert!(a_hits.lock().unwrap().is_empty(), "聚合模型失败后换了线");
+        assert_eq!(
+            b_hits.lock().unwrap().len() as u32,
+            n,
+            "聚合模型被熔断挡掉了"
+        );
+        let now = chrono::Utc::now().timestamp_millis();
+        assert!(
+            h.state.lock().unwrap().usable("b", now),
+            "聚合模型的失败记进了熔断"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_aggregated_id_that_cannot_be_resolved_is_refused_without_touching_any_line() {
+        let (a, a_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), aggregate_on).await;
+        for (id, why) in [
+            ("qbg-claude-nobody--m", "不存在"),
+            ("qbg-claude-gone--m", "移出聚合名单"),
+            ("qbg-claude-zhipu", "不存在"),
+        ] {
+            let (status, body) = post(&h, "/v1/messages", &format!(r#"{{"model":"{id}"}}"#)).await;
+            assert_eq!(status, 400, "{id}");
+            assert!(body.contains(why), "{id}: {body}");
+            assert!(
+                body.contains("invalid_request_error"),
+                "Claude 要 Anthropic 的错误信封：{body}"
+            );
+        }
+        // 聚合关了：带前缀的照样报错，不回落到当前那条。
+        let mut off = h.state.lock().unwrap().settings(Client::ClaudeCode);
+        off.aggregate.enabled = false;
+        h.state.lock().unwrap().set_settings(off);
+        let (status, body) =
+            post(&h, "/v1/messages", r#"{"model":"qbg-claude-zhipu--glm-5"}"#).await;
+        assert_eq!(status, 400);
+        assert!(body.contains("没开"), "{body}");
+        assert!(a_hits.lock().unwrap().is_empty() && b_hits.lock().unwrap().is_empty());
+        assert_eq!(last_log(&h).await.fault.as_deref(), Some("client-request"));
+    }
+
+    #[tokio::test]
+    async fn model_discovery_is_answered_locally_only_while_aggregation_is_on() {
+        let (a, a_hits) = stub(Script::json(200, r#"{"data":[]}"#)).await;
+        let (b, _) = stub(Script::json(200, CLAUDE_OK)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), aggregate_on).await;
+        let discover = || async {
+            let resp = reqwest::Client::new()
+                .get(format!("{}/v1/models?limit=1000", h.base_url()))
+                .header("anthropic-version", "2023-06-01")
+                .send()
+                .await
+                .unwrap();
+            (resp.status().as_u16(), resp.text().await.unwrap())
+        };
+        let (status, body) = discover().await;
+        assert_eq!(status, 200);
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["data"][0]["id"], "qbg-claude-zhipu--glm-5[1M]");
+        assert!(
+            a_hits.lock().unwrap().is_empty(),
+            "聚合开着时模型发现不该联网"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            h.state.lock().unwrap().logs().is_empty(),
+            "本机自己答的模型发现不该进请求日志（会给当前那条记一发假的秒回）"
+        );
+
+        let mut off = h.state.lock().unwrap().settings(Client::ClaudeCode);
+        off.aggregate.enabled = false;
+        h.state.lock().unwrap().set_settings(off);
+        let (status, _) = discover().await;
+        assert_eq!(status, 200);
+        assert_eq!(
+            a_hits.lock().unwrap().len(),
+            1,
+            "聚合关了，模型发现要照旧转给上游"
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregated_models_are_refused_while_the_official_codex_line_is_current() {
+        // ⛔ 官方线当前时 Codex 带着官方登录的身份头：转去中转站就把官方身份交给了第三方。
+        let (official, official_hits) = stub(Script::json(200, RESPONSES_OK)).await;
+        let (relay, relay_hits) = stub(Script::json(200, RESPONSES_OK)).await;
+        let state = Arc::new(Mutex::new(RouterState::default()));
+        {
+            let mut s = state.lock().unwrap();
+            s.put_upstream(Upstream {
+                route_id: OFFICIAL_CODEX_ROUTE_ID.into(),
+                base_url: format!("http://127.0.0.1:{}", official.port()),
+                auth: UpstreamAuth::OAuthPassthrough,
+                ..Default::default()
+            });
+            s.put_upstream(line("relay", relay));
+            s.set_now(Client::Codex, OFFICIAL_CODEX_ROUTE_ID);
+            let mut settings = RouterSettings::for_client(Client::Codex);
+            settings.aggregate.enabled = true;
+            settings.aggregate.members = vec!["relay".into(), OFFICIAL_CODEX_ROUTE_ID.into()];
+            settings
+                .aggregate
+                .keys
+                .insert("kimi".into(), "relay".into());
+            settings
+                .aggregate
+                .keys
+                .insert("off".into(), OFFICIAL_CODEX_ROUTE_ID.into());
+            s.set_settings(settings);
+            assert!(
+                s.aggregate_models(Client::Codex)
+                    .iter()
+                    .all(|m| m.route_id != OFFICIAL_CODEX_ROUTE_ID),
+                "官方线发布进了聚合模型"
+            );
+        }
+        let h = serve(RouterConfig::loopback(0), state, reqwest::Client::new())
+            .await
+            .unwrap();
+        for id in ["qbg-kimi/kimi-k3", "qbg-off/gpt-6"] {
+            let (status, body) =
+                post(&h, "/codex/v1/responses", &format!(r#"{{"model":"{id}"}}"#)).await;
+            assert_eq!(status, 400, "{id}: {body}");
+            assert!(
+                body.contains("model_not_found"),
+                "Codex 要 OpenAI 的错误信封：{body}"
+            );
+        }
+        assert!(
+            relay_hits.lock().unwrap().is_empty(),
+            "官方身份的请求转去了中转站"
+        );
+        assert!(
+            official_hits.lock().unwrap().is_empty(),
+            "聚合 id 发去了官方"
+        );
     }
 }

@@ -34,6 +34,8 @@ use crate::local_router::{join_url, retry_after_ms, Upstream};
 use crate::repository::Repository;
 use qb_platform::repository::ProbeAttemptQuery;
 use qb_proxy::classify::{classify_message, classify_text, classify_upstream, Fault};
+use qb_proxy::convert::gemini_url;
+use qb_proxy::convert::plan::ApiFormat;
 use qb_station::schedule::liveness::{
     assess, estimate_cost, fail_rate, next_due, probe_interval_min, speed, Health, ProbeAttempt,
     ProbeSettings, ProbeState,
@@ -144,14 +146,18 @@ pub fn local_midnight_ms(now_ms: i64) -> i64 {
 
 // ------------------------------------------------------------------ 花多少钱
 
-/// 花钱测活的输出上限（按协议）。
-pub fn max_output(client: Client) -> u64 {
-    if client == Client::Codex {
+/// 花钱测活的输出上限（按上游说的协议，阶段 3 起不再按软件）：Responses 的下限是 16，别的给 1。
+pub fn max_output(speaks: ApiFormat) -> u64 {
+    if speaks == ApiFormat::OpenaiResponses {
         RESPONSES_MAX_OUTPUT
     } else {
         ANTHROPIC_MAX_OUTPUT
     }
 }
+
+/// 免费测活打 Gemini 原生时 URL 里要有个模型名（空请求体里没有）：给一个常见的，站点不认就是 404，
+/// 那一次按「这条线不接这一发」跳过，不算故障。
+const FREE_GEMINI_PROBE_MODEL: &str = "gemini-2.5-flash";
 
 /// 在这条线上花钱测一次 `model` 大概多少钱（元）：`(下限, 上界)`。下限 `None` = 不知道价，
 /// 上界按 [`UNKNOWN_PRICE_PER_MTOK`] 记。
@@ -164,7 +170,7 @@ pub fn probe_cost(
     catalog: &Catalog,
     topup: f64,
 ) -> (Option<f64>, f64) {
-    let out = max_output(route.client);
+    let out = max_output(crate::local_router::speaks(route));
     let [p_in, _, _, p_out] = route.rates.category_prices();
     let known = p_in.zip(p_out).or_else(|| {
         let official = catalog.resolve(model?)?;
@@ -424,6 +430,8 @@ fn is_skipped(a: &ProbeAttempt) -> bool {
 pub struct ProbeTarget {
     pub route_id: String,
     pub client: Client,
+    /// 上游实际说的协议（[`crate::local_router::speaks`]）：测活跟真实流量打同一个协议的路径、带同一种鉴权头。
+    speaks: ApiFormat,
     base_url: String,
     key: String,
     /// 只用它的模型映射（客户端的模型名 → 这条线上的），见 [`Upstream::map_model`]。
@@ -448,6 +456,7 @@ impl ProbeTarget {
         Ok(Self {
             route_id: route.id.clone(),
             client: route.client,
+            speaks: crate::local_router::speaks(route),
             base_url: source.base_url,
             key: source.key,
             mapping: Upstream::default().with_model_map(&route.model_map),
@@ -460,6 +469,11 @@ impl ProbeTarget {
         Self {
             route_id: route_id.to_string(),
             client,
+            speaks: if client == Client::Codex {
+                ApiFormat::OpenaiResponses
+            } else {
+                ApiFormat::Anthropic
+            },
             base_url: base_url.to_string(),
             key: key.to_string(),
             mapping: Upstream::default(),
@@ -467,22 +481,47 @@ impl ProbeTarget {
         }
     }
 
-    /// 跟本机路由转发时一样的路径与鉴权（Codex 走 Responses + Bearer，Claude 走 Messages + `x-api-key`）。
-    fn post(&self, http: &reqwest::Client, body: String) -> reqwest::RequestBuilder {
-        let path = if self.client == Client::Codex {
-            "/v1/responses"
-        } else {
-            "/v1/messages"
+    /// 测试用：这条线的上游说别的协议。
+    pub fn speaking(mut self, speaks: ApiFormat) -> Self {
+        self.speaks = speaks;
+        self
+    }
+
+    /// 跟本机路由转发时一样的路径与鉴权，按上游说的协议（阶段 3 起）：Anthropic 走 Messages + `x-api-key`，
+    /// OpenAI 两种走各自的路径 + Bearer，Gemini 走 `generateContent` + `x-goog-api-key`。
+    /// `model` 只有 Gemini 用得上（模型名在 URL 里）。
+    fn post(
+        &self,
+        http: &reqwest::Client,
+        body: String,
+        model: Option<&str>,
+        stream: bool,
+    ) -> reqwest::RequestBuilder {
+        let url = match self.speaks {
+            ApiFormat::Anthropic => join_url(&self.base_url, "/v1/messages"),
+            ApiFormat::OpenaiResponses => join_url(&self.base_url, "/v1/responses"),
+            ApiFormat::OpenaiChat => join_url(&self.base_url, "/v1/chat/completions"),
+            ApiFormat::GeminiNative => {
+                let model =
+                    gemini_url::normalize_gemini_model_id(model.unwrap_or(FREE_GEMINI_PROBE_MODEL));
+                let endpoint = if stream {
+                    format!("/v1beta/models/{model}:streamGenerateContent?alt=sse")
+                } else {
+                    format!("/v1beta/models/{model}:generateContent")
+                };
+                gemini_url::resolve_gemini_native_url(&self.base_url, &endpoint, false)
+            }
         };
         let req = http
-            .post(join_url(&self.base_url, path))
+            .post(url)
             .header("content-type", "application/json")
             .body(body);
-        if self.client == Client::Codex {
-            req.bearer_auth(self.key.trim())
-        } else {
-            req.header("x-api-key", self.key.trim())
-                .header("anthropic-version", "2023-06-01")
+        match self.speaks {
+            ApiFormat::Anthropic => req
+                .header("x-api-key", self.key.trim())
+                .header("anthropic-version", "2023-06-01"),
+            ApiFormat::OpenaiChat | ApiFormat::OpenaiResponses => req.bearer_auth(self.key.trim()),
+            ApiFormat::GeminiNative => req.header("x-goog-api-key", self.key.trim()),
         }
     }
 }
@@ -554,7 +593,7 @@ pub async fn free_probe(target: &ProbeTarget, http: &reqwest::Client, now_ms: i6
     let a = attempt(target, now_ms, "", false);
     let started = Instant::now();
     let sent = target
-        .post(http, "{}".into())
+        .post(http, "{}".into(), None, false)
         .timeout(FREE_TIMEOUT)
         .send()
         .await;
@@ -604,12 +643,21 @@ pub async fn free_probe(target: &ProbeTarget, http: &reqwest::Client, now_ms: i6
     }
 }
 
-/// 花钱测活的请求体。模型名先按这条线的映射换过。
-fn paid_body(client: Client, model: &str) -> Value {
-    if client == Client::Codex {
-        json!({"model": model, "input": "hi", "max_output_tokens": RESPONSES_MAX_OUTPUT, "store": false, "stream": true})
-    } else {
-        json!({"model": model, "max_tokens": ANTHROPIC_MAX_OUTPUT, "messages": [{"role": "user", "content": "hi"}], "stream": true})
+/// 花钱测活的请求体（按上游说的协议）。模型名先按这条线的映射换过。
+fn paid_body(speaks: ApiFormat, model: &str) -> Value {
+    match speaks {
+        ApiFormat::OpenaiResponses => {
+            json!({"model": model, "input": "hi", "max_output_tokens": RESPONSES_MAX_OUTPUT, "store": false, "stream": true})
+        }
+        ApiFormat::OpenaiChat => {
+            json!({"model": model, "max_tokens": ANTHROPIC_MAX_OUTPUT, "messages": [{"role": "user", "content": "hi"}], "stream": true})
+        }
+        ApiFormat::GeminiNative => {
+            json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}], "generationConfig": {"maxOutputTokens": ANTHROPIC_MAX_OUTPUT}})
+        }
+        ApiFormat::Anthropic => {
+            json!({"model": model, "max_tokens": ANTHROPIC_MAX_OUTPUT, "messages": [{"role": "user", "content": "hi"}], "stream": true})
+        }
     }
 }
 
@@ -625,7 +673,9 @@ fn read_reply(body: &str) -> std::result::Result<bool, String> {
         if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
             return Err(error_text(err));
         }
-        return Ok(v.get("content").is_some() || v.get("output").is_some());
+        return Ok(["content", "output", "choices", "candidates"]
+            .iter()
+            .any(|k| v.get(*k).is_some()));
     }
     let mut done = false;
     for line in body.lines() {
@@ -650,6 +700,13 @@ fn read_reply(body: &str) -> std::result::Result<bool, String> {
             // 输出上限到了（推理模型 16 个 token 可能全花在思考上）：模型在干活，算通。
             "message_stop" | "response.completed" | "response.incomplete" => done = true,
             _ => {}
+        }
+        // Chat 的结束块带 `finish_reason`；Gemini 的流没有结束事件，见到候选就算通。
+        let chat_finished = v
+            .pointer("/choices/0/finish_reason")
+            .is_some_and(|r| !r.is_null());
+        if chat_finished || v.get("candidates").is_some() {
+            done = true;
         }
     }
     Ok(done)
@@ -681,7 +738,12 @@ pub async fn paid_probe(
         .unwrap_or_else(|| model.to_string());
     let started = Instant::now();
     let sent = target
-        .post(http, paid_body(target.client, &upstream_model).to_string())
+        .post(
+            http,
+            paid_body(target.speaks, &upstream_model).to_string(),
+            Some(&upstream_model),
+            true,
+        )
         .header("accept", "text/event-stream")
         .timeout(PAID_TOTAL)
         .send();
@@ -1309,6 +1371,40 @@ mod tests {
             "画图模型测不了；同样多按名字排"
         );
         assert!(traffic_models(&[]).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_line_that_speaks_another_protocol_is_probed_in_that_protocol() {
+        // 阶段 3：Claude 的线标成 OpenAI Chat，真实流量走 /v1/chat/completions + Bearer，测活也得一样，
+        // 不然测的是一条这条线根本不接的路径。
+        let (base, seen) = stub(
+            400,
+            "application/json",
+            r#"{"error":{"message":"messages required"}}"#,
+        )
+        .await;
+        let t = ProbeTarget::new("r", Client::ClaudeCode, &format!("{base}/v1"), "line-key")
+            .speaking(ApiFormat::OpenaiChat);
+        assert!(free_probe(&t, &reqwest::Client::new(), NOW).await.ok);
+        let hits = seen.lock().unwrap().clone();
+        assert_eq!(hits[0].0, "/v1/chat/completions");
+        assert_eq!(hits[0].2, "Bearer line-key");
+        assert_eq!(hits[0].1, "", "OpenAI 协议不带 x-api-key");
+
+        let (base, seen) = stub(
+            200,
+            "text/event-stream",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"h\"}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n",
+        )
+        .await;
+        let t = ProbeTarget::new("r", Client::Codex, &base, "k").speaking(ApiFormat::OpenaiChat);
+        let a = paid_probe(&t, "glm-5", &reqwest::Client::new(), NOW).await;
+        assert!(a.ok, "{a:?}");
+        let body: Value = serde_json::from_str(&seen.lock().unwrap()[0].3).unwrap();
+        assert_eq!(body["max_tokens"], 1, "Chat 的输出上限给 1");
+        assert!(body["messages"].is_array());
+        assert_eq!(max_output(ApiFormat::OpenaiChat), 1);
+        assert_eq!(max_output(ApiFormat::OpenaiResponses), RESPONSES_MAX_OUTPUT);
     }
 
     #[test]

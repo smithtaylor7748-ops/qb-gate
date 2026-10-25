@@ -164,6 +164,8 @@ pub fn run() {
             // 本机路由每个软件一份的设置与派单顺序（2026-10-24，中转站重构阶段 1）。
             commands::station::station_router_settings,
             commands::station::station_router_settings_save,
+            // 聚合模型此刻发布哪些（中转站重构阶段 3）。
+            commands::station::station_aggregate_models,
             commands::station::station_dispatch_queue,
             commands::station::station_dispatch_queue_save,
             commands::station::station_route_retest,

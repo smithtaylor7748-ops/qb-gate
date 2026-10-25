@@ -2005,6 +2005,45 @@ try {
     false,
     "关掉的故障转移读回来又开着",
   );
+  // 中转站重构阶段 3：聚合模型。勾一条线、写发布的模型、保存 —— 列出来的 id 是后端（演示后端）编的，前端不自己拼。
+  const aggDialog = page.getByRole("dialog");
+  assert.equal(
+    await aggDialog
+      .getByText("现在发布的（保存后刷新）", { exact: true })
+      .count(),
+    0,
+    "聚合没开时也列了发布的模型",
+  );
+  await aggDialog
+    .getByLabel(
+      "把勾上的几条线的模型一起列给这个软件：选哪个模型，那一发就直达那条线",
+    )
+    .check();
+  await aggDialog
+    .getByLabel(/放进聚合$/)
+    .first()
+    .check();
+  await aggDialog
+    .getByLabel(/发布的模型$/)
+    .first()
+    .fill("glm-5[1M], glm-4.7，glm-4.7");
+  await aggDialog.getByRole("button", { name: "保存", exact: true }).click();
+  await aggDialog
+    .getByText("qbg-claude-example--glm-5[1M]", { exact: true })
+    .waitFor();
+  await aggDialog
+    .getByText("qbg-claude-example--glm-4.7", { exact: true })
+    .waitFor();
+  assert.equal(
+    await aggDialog
+      .getByText("qbg-claude-example--glm-4.7", { exact: true })
+      .count(),
+    1,
+    "重复写的模型发布了两次",
+  );
+  await page.setViewportSize({ width: 680, height: 940 });
+  await assertNoOverflow(page, "router aggregate 680");
+  await page.setViewportSize({ width: 1320, height: 940 });
   // 网络那一节（R6）：开到所有网卡上才出现口令与警告；代理框不回填存着的那个（会冲掉密码）。
   const netDialog = page.getByRole("dialog");
   assert.equal(

@@ -2473,6 +2473,124 @@ DEALINGS IN THE SOFTWARE.
 
 ========================================================================
 
+cargo: async-stream-impl@0.3.6
+Source: https://github.com/tokio-rs/async-stream
+Declared license: MIT
+LICENSE
+Copyright (c) 2019 Carl Lerche
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+Copyright (c) 2018 David Tolnay
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+========================================================================
+
+cargo: async-stream@0.3.6
+Source: https://github.com/tokio-rs/async-stream
+Declared license: MIT
+LICENSE
+Copyright (c) 2019 Carl Lerche
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+Copyright (c) 2018 David Tolnay
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+========================================================================
+
 cargo: async-task@4.7.1
 Source: https://github.com/smol-rs/async-task
 Declared license: Apache-2.0 OR MIT
@@ -48937,92 +49055,120 @@ DEALINGS IN THE SOFTWARE.
 
 ========================================================================
 
-cargo: qb-accounts@0.25.3
-Source: https://crates.io/crates/qb-accounts/0.25.3
+cargo: qb-accounts@0.25.6
+Source: https://crates.io/crates/qb-accounts/0.25.6
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-app@0.25.3
-Source: https://crates.io/crates/qb-app/0.25.3
+cargo: qb-app@0.25.6
+Source: https://crates.io/crates/qb-app/0.25.6
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-contract@0.25.3
-Source: https://crates.io/crates/qb-contract/0.25.3
+cargo: qb-contract@0.25.6
+Source: https://crates.io/crates/qb-contract/0.25.6
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-extensions@0.25.3
-Source: https://crates.io/crates/qb-extensions/0.25.3
+cargo: qb-extensions@0.25.6
+Source: https://crates.io/crates/qb-extensions/0.25.6
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-foundation@0.25.3
-Source: https://crates.io/crates/qb-foundation/0.25.3
+cargo: qb-foundation@0.25.6
+Source: https://crates.io/crates/qb-foundation/0.25.6
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-install@0.25.3
-Source: https://crates.io/crates/qb-install/0.25.3
+cargo: qb-install@0.25.6
+Source: https://crates.io/crates/qb-install/0.25.6
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-iplock@0.25.3
-Source: https://crates.io/crates/qb-iplock/0.25.3
+cargo: qb-iplock@0.25.6
+Source: https://crates.io/crates/qb-iplock/0.25.6
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-launch@0.25.3
-Source: https://crates.io/crates/qb-launch/0.25.3
+cargo: qb-launch@0.25.6
+Source: https://crates.io/crates/qb-launch/0.25.6
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-platform@0.25.3
-Source: https://crates.io/crates/qb-platform/0.25.3
+cargo: qb-platform@0.25.6
+Source: https://crates.io/crates/qb-platform/0.25.6
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-probe@0.25.3
-Source: https://crates.io/crates/qb-probe/0.25.3
+cargo: qb-probe@0.25.6
+Source: https://crates.io/crates/qb-probe/0.25.6
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-relay@0.25.3
-Source: https://crates.io/crates/qb-relay/0.25.3
+cargo: qb-proxy@0.25.6
+Source: https://crates.io/crates/qb-proxy/0.25.6
+Declared license: AGPL-3.0-only
+LICENSE-cc-switch
+MIT License
+
+Copyright (c) 2025 Jason Young
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+========================================================================
+
+cargo: qb-relay@0.25.6
+Source: https://crates.io/crates/qb-relay/0.25.6
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-station@0.25.3
-Source: https://crates.io/crates/qb-station/0.25.3
+cargo: qb-station@0.25.6
+Source: https://crates.io/crates/qb-station/0.25.6
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-sysenv@0.25.3
-Source: https://crates.io/crates/qb-sysenv/0.25.3
+cargo: qb-sysenv@0.25.6
+Source: https://crates.io/crates/qb-sysenv/0.25.6
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
@@ -54847,7 +54993,7 @@ SOFTWARE.
 
 ========================================================================
 
-cargo: rustls-webpki@0.103.15
+cargo: rustls-webpki@0.103.16
 Source: https://github.com/rustls/webpki
 Declared license: ISC
 LICENSE
@@ -54874,7 +55020,7 @@ third-party/chromium/LICENSE.
 
 ========================================================================
 
-cargo: rustls@0.23.45
+cargo: rustls@0.23.46
 Source: https://github.com/rustls/rustls
 Declared license: Apache-2.0 OR ISC OR MIT
 LICENSE-APACHE
@@ -71153,7 +71299,7 @@ SOFTWARE.
 
 ========================================================================
 
-cargo: tokio@1.53.1
+cargo: tokio@1.54.1
 Source: https://github.com/tokio-rs/tokio
 Declared license: MIT
 LICENSE
@@ -82094,7 +82240,7 @@ insights.
 
 ========================================================================
 
-cargo: webpki-roots@1.0.9
+cargo: webpki-roots@1.0.11
 Source: https://github.com/rustls/webpki-roots
 Declared license: CDLA-Permissive-2.0
 LICENSE

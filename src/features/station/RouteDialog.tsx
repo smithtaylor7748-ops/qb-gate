@@ -33,7 +33,16 @@ import type { ProbeResult } from "../../lib/generated/ProbeResult";
 import type { Provider } from "../../lib/generated/Provider";
 import { api } from "../../lib/api";
 import { saveStationConnection } from "../../lib/stationConnection";
-import { modelRateLabel, stationApi, type Route } from "../../lib/station";
+import {
+  convertibleFormats,
+  modelRateLabel,
+  nativeFormat,
+  stationApi,
+  suggestUpstreamFormat,
+  UPSTREAM_FORMAT_LABEL,
+  type Route,
+  type UpstreamFormat,
+} from "../../lib/station";
 import { Button, Modal } from "../../ui";
 import ConfigPane from "./ConfigPane";
 import {
@@ -121,6 +130,10 @@ export default function RouteDialog({
   const [anthropic, setAnthropic] = useState<Tri>("");
   const [chat, setChat] = useState<Tri>("");
   const [responses, setResponses] = useState<Tri>("");
+  // ---- 上游协议（阶段 3）：`""` = 跟软件自己说的一样，原样转发。
+  const [format, setFormat] = useState<UpstreamFormat | "">("");
+  /** 探测之后自动填的那一句（使用者自己改过就不再自动填）。 */
+  const [formatNote, setFormatNote] = useState<string | null>(null);
   const [credentialId, setCredentialId] = useState("");
   // ---- 模型映射（只对这条线，本机路由转发时换）
   const [tiers, setTiers] = useState<Tiers>(NO_TIERS);
@@ -173,6 +186,8 @@ export default function RouteDialog({
       setAnthropic(toTri(editing.protocols.anthropic));
       setChat(toTri(editing.protocols.openai_chat));
       setResponses(toTri(editing.protocols.openai_responses));
+      setFormat(editing.upstream_format ?? "");
+      setFormatNote(null);
       setTiers(tiersOf(editing.model_map));
       setPairs(pairsText(editing.model_map));
     } else {
@@ -187,6 +202,8 @@ export default function RouteDialog({
       setAnthropic("");
       setChat("");
       setResponses("");
+      setFormat("");
+      setFormatNote(null);
       setTiers(NO_TIERS);
       setPairs("");
     }
@@ -225,6 +242,18 @@ export default function RouteDialog({
         setChat(toTri(r.protocols.openai_chat));
       if (r.protocols.openai_responses != null)
         setResponses(toTri(r.protocols.openai_responses));
+      // 这家站不接这个软件自己的协议、别的探通了：建议转换（使用者已经选过的不动）。
+      const suggested = suggestUpstreamFormat(owner, {
+        anthropic: r.protocols.anthropic ?? fromTri(anthropic),
+        openai_chat: r.protocols.openai_chat ?? fromTri(chat),
+        openai_responses: r.protocols.openai_responses ?? fromTri(responses),
+      });
+      if (format === "" && suggested) {
+        setFormat(suggested);
+        setFormatNote(
+          `这家站不接 ${UPSTREAM_FORMAT_LABEL[nativeFormat(owner)]}，已改成走 ${UPSTREAM_FORMAT_LABEL[suggested]}（本机路由两头转换）`,
+        );
+      }
     } catch (e) {
       setProbeError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -309,8 +338,9 @@ export default function RouteDialog({
         // 官方价按错的那一行去查，算出的倍率错得看不出来。
         rates_model: editing?.rates_model ?? null,
         model_map: modelMap,
-        // 中转站重构阶段 1 只有原样转发：这一格界面不给改，原样带回去（协议转换在阶段 3）。
-        upstream_format: editing?.upstream_format ?? null,
+        // 上游协议（阶段 3）：跟软件自己说的一样就存 null（原样转发）。
+        upstream_format:
+          format === "" || format === nativeFormat(owner) ? null : format,
       });
       onClose();
     } catch (e) {
@@ -534,6 +564,36 @@ export default function RouteDialog({
           chat={chat}
           responses={responses}
         />
+
+        {/* ------------------------------------------------ 上游协议（阶段 3） */}
+        <Field
+          label="上游协议"
+          hint={
+            format === "" || format === nativeFormat(owner)
+              ? `跟 ${CLIENT_NAME[owner]} 一样，原样转发。`
+              : `${CLIENT_NAME[owner]} 说的是 ${UPSTREAM_FORMAT_LABEL[nativeFormat(owner)]}，本机路由把请求换成 ${UPSTREAM_FORMAT_LABEL[format]} 发给这条线、回复再换回来。只对经过本机路由的请求生效。`
+          }
+        >
+          <select
+            aria-label="上游协议"
+            value={format}
+            onChange={(e) => {
+              setFormat(e.target.value as UpstreamFormat | "");
+              setFormatNote(null);
+            }}
+          >
+            <option value="">
+              跟 {CLIENT_NAME[owner]} 一样（
+              {UPSTREAM_FORMAT_LABEL[nativeFormat(owner)]}）
+            </option>
+            {convertibleFormats(owner).map((f) => (
+              <option key={f} value={f}>
+                转换成 {UPSTREAM_FORMAT_LABEL[f]}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {formatNote && <p className="qb-st-note">{formatNote}</p>}
 
         {/* ------------------------------------------------ 配置 JSON */}
         <details className="qb-st-adv">

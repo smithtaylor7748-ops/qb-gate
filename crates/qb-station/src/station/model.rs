@@ -46,22 +46,47 @@ pub struct Protocols {
 
 impl Protocols {
     /// 这套协议能不能起这个客户端。**探不出来时返回 `None`,不猜。**
+    ///
+    /// 2026-10-24 起（中转站重构阶段 3）**能直通或者能转换都算**：本机路由会在请求、响应两头换协议，
+    /// 只说 OpenAI Chat 的站照样起得了 Claude Code（线路的「上游协议」要标成 Chat）。直通的那一半见 [`native`](Self::native)。
     pub fn supports(self, client: crate::domain::Client) -> Option<bool> {
         match client {
-            crate::domain::Client::ClaudeCode | crate::domain::Client::ClaudeDesktop => {
-                self.anthropic
+            crate::domain::Client::ClaudeCode
+            | crate::domain::Client::ClaudeDesktop
+            | crate::domain::Client::Codex => {
+                any_of([self.anthropic, self.openai_chat, self.openai_responses])
             }
-            // Codex 两种协议任一即可;都还没探过才是 None。
-            crate::domain::Client::Codex => match (self.openai_responses, self.openai_chat) {
-                (None, None) => None,
-                (a, b) => Some(a.unwrap_or(false) || b.unwrap_or(false)),
-            },
             // 反重力没有中转路径（端点写死在客户端里），**不是「还没探」，是「探了也没用」**：
             // 回 `Some(false)`，界面上如实显示成「不支持」而不是「未检测」。
             crate::domain::Client::Antigravity | crate::domain::Client::AntigravityIde => {
                 Some(false)
             }
         }
+    }
+
+    /// 能不能**不转换**直接起这个客户端（阶段 3 之前 [`supports`](Self::supports) 的意思）。
+    pub fn native(self, client: crate::domain::Client) -> Option<bool> {
+        match client {
+            crate::domain::Client::ClaudeCode | crate::domain::Client::ClaudeDesktop => {
+                self.anthropic
+            }
+            // Codex 原样转发只认 Responses；Chat 要转换（阶段 3 之前 Chat 也算，那时本机路由原样转发 Chat 请求）。
+            crate::domain::Client::Codex => self.openai_responses,
+            crate::domain::Client::Antigravity | crate::domain::Client::AntigravityIde => {
+                Some(false)
+            }
+        }
+    }
+}
+
+/// 有一个 `Some(true)` 就是能；全是 `Some(false)` 才是不能；其余（有没探过的）是不知道。
+fn any_of(v: [Option<bool>; 3]) -> Option<bool> {
+    if v.contains(&Some(true)) {
+        Some(true)
+    } else if v.iter().all(|x| *x == Some(false)) {
+        Some(false)
+    } else {
+        None
     }
 }
 
@@ -204,5 +229,50 @@ impl UsageRow {
     /// 缓存命中率会被抬高 —— 那正好是造假站点希望你看到的方向。
     pub fn input_total(&self) -> Option<u64> {
         Some(self.input_uncached? + self.cache_read? + self.cache_write?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::Client;
+
+    fn p(a: Option<bool>, chat: Option<bool>, resp: Option<bool>) -> Protocols {
+        Protocols {
+            anthropic: a,
+            openai_chat: chat,
+            openai_responses: resp,
+        }
+    }
+
+    #[test]
+    fn a_station_that_only_speaks_chat_still_serves_claude_through_conversion() {
+        let chat_only = p(Some(false), Some(true), Some(false));
+        assert_eq!(chat_only.supports(Client::ClaudeCode), Some(true));
+        assert_eq!(chat_only.native(Client::ClaudeCode), Some(false));
+        assert_eq!(chat_only.supports(Client::Codex), Some(true));
+        assert_eq!(
+            chat_only.native(Client::Codex),
+            Some(false),
+            "Codex 直通只认 Responses"
+        );
+    }
+
+    #[test]
+    fn unknown_stays_unknown_and_all_refused_is_refused() {
+        let none = p(None, None, None);
+        assert_eq!(none.supports(Client::ClaudeDesktop), None);
+        let partial = p(Some(false), None, Some(false));
+        assert_eq!(
+            partial.supports(Client::Codex),
+            None,
+            "还有一种没探过，不猜成不支持"
+        );
+        let refused = p(Some(false), Some(false), Some(false));
+        assert_eq!(refused.supports(Client::ClaudeCode), Some(false));
+        assert_eq!(
+            p(Some(true), Some(true), Some(true)).supports(Client::Antigravity),
+            Some(false)
+        );
     }
 }

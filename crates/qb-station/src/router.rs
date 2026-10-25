@@ -215,6 +215,44 @@ pub struct RouterSettings {
     pub breaker: BreakerSettings,
     /// 整流器（cc-switch 的 `RectifierConfig`，默认全开）。
     pub rectifier: RectifierSwitches,
+    /// 聚合模型（中转站重构阶段 3）。老数据没有就是关着。
+    pub aggregate: AggregateSettings,
+}
+
+/// 聚合模型（cc-switch 的 Stack 模式，只搬了本机路由那一半，见 `qb_proxy::aggregate`）：名单里每条线的模型以
+/// 带前缀的 id 发布给客户端，选中的请求直达那一条线 —— **不换线、不碰熔断**；解不出来的 id 一律报错，
+/// 不回落到当前那条（回落等于拿别家的钱、别家的模型回答，使用者看不出来）。不带前缀的请求照旧按派单队列走。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(default)]
+pub struct AggregateSettings {
+    pub enabled: bool,
+    /// 名单：线路 id，按加入顺序（模型列表里也按这个顺序）。只收这个软件自己的线。
+    pub members: Vec<String>,
+    /// 每条线发布哪些模型（发往上游的名字，可以带 `[1M]`）。没有或为空 = 用这条线模型映射里的目标模型。
+    pub models: std::collections::BTreeMap<String, Vec<String>>,
+    /// key → 线路 id 的**永久**登记。客户端会一直带着选中过的 id：key 一旦换了指向，旧 id 会被悄悄发到另一条线。
+    /// 移出名单、删掉线路都不删登记（cc-switch 的 `allocate_key` 同样如此）。
+    pub keys: std::collections::BTreeMap<String, String>,
+}
+
+/// 聚合名单最多几条线、每条线最多发布几个模型、一个模型名最长几个字符。只是为了界面和模型列表不至于失控。
+pub const AGGREGATE_MAX_MEMBERS: usize = 32;
+pub const AGGREGATE_MAX_MODELS_PER_LINE: usize = 64;
+pub const AGGREGATE_MAX_MODEL_LEN: usize = 200;
+
+/// 聚合模型发布出去的一个（设置弹窗的预览；本机路由答模型发现时发的就是这些）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AggregateModel {
+    pub route_id: String,
+    /// 发布给客户端的 id（带 `qbg` 前缀；桌面端是 `claude-fable-qbg-` 加 6 位数字）。
+    pub id: String,
+    /// 发往上游的模型名。
+    pub upstream: String,
+    /// 选择器里显示的名字：`模型（线路名）`。
+    pub display_name: String,
+    pub one_m: bool,
 }
 
 /// 整流器的几个开关。跟 `qb_proxy::types::RectifierConfig` 一一对应，由 `qb-app` 换过去。
@@ -267,6 +305,7 @@ impl RouterSettings {
                 ..BreakerSettings::default()
             },
             rectifier: RectifierSwitches::default(),
+            aggregate: AggregateSettings::default(),
         }
     }
 
@@ -309,6 +348,29 @@ impl RouterSettings {
         }
         if b.half_open_successes == 0 {
             problems.push("半开时要成功几次才闭合不能是 0".to_string());
+        }
+        let a = &self.aggregate;
+        if a.members.len() > AGGREGATE_MAX_MEMBERS {
+            problems.push(format!(
+                "聚合名单最多 {AGGREGATE_MAX_MEMBERS} 条线（勾了 {} 条）",
+                a.members.len()
+            ));
+        }
+        for list in a.models.values() {
+            if list.len() > AGGREGATE_MAX_MODELS_PER_LINE {
+                problems.push(format!(
+                    "一条线最多发布 {AGGREGATE_MAX_MODELS_PER_LINE} 个聚合模型（写了 {} 个）",
+                    list.len()
+                ));
+            }
+            if let Some(bad) = list.iter().find(|m| {
+                m.chars().count() > AGGREGATE_MAX_MODEL_LEN || m.chars().any(char::is_control)
+            }) {
+                problems.push(format!(
+                    "聚合模型名太长或带了控制字符：{}",
+                    bad.chars().take(40).collect::<String>()
+                ));
+            }
         }
         if problems.is_empty() {
             Ok(())
@@ -771,6 +833,31 @@ mod tests {
         unlimited.first_byte_timeout_secs = 0;
         unlimited.idle_timeout_secs = 0;
         assert!(unlimited.validate().is_ok());
+    }
+
+    #[test]
+    fn aggregate_lists_that_would_flood_the_model_picker_are_rejected() {
+        let mut s = RouterSettings::for_client(Client::ClaudeCode);
+        s.aggregate.enabled = true;
+        s.aggregate.members = vec!["a".into()];
+        s.aggregate
+            .models
+            .insert("a".into(), vec!["glm-5[1M]".into()]);
+        assert!(s.validate().is_ok());
+        s.aggregate.members = (0..=AGGREGATE_MAX_MEMBERS).map(|i| i.to_string()).collect();
+        s.aggregate.models.insert(
+            "b".into(),
+            (0..=AGGREGATE_MAX_MODELS_PER_LINE)
+                .map(|i| format!("m{i}"))
+                .collect(),
+        );
+        s.aggregate
+            .models
+            .insert("c".into(), vec!["bad\nname".into()]);
+        let why = s.validate().unwrap_err();
+        assert!(why.contains("聚合名单最多"), "{why}");
+        assert!(why.contains("一条线最多发布"), "{why}");
+        assert!(why.contains("控制字符"), "{why}");
     }
 
     #[test]

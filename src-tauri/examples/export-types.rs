@@ -260,6 +260,9 @@ fn main() {
         qb_gate_lib::router::RouteAttempt::export_all_to(&root)?;
         // 每个软件一份的本机路由设置（故障转移、三种超时、熔断参数、整流器开关）。
         qb_gate_lib::router::RouterSettings::export_all_to(&root)?;
+        // 聚合模型（中转站重构阶段 3）：名单与发布出去的模型。
+        qb_gate_lib::router::AggregateSettings::export_all_to(&root)?;
+        qb_gate_lib::router::AggregateModel::export_all_to(&root)?;
         qb_gate_lib::router::DispatchQueue::export_all_to(&root)?;
         qb_gate_lib::router::RectifierSwitches::export_all_to(&root)?;
         qb_gate_lib::schedule::BreakerSettings::export_all_to(&root)?;

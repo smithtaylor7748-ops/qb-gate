@@ -34,8 +34,14 @@ import type { Session } from "./generated/Session";
 import type { Route } from "./generated/Route";
 import type { StationModel } from "./generated/StationModel";
 import type { StationModelsView } from "./generated/StationModelsView";
+import type { UpstreamFormat } from "./generated/UpstreamFormat";
+import type { Protocols } from "./generated/Protocols";
+import type { AggregateModel } from "./generated/AggregateModel";
+import type { AggregateSettings } from "./generated/AggregateSettings";
 
 export type {
+  AggregateModel,
+  AggregateSettings,
   AuditRound,
   DecisionView,
   DispatchParams,
@@ -53,6 +59,7 @@ export type {
   RouterStatus,
   StationModel,
   StationModelsView,
+  UpstreamFormat,
 };
 
 export const stationApi = {
@@ -142,6 +149,12 @@ export const stationApi = {
   /** 存了立刻生效（下一发就按新的来；熔断器的当前状态不动）。不合格的整份不存、报原因。 */
   saveRouterSettings: (settings: RouterSettings) =>
     call<RouterSettings>("station_router_settings_save", { settings }),
+  /**
+   * 聚合模型此刻发布哪些（阶段 3）：本机路由答模型发现时发的就是这一份。没开聚合是空的。
+   * id 由后端编（key 只增不减、桌面端是散列出来的数字），前端别自己拼。
+   */
+  aggregateModels: (client: Client) =>
+    call<AggregateModel[]>("station_aggregate_models", { client }),
   /** 派单队列：上次选中的那条 + 手动排的顺序（当前那条失败时依次改用谁）。 */
   dispatchQueue: (client: Client) =>
     call<DispatchQueue>("station_dispatch_queue", { client }),
@@ -335,6 +348,81 @@ export function topupOf(p?: { topup_per_usd: number | null } | null): number {
  * 跟 `route::RATE_TOLERANCE` 同一个宽度。
  */
 export const OUTPUT_MARKUP_TOLERANCE = 0.05;
+
+/**
+ * 线路「上游协议」那一格的写法（中转站重构阶段 3：跟软件自己说的不一样时，本机路由两头转换）。
+ */
+export const UPSTREAM_FORMAT_LABEL: Record<UpstreamFormat, string> = {
+  anthropic: "Anthropic Messages",
+  openai_chat: "OpenAI Chat",
+  openai_responses: "OpenAI Responses",
+  gemini_native: "Gemini 原生",
+};
+
+/** 这个软件自己说的协议 —— 线路没写协议时就是它，原样转发。 */
+export function nativeFormat(client: Client): UpstreamFormat {
+  return client === "codex" ? "openai_responses" : "anthropic";
+}
+
+/**
+ * 这个软件能转换到哪几种上游协议（cc-switch 搬来的那几对）。Codex 没有转 Gemini 的那一对 ——
+ * 后端选到这一对会直接跳过这条线（`convert::plan::select` 的 `Unsupported`）。
+ */
+export function convertibleFormats(client: Client): UpstreamFormat[] {
+  return client === "codex"
+    ? ["openai_chat", "anthropic"]
+    : ["openai_responses", "openai_chat", "gemini_native"];
+}
+
+/** 这条线要不要本机路由转换协议：写了协议、而且跟软件自己说的不一样。不转回 `null`。 */
+export function convertedFormat(route: Route): UpstreamFormat | null {
+  const f = route.upstream_format;
+  return f != null && f !== nativeFormat(route.client) ? f : null;
+}
+
+/**
+ * 探完协议之后「上游协议」建议填什么。能直通（或者没探出来）就不建议（`null`，原样转发）；
+ * 直通**明确**不行、别的协议探通了，建议转换成那个 —— Claude 先 Responses 再 Chat，Codex 先 Chat 再 Anthropic。
+ * 探不出来的一律不猜。跟 Rust 侧 `Protocols::native` 同一套判定（Codex 直通只认 Responses）。
+ */
+export function suggestUpstreamFormat(
+  client: Client,
+  p: Protocols,
+): UpstreamFormat | null {
+  const native = client === "codex" ? p.openai_responses : p.anthropic;
+  if (native !== false) return null;
+  const probed: Partial<Record<UpstreamFormat, boolean | null>> = {
+    anthropic: p.anthropic,
+    openai_chat: p.openai_chat,
+    openai_responses: p.openai_responses,
+  };
+  return convertibleFormats(client).find((f) => probed[f] === true) ?? null;
+}
+
+/**
+ * 聚合模型「这条线发布哪些模型」那一格：逗号、顿号、换行都算分隔，去空白、去重。空 = 用这条线模型映射里的目标模型。
+ * 后端存之前还会再理一遍（`station_ops::settle_aggregate`），这里只是让输入框里的样子跟存下的一致。
+ */
+export function parseModelList(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of text.split(/[,，、\n]/)) {
+    const m = raw.trim();
+    if (m && !out.includes(m)) out.push(m);
+  }
+  return out;
+}
+
+/** 聚合模型怎么在客户端里选（阶段 3 还不写客户端的配置，所以要人手选或手填 id）。 */
+export function aggregateHowTo(client: Client): string {
+  switch (client) {
+    case "codex":
+      return "Codex：启动时带 -m <id>，或在会话里 /model 手填 id。Codex 的模型目录要等配置写入那一阶段才自动列出来。";
+    case "claude-desktop":
+      return "Claude 桌面端：模型条目要等配置写入那一阶段才自动写进去；现在只能在第三方网关的模型设置里手填 id。";
+    default:
+      return "Claude Code：开了网关模型发现（CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY）的话 /model 里会列出来，要 2.1.243 以上；没开就 /model <id> 手填。";
+  }
+}
 
 /** `Route::make_id` 用的单元分隔符。写成 fromCharCode 是因为字面量控制字符
  *  会被编辑器和管线吃掉，而 `""` 写法在几处工具链里各被转义一次。 */

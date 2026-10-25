@@ -41,6 +41,7 @@
 //! | `server.rs` | 监听、收连接、把一发请求分给下面两条路 |
 //! | `forward.rs` | **中转线路**：一发请求的重试循环（故障转移、熔断放行、首包 / 静默 / 非流式超时、2xx 里的错误、整流器重试、用量解析），照 cc-switch 的 `forward_with_retry_inner` 写 |
 //! | `official.rs` | **官方 Codex**（turn-state）：不进重试、不换线，原样直通 |
+//! | `aggregate.rs` | **聚合模型**（阶段 3）：模型发现本机自己答；带保留前缀的模型直达名单里那一条，解不出来报错、不回落 |
 //! | `log.rs` | 请求日志：每发一条 [`RouterRequest`]，有界缓冲，后台批量落库 |
 
 use crate::error::{GateError, Result};
@@ -56,6 +57,7 @@ use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
 
+mod aggregate;
 mod forward;
 mod log;
 mod official;
@@ -97,6 +99,8 @@ pub enum UpstreamAuth {
     Bearer(String),
     /// `x-api-key: <key>` —— Anthropic Messages 用这个。
     ApiKey(String),
+    /// `x-goog-api-key: <key>` —— Gemini 原生（线路协议标成 Gemini 时，中转站重构阶段 3）。
+    GoogleApiKey(String),
     /// 不带 —— 上游自己不校验,或者由使用者在别处配好。
     #[default]
     None,
@@ -120,9 +124,61 @@ pub struct Upstream {
     pub model_map: ModelMapping,
     /// 逐个指定的「从 → 到」，先于 `model_map` 看（不分大小写、完全一致）。
     pub model_exact: Vec<(String, String)>,
+    /// 这条线的上游说什么协议（`Route.upstream_format`）。`None` = 跟客户端一样，原样转发。
+    /// 跟客户端不一样时本机路由在请求、响应两头转换（`qb_proxy::convert`，中转站重构阶段 3）。
+    pub format: Option<qb_proxy::convert::plan::ApiFormat>,
+    /// 给人看的线路名（`站点名 · 分组`）。只用在聚合模型的显示名里（`模型（线路名）`），不参与转发。
+    pub label: String,
+}
+
+/// 线路上写的上游协议换成转换那一层认的写法（两个都在第 3 层、彼此不依赖，换算放在这一层）。
+pub fn api_format(
+    f: qb_station::station::route::UpstreamFormat,
+) -> qb_proxy::convert::plan::ApiFormat {
+    use qb_proxy::convert::plan::ApiFormat;
+    use qb_station::station::route::UpstreamFormat;
+    match f {
+        UpstreamFormat::Anthropic => ApiFormat::Anthropic,
+        UpstreamFormat::OpenaiChat => ApiFormat::OpenaiChat,
+        UpstreamFormat::OpenaiResponses => ApiFormat::OpenaiResponses,
+        UpstreamFormat::GeminiNative => ApiFormat::GeminiNative,
+    }
+}
+
+/// 一条线的上游实际说什么协议：写了就是写的那个，没写跟客户端一样（Claude 两个是 Anthropic、Codex 是 Responses）。
+pub fn speaks(route: &qb_station::station::route::Route) -> qb_proxy::convert::plan::ApiFormat {
+    use qb_proxy::convert::plan::ApiFormat;
+    route
+        .upstream_format
+        .map(api_format)
+        .unwrap_or(if route.client == Client::Codex {
+            ApiFormat::OpenaiResponses
+        } else {
+            ApiFormat::Anthropic
+        })
 }
 
 impl Upstream {
+    /// 一条中转线路装成可转发的上游：上游协议、模型映射挂上，**鉴权头跟着上游说的协议走**
+    /// （cc-switch 的适配器同样如此）—— Anthropic 用 `x-api-key`，OpenAI 两种用 `Authorization: Bearer`，
+    /// Gemini 用 `x-goog-api-key`。没写协议的照原来按软件定（Claude 两个用 `x-api-key`、Codex 用 Bearer）。
+    pub fn relay(route: &qb_station::station::route::Route, base_url: String, key: String) -> Self {
+        use qb_proxy::convert::plan::ApiFormat;
+        let auth = match speaks(route) {
+            ApiFormat::Anthropic => UpstreamAuth::ApiKey(key),
+            ApiFormat::OpenaiChat | ApiFormat::OpenaiResponses => UpstreamAuth::Bearer(key),
+            ApiFormat::GeminiNative => UpstreamAuth::GoogleApiKey(key),
+        };
+        Upstream {
+            route_id: route.id.clone(),
+            base_url,
+            auth,
+            format: route.upstream_format.map(api_format),
+            ..Default::default()
+        }
+        .with_model_map(&route.model_map)
+    }
+
     /// 挂上一条线路自己的模型映射（`qb_station::station::route::RouteModelMap`）。
     ///
     /// 跨 crate 的类型转换放在这一层：`qb-station` 和 `qb-proxy` 同在第 3 层，彼此不依赖。
@@ -240,6 +296,12 @@ pub struct RouterState {
     /// ⛔ **只给中转线路**（`forward.rs`）。官方 Codex 那条线（`official.rs`）永远用 `serve` 给的直连客户端 ——
     /// 走代理的话，门禁核过的出口就不是它真走的出口。
     relay_http: Option<reqwest::Client>,
+    /// 协议转换要跨请求记住的两样东西（中转站重构阶段 3，cc-switch 的 `ProxyState` 里同样两个）：
+    /// Claude 转 Gemini 时上一回合的 thought signature（Gemini 要求原样回传），Codex 转 Chat 时上一回合的
+    /// 函数调用（Chat 没有 `previous_response_id`）。只在内存里，面板重启就清空 —— 最多那一轮少带一点上下文。
+    pub(crate) gemini_shadow: Arc<qb_proxy::convert::gemini_shadow::GeminiShadowStore>,
+    pub(crate) codex_chat_history:
+        Arc<qb_proxy::convert::codex_chat_history::CodexChatHistoryStore>,
 }
 
 impl RouterState {
@@ -303,6 +365,9 @@ impl RouterState {
             // ⛔ 官方线不换模型名：官方端点只认官方的模型名，映射只给中转线路用。
             model_map: ModelMapping::default(),
             model_exact: Vec::new(),
+            // ⛔ 官方线不转协议：它就是 Responses，原样转发（官方那条路径在 `official.rs`，不走转换）。
+            format: None,
+            label: "官方 Codex".to_string(),
         });
         self.set_now(Client::Codex, OFFICIAL_CODEX_ROUTE_ID);
     }
@@ -441,6 +506,25 @@ impl RouterState {
             }
         }
         self.settings.insert(client, settings);
+    }
+
+    /// 这个软件的聚合模型此刻发布哪些 —— 模型发现由本机路由自己答的就是这一份，设置弹窗的预览也读它。
+    /// 没开聚合时是空的。
+    pub fn aggregate_models(&self, client: Client) -> Vec<qb_station::router::AggregateModel> {
+        let settings = self.settings(client).aggregate;
+        if !settings.enabled {
+            return Vec::new();
+        }
+        aggregate::published(client, &settings, &self.upstreams)
+            .into_iter()
+            .map(|p| qb_station::router::AggregateModel {
+                route_id: p.route_id,
+                id: p.id,
+                upstream: p.upstream,
+                display_name: p.display_name,
+                one_m: p.one_m,
+            })
+            .collect()
     }
 
     /// 这个软件的派单顺序（不含没有上游的线）。
@@ -928,6 +1012,39 @@ pub fn forwardable(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_line_s_auth_header_follows_the_protocol_its_upstream_speaks() {
+        use qb_proxy::convert::plan::ApiFormat;
+        use qb_station::station::route::{Route, UpstreamFormat};
+        let up = |client: Client, format: Option<UpstreamFormat>| {
+            let route = Route {
+                upstream_format: format,
+                ..Route::new(client, "s", "g")
+            };
+            Upstream::relay(&route, "https://relay.test/v1".into(), "k".into())
+        };
+        assert_eq!(
+            up(Client::ClaudeCode, None).auth,
+            UpstreamAuth::ApiKey("k".into())
+        );
+        assert_eq!(
+            up(Client::Codex, None).auth,
+            UpstreamAuth::Bearer("k".into())
+        );
+        let chat = up(Client::ClaudeCode, Some(UpstreamFormat::OpenaiChat));
+        assert_eq!(chat.auth, UpstreamAuth::Bearer("k".into()));
+        assert_eq!(chat.format, Some(ApiFormat::OpenaiChat));
+        assert_eq!(
+            up(Client::Codex, Some(UpstreamFormat::Anthropic)).auth,
+            UpstreamAuth::ApiKey("k".into())
+        );
+        assert_eq!(
+            up(Client::ClaudeDesktop, Some(UpstreamFormat::GeminiNative)).auth,
+            UpstreamAuth::GoogleApiKey("k".into())
+        );
+        assert_eq!(up(Client::Codex, None).format, None, "没写协议就是原样转发");
+    }
 
     /// 发出去的 base_url 和收回来的路径判定**必须是同一套前缀**。
     ///

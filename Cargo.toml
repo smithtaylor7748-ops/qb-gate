@@ -90,6 +90,13 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 futures-util = { version = "0.3", default-features = false }
+# 协议转换（中转站重构阶段 3，照搬 cc-switch v4.0.14 的 `proxy/providers/*`）：流式转换器是
+# `async_stream::stream!` 写的，拿 `bytes::Bytes` 进出。`bytes` / `futures` / `url` 早就在依赖树里
+# （hyper、reqwest 带进来的），这里只是提成直接依赖；`async-stream` 是新加的（tokio-rs，MIT）。
+bytes = "1"
+futures = "0.3"
+async-stream = "0.3"
+url = "2"
 # 反重力汉化引擎（0.26.0）要跟 Hub 的 Chrome DevTools 协议说话，那是本机回环上的
 # `ws://127.0.0.1`。只开最小 feature：不带 TLS —— 回环上没有 TLS，也不想为此多拉一套证书栈。
 # MIT，crates.io，`cargo deny` 的 licenses / sources 都过。

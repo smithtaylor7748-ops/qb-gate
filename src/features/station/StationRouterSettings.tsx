@@ -13,6 +13,11 @@
  *
  * 当前那条（行上高亮的那条）永远第一个试；这里排的是它失败之后依次改用谁。
  * 只列这个软件自己的线 —— 后端也只收这个软件的线，混进别的软件的线整份拒绝。
+ *
+ * # 聚合模型（阶段 3，cc-switch 的 Stack）
+ *
+ * 跟上面几节一起存。模型 id 由后端编（key 只增不减、桌面端是散列出来的数字），这里只显示后端读回来的那份，
+ * 不在前端自己拼 —— 拼出来的跟路由真认的对不上，使用者照着填就是一发 400。
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -20,7 +25,11 @@ import { useEffect, useMemo, useState } from "react";
 import type { Client } from "../../lib/generated/Client";
 import type { RouterStatus } from "../../lib/generated/RouterStatus";
 import {
+  aggregateHowTo,
+  convertedFormat,
+  parseModelList,
   stationApi,
+  type AggregateModel,
   type Route,
   type RouterNetworkView,
   type RouterSettings,
@@ -49,6 +58,9 @@ export default function StationRouterSettings({
   const [scheduled, setScheduled] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 聚合模型每条线「发布哪些模型」的输入框原文：边打边理会把刚打的逗号吃掉，存的时候才拆。
+  const [modelText, setModelText] = useState<Record<string, string>>({});
+  const [published, setPublished] = useState<AggregateModel[]>([]);
 
   useEffect(() => {
     let dropped = false;
@@ -58,12 +70,15 @@ export default function StationRouterSettings({
       stationApi.routerSettings(client),
       stationApi.dispatchQueue(client),
       stationApi.schedules(),
+      stationApi.aggregateModels(client),
     ])
-      .then(([s, q, all]) => {
+      .then(([s, q, all, models]) => {
         if (dropped) return;
         setSettings(s);
         setOrder(q.order);
         setScheduled(all.some((x) => x.client === client && x.enabled));
+        setModelText(textOf(s.aggregate.models));
+        setPublished(models);
       })
       .catch((e: unknown) => {
         if (!dropped) setError(e instanceof Error ? e.message : String(e));
@@ -113,12 +128,41 @@ export default function StationRouterSettings({
   const toggle = (id: string, on: boolean) =>
     setOrder(on ? [...order, id] : order.filter((x) => x !== id));
 
+  const agg = settings.aggregate;
+  const setAgg = (patch: Partial<RouterSettings["aggregate"]>) =>
+    setSettings({ ...settings, aggregate: { ...agg, ...patch } });
+  const toggleMember = (id: string, on: boolean) =>
+    setAgg({
+      members: on
+        ? [...agg.members.filter((x) => x !== id), id]
+        : agg.members.filter((x) => x !== id),
+    });
+
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.ok("模型 id 已复制");
+    } catch {
+      toast.error("复制不了，请手动选中复制");
+    }
+  };
+
   const save = async () => {
     setBusy(true);
     setError(null);
     try {
-      const saved = await stationApi.saveRouterSettings(settings);
+      const models: Record<string, string[]> = {};
+      for (const id of agg.members) {
+        const list = parseModelList(modelText[id] ?? "");
+        if (list.length > 0) models[id] = list;
+      }
+      const saved = await stationApi.saveRouterSettings({
+        ...settings,
+        aggregate: { ...agg, models },
+      });
       setSettings(saved);
+      setModelText({ ...modelText, ...textOf(saved.aggregate.models) });
+      setPublished(await stationApi.aggregateModels(client));
       if (!scheduled) {
         const q = await stationApi.saveDispatchQueue(client, order);
         setOrder(q.order);
@@ -374,6 +418,118 @@ export default function StationRouterSettings({
           onChange={(v) => setRect({ media_heuristic: v })}
         />
       </div>
+
+      {/* ------------------------------------------------ 聚合模型（阶段 3） */}
+      <h4 className="qb-st-sect">聚合模型</h4>
+      <label className="qb-st-check">
+        <input
+          type="checkbox"
+          checked={agg.enabled}
+          onChange={(e) => setAgg({ enabled: e.target.checked })}
+        />
+        把勾上的几条线的模型一起列给这个软件：选哪个模型，那一发就直达那条线
+      </label>
+      <p className="qb-st-note">
+        模型 id 带 <code>qbg</code>{" "}
+        前缀，跟普通模型名分得开；不带前缀的照旧按派单走。
+        <b>选中的那一发只打那一条线：不换线、不记熔断。</b>
+        那条线移出名单或删掉之后，带着旧 id 的请求直接报错，不会悄悄改用别的线
+        （那等于拿别家的钱、别家的模型回答）。{aggregateHowTo(client)}
+      </p>
+      {routes.length > 0 && (
+        <div className="qb-st-tw">
+          <table>
+            <thead>
+              <tr>
+                <th>聚合</th>
+                <th>线路</th>
+                <th>
+                  发布哪些模型（逗号分隔；空 = 用这条线模型映射的目标模型）
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {routes.map((r) => {
+                const on = agg.members.includes(r.id);
+                return (
+                  <tr key={r.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        aria-label={`把「${label(r)}」放进聚合`}
+                        checked={on}
+                        onChange={(e) => toggleMember(r.id, e.target.checked)}
+                      />
+                    </td>
+                    <td>
+                      {label(r)}
+                      {convertedFormat(r) && (
+                        <span className="qb-st-pill qb-st-pill--accent">
+                          转换
+                        </span>
+                      )}
+                    </td>
+                    <td>
+                      <input
+                        value={modelText[r.id] ?? ""}
+                        disabled={!on}
+                        aria-label={`「${label(r)}」发布的模型`}
+                        placeholder={
+                          mappedTargets(r) || "例如 glm-5[1M], glm-4.7"
+                        }
+                        onChange={(e) =>
+                          setModelText({ ...modelText, [r.id]: e.target.value })
+                        }
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {agg.enabled && (
+        <div>
+          <span className="qb-st-k">现在发布的（保存后刷新）</span>
+          {published.length === 0 ? (
+            <p className="qb-st-note">
+              还没有：勾上线、保存。没配 Key
+              的线、没写模型又没配模型映射的线发布不了模型。
+            </p>
+          ) : (
+            <div className="qb-st-tw">
+              <table>
+                <thead>
+                  <tr>
+                    <th>模型 id</th>
+                    <th>显示名</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {published.map((m) => (
+                    <tr key={m.id}>
+                      <td>
+                        <code>{m.id}</code>
+                      </td>
+                      <td className="qb-st-dim">{m.display_name}</td>
+                      <td>
+                        <button
+                          className="qb-st-iconbtn"
+                          onClick={() => void copy(m.id)}
+                        >
+                          复制
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="qb-st-nudge">
@@ -648,6 +804,36 @@ function RouterNetworkPanel({ client }: { client: Client }) {
       )}
     </>
   );
+}
+
+/** 存着的「每条线发布哪些模型」换成输入框里的写法。 */
+function textOf(
+  models: RouterSettings["aggregate"]["models"],
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(models).map(([id, list]) => [id, (list ?? []).join(", ")]),
+  );
+}
+
+/** 这条线模型映射里的目标模型（没写发布列表时发布的就是这些），拿来当输入框的提示。 */
+function mappedTargets(route: Route): string {
+  // 老数据（和演示夹具）里可能没有这一格 —— 跟 `modelMap.ts` 一样当它没写。
+  const m = route.model_map as Route["model_map"] | undefined;
+  if (!m) return "";
+  const out: string[] = [];
+  for (const t of [
+    ...m.exact.map((p) => p.to),
+    m.default,
+    m.opus,
+    m.sonnet,
+    m.haiku,
+    m.fable,
+    m.subagent,
+  ]) {
+    const v = t?.trim();
+    if (v && !out.includes(v)) out.push(v);
+  }
+  return out.join(", ");
 }
 
 /** 还要关多久，写成「 · 还要 37 分钟」。取不到就不写。 */
