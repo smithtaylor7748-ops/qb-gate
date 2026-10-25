@@ -166,6 +166,11 @@ const MIGRATIONS: &[&str] = &[
      CREATE INDEX IF NOT EXISTS probe_attempts_route ON probe_attempts(route_id, at_ms);
      CREATE INDEX IF NOT EXISTS probe_attempts_at ON probe_attempts(at_ms);
      CREATE TABLE IF NOT EXISTS scheduler_actions(id TEXT PRIMARY KEY,body TEXT NOT NULL);",
+    // 8：站点的备用地址与测速结果（2026-10-25，中转站重构阶段 4，cc-switch 的 P3 多端点）。
+    //
+    // 一个站点一行、主键是站点 id，跟 `router_settings` 同一个形状。站点眼下没有删除入口（删的是线路）；
+    // 以后加了，要连这一行一起删。
+    "CREATE TABLE IF NOT EXISTS station_endpoints(id TEXT PRIMARY KEY,body TEXT NOT NULL);",
 ];
 
 /// 用正经列存的高频表（不走通用的 `(id, body)`）。列名跟第 3 层那个类型的字段**同名**。
@@ -272,6 +277,7 @@ const TABLES: &[&str] = &[
     "router_settings",
     "dispatch_queue",
     "scheduler_actions",
+    "station_endpoints",
 ];
 
 impl Repository {

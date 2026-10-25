@@ -50,6 +50,7 @@ import {
 } from "../../lib/station";
 import { Button, Modal } from "../../ui";
 import ConfigPane from "./ConfigPane";
+import StationEndpointsPanel from "./StationEndpointsPanel";
 import {
   mappedCount,
   modelMapOf,
@@ -153,6 +154,8 @@ export default function RouteDialog({
   const [presetFilter, setPresetFilter] = useState("");
   /** 刚点的那个预设（给「去拿 Key」链接和占位提醒用）。改了地址就不算了。 */
   const [chosen, setChosen] = useState<Preset | null>(null);
+  /** 这次打开之后点过几次「设为主地址」（每次后端给站点版本号加一）。 */
+  const [promoted, setPromoted] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -184,6 +187,7 @@ export default function RouteDialog({
     setFullUrl(false);
     setPresetFilter("");
     setChosen(null);
+    setPromoted(0);
     if (editing) {
       const p = providers.find((x) => x.id === editing.station_id);
       setName(p?.name ?? editing.station_id);
@@ -320,7 +324,8 @@ export default function RouteDialog({
             note: note.trim(),
             tags: existing?.tags ?? [],
             favorite: existing?.favorite ?? false,
-            revision: existing?.revision ?? 0,
+            // 「设为主地址」在库里给站点的版本号加了一（阶段 4，多端点）：这里跟上，不然一保存就是「已被修改」。
+            revision: (existing?.revision ?? 0) + promoted,
             topup_per_usd: topupPerUsd,
           },
           key,
@@ -612,6 +617,18 @@ export default function RouteDialog({
         <p className="qb-st-note">
           开了就原样用这个地址，不追加 <code>/v1/messages</code>。
         </p>
+
+        {/* ------------------------------------------------ 备用地址（阶段 4，多端点）：站点已经存在时才有 */}
+        {editing && (
+          <StationEndpointsPanel
+            providerId={editing.station_id}
+            mainUrl={baseUrl}
+            onMainChanged={(url) => {
+              setBaseUrl(url);
+              setPromoted((n) => n + 1);
+            }}
+          />
+        )}
 
         {/* ------------------------------------------------ 探测结果 */}
         <ProbeBox

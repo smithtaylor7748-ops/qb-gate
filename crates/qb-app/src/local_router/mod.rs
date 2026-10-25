@@ -129,6 +129,9 @@ pub struct Upstream {
     pub format: Option<qb_proxy::convert::plan::ApiFormat>,
     /// 给人看的线路名（`站点名 · 分组`）。只用在聚合模型的显示名里（`模型（线路名）`），不参与转发。
     pub label: String,
+    /// 这个站点的备用地址，按试的先后排好（中转站重构阶段 4，多端点）。主地址连不上时同一发改打它们，
+    /// 见 `forward::try_line`。⛔ 官方线永远是空的。
+    pub alternates: Vec<String>,
 }
 
 /// 线路上写的上游协议换成转换那一层认的写法（两个都在第 3 层、彼此不依赖，换算放在这一层）。
@@ -368,6 +371,8 @@ impl RouterState {
             // ⛔ 官方线不转协议：它就是 Responses，原样转发（官方那条路径在 `official.rs`，不走转换）。
             format: None,
             label: "官方 Codex".to_string(),
+            // ⛔ 官方线没有备用地址：它只有一个官方端点。
+            alternates: Vec::new(),
         });
         self.set_now(Client::Codex, OFFICIAL_CODEX_ROUTE_ID);
     }

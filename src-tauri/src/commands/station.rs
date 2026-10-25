@@ -170,10 +170,8 @@ fn load_upstreams(state: &AppState) -> Result<usize> {
         .iter()
         .filter_map(|route| {
             let source = station_ops::source(&db, route).ok()?;
-            let site = providers
-                .iter()
-                .find(|p| p.id == route.station_id)
-                .map_or(route.station_id.as_str(), |p| p.name.as_str());
+            let provider = providers.iter().find(|p| p.id == route.station_id);
+            let site = provider.map_or(route.station_id.as_str(), |p| p.name.as_str());
             let group = if route.group.is_empty() {
                 "默认分组"
             } else {
@@ -181,8 +179,12 @@ fn load_upstreams(state: &AppState) -> Result<usize> {
             };
             // 上游协议、模型映射挂上，鉴权头跟着上游协议走（中转站重构阶段 3：`upstream_format` 生效，
             // 跟客户端不一样时本机路由两头转换）。线路名只给聚合模型的显示名用（跟界面上同一个写法）。
+            // 站点的备用地址按故障转移的先后挂上（阶段 4，多端点：主地址连不上时同一发改打它们）。
             Some(Upstream {
                 label: format!("{site} · {group}"),
+                alternates: provider
+                    .map(|p| station_ops::alternates(&db, p))
+                    .unwrap_or_default(),
                 ..Upstream::relay(route, source.base_url, source.key)
             })
         })
@@ -513,6 +515,111 @@ pub fn station_aggregate_models(
         .lock()
         .map_err(|_| GateError::Other("中转站状态损坏".into()))?
         .aggregate_models(client))
+}
+
+// ------------------------------------------------------------------ 站点的备用地址（阶段 4，多端点）
+
+/// 一次测速的结果：主地址那一个 + 存着的备用地址（各自带着刚测的结果）。
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct EndpointTestView {
+    pub main: qb_station::station::endpoints::EndpointLatency,
+    pub endpoints: qb_station::station::endpoints::StationEndpoints,
+}
+
+/// 一个站点的备用地址（主地址在站点自己身上）。只读库。
+#[tauri::command]
+pub fn station_endpoints(
+    provider_id: String,
+) -> Result<qb_station::station::endpoints::StationEndpoints> {
+    let db = crate::repository::Repository::open()?;
+    station_ops::load_endpoints(&db, &provider_id)
+}
+
+/// 给站点加一个备用地址，并立刻装进本机路由（主地址连不上时同一发改打它）。
+#[tauri::command]
+pub fn station_endpoint_add(
+    state: State<'_, AppState>,
+    provider_id: String,
+    url: String,
+) -> Result<qb_station::station::endpoints::StationEndpoints> {
+    let db = crate::repository::Repository::open()?;
+    let e = station_ops::add_endpoint(
+        &db,
+        &provider_id,
+        &url,
+        chrono::Utc::now().timestamp_millis(),
+    )?;
+    load_upstreams(&state)?;
+    Ok(e)
+}
+
+#[tauri::command]
+pub fn station_endpoint_remove(
+    state: State<'_, AppState>,
+    provider_id: String,
+    url: String,
+) -> Result<qb_station::station::endpoints::StationEndpoints> {
+    let db = crate::repository::Repository::open()?;
+    let e = station_ops::remove_endpoint(&db, &provider_id, &url)?;
+    load_upstreams(&state)?;
+    Ok(e)
+}
+
+/// 把一个备用地址换成主地址（原来的主地址挪进备用）。站点的 `base_url` 变了：账单、检验都改问新地址。
+#[tauri::command]
+pub fn station_endpoint_promote(
+    state: State<'_, AppState>,
+    provider_id: String,
+    url: String,
+) -> Result<qb_station::station::endpoints::StationEndpoints> {
+    let db = crate::repository::Repository::open()?;
+    station_ops::promote_endpoint(
+        &db,
+        &provider_id,
+        &url,
+        chrono::Utc::now().timestamp_millis(),
+    )?;
+    load_upstreams(&state)?;
+    station_ops::load_endpoints(&db, &provider_id)
+}
+
+/// 测速：主地址和每个备用地址各发一发热身、一发计时（不带 Key、不调用模型、不花钱，只在点的时候跑）。
+/// 跟中转请求走同一条路：设了出站代理就经它测。备用地址的结果存下来，故障转移按它排先后。
+#[tauri::command]
+pub async fn station_endpoints_test(
+    state: State<'_, AppState>,
+    provider_id: String,
+) -> Result<EndpointTestView> {
+    let (main_url, urls, client) = {
+        let db = crate::repository::Repository::open()?;
+        let provider: qb_contract::domain::Provider = db
+            .get("providers", &provider_id)
+            .map_err(|_| GateError::Other("这个站点不存在".into()))?;
+        let e = station_ops::load_endpoints(&db, &provider_id)?;
+        let client = match station_ops::relay_client(&station_ops::load_router_network(&db)?)? {
+            Some(proxied) => proxied,
+            None => reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
+        };
+        let mut urls = vec![provider.base_url.clone()];
+        urls.extend(e.endpoints.iter().map(|x| x.url.clone()));
+        (provider.base_url, urls, client)
+    };
+    let mut results = station_ops::test_endpoints(&client, urls, None).await;
+    let main = results.remove(0);
+    let db = crate::repository::Repository::open()?;
+    let mut e = station_ops::load_endpoints(&db, &provider_id)?;
+    let now = chrono::Utc::now().timestamp_millis();
+    for r in &results {
+        e.record(r, now);
+    }
+    station_ops::save_endpoints(&db, &e)?;
+    load_upstreams(&state)?;
+    tracing::debug!("测速：{main_url} 与 {} 个备用地址", results.len());
+    Ok(EndpointTestView { main, endpoints: e })
 }
 
 /// 一个软件的派单队列：上次选中的那条 + 手动排的顺序。

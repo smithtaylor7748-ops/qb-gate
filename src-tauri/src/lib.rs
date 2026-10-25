@@ -166,6 +166,12 @@ pub fn run() {
             commands::station::station_router_settings_save,
             // 聚合模型此刻发布哪些（中转站重构阶段 3）。
             commands::station::station_aggregate_models,
+            // 站点的备用地址与测速（中转站重构阶段 4，多端点）。
+            commands::station::station_endpoints,
+            commands::station::station_endpoint_add,
+            commands::station::station_endpoint_remove,
+            commands::station::station_endpoint_promote,
+            commands::station::station_endpoints_test,
             commands::station::station_dispatch_queue,
             commands::station::station_dispatch_queue_save,
             commands::station::station_route_retest,

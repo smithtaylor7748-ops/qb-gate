@@ -30,6 +30,7 @@ import type { RouterRequest } from "./generated/RouterRequest";
 import type { ListenScope } from "./generated/ListenScope";
 import type { RouterNetworkView } from "./generated/RouterNetworkView";
 import type { RouterSettings } from "./generated/RouterSettings";
+import type { StationEndpoints } from "./generated/StationEndpoints";
 /**
  * 演示数据 —— 只给截图和界面预览用。
  *
@@ -1973,6 +1974,24 @@ const routerSettingsOf = (client: string): RouterSettings => {
   };
 };
 const stationRouterSettings: Record<string, RouterSettings> = {};
+/** 站点的备用地址（阶段 4），按站点各记一份。演示里 example 站自带一个备用地址。 */
+const stationEndpoints: Record<string, StationEndpoints> = {
+  example: {
+    provider_id: "example",
+    endpoints: [
+      {
+        url: "https://backup.example.com",
+        added_ms: 1757820000000,
+        latency_ms: null,
+        status: null,
+        error: null,
+        tested_ms: null,
+      },
+    ],
+  },
+};
+const demoEndpointsOf = (providerId: string): StationEndpoints =>
+  (stationEndpoints[providerId] ??= { provider_id: providerId, endpoints: [] });
 /** 演示里的路由口令。一眼看得出是演示用的，别像真的。 */
 const DEMO_ROUTER_KEY = "qbr-demo-not-a-real-key-0000";
 /** 本机路由的网络设置（R6）。默认只本机、直连 —— 跟真后端没存过时一样。 */
@@ -2781,6 +2800,50 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     const saved = { ...s, aggregate: { ...s.aggregate, keys } };
     stationRouterSettings[s.client] = saved;
     return { ...saved };
+  },
+  // 站点的备用地址（阶段 4，多端点）。演示里按站点各记一份，测速给固定的假耗时（真后端才联网）。
+  station_endpoints: (args) => demoEndpointsOf(String(args?.providerId ?? "")),
+  station_endpoint_add: (args) => {
+    const e = demoEndpointsOf(String(args?.providerId ?? ""));
+    const url = String(args?.url ?? "")
+      .trim()
+      .replace(/\/+$/, "");
+    if (!/^https?:\/\//i.test(url))
+      throw new Error(`地址要以 https:// 或 http:// 开头：${url}`);
+    if (!e.endpoints.some((x) => x.url.toLowerCase() === url.toLowerCase()))
+      e.endpoints.push({
+        url,
+        added_ms: Date.now(),
+        latency_ms: null,
+        status: null,
+        error: null,
+        tested_ms: null,
+      });
+    return { ...e, endpoints: [...e.endpoints] };
+  },
+  station_endpoint_remove: (args) => {
+    const e = demoEndpointsOf(String(args?.providerId ?? ""));
+    e.endpoints = e.endpoints.filter((x) => x.url !== args?.url);
+    return { ...e, endpoints: [...e.endpoints] };
+  },
+  station_endpoint_promote: (args) => {
+    const e = demoEndpointsOf(String(args?.providerId ?? ""));
+    e.endpoints = e.endpoints.filter((x) => x.url !== args?.url);
+    return { ...e, endpoints: [...e.endpoints] };
+  },
+  station_endpoints_test: (args) => {
+    const e = demoEndpointsOf(String(args?.providerId ?? ""));
+    e.endpoints = e.endpoints.map((x, i) => ({
+      ...x,
+      latency_ms: 180 + i * 140,
+      status: 404,
+      error: null,
+      tested_ms: Date.now(),
+    }));
+    return {
+      main: { url: "", latency_ms: 120, status: 404, error: null },
+      endpoints: { ...e, endpoints: [...e.endpoints] },
+    };
   },
   // 聚合模型的预览（阶段 3）。id 照后端的格式拼；桌面端的数字在演示里是假的（真后端按 key 和模型名散列）。
   station_aggregate_models: (args) => {

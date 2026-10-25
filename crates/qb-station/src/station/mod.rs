@@ -9,6 +9,8 @@
 
 pub mod audit;
 pub mod billing;
+/// 站点的备用地址与测速（中转站重构阶段 4，多端点）。
+pub mod endpoints;
 pub mod model;
 pub mod pricing;
 pub mod route;

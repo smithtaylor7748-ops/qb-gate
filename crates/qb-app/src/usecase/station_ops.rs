@@ -33,6 +33,7 @@ use qb_station::schedule::{
     Pin, Prefs, Ranking, Schedule,
 };
 use qb_station::station::audit::{AuditRound, Check, CheckKind};
+use qb_station::station::endpoints::StationEndpoints;
 use qb_station::station::model::{Protocols, UsageRow};
 use qb_station::station::pricing::{self, FetchedPrice};
 use qb_station::station::route::Route;
@@ -1298,6 +1299,141 @@ fn host_hint(base_url: &str) -> &str {
     host.rsplit_once('.').map_or(host, |(name, _)| name)
 }
 
+// ------------------------------------------------------------------ 站点的备用地址（阶段 4，多端点）
+
+const ENDPOINTS_TABLE: &str = "station_endpoints";
+
+/// 读一个站点的备用地址。没存过 = 一个都没有。
+pub fn load_endpoints(db: &Repository, provider_id: &str) -> Result<StationEndpoints> {
+    let mut e: StationEndpoints = db
+        .find(ENDPOINTS_TABLE, provider_id)?
+        .unwrap_or_else(|| StationEndpoints::new(provider_id));
+    // 主键说了算（跟路由设置同一条）。
+    e.provider_id = provider_id.to_string();
+    Ok(e)
+}
+
+pub fn save_endpoints(db: &Repository, e: &StationEndpoints) -> Result<()> {
+    db.put(ENDPOINTS_TABLE, &e.provider_id, e)
+}
+
+/// 给站点加一个备用地址（跟主地址或已有的重复就不加）。地址照主地址的规矩查：不许带凭证、查询串、片段。
+pub fn add_endpoint(
+    db: &Repository,
+    provider_id: &str,
+    url: &str,
+    now_ms: i64,
+) -> Result<StationEndpoints> {
+    let provider: Provider = db
+        .get("providers", provider_id)
+        .map_err(|_| GateError::Other("这个站点不存在".into()))?;
+    let url = crate::endpoint::endpoint_base(url)?;
+    let mut e = load_endpoints(db, provider_id)?;
+    e.add(&url, &provider.base_url, now_ms)
+        .map_err(GateError::Other)?;
+    save_endpoints(db, &e)?;
+    Ok(e)
+}
+
+pub fn remove_endpoint(db: &Repository, provider_id: &str, url: &str) -> Result<StationEndpoints> {
+    let mut e = load_endpoints(db, provider_id)?;
+    e.remove(url);
+    save_endpoints(db, &e)?;
+    Ok(e)
+}
+
+/// 把一个备用地址换成主地址：站点的 `base_url` 改成它，原来的主地址挪进备用（cc-switch「用这个地址」那一下）。
+pub fn promote_endpoint(
+    db: &Repository,
+    provider_id: &str,
+    url: &str,
+    now_ms: i64,
+) -> Result<Provider> {
+    let mut provider: Provider = db
+        .get("providers", provider_id)
+        .map_err(|_| GateError::Other("这个站点不存在".into()))?;
+    let mut e = load_endpoints(db, provider_id)?;
+    let Some(chosen) = e
+        .endpoints
+        .iter()
+        .find(|x| qb_station::station::endpoints::same(&x.url, url))
+        .map(|x| x.url.clone())
+    else {
+        return Err(GateError::Other("这个地址不在这个站点的备用地址里".into()));
+    };
+    let old_main = std::mem::replace(&mut provider.base_url, chosen.clone());
+    e.remove(&chosen);
+    e.add(&old_main, &provider.base_url, now_ms)
+        .map_err(GateError::Other)?;
+    provider.revision = provider.revision.saturating_add(1);
+    db.put("providers", provider_id, &provider)?;
+    save_endpoints(db, &e)?;
+    Ok(provider)
+}
+
+/// 一条线的备用地址，按故障转移的先后（[`qb_station::station::endpoints::failover_order`]），每个都照主地址的规矩规范化过；
+/// 规范化不了的跳过。读不了库就当没有。
+pub fn alternates(db: &Repository, provider: &Provider) -> Vec<String> {
+    let Ok(e) = load_endpoints(db, &provider.id) else {
+        return Vec::new();
+    };
+    let Ok(main) = crate::endpoint::endpoint_base(&provider.base_url) else {
+        return Vec::new();
+    };
+    qb_station::station::endpoints::failover_order(&main, &e.endpoints)
+        .into_iter()
+        .filter_map(|u| crate::endpoint::endpoint_base(&u).ok())
+        .collect()
+}
+
+/// 测一组地址的响应耗时（cc-switch `SpeedtestService::test_endpoints`）：先发一发热身（复用连接、躲开首包的额外耗时），
+/// 第二发计时。任何状态码都算通 —— 测的是地址，不带 Key、不调用模型、不花钱。只在点「测速」时跑。
+pub async fn test_endpoints(
+    client: &reqwest::Client,
+    urls: Vec<String>,
+    timeout_secs: Option<u64>,
+) -> Vec<qb_station::station::endpoints::EndpointLatency> {
+    use qb_station::station::endpoints::{sanitize_timeout, EndpointLatency};
+    let timeout = std::time::Duration::from_secs(sanitize_timeout(timeout_secs));
+    let tasks = urls.into_iter().map(|url| {
+        let client = client.clone();
+        async move {
+            let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
+                return EndpointLatency {
+                    error: Some("地址无效".into()),
+                    url,
+                    latency_ms: None,
+                    status: None,
+                };
+            };
+            let _ = client.get(parsed.clone()).timeout(timeout).send().await;
+            let start = std::time::Instant::now();
+            match client.get(parsed).timeout(timeout).send().await {
+                Ok(resp) => EndpointLatency {
+                    url,
+                    latency_ms: Some(start.elapsed().as_millis() as u64),
+                    status: Some(resp.status().as_u16()),
+                    error: None,
+                },
+                Err(e) => EndpointLatency {
+                    url,
+                    latency_ms: None,
+                    status: e.status().map(|s| s.as_u16()),
+                    error: Some(if e.is_timeout() {
+                        "请求超时".into()
+                    } else if e.is_connect() {
+                        "连接失败".into()
+                    } else {
+                        // 不带地址（`without_url`）：错误文字里会带上整个请求地址。
+                        e.without_url().to_string()
+                    }),
+                },
+            }
+        }
+    });
+    futures_util::future::join_all(tasks).await
+}
+
 /// 读一个软件的派单队列。没存过 = 空的（没有上次选中的那条、没有顺序）。
 pub fn load_dispatch_queue(db: &Repository, client: Client) -> Result<DispatchQueue> {
     let mut q: DispatchQueue = db
@@ -2397,6 +2533,76 @@ mod tests {
         assert_eq!(host_hint("https://www.relay.example/v1"), "relay");
         assert_eq!(host_hint("http://127.0.0.1:3000"), "127.0.0");
         assert_eq!(host_hint("relay.test"), "relay");
+    }
+
+    #[test]
+    fn a_station_s_alternate_addresses_are_stored_ordered_and_promoted() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        let provider = Provider {
+            id: "site".into(),
+            name: "Fixture".into(),
+            base_url: "https://main.test".into(),
+            website: String::new(),
+            note: String::new(),
+            tags: vec![],
+            favorite: false,
+            revision: 1,
+            topup_per_usd: None,
+        };
+        db.put("providers", "site", &provider).unwrap();
+
+        add_endpoint(&db, "site", "https://b.test/", 1).unwrap();
+        let e = add_endpoint(&db, "site", "https://MAIN.test", 2).unwrap();
+        assert_eq!(e.endpoints.len(), 1, "跟主地址重复的不加");
+        assert!(
+            add_endpoint(&db, "site", "https://u:p@c.test", 3).is_err(),
+            "带凭证的地址"
+        );
+        assert!(
+            add_endpoint(&db, "nobody", "https://c.test", 3).is_err(),
+            "站点不存在"
+        );
+        add_endpoint(&db, "site", "https://c.test", 4).unwrap();
+        let mut e = load_endpoints(&db, "site").unwrap();
+        e.record(
+            &qb_station::station::endpoints::EndpointLatency {
+                url: "https://c.test".into(),
+                latency_ms: Some(30),
+                status: Some(404),
+                error: None,
+            },
+            5,
+        );
+        save_endpoints(&db, &e).unwrap();
+        assert_eq!(
+            alternates(&db, &provider),
+            ["https://c.test", "https://b.test"],
+            "测过的快的在前"
+        );
+
+        let promoted = promote_endpoint(&db, "site", "https://c.test/", 6).unwrap();
+        assert_eq!(promoted.base_url, "https://c.test");
+        assert_eq!(promoted.revision, 2);
+        let after: Vec<String> = load_endpoints(&db, "site")
+            .unwrap()
+            .endpoints
+            .into_iter()
+            .map(|x| x.url)
+            .collect();
+        assert_eq!(
+            after,
+            ["https://b.test", "https://main.test"],
+            "原来的主地址挪进备用"
+        );
+        assert!(promote_endpoint(&db, "site", "https://stranger.test", 7).is_err());
+        assert!(remove_endpoint(&db, "site", "https://b.test")
+            .unwrap()
+            .endpoints
+            .iter()
+            .all(|x| x.url != "https://b.test"));
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

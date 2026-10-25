@@ -136,6 +136,9 @@ struct Failure {
     retry_after_ms: Option<i64>,
     /// 最后一条也失败时回给客户端的东西。
     reply: Reply,
+    /// 这个地址根本没连上（发送就失败了，一个 HTTP 响应都没拿到）。只有这种才换同一条线的备用地址
+    /// （中转站重构阶段 4，多端点）：拿到了响应、哪怕是 5xx，就是站点自己的答复，换个地址答的也一样。
+    unreached: bool,
 }
 
 enum Reply {
@@ -155,6 +158,17 @@ impl Failure {
             error,
             retry_after_ms: None,
             reply: Reply::Local,
+            unreached: false,
+        })
+    }
+
+    /// 发送就失败了（连不上、发送超时）。
+    fn unreached(error: ProxyError) -> Attempt {
+        Attempt::Failed(Self {
+            error,
+            retry_after_ms: None,
+            reply: Reply::Local,
+            unreached: true,
         })
     }
 }
@@ -417,7 +431,29 @@ struct LinePlan {
 }
 
 /// 选转换、改请求、打这条线一次。
+///
+/// 这个站点有备用地址（中转站重构阶段 4，多端点）时：主地址**根本没连上**就照原样改打下一个地址，同一把 Key、
+/// 同一个熔断名额，都没连上才算这条线失败、交给上面换线。拿到了 HTTP 响应就不换地址（见 [`Failure::unreached`]）。
 async fn try_line(ctx: &LineCtx<'_>, line: &Upstream, body: &Outgoing) -> Attempt {
+    let mut result = try_address(ctx, line, body).await;
+    for alternate in &line.alternates {
+        if !matches!(&result, Attempt::Failed(f) if f.unreached) {
+            break;
+        }
+        tracing::info!(
+            "本机路由：{} 的地址连不上，改用这个站点的备用地址再试",
+            line.route_id
+        );
+        let moved = Upstream {
+            base_url: alternate.clone(),
+            ..line.clone()
+        };
+        result = try_address(ctx, &moved, body).await;
+    }
+    result
+}
+
+async fn try_address(ctx: &LineCtx<'_>, line: &Upstream, body: &Outgoing) -> Attempt {
     match plan_line(ctx, line, body).await {
         Ok(plan) => attempt(ctx, line, &plan).await,
         Err(error) => Failure::local(error),
@@ -831,7 +867,7 @@ async fn attempt(ctx: &LineCtx<'_>, line: &Upstream, plan: &LinePlan) -> Attempt
     };
     let mut resp = match sent {
         Ok(r) => r,
-        Err(e) => return Failure::local(describe_send_error(e)),
+        Err(e) => return Failure::unreached(describe_send_error(e)),
     };
 
     let status = resp.status().as_u16();
@@ -862,6 +898,7 @@ async fn attempt(ctx: &LineCtx<'_>, line: &Upstream, plan: &LinePlan) -> Attempt
             None => body,
         };
         return Attempt::Failed(Failure {
+            unreached: false,
             error: ProxyError::UpstreamError { status, body: text },
             retry_after_ms: retry,
             reply: Reply::Upstream {
@@ -924,6 +961,7 @@ async fn attempt(ctx: &LineCtx<'_>, line: &Upstream, plan: &LinePlan) -> Attempt
         };
         if let Some(message) = hidden {
             return Attempt::Failed(Failure {
+                unreached: false,
                 error: ProxyError::TransformError(message),
                 retry_after_ms: None,
                 reply: Reply::Upstream {
@@ -1014,6 +1052,7 @@ async fn converted(
     let fail = |error: ProxyError| {
         tracing::warn!("本机路由：「{}」响应转换失败：{error}", conversion.label());
         Attempt::Failed(Failure {
+            unreached: false,
             error,
             retry_after_ms: None,
             reply: Reply::Local,
@@ -1213,12 +1252,14 @@ async fn prime(
                 match verdict {
                     Some(Err(error)) => {
                         return Attempt::Failed(Failure {
+                            unreached: false,
                             error,
                             retry_after_ms: None,
                             reply: reply_with(&primed),
                         })
                     }
                     None if responses => return Attempt::Failed(Failure {
+                        unreached: false,
                         error: ProxyError::ForwardFailed(
                             "Responses stream ended before producing output or a terminal event"
                                 .to_string(),
@@ -1267,6 +1308,7 @@ async fn prime(
             Some(Ok(())) => break,
             Some(Err(error)) => {
                 return Attempt::Failed(Failure {
+                    unreached: false,
                     error,
                     retry_after_ms: None,
                     reply: reply_with(&primed),
@@ -1378,6 +1420,7 @@ fn respond_failure(failure: Failure, fault: Fault, mut record: Record) -> Respon
         error,
         retry_after_ms,
         reply,
+        ..
     } = failure;
     record.log.fault = Some(fault.key().to_string());
     record.log.retry_after_ms = retry_after_ms;
@@ -2691,5 +2734,53 @@ mod tests {
             official_hits.lock().unwrap().is_empty(),
             "聚合 id 发去了官方"
         );
+    }
+
+    // ---- 站点的备用地址（阶段 4，多端点）
+
+    /// 一个保证连不上的地址：绑一个端口再放掉。
+    async fn dead_address() -> String {
+        let l = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = l.local_addr().unwrap().port();
+        drop(l);
+        format!("http://127.0.0.1:{port}/v1")
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_address_falls_back_to_the_station_s_other_address_on_the_same_line() {
+        let (alt, alt_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let mut a = line("a", alt);
+        a.alternates = vec![a.base_url.clone()];
+        a.base_url = dead_address().await;
+        let h = two_lines(Client::ClaudeCode, a, line("b", b), |_| {}).await;
+        let (status, body) = post(&h, "/v1/messages", r#"{"model":"m"}"#).await;
+        assert_eq!((status, body.as_str()), (200, CLAUDE_OK));
+        assert_eq!(alt_hits.lock().unwrap().len(), 1, "没改打备用地址");
+        assert!(
+            b_hits.lock().unwrap().is_empty(),
+            "换了线，而不是换同一条线的地址"
+        );
+        assert_eq!(last_log(&h).await.route_id, "a");
+    }
+
+    #[tokio::test]
+    async fn an_address_that_answers_with_an_error_does_not_switch_to_the_other_address() {
+        // 拿到了响应就是站点自己的答复：换个地址答的也一样，该按故障转移换下一条线。
+        let (main, _) = stub(Script::json(502, r#"{"error":{"message":"bad gateway"}}"#)).await;
+        let (alt, alt_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let mut a = line("a", main);
+        a.alternates = vec![line("x", alt).base_url];
+        let h = two_lines(Client::ClaudeCode, a, line("b", b), |_| {}).await;
+        let (status, _) = post(&h, "/v1/messages", r#"{"model":"m"}"#).await;
+        assert_eq!(status, 200);
+        assert!(
+            alt_hits.lock().unwrap().is_empty(),
+            "站点答了 502 还去打备用地址"
+        );
+        assert_eq!(b_hits.lock().unwrap().len(), 1, "该按故障转移换下一条线");
     }
 }

@@ -38,10 +38,14 @@ import type { UpstreamFormat } from "./generated/UpstreamFormat";
 import type { Protocols } from "./generated/Protocols";
 import type { AggregateModel } from "./generated/AggregateModel";
 import type { AggregateSettings } from "./generated/AggregateSettings";
+import type { EndpointTestView } from "./generated/EndpointTestView";
+import type { StationEndpoints } from "./generated/StationEndpoints";
 
 export type {
   AggregateModel,
   AggregateSettings,
+  EndpointTestView,
+  StationEndpoints,
   AuditRound,
   DecisionView,
   DispatchParams,
@@ -155,6 +159,22 @@ export const stationApi = {
    */
   aggregateModels: (client: Client) =>
     call<AggregateModel[]>("station_aggregate_models", { client }),
+  /**
+   * 站点的备用地址（阶段 4，多端点）。主地址连不上时，同一发请求改打这些（同一把 Key），按上次测速从快到慢。
+   * 主地址在站点自己身上（`Provider.base_url`），不在这份列表里。
+   */
+  endpoints: (providerId: string) =>
+    call<StationEndpoints>("station_endpoints", { providerId }),
+  addEndpoint: (providerId: string, url: string) =>
+    call<StationEndpoints>("station_endpoint_add", { providerId, url }),
+  removeEndpoint: (providerId: string, url: string) =>
+    call<StationEndpoints>("station_endpoint_remove", { providerId, url }),
+  /** 换成主地址：站点的地址改成它，原来的主地址挪进备用。账单、检验从此问新地址。 */
+  promoteEndpoint: (providerId: string, url: string) =>
+    call<StationEndpoints>("station_endpoint_promote", { providerId, url }),
+  /** 测速：不带 Key、不花钱，只在点的时候跑；设了出站代理就经它测。 */
+  testEndpoints: (providerId: string) =>
+    call<EndpointTestView>("station_endpoints_test", { providerId }),
   /** 派单队列：上次选中的那条 + 手动排的顺序（当前那条失败时依次改用谁）。 */
   dispatchQueue: (client: Client) =>
     call<DispatchQueue>("station_dispatch_queue", { client }),

@@ -114,6 +114,13 @@ Gemini CLI 这个客户端在阶段 4）。`convert/mod.rs` 顶上逐个写明�
 网址里的推广参数（aff / ref / invite* / ch / track_id / utm_*）剥掉，模型名末尾的 `[1M]` 剥掉另记一个标记。
 每个数据文件顶上写着出处、许可和筛法；Claude Code 的关键字段镜像 `claudeKeyFields.json` 同批搬进 `live/`。图标没搬（来源核不清）。
 
+**阶段 4 第三批（2026-10-25，多端点 P3）**：`qb-station/src/station/endpoints.rs` 改写自 cc-switch 的
+`services/provider/endpoints.rs`（加 / 删 / 规范化备用地址）与 `services/speedtest.rs`（热身一发、计时一发；
+`sanitize_timeout` 与它的测试照搬）；测速本体在 `qb-app::usecase::station_ops::test_endpoints`。备用地址存在新表
+`station_endpoints`（迁移 8），不放进站点记录（cc-switch 放在供应商的 `meta.custom_endpoints`）。
+**跟 cc-switch 不一样**：它只让人挑一个地址用；QB Gate 让备用地址参与故障转移（主地址根本连不上时同一发改打它们，
+`local_router::forward::try_line`），挑地址变成「设为主地址」（换站点的 `base_url`）。界面 `StationEndpointsPanel.tsx` 照它的交互重做。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text
