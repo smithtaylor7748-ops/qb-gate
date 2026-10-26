@@ -28,6 +28,7 @@ import type { Client } from "./generated/Client";
 import type { RouterStatus } from "./generated/RouterStatus";
 import type { ClientConfig } from "./generated/ClientConfig";
 import type { ProbeResult } from "./generated/ProbeResult";
+import type { SiteQuota } from "./generated/SiteQuota";
 import type { TurnStateModelStatus } from "./generated/TurnStateModelStatus";
 import type { Schedule } from "./generated/Schedule";
 import type { Session } from "./generated/Session";
@@ -104,6 +105,15 @@ export const stationApi = {
    */
   selectRoute: (routeId: string, immediate: boolean) =>
     call<RouterStatus>("station_select_route", { routeId, immediate }),
+
+  /**
+   * 站点卡表头的余额 / 编程套餐额度（中转站重构阶段 6 · U3），用这条线路那把 Key 问。
+   *
+   * 认不出是哪一家（大部分中转站）就是 `null`，后端一个请求都不发。`force: false`（打开页面）
+   * 这把 Key 5 分钟内问过的直接给那一份；`force: true`（点刷新图标）问一次。只显示，调度不读它。
+   */
+  siteQuota: (routeId: string, force: boolean) =>
+    call<SiteQuota | null>("station_site_quota", { routeId, force }),
 
   /**
    * 官方 Codex 的 turn-state 注入开关 + 账号规则（实验功能，默认关闭，只对 Codex）。

@@ -553,6 +553,17 @@ try {
   await page.goto(origin + "/#/relays");
   await page.locator(".qb-st-ctl").waitFor();
   assert.equal(await page.locator(".qb-page-heading h1").count(), 0);
+  // 阶段 6 · U3：站点卡表头的余额 / 套餐额度。认得出的那家（演示里的 moxi）写各窗口还剩多少，
+  // 普通中转站（example）照旧「站点未提供」—— 后端对它一个请求都不发。
+  await page.getByTestId("site-quota").first().waitFor();
+  assert.match(
+    await page.getByTestId("site-quota").first().innerText(),
+    /5 小时 剩 65% · 每周 剩 18%/,
+  );
+  assert.equal(
+    await page.getByText("余额（整站共享）站点未提供", { exact: true }).count(),
+    1,
+  );
   assert.equal(await page.locator(".qb-st-nudge").count(), 0);
   const relayButton = page.locator(".qb-st-launchbtn");
   await relayButton.click();

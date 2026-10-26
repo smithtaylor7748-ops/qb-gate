@@ -269,6 +269,7 @@ pub fn run() {
             commands::station::station_billing_connect,
             commands::station::station_billing_browser,
             commands::station::station_billing_refresh,
+            commands::station::station_site_quota,
             commands::install::detect_software,
             commands::install::install_probe,
             commands::install::install_run,

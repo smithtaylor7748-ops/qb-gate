@@ -89,6 +89,7 @@ import StationClaudeCodeExtras from "./StationClaudeCodeExtras";
 import StationCodexHistory from "./StationCodexHistory";
 import StationDesktopDirect from "./StationDesktopDirect";
 import StationProjects from "./StationProjects";
+import StationSiteQuota from "./StationSiteQuota";
 import RouteDialog from "./RouteDialog";
 
 /** 三个维度在界面上叫什么。跟调度设置弹窗里那份是同一套写法。 */
@@ -1148,8 +1149,13 @@ function StationBoard({
                   <span className="qb-st-pill qb-st-pill--ok">调度中</span>
                 )}
                 <span style={{ flex: 1 }} />
-                {/* 余额是站点级的 —— 整站共享，画在这一层。 */}
-                <span className="bal">余额（整站共享）站点未提供</span>
+                {/* 余额是站点级的 —— 整站共享，画在这一层。阶段 6 · U3 起认得出的那几家
+                    （DeepSeek、Kimi 编程套餐……）用第一条线路的 Key 问一次，别的照旧「站点未提供」。 */}
+                <StationSiteQuota
+                  key={s.lines[0].id}
+                  routeId={s.lines[0].id}
+                  group={s.lines[0].group}
+                />
               </div>
               {s.lines.map((r) => (
                 <RouteRow

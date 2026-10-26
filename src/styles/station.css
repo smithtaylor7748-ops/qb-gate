@@ -1062,6 +1062,19 @@
   font-size: 10.5px;
   color: var(--text-3);
 }
+/* 站点卡表头的余额 / 编程套餐额度（阶段 6 · U3）：一行字 + 一颗小刷新图标；
+   表头本来就 flex-wrap，放不下整格换到下一行。 */
+.qb-st-sites .qb-st-sitehd .qb-st-quota {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.qb-st-quota .qb-st-quota-refresh {
+  padding: 0 3px;
+  min-height: 0;
+  height: 18px;
+}
 
 /* 整行可点，没有小圆点。行是 div[role=radio] —— button 套 button 会被
    解析器提前闭合外层，名字/动作/读数格散成三段。 */

@@ -45,6 +45,7 @@ import type { ProjectsView } from "./generated/ProjectsView";
 import type { DeepLinkEntry } from "./generated/DeepLinkEntry";
 import type { DeepLinkView } from "./generated/DeepLinkView";
 import type { ClaudeQuota } from "./generated/ClaudeQuota";
+import type { SiteQuota } from "./generated/SiteQuota";
 /**
  * 演示数据 —— 只给截图和界面预览用。
  *
@@ -3113,6 +3114,36 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   // 列表走的是 useMemo，**它不更新**。于是「删掉一条，角标少了 1，行还在」。
   // 看起来像列表组件有 bug，实际是夹具跟真接口的行为不一样。
   station_routes: () => [...stationRoutes],
+  // 站点卡表头的余额 / 套餐额度（阶段 6 · U3）：example 是普通中转站，认不出是哪一家 → null（后端不联网）；
+  // moxi 演示成一家认得出的编程套餐站（名字是编的）。
+  station_site_quota: (args): SiteQuota | null => {
+    const route = stationRoutes.find((r) => r.id === args?.routeId);
+    if (route?.station_id !== "moxi") return null;
+    const now = Date.now();
+    return {
+      provider: "演示编程套餐",
+      kind: "plan",
+      balances: [],
+      windows: [
+        {
+          key: "five_hour",
+          label: "5 小时",
+          used_percent: 35,
+          resets_at: new Date(now + 2 * 3_600_000).toISOString(),
+        },
+        {
+          key: "weekly",
+          label: "每周",
+          used_percent: 82,
+          resets_at: new Date(now + 3 * 86_400_000).toISOString(),
+        },
+      ],
+      plan: "pro",
+      warning: null,
+      fetched_at: new Date(now).toISOString(),
+      route_id: String(args?.routeId),
+    };
+  },
   // 加 / 改 / 删都要能跑通：少了这两条，演示里点「保存」和「移除」会**直接抛**，
   // 而抛出来的是「找不到这条命令」—— 看起来像后端坏了，不像夹具没写。
   station_put_route: (args) => {

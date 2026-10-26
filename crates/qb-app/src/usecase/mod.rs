@@ -35,6 +35,8 @@ pub mod project_ops;
 pub mod prompt_ops;
 pub mod purge_ops;
 pub mod settings_ops;
+/// 站点卡表头的余额 / 编程套餐额度（中转站重构阶段 6 · U3）：打开页面或点刷新时问，认不出是哪一家就不问。
+pub mod site_quota_ops;
 /// Skills 面板：装一次，勾哪些目标就复制到哪些 skills 目录（中转站重构阶段 5，M2）。
 pub mod skill_ops;
 pub mod station_batch;

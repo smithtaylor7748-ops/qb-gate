@@ -14,3 +14,5 @@ pub mod endpoints;
 pub mod model;
 pub mod pricing;
 pub mod route;
+/// 站点的余额与编程套餐额度（中转站重构阶段 6 · U3）：纯解析，发请求在 `qb-app`。
+pub mod site_quota;

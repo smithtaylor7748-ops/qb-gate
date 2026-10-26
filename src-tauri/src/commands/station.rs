@@ -1847,6 +1847,16 @@ pub async fn station_billing_refresh(station_id: String) -> Result<StationBillin
     station_billing::refresh(&station_id).await
 }
 
+/// 站点卡表头的余额 / 编程套餐额度（中转站重构阶段 6 · U3），用这条线路那把 Key 问。
+/// 认不出是哪一家就是 `None`、不联网；`force = false` 时 5 分钟内问过的不再问（`usecase::site_quota_ops`）。
+#[tauri::command]
+pub async fn station_site_quota(
+    route_id: String,
+    force: bool,
+) -> Result<Option<qb_station::station::site_quota::SiteQuota>> {
+    qb_app::usecase::site_quota_ops::quota(&route_id, force).await
+}
+
 #[tauri::command]
 pub async fn station_billing_save(
     station_id: String,

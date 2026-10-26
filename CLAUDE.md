@@ -1395,6 +1395,24 @@ MCP 一个目标都不勾、提示词不启用、只留最新一条按编号清�
 `a_stale_revision_is_refused_and_deleting_keeps_a_backup`、`pi_templates_and_hermes_memory_settings` 和 `ToolFilesPanel.test.tsx`
 （按读的时候的版本存、删除先确认、没装只读、Hermes 设置存得上、网页面板答了才打开）。
 
+## 站点卡表头的余额 / 编程套餐额度（2026-10-26，中转站重构阶段 6 · U3，照 cc-switch 的 `balance.rs` + `coding_plan.rs`）
+
+中转站页每张站点卡的表头原来固定写「余额（整站共享）站点未提供」。现在认得出的几家用那个站点在这个软件下**第一条线路的 Key** 问一次：
+余额（DeepSeek、阶跃星辰、硅基流动国内 / 国际、OpenRouter、Novita AI）或编程套餐的各窗口（Kimi For Coding、智谱 GLM / Z.ai、
+MiniMax 国内 / 国际、OpenCode Go）。认哪一家、怎么解析在 `qb-station::station::site_quota`（纯函数，这个 crate 没有 reqwest），
+问在 `usecase::site_quota_ops`，界面 `StationSiteQuota.tsx`。
+
+- **什么时候问**（计划 §7 阶段 6 写的、使用者勾过的）：打开中转站页 / 切到那个软件时问一次，这把 Key（id + 版本）5 分钟内问过的直接给那一份；
+  点表头那颗小刷新图标再问一次。**没有定时器。** 认不出是哪一家（绝大多数中转站）**一个请求都不发**。
+- ⛔ **只按主机名认，不认子串**：cc-switch 多数按 `base_url.contains("api.deepseek.com")` 认，中转站把官方域名写进路径就会把
+  **中转站的 Key** 发到 DeepSeek 去。Key 只发给它本来就配给的那一家（唯一跨主机的是 MiniMax 国内新域名 → 同一家的旧域名
+  `api.minimaxi.com`，同 cc-switch）；不跟随跳转。`every_quota_request_goes_to_a_host_of_the_same_provider` 钉着。
+- **读不出来的格子不给数**：cc-switch 的 Kimi 缺 `limit` / `remaining` 会按 1 / 0 算成「用光」、阶跃 / 硅基缺余额按 0；这里那一格不要，
+  一格都没有就报「回复里没有认得出的……」。问不到时界面留着上一次的（悬停里时刻照实），不抹成 0；回复内容不原样进报错。
+- **只显示**：调度、排序、换线一概不读它；结果只在内存里。
+- 没搬：ZenMux（要另填管理地址和管理 Key）、火山方舟（要账号 AK/SK、V4 签名 —— 比 API Key 大得多的凭证，不往面板里存）、
+  智谱团队版（要组织 / 项目 ID）、Command Code（四个未公开的 `/alpha` 路由，预设里也没有它）。要加先问使用者。
+
 ---
 
 ### 桌面端走的是它自己的「第三方网关」模式，不是环境变量里的 base_url

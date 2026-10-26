@@ -247,6 +247,8 @@ fn main() {
         qb_gate_lib::schedule::CheapBasis::export_all_to(&root)?;
         qb_gate_lib::station::model::Protocols::export_all_to(&root)?;
         qb_gate_lib::station::route::Route::export_all_to(&root)?;
+        // 站点卡表头的余额 / 编程套餐额度（中转站重构阶段 6 · U3）。
+        qb_gate_lib::station::site_quota::SiteQuota::export_all_to(&root)?;
         // 倍率三态。界面照它分「标称·未核实」/「已核实」/ 划掉标称写实测,
         // 少一个分支就会把没检验过的显示成属实。
         qb_gate_lib::station::route::RateTrust::export_all_to(&root)?;

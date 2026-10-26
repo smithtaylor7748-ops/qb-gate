@@ -228,6 +228,14 @@ OpenClaw 的 `models.providers`、Hermes 的 `custom_providers` 列表与 `api_m
 （`credits` 的三个字段、余额是字符串也收）与 `query_codex_reset_credits` / `parse_codex_reset_credits`（`wham/rate-limit-reset-credits`、
 `OpenAI-Beta: codex-1`、不信 `available_count`、先到期的在前）。**跟它不一样**：Credits 只写个数，不按「1 Credit = $0.04」折成美元。
 
+**阶段 6 第二批（2026-10-26，站点余额与编程套餐额度，U3）**：`qb-station/src/station/site_quota.rs` 对应 cc-switch `services/balance.rs`
+（DeepSeek / StepFun / SiliconFlow 国内与国际 / OpenRouter / Novita AI 的端点、字段、单位，OpenRouter 按 `/credits` 不按 `/key`、Novita 的 0.0001 美元）
+与 `services/coding_plan.rs`（Kimi For Coding、智谱个人版的 `unit` 分窗与重置时刻兜底、不加 `Bearer`、MiniMax 剩余比例反转与周窗口的 `status`、
+OpenCode Go 三个窗口与 0% 时的占位重置时刻、秒 / 毫秒时间戳与 -1 的处理）；`qb-app/src/usecase/site_quota_ops.rs` 是发请求那一半。
+**跟它不一样**：只按主机名认（cc-switch 多数按子串，中转站把官方域名写进路径会把中转站的 Key 发过去）；读不出来的格子不给数（cc-switch 的 Kimi
+缺字段算成用光、阶跃 / 硅基缺余额按 0）；回复内容不原样进报错；打开页面时同一把 Key 5 分钟内只问一次；ZenMux、火山方舟（AK/SK 签名）、智谱团队版、
+Command Code 没搬。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text
