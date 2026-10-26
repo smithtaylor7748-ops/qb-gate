@@ -186,6 +186,9 @@ pub fn run() {
             commands::station::codex_history_status,
             commands::station::codex_history_merge,
             commands::station::codex_history_restore,
+            // 桌面端直连档（阶段 4，写真 Key）。
+            commands::station::station_desktop_direct,
+            commands::station::station_desktop_direct_set,
             commands::station::station_dispatch_queue,
             commands::station::station_dispatch_queue_save,
             commands::station::station_route_retest,

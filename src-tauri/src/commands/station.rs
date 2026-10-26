@@ -501,6 +501,12 @@ pub fn station_router_settings_save(
         ));
     }
     let db = crate::repository::Repository::open()?;
+    // 桌面端直连时聚合用不上（阶段 4 · 直连档）。
+    qb_app::usecase::desktop_direct_ops::guard_aggregate(
+        &db,
+        settings.client,
+        settings.aggregate.enabled,
+    )?;
     // 存下的那份可能跟传来的不一样：聚合模型的 key 由后端分、只增不减（`station_ops::settle_aggregate`）。
     let settings = station_ops::save_router_settings(&db, &settings)?;
     state
@@ -765,6 +771,25 @@ pub async fn codex_history_restore(
     })
     .await
     .map_err(|e| GateError::Other(e.to_string()))?
+}
+
+// ------------------------------------------------------------------ 桌面端直连档（阶段 4，写真 Key）
+
+/// 桌面端现在经本机路由还是直连某条线，以及每条桌面端线路能不能直连。只读。
+#[tauri::command]
+pub fn station_desktop_direct() -> Result<qb_app::usecase::desktop_direct_ops::DesktopDirectView> {
+    qb_app::usecase::desktop_direct_ops::status(&crate::repository::Repository::open()?)
+}
+
+/// 开直连（给线路）或关掉（`null`）。⛔ 开了之后桌面端配置里是那条线的**真 Key**；重开桌面端才生效。
+#[tauri::command]
+pub fn station_desktop_direct_set(
+    route_id: Option<String>,
+) -> Result<qb_app::usecase::desktop_direct_ops::DesktopDirectView> {
+    qb_app::usecase::desktop_direct_ops::set(
+        &crate::repository::Repository::open()?,
+        route_id.as_deref(),
+    )
 }
 
 /// 一个软件的派单队列：上次选中的那条 + 手动排的顺序。
@@ -1206,7 +1231,11 @@ fn client_config_path(client: Client) -> Result<(std::path::PathBuf, &'static st
 #[tauri::command]
 pub fn station_client_config(client: Client) -> Result<ClientConfig> {
     let (path, format) = client_config_path(client)?;
-    let text = crate::config_io::read_text(&path)?;
+    let mut text = crate::config_io::read_text(&path)?;
+    // 桌面端直连时那份配置里是真 Key：界面上只给一串记号（存的时候 `apply` 会按库里的设定写回真 Key）。
+    if client == Client::ClaudeDesktop {
+        text = mask_desktop_key(&text);
+    }
     Ok(ClientConfig {
         path: path.display().to_string(),
         // 空文件在界面上显示成 `{}` 而不是一片空白 —— 空白让人以为读失败了。
@@ -1217,6 +1246,24 @@ pub fn station_client_config(client: Client) -> Result<ClientConfig> {
         },
         format: format.into(),
     })
+}
+
+/// 桌面端配置在界面上显示时，真 Key 换成这串记号。
+const DESKTOP_KEY_MASK: &str = "（直连：真 Key 不在界面上显示，存的时候按线路自动写回）";
+
+/// 把 `inferenceGatewayApiKey` 的值换成 [`DESKTOP_KEY_MASK`]（占位串原样留着）。只做文本替换，别的格式不动。
+fn mask_desktop_key(text: &str) -> String {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
+        return text.to_string();
+    };
+    match v.get("inferenceGatewayApiKey").and_then(|k| k.as_str()) {
+        Some(k) if !k.is_empty() && k != local_router::ROUTER_KEY => {
+            let quoted = serde_json::to_string(k).unwrap_or_default();
+            let mask = serde_json::to_string(DESKTOP_KEY_MASK).unwrap_or_default();
+            text.replace(&quoted, &mask)
+        }
+        _ => text.to_string(),
+    }
 }
 
 /// 存这份配置。
@@ -1266,6 +1313,9 @@ pub fn station_put_route(
     use tauri::Manager;
     let db = crate::repository::Repository::open()?;
     station_ops::source(&db, &route)?;
+    // 改的是桌面端直连那条：改完还得能直连，存完把桌面端配置跟上（Key、站点可能换了）。
+    let rewrite_desktop =
+        qb_app::usecase::desktop_direct_ops::guard_route_save(&db, &route, previous_id.as_deref())?;
     let renamed_from = previous_id.filter(|id| id != &route.id);
     db.transaction(|| {
         db.put("station_routes", &route.id, &route)?;
@@ -1278,6 +1328,9 @@ pub fn station_put_route(
         }
         Ok(())
     })?;
+    if rewrite_desktop {
+        qb_app::usecase::desktop_direct_ops::reapply()?;
+    }
     // 线路变了,上游表要跟着重装 —— 否则新加的线路转发时找不到 base_url。
     let state = app.state::<AppState>();
     load_upstreams(&state)?;
@@ -1299,7 +1352,10 @@ pub fn station_put_route(
 #[tauri::command]
 pub fn station_remove_route(app: tauri::AppHandle, id: String) -> Result<Vec<Route>> {
     use tauri::Manager;
-    crate::repository::Repository::open()?.remove("station_routes", &id)?;
+    let db = crate::repository::Repository::open()?;
+    // 删的是桌面端直连那条：先把桌面端换回本机路由，免得它指着一条不存在的线。
+    qb_app::usecase::desktop_direct_ops::before_route_removed(&db, &id)?;
+    db.remove("station_routes", &id)?;
     load_upstreams(&app.state::<AppState>())?;
     station_routes()
 }
@@ -2706,5 +2762,21 @@ mod tests {
             Client::ClaudeCode,
             Protocols::default()
         )));
+    }
+
+    /// 桌面端直连时配置里是真 Key：给界面的那份换成记号，占位串和别的内容原样。
+    #[test]
+    fn the_desktop_config_view_never_shows_a_real_key() {
+        let text =
+            "{\n  \"mcpServers\": {},\n  \"inferenceGatewayApiKey\": \"sk-real-fixture\"\n}\n";
+        let shown = mask_desktop_key(text);
+        assert!(!shown.contains("sk-real-fixture"), "{shown}");
+        assert!(shown.contains("mcpServers") && shown.contains(DESKTOP_KEY_MASK));
+        let routed = format!(
+            "{{\"inferenceGatewayApiKey\": \"{}\"}}",
+            local_router::ROUTER_KEY
+        );
+        assert_eq!(mask_desktop_key(&routed), routed, "占位串不用藏");
+        assert_eq!(mask_desktop_key("not json"), "not json");
     }
 }

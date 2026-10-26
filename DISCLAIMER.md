@@ -252,8 +252,14 @@ ipinfo）问国家，三家说的不一样时**按最严的算，判不合格**�
   （`~\.config\opencode\opencode.json(c)`、`~\.minimax\config.yaml`、`~\.openclaw\openclaw.json`、`~\.hermes\config.yaml`、
   `~\.pi\agent\models.json`）。**能读到那个文件的程序和人都能拿到这把 Key**，备份、同步盘、截图时请留意。
   面板只增删改它自己写的那一条（名字以 `qb-gate-` 开头），你自己配的供应商不动；工具没装（配置目录不在）就不写；
-  之后换了 Key 不会自动跟着改，要回来再点「更新」。其余经本机路由的软件（Claude Code、Codex、Claude 桌面端、
-  Gemini CLI、Grok Build）的配置里只有一个占位串，真 Key 不落进它们的配置。
+  之后换了 Key 不会自动跟着改，要回来再点「更新」。其余经本机路由的软件（Claude Code、Codex、Gemini CLI、Grok Build，
+  以及没开直连档的 Claude 桌面端）的配置里只有一个占位串，真 Key 不落进它们的配置。
+- **Claude 桌面端直连档**（2026-10-26 起）：在你选一条桌面端线路「直连」并再确认一次之后，面板把**那个站点的地址和这条线的
+  API Key 以明文**写进桌面端的配置文件（面板中转环境目录里的 `claude_desktop_config.json`，桌面端经面板启动时用的那一份）。
+  **能读到那个文件的程序和人都能拿到这把 Key**。直连之后桌面端**不经过本机路由**：换线、自动故障转移、熔断、请求日志、
+  模型映射、协议转换、聚合模型都不再作用于桌面端；只有没设模型映射、说 Anthropic 协议的线能直连。
+  线路的 Key 换了，面板会把新 Key 写进去；删掉那条线前会先改回经本机路由。改回经本机路由时那一格换回占位串。
+  面板界面上不显示这把 Key；重开桌面端才生效。
 - **Gemini CLI / Grok Build 的中转环境**（2026-10-25 起）：Gemini CLI 用面板自己的目录（`GEMINI_CLI_HOME`），
   不碰你官方 Gemini 的登录；Grok Build 会在 `~\.grok\config.toml` 里写一个指向本机路由的 `qb-gate` 模型（占位 Key），别的设置不动。
 - **跳过 Claude Code 首次确认**（2026-10-25 起）：在你点「跳过」之后，在那一份 `.claude.json` 里写 `hasCompletedOnboarding = true`。

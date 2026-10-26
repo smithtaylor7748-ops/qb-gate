@@ -776,7 +776,17 @@ pub fn configuration_files(db: &Repository, e: &Environment) -> Result<Vec<Edit>
             let old = config_io::read_optional(&path)?;
             let text = String::from_utf8(old.clone().unwrap_or_default())
                 .map_err(|e| GateError::Other(e.to_string()))?;
-            let body = desktop_gateway_json(&text, &m.base_url, key.as_deref())?;
+            // 阶段 4 · 直连档（使用者 2026-10-26 定的）：选了直连的那条线时，网关地址换成那个站点、
+            // Key 换成那条线的**真 Key** —— 桌面端不再经过本机路由（`desktop_direct` 模块头）。
+            let direct = if e.via_router {
+                crate::desktop_direct::resolve(db)?
+            } else {
+                None
+            };
+            let body = match &direct {
+                Some(t) => desktop_gateway_json(&text, &t.base_url, Some(&t.key))?,
+                None => desktop_gateway_json(&text, &m.base_url, key.as_deref())?,
+            };
             edits.push(Edit {
                 path,
                 expected: old,
@@ -1993,5 +2003,60 @@ mod tests {
         for id in ["..", "a/b", "C:\\x", ""] {
             assert!(crate::config_io::environment_dir(Path::new("root"), id).is_err());
         }
+    }
+
+    /// 桌面端直连档（阶段 4，使用者 2026-10-26 定的）：选了直连的线，桌面端那份配置里就是站点地址和**真 Key**；
+    /// 没选就是本机路由和占位串。别的软件的配置不受它影响。
+    #[test]
+    fn the_desktop_config_carries_the_real_key_only_in_direct_mode() {
+        let root = std::env::temp_dir().join(config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        db.put("providers", "p", &provider("http://127.0.0.1:15721"))
+            .unwrap();
+        let mut site = provider("https://fixture.invalid/v1");
+        site.id = "site".into();
+        db.put("providers", "site", &site).unwrap();
+        db.set_credential(
+            &crate::domain::Credential {
+                id: "k".into(),
+                provider_id: "site".into(),
+                label: "k".into(),
+                masked: "***".into(),
+                available: true,
+                revision: 1,
+            },
+            &crate::secret::seal("fixture-real-key").unwrap(),
+        )
+        .unwrap();
+        let mut route = qb_station::station::route::Route::new(Client::ClaudeDesktop, "site", "g");
+        route.credential_id = Some("k".into());
+        db.put("station_routes", &route.id, &route).unwrap();
+
+        let gateway = |db: &Repository| -> serde_json::Value {
+            let edits = configuration_files(db, &env(Client::ClaudeDesktop, true)).unwrap();
+            serde_json::from_slice(edits[0].body.as_deref().unwrap()).unwrap()
+        };
+        let routed = gateway(&db);
+        assert_eq!(
+            routed["inferenceGatewayApiKey"],
+            crate::local_router::ROUTER_KEY
+        );
+        assert!(routed["inferenceGatewayBaseUrl"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://127.0.0.1:"));
+
+        db.set_meta(crate::desktop_direct::META_KEY, &route.id)
+            .unwrap();
+        let direct = gateway(&db);
+        assert_eq!(direct["inferenceGatewayApiKey"], "fixture-real-key");
+        assert_eq!(direct["inferenceGatewayBaseUrl"], "https://fixture.invalid");
+        // Claude Code 的中转环境照旧是占位串：直连只管桌面端。
+        let code = configuration_files(&db, &env(Client::ClaudeCode, true)).unwrap();
+        let text = String::from_utf8(code[0].body.clone().unwrap()).unwrap();
+        assert!(!text.contains("fixture-real-key"), "{text}");
+
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

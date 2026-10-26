@@ -36,6 +36,7 @@ import {
   Download,
   Fingerprint,
   History,
+  Plug,
   Play,
   Shuffle,
   SlidersHorizontal,
@@ -84,6 +85,7 @@ import StationLogs from "./StationLogs";
 import StationTurnState from "./StationTurnState";
 import StationClaudeCodeExtras from "./StationClaudeCodeExtras";
 import StationCodexHistory from "./StationCodexHistory";
+import StationDesktopDirect from "./StationDesktopDirect";
 import RouteDialog from "./RouteDialog";
 
 /** 三个维度在界面上叫什么。跟调度设置弹窗里那份是同一套写法。 */
@@ -245,6 +247,20 @@ function StationBoard({
   const [extrasOpen, setExtrasOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  /** 桌面端直连档（阶段 4，写真 Key）：直连的那条线 id；`null` = 经本机路由（或还没读到）。 */
+  const [directOpen, setDirectOpen] = useState(false);
+  const [directRoute, setDirectRoute] = useState<string | null>(null);
+  useEffect(() => {
+    if (client !== "claude-desktop") return;
+    let dropped = false;
+    void stationApi
+      .desktopDirect()
+      .then((v) => !dropped && setDirectRoute(v.route_id))
+      .catch(() => undefined);
+    return () => {
+      dropped = true;
+    };
+  }, [client, routes]);
   const [logOpen, setLogOpen] = useState<Route | null>(null);
   const [auditOpen, setAuditOpen] = useState<Route | null>(null);
   const [auditBusy, setAuditBusy] = useState(false);
@@ -1001,6 +1017,23 @@ function StationBoard({
             <button
               type="button"
               className="qb-st-schedcfg"
+              onClick={() => setDirectOpen(true)}
+            >
+              <span className="qb-st-sheen" aria-hidden="true" />
+              <Plug size={14} aria-hidden="true" />
+              接入方式 · {directRoute ? "直连一条线" : "经本机路由"}
+              {directRoute && (
+                <span className="qb-st-pill qb-st-pill--warn">
+                  直连中 · 真 Key 在桌面端配置里
+                </span>
+              )}
+              <ChevronRight size={14} className="chev" aria-hidden="true" />
+            </button>
+          )}
+          {client === "claude-desktop" && (
+            <button
+              type="button"
+              className="qb-st-schedcfg"
               disabled={importing}
               title="同一个站点、同一个分组、同一把 Key 复制一份给桌面端；已经有的跳过"
               onClick={() => {
@@ -1233,6 +1266,23 @@ function StationBoard({
         size="form"
       >
         {extrasOpen && <StationClaudeCodeExtras />}
+      </Modal>
+
+      <Modal
+        open={directOpen}
+        onClose={() => setDirectOpen(false)}
+        title="Claude 桌面端 · 接入方式"
+        size="form"
+      >
+        {directOpen && (
+          <StationDesktopDirect
+            routes={routes.filter((r) => r.client === "claude-desktop")}
+            label={(r) =>
+              `${siteName(r.station_id)} · ${r.group || "默认分组"}`
+            }
+            onChanged={(v) => setDirectRoute(v.route_id)}
+          />
+        )}
       </Modal>
 
       <Modal

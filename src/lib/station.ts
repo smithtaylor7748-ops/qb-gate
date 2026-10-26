@@ -45,6 +45,7 @@ import type { CoexistTool } from "./generated/CoexistTool";
 import type { OnboardingTarget } from "./generated/OnboardingTarget";
 import type { EditorLink } from "./generated/EditorLink";
 import type { CodexHistoryHome } from "./generated/CodexHistoryHome";
+import type { DesktopDirectView } from "./generated/DesktopDirectView";
 
 export type {
   AggregateModel,
@@ -53,6 +54,7 @@ export type {
   OnboardingTarget,
   EditorLink,
   CodexHistoryHome,
+  DesktopDirectView,
   AggregateSettings,
   EndpointTestView,
   StationEndpoints,
@@ -219,6 +221,11 @@ export const stationApi = {
     call<CodexHistoryHome[]>("codex_history_merge", { home, from }),
   codexHistoryRestore: (home: string, backup: string) =>
     call<CodexHistoryHome[]>("codex_history_restore", { home, backup }),
+  /** 桌面端直连档：现在经本机路由还是直连哪条线，每条桌面端线路能不能直连。 */
+  desktopDirect: () => call<DesktopDirectView>("station_desktop_direct"),
+  /** ⛔ 给线路 = 直连（桌面端配置里写那条线的真 Key）；`null` = 改回经本机路由。重开桌面端才生效。 */
+  setDesktopDirect: (routeId: string | null) =>
+    call<DesktopDirectView>("station_desktop_direct_set", { routeId }),
   /** 派单队列：上次选中的那条 + 手动排的顺序（当前那条失败时依次改用谁）。 */
   dispatchQueue: (client: Client) =>
     call<DispatchQueue>("station_dispatch_queue", { client }),

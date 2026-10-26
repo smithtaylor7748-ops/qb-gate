@@ -1169,22 +1169,35 @@ Electron 里注 JS、扫 Chrome 的 Cookies、改防火墙与代理），删不�
 客户端只在启动时读一次配置 —— 六条线轮着走用的是同一份 settings.json。
 做成一条线一份的话，改另外五条完全没有反应，而没有任何地方说得清为什么。
 
-## ⛔ Key 不出后端 —— 只管经本机路由的五个软件；共存型工具写的是真 Key
+## ⛔ Key 不出后端 —— 只管经本机路由的那几个；共存型工具和桌面端直连档写的是真 Key
 
-「真 Key 只在后端、客户端配置里只有占位串」这条规矩**只对经本机路由的五个软件成立**：
-Claude Code、Codex、Claude 桌面端、Gemini CLI、Grok Build（`Client::ALL`）。它们的配置里永远是
+「真 Key 只在后端、客户端配置里只有占位串」这条规矩**只对经本机路由的配置成立**：
+Claude Code、Codex、Gemini CLI、Grok Build，以及**没开直连档时**的 Claude 桌面端。它们的配置里永远是
 `local_router::ROUTER_KEY`，真 Key 由路由在转发时换上（上一节）。
 
-**共存型工具是唯一的例外**（2026-10-25 使用者定的，照 cc-switch 的 C3 / C4）：OpenCode、MiniMax Code、OpenClaw、
-Hermes、Pi 不经本机路由，`usecase::coexist_ops::write` 把站点地址和这条线绑着的**真 Key 明文**写进它们自己的配置
-（`relay::coexist` 定位置和形状）。守住的边界：
+**例外只有两个，都是使用者明说过的：**
 
-- **只在使用者点「写入」并在面板里再确认一次时写**（确认那一行写着要改哪个文件，`StationCoexistPanel`）；
-  不随保存线路、换 Key、启动面板自动写或自动更新 —— 换了 Key 要回来再点「更新」，界面写着；
-- **只动 `qb-gate-` 开头的那一条**（`coexist::ID_PREFIX`），使用者自己配的供应商、别的字段一个不碰；
-  JSONC / JSON5 走 `live::jsonc_document` 保留注释和格式，YAML 只换那一节；原文件解析不了就**停**，不覆盖；
-- 工具的配置目录不在（多半没装）就**拒绝**，不替它建；
-- 写盘走 `config_io::commit`（写前核对没被外部改过、日志里留原内容、失败回滚），审计日志只记工具和线路，不记 Key；
+1. **桌面端直连档**（2026-10-26 使用者定的，照 cc-switch 的 C5）：使用者在桌面端那一页选一条线直连之后，
+   `workspace::configuration_files` 把桌面端那份 `claude_desktop_config.json` 的网关地址换成那个站点、
+   `inferenceGatewayApiKey` 换成**那条线的真 Key**（`desktop_direct::resolve`）。守住的边界：
+   - **只在使用者选了、再确认一次时开**（`StationDesktopDirect`，确认那一行写着真 Key 会写进桌面端配置）；关掉就换回占位串；
+   - **只收不需要本机路由的线**（`desktop_direct::check`）：没设模型映射、上游是 Anthropic、绑着属于这个站点的 Key ——
+     直连时没人换模型名、没人转协议；开着聚合时不许开直连、直连时不许开聚合（`desktop_direct_ops::guard_aggregate`）；
+   - 选的线不在了、改得不合格了，**报错、不悄悄退回本机路由**（`resolve`）—— 使用者以为在直连、实际走的却是另一条线，
+     那才说不清；存那条线之前就拦（`guard_route_save`），删那条线之前先关直连（`before_route_removed`）；
+   - 线路的 Key 换了，存完立刻重写桌面端配置跟上；
+   - **界面上不显示真 Key**：配置面板读到的那份把 `inferenceGatewayApiKey` 换成记号（`mask_desktop_key`），存的时候
+     `apply` 按库里的设定写回真 Key；审计日志只记线路，不记 Key。
+2. **共存型工具**（2026-10-25 使用者定的，照 cc-switch 的 C3 / C4）：OpenCode、MiniMax Code、OpenClaw、
+   Hermes、Pi 不经本机路由，`usecase::coexist_ops::write` 把站点地址和这条线绑着的**真 Key 明文**写进它们自己的配置
+   （`relay::coexist` 定位置和形状）。守住的边界：
+   - **只在使用者点「写入」并在面板里再确认一次时写**（确认那一行写着要改哪个文件，`StationCoexistPanel`）；
+     不随保存线路、换 Key、启动面板自动写或自动更新 —— 换了 Key 要回来再点「更新」，界面写着；
+   - **只动 `qb-gate-` 开头的那一条**（`coexist::ID_PREFIX`），使用者自己配的供应商、别的字段一个不碰；
+     JSONC / JSON5 走 `live::jsonc_document` 保留注释和格式，YAML 只换那一节；原文件解析不了就**停**，不覆盖；
+   - 工具的配置目录不在（多半没装）就**拒绝**，不替它建；
+   - 写盘走 `config_io::commit`（写前核对没被外部改过、日志里留原内容、失败回滚），审计日志只记工具和线路，不记 Key；
+
 - **新加的任何「往别的软件配置里写东西」的功能都默认占位 Key + 本机路由。** 要再开一个写真 Key 的口子，
   得像这次一样由使用者明说，并在同一个提交里改这一节和 DISCLAIMER §5.1。
 
@@ -1201,13 +1214,16 @@ Hermes、Pi 不经本机路由，`usecase::coexist_ops::write` 把站点地址�
   使用者设过同名变量、值不一样就拒绝；`disableLoginPrompt` 联动前的值记在 `vscode-claude-link:<编辑器>`，撤销时还原；
 - Codex 会话归桶（`usecase::codex_history_ops`）：**不在启动时自动跑**（cc-switch 是自动的）；每个桶使用者自己勾、再确认；
   改之前先备份，还原**按账本逐处改回**，不拿旧文件盖 —— 并桶之后 Codex 往同一个会话里接着写的内容不能因为还原而丢。
-- ⛔ **桌面端直连档没做**：cc-switch 的直连档把站点地址和真 Key 写进桌面端的网关配置，跟上面那条规矩冲突。
-  要做的话得使用者先明说，并在同一个提交里改这一节和 DISCLAIMER §5.1。
+- 桌面端直连档见本节开头的例外 1（2026-10-26 补上；原来写着「没做、等使用者定」）。
 
 钉着这些的是 `claude_code_ops` 的 `onboarding_skip_only_undoes_what_the_panel_set`、
 `vscode_link_needs_the_editor_and_unlink_restores_the_user_s_settings`，`relay::vscode` 的三个，
 `codex_history_ops` 的 `merging_moves_only_the_ticked_buckets_and_restore_keeps_later_writes`，
 `station_ops` 的 `claude_code_routes_copy_to_the_desktop_once_and_only_with_a_key`，和 `StationCodexHistory.test.tsx`。
+直连档的是 `desktop_direct` 的 `only_a_line_that_needs_no_router_can_go_direct`、
+`desktop_direct_ops` 的 `switching_writes_the_setting_and_rolls_back_when_the_rewrite_fails`、
+`workspace` 的 `the_desktop_config_carries_the_real_key_only_in_direct_mode`、
+`commands::station` 的 `the_desktop_config_view_never_shows_a_real_key` 和 `StationDesktopDirect.test.tsx`（不确认不切）。
 
 ---
 

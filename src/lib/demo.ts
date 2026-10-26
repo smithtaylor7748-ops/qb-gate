@@ -2016,6 +2016,22 @@ const demoCoexistOf = (routeId: string): CoexistStatus[] =>
     written: demoCoexistWritten.has(`${routeId}|${tool}`),
     problem: null,
   }));
+/** 桌面端直连的那条线（演示里只在内存里）。 */
+let demoDirectRoute: string | null = null;
+const demoDesktopDirect = () => ({
+  route_id: demoDirectRoute,
+  base_url: demoDirectRoute ? "https://relay.example.com" : null,
+  problem: null,
+  candidates: stationRoutes
+    .filter((r) => r.client === "claude-desktop")
+    .map((r) => ({
+      route_id: r.id,
+      problem:
+        r.upstream_format && r.upstream_format !== "anthropic"
+          ? "这条线的上游不是 Anthropic 协议：直连时没有本机路由替它转换"
+          : null,
+    })),
+});
 /** 阶段 4 · C5 的演示数据：中转环境还没跳过首次确认，官方默认目录是使用者自己走完的。 */
 const demoOnboarding: OnboardingTarget[] = [
   {
@@ -2998,6 +3014,18 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       added.push(copy);
     }
     return added;
+  },
+  // 桌面端直连档（阶段 4）。演示里只记选了哪条；没设映射、说 Anthropic 的才能选。
+  station_desktop_direct: () => demoDesktopDirect(),
+  station_desktop_direct_set: (args) => {
+    const id = (args?.routeId as string | null | undefined) ?? null;
+    if (id) {
+      const c = demoDesktopDirect().candidates.find((x) => x.route_id === id);
+      if (!c) throw new Error("这条线不在了");
+      if (c.problem) throw new Error(c.problem);
+    }
+    demoDirectRoute = id;
+    return demoDesktopDirect();
   },
   claude_onboarding_status: () => demoOnboarding.map((t) => ({ ...t })),
   claude_onboarding_set: (args) => {

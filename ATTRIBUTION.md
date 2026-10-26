@@ -138,7 +138,7 @@ OpenClaw 的 `models.providers`、Hermes 的 `custom_providers` 列表与 `api_m
 **跟 cc-switch 一样写真 Key**（使用者定的，仓库 `CLAUDE.md`「Key 不出后端」一节）；**跟它不一样**：只动 `qb-gate-` 开头的那一条、
 工具没装不替它建目录、每次写入再确认一次，不做它的「当前供应商」切换与 MCP / 技能同步。
 
-**阶段 4 第六批（2026-10-25，C5 四个小件里的三个半）**：
+**阶段 4 第六批（2026-10-25，C5 四个小件里的三个；直连档在第七批）**：
 
 - 跳过首次确认（`qb-app/src/usecase/claude_code_ops.rs`）照 cc-switch `claude_mcp.rs` 的 `set_has_completed_onboarding` /
   `clear_has_completed_onboarding`（只增删 `hasCompletedOnboarding` 一个键）；**跟它不一样**：默认只给中转环境，官方目录要点名，
@@ -151,8 +151,15 @@ OpenClaw 的 `models.providers`、Hermes 的 `custom_providers` 列表与 `api_m
   `UPDATE` 与 SQLite 备份）与 `codex_state_db.rs`（`sqlite_home`）；**跟它不一样**：不在启动时自动迁移，使用者逐个桶勾选；
   还原按账本逐处改回（它的还原只认官方桶）；压缩过的 `.jsonl.zst` 不动（没带 zstd 依赖）。
 - 桌面端导入线路（`station_ops::import_desktop_routes`）照 cc-switch `import_claude_desktop_providers_from_claude`；
-  QB Gate 的桌面端只走本机路由，不分「直连 / 代理」两档。**桌面端直连档没有搬**：它要把真 Key 写进桌面端的配置，
-  跟「Key 不出后端」冲突，等使用者定。
+  导入的线一律按本机路由那一档来，不在导入时判「直连 / 代理」。
+
+**阶段 4 第七批（2026-10-26，桌面端直连档，C5 最后一件）**：`qb-app/src/desktop_direct.rs` 的合格条件照 cc-switch
+`claude_desktop_config.rs` 的 `validate_direct_provider` / `direct_inference_model_specs`（只认原生 Anthropic、直连不能映射模型、
+完整 URL 端点不行 —— QB Gate 没有存这一项，不用判）与 `direct_gateway_credentials`（网关地址 + Bearer Key）。
+**跟 cc-switch 一样写真 Key**（使用者 2026-10-26 定的，仓库 `CLAUDE.md`「Key 不出后端」一节的例外 1）；**跟它不一样**：
+它把直连 profile 写进桌面端新版的 `configLibrary`，QB Gate 沿用自己那一套（中转环境目录里的 `claude_desktop_config.json`、
+`deploymentMode = 3p`，见 `workspace::desktop_gateway_json`），只换地址和 Key 两格；它的 `disableDeploymentModeChooser`、
+`coworkEgressAllowedHosts` 照旧不写；界面上不显示 Key；选的线不合格了报错而不是退回本机路由。
 
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
