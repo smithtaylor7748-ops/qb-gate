@@ -304,8 +304,17 @@ fn to_yaml(v: &Value) -> Result<serde_yaml_ng::Value> {
 
 // ------------------------------------------------------------------ 读写
 
-/// 在一份 JSONC / JSON5 里把 `path` 那一处设成 `value`（`None` = 删掉），按原样改写。
-pub(crate) fn jsonc_set(existing: &str, path: &[&str], value: Option<Value>) -> Result<String> {
+/// 读一份 JSONC / JSON5（空文本当空对象）。阶段 5 的 MCP 同步也用它读 OpenCode 的配置。
+pub fn jsonc_value(existing: &str) -> Result<Value> {
+    if existing.trim().is_empty() {
+        return Ok(json!({}));
+    }
+    json5::from_str(existing).map_err(|e| GateError::Other(format!("无法解析这份配置：{e}")))
+}
+
+/// 在一份 JSONC / JSON5 里把 `path` 那一处设成 `value`（`None` = 删掉），按原样改写（注释、格式留着）。
+/// 阶段 5 的 MCP 同步也用它改 OpenCode 的 `mcp`。
+pub fn jsonc_set(existing: &str, path: &[&str], value: Option<Value>) -> Result<String> {
     let source = if existing.trim().is_empty() {
         "{}\n"
     } else {

@@ -170,6 +170,14 @@ OpenClaw 的 `models.providers`、Hermes 的 `custom_providers` 列表与 `api_m
 使用者手写的选择器行、模型条目、别处的 Codex 目录都不碰（cc-switch 聚合模式下整份换掉）；四档模型别名不改（QB Gate 的档位映射在线路上）；
 聚合行一律用中性模板，只有原生 Responses 线上与 Codex 自带同名的照抄官方行（它按前缀匹配、ProxyChat 用 gpt-5.5 骨架）。
 
+**阶段 5 第一批（2026-10-26，统一 MCP，M1）**：`qb-extensions/src/mcp.rs` 改写自 cc-switch 的 `mcp/validation.rs`（校验）、
+`claude_mcp.rs` 的 `wrap_command_for_windows`（`cmd /c`）、`mcp/codex.rs` 的 `json_server_to_toml_table` / `spec_transport_type` /
+`upsert_mcp_server_table` / `remove_mcp_server_from_doc`（只写所选传输的字段、内联表）、`mcp/grokbuild.rs`（`headers`）、`gemini_mcp.rs`
+（`httpUrl`、合成超时）、`mcp/opencode.rs`（`local` / `remote`）、`mcp/hermes.rs`（保留它自己的字段）、`mcp/mcode.rs`、`mcp/pi.rs`
+（Pi 字段、不收 SSE、名字规则）。`qb-app/src/usecase/mcp_ops.rs` 对应 `services/mcp.rs` 的同步与导入；常用的几个（`McpPanel.tsx` 的 `PRESETS`）
+照 cc-switch `src/config/mcpPresets.ts` 的五个。**跟它不一样**：开关按目标（中转环境 / 官方目录 / 槽位 / 各工具），不按客户端；
+只增删登记过的那几条；官方目录要使用者自己勾；连接定义库里加密存；导入时同名不同定义的跳过而不是覆盖。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text

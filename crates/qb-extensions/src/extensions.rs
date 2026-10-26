@@ -15,7 +15,8 @@ use std::{
 pub fn catalog() -> Result<Vec<ExtensionManifest>> {
     catalog_in(&Repository::open()?)
 }
-fn catalog_in(db: &Repository) -> Result<Vec<ExtensionManifest>> {
+/// 同上，用给的库（编排层的单测在临时库上跑，不碰真实状态）。
+pub fn catalog_in(db: &Repository) -> Result<Vec<ExtensionManifest>> {
     let mut list: Vec<ExtensionManifest> =
         serde_json::from_str(include_str!("../extension-catalog.json"))?;
     for custom in db.list::<ExtensionManifest>("catalog")? {
@@ -359,57 +360,9 @@ pub async fn import_skills(source: &str) -> Result<Vec<ExtensionManifest>> {
     Ok(found)
 }
 
-pub fn import_mcp(name: &str, text: &str) -> Result<ExtensionManifest> {
-    let mut config = config_io::object(text)?;
-    if let Some(servers) = config.get("mcpServers").and_then(|v| v.as_object()) {
-        config = servers
-            .get(name)
-            .or_else(|| {
-                if servers.len() == 1 {
-                    servers.values().next()
-                } else {
-                    None
-                }
-            })
-            .cloned()
-            .ok_or_else(|| GateError::Other("配置包含多个 MCP，请填写要导入的服务名称".into()))?;
-    }
-    validate_mcp(&config)?;
-    if !valid_name(name) {
-        return Err(GateError::Other(
-            "MCP 名称请使用小写字母、数字和连字符".into(),
-        ));
-    }
-    let id = format!("mcp-{name}");
-    let db = Repository::open()?;
-    db.set_meta(
-        &format!("extension-config:{id}"),
-        &crate::secret::seal(&serde_json::to_string(&config)?)?,
-    )?;
-    let mut public = config.clone();
-    for field in ["env", "headers", "http_headers"] {
-        if let Some(object) = public.get_mut(field).and_then(|v| v.as_object_mut()) {
-            for value in object.values_mut() {
-                *value = serde_json::json!("[已加密保存]");
-            }
-        }
-    }
-    let m = ExtensionManifest {
-        id: id.clone(),
-        name: name.into(),
-        description: "手动导入的 MCP 连接配置".into(),
-        kind: ExtensionKind::Mcp,
-        source: "手动配置".into(),
-        version: hex::encode(Sha256::digest(text.as_bytes())),
-        license: "参见服务来源".into(),
-        clients: vec![Client::ClaudeCode, Client::Codex],
-        install_method: "mcp-config".into(),
-        configuration: serde_json::to_string_pretty(&public)?,
-        dependencies: vec![],
-    };
-    db.put("catalog", &id, &m)?;
-    Ok(m)
-}
+// 原来这里有 `import_mcp`（把一段 MCP 配置导进扩展目录、加密存在 `extension-config:*`）。2026-10-26 起 MCP 在
+// MCP 面板统一管（`qb-app::usecase::mcp_ops`），它跟着撤了；已经导入过的那几条照旧能装、能读（`mcp_configuration`）。
+
 fn validate_mcp(v: &serde_json::Value) -> Result<()> {
     if let Some(url) = v.get("url").and_then(|v| v.as_str()) {
         crate::endpoint::endpoint_base(url)?;

@@ -171,6 +171,16 @@ const MIGRATIONS: &[&str] = &[
     // 一个站点一行、主键是站点 id，跟 `router_settings` 同一个形状。站点眼下没有删除入口（删的是线路）；
     // 以后加了，要连这一行一起删。
     "CREATE TABLE IF NOT EXISTS station_endpoints(id TEXT PRIMARY KEY,body TEXT NOT NULL);",
+    // 9：MCP / Skills / 提示词 / 项目 / 深链待处理（2026-10-26，中转站重构阶段 5，cc-switch 的 M1–M4、X4）。
+    //
+    // 都是通用的 `(id, body)` 形状：一条 MCP 服务器、一个 Skill、一条提示词、一个项目、一条还没处理的深链。
+    // 写进哪些客户端（「目标」）记在 body 里，不另开关联表 —— 目标是「中转环境 / 官方目录 / 某个工具」，
+    // 不是固定的几列（cc-switch 一个客户端一个 `enabled_<app>` 列；QB Gate 一个客户端有好几个目录）。
+    "CREATE TABLE IF NOT EXISTS mcp_servers(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS skills(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS prompts(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS deeplink_pending(id TEXT PRIMARY KEY,body TEXT NOT NULL);",
 ];
 
 /// 用正经列存的高频表（不走通用的 `(id, body)`）。列名跟第 3 层那个类型的字段**同名**。
@@ -278,6 +288,12 @@ const TABLES: &[&str] = &[
     "dispatch_queue",
     "scheduler_actions",
     "station_endpoints",
+    // 迁移 9（阶段 5）。
+    "mcp_servers",
+    "skills",
+    "prompts",
+    "projects",
+    "deeplink_pending",
 ];
 
 impl Repository {

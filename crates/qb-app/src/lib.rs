@@ -34,7 +34,7 @@
 
 pub use qb_accounts::{accounts, residue};
 pub use qb_contract::domain;
-pub use qb_extensions::{extensions, plugins};
+pub use qb_extensions::{extensions, mcp, plugins};
 pub use qb_foundation::{audit, error, paths, sink};
 pub use qb_install::install;
 pub use qb_iplock::gate;

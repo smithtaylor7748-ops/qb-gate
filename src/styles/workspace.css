@@ -1830,3 +1830,68 @@ body:has(.official-page) {
   gap: 8px;
   margin-top: 8px;
 }
+
+/* ------------------------------------------------ MCP 面板（阶段 5，M1） */
+.qb-mcp {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.qb-mcp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.qb-mcp-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.qb-mcp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.qb-mcp-summary {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+/* 开关：勾上的那几个用强调色，一眼分得出写进了哪里。 */
+.qb-mcp-row .qb-filter-pills button {
+  border-color: var(--border);
+}
+.qb-mcp-row .qb-filter-pills button[aria-pressed="true"] {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--text);
+}
+.qb-mcp-row .qb-filter-pills button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.qb-icon-button {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  border-radius: 6px;
+  padding: 5px;
+  cursor: pointer;
+  display: inline-flex;
+}
+.qb-icon-button:hover:not(:disabled) {
+  border-color: var(--border);
+  color: var(--text);
+}
+.qb-icon-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

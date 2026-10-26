@@ -33,6 +33,7 @@ import type { RouterSettings } from "./generated/RouterSettings";
 import type { StationEndpoints } from "./generated/StationEndpoints";
 import type { CoexistStatus } from "./generated/CoexistStatus";
 import type { CoexistTool } from "./generated/CoexistTool";
+import type { McpServer } from "./generated/McpServer";
 import type { OnboardingTarget } from "./generated/OnboardingTarget";
 import type { EditorLink } from "./generated/EditorLink";
 import type { CodexHistoryHome } from "./generated/CodexHistoryHome";
@@ -1998,6 +1999,40 @@ const stationEndpoints: Record<string, StationEndpoints> = {
 };
 const demoEndpointsOf = (providerId: string): StationEndpoints =>
   (stationEndpoints[providerId] ??= { provider_id: providerId, endpoints: [] });
+/** MCP 面板（阶段 5）的演示数据：一条写进了 Claude Code 中转环境的，目标里 OpenCode 当没装。 */
+let demoMcp: McpServer[] = [
+  {
+    id: "fetch",
+    name: "mcp-server-fetch",
+    server: { type: "stdio", command: "uvx", args: ["mcp-server-fetch"] },
+    targets: ["claude-code:relay"],
+    description: null,
+    homepage: "https://github.com/modelcontextprotocol/servers",
+    tags: [],
+  },
+];
+const DEMO_MCP_TARGETS = [
+  ["claude-code:relay", "Claude Code · 中转环境", false, true],
+  ["claude-code:default", "Claude Code · 官方默认目录", true, true],
+  ["codex:relay", "Codex · 中转环境", false, true],
+  ["codex:default", "Codex · 官方默认目录", true, true],
+  ["gemini-cli:relay", "Gemini CLI · 中转环境", false, true],
+  ["opencode", "OpenCode", false, false],
+].map(([id, label, official, available]) => ({
+  id: id as string,
+  label: label as string,
+  official: official as boolean,
+  available: available as boolean,
+}));
+const demoMcpView = () => ({
+  servers: demoMcp.map((m) => ({ ...m })),
+  targets: DEMO_MCP_TARGETS.map((t) => ({
+    ...t,
+    path: `C:\\Users\\demo\\${t.id}`,
+    entries: demoMcp.filter((m) => m.targets.includes(t.id)).map((m) => m.id),
+    problem: null,
+  })),
+});
 /** 共存型工具（阶段 4）：哪条线写进了哪个工具（`线路|工具`）。演示里 Hermes 当没装，好让「没找到」也看得见。 */
 const demoCoexistWritten = new Set<string>();
 const DEMO_COEXIST_TOOLS: Array<[CoexistTool, string, string]> = [
@@ -2989,6 +3024,39 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       endpoints: { ...e, endpoints: [...e.endpoints] },
     };
   },
+  // MCP 面板（阶段 5）。演示里只在内存里记；目标的「现有条目」跟着勾选变。
+  mcp_list: () => demoMcpView(),
+  mcp_save: (args) => {
+    const server = args?.server as McpServer;
+    const previous = (args?.previousId as string | null) ?? null;
+    if (!/^[A-Za-z0-9_.-]{1,64}$/.test(server.id))
+      throw new Error(`MCP 服务器名只能用字母、数字、_、- 和 .：${server.id}`);
+    if (previous == null && demoMcp.some((m) => m.id === server.id))
+      throw new Error(`已经有一条叫 ${server.id} 的 MCP 服务器`);
+    demoMcp = demoMcp.filter((m) => m.id !== (previous ?? server.id));
+    demoMcp.push({ ...server, targets: [...server.targets].sort() });
+    return demoMcpView();
+  },
+  mcp_delete: (args) => {
+    demoMcp = demoMcp.filter((m) => m.id !== args?.id);
+    return demoMcpView();
+  },
+  mcp_set_target: (args) => {
+    const m = demoMcp.find((x) => x.id === args?.id);
+    const t = DEMO_MCP_TARGETS.find((x) => x.id === args?.target);
+    if (!m || !t) throw new Error("没有这条");
+    if (args?.enabled && !t.available)
+      throw new Error(`${t.label} 没找到：多半还没装，不替它建`);
+    m.targets = m.targets.filter((x) => x !== t.id);
+    if (args?.enabled) m.targets.push(t.id);
+    return demoMcpView();
+  },
+  mcp_import: () => ({
+    added: [],
+    linked: [],
+    skipped: [],
+    view: demoMcpView(),
+  }),
   // 共存型工具（阶段 4）：演示里只在内存里记一下写没写，路径照真后端在 Windows 上的样子编。
   station_coexist_status: (args) => demoCoexistOf(String(args?.routeId ?? "")),
   station_coexist_write: (args) => {

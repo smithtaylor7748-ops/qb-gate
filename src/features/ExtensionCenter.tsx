@@ -29,6 +29,7 @@ import {
 } from "../lib/workspace";
 import CodexEgressPanel from "../plugins/CodexEgressPanel";
 import AntigravityPanel from "../plugins/AntigravityPanel";
+import McpPanel from "./McpPanel";
 
 const KIND_ICON = {
   application: Blocks,
@@ -68,8 +69,10 @@ export default function ExtensionCenter() {
   // 「服务商与环境」旧页，跟中转站页的添加线路完全重复。2026-09-27 连同 `template`
   // 这一类一起删了 —— 模板不产生安装记录，删掉不会让谁已有的东西消失。
   const installations = workspace.data?.installations ?? [];
+  // 2026-10-26 起 MCP 不在目录里了，在「MCP」分页（阶段 5，M1）：原来装过的第一次打开那一页时迁过去。
   const list = (catalog.data ?? []).filter(
     (m) =>
+      m.kind !== "mcp" &&
       (SURFACED.has(m.id) ||
         installations.some((i) => i.extension_id === m.id)) &&
       (category === "all" || m.kind === category) &&
@@ -112,6 +115,7 @@ export default function ExtensionCenter() {
           ["discover", "发现"],
           ["installed", "已安装"],
           ["updates", "更新"],
+          ["mcp", "MCP"],
         ].map(([key, name]) => (
           <button
             key={key}
@@ -124,112 +128,121 @@ export default function ExtensionCenter() {
           </button>
         ))}
       </div>
-      <div className="qb-catalog-toolbar">
-        <div className="qb-filter-pills">
-          {[["all", "全部"], ...Object.entries(KIND_NAMES)].map(
-            ([key, name]) => (
-              <button
-                key={key}
-                aria-pressed={category === key}
-                onClick={() => setCategory(key)}
-              >
-                {name}
-              </button>
-            ),
-          )}
-        </div>
-        <label className="qb-search-box">
-          <Search size={16} />
-          <input
-            aria-label="搜索扩展"
-            placeholder="搜索扩展…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </label>
-      </div>
-      {catalog.error && (
-        <p className="notice notice--danger">{catalog.error}</p>
-      )}
-      {catalog.loading && !catalog.data && (
-        <p className="qb-muted" role="status">
-          正在读取扩展目录…
-        </p>
-      )}
-      <div className="qb-catalog-grid">
-        {list.map((m) => {
-          const Icon = KIND_ICON[m.kind];
-          const installed = installations.filter(
-            (i) => i.extension_id === m.id,
-          );
-          return (
-            <Link
-              className="qb-extension-card"
-              key={m.id}
-              to={"/extensions/" + m.id}
-            >
-              <div className={"qb-extension-icon qb-extension-icon-" + m.kind}>
-                <Icon size={25} />
-              </div>
-              <span className="qb-extension-category">
-                {KIND_NAMES[m.kind]}
-              </span>
-              <h3>{m.name}</h3>
-              <p>{m.description}</p>
-              <div className="qb-extension-foot">
-                <span>
-                  {installed.length
-                    ? `已安装到 ${installed.length} 个环境`
-                    : m.clients.map((c) => CLIENT_NAMES[c]).join(" / ")}
-                </span>
-                <ArrowRight size={17} />
-              </div>
-            </Link>
-          );
-        })}
-      </div>
-      {!list.length && !catalog.loading && (
-        <div className="qb-empty">
-          <Blocks size={30} />
-          <h3>
-            {tab === "updates"
-              ? "精选目录中的已安装扩展已是当前版本"
-              : tab === "installed"
-                ? "还没有安装扩展"
-                : "没有匹配的扩展"}
-          </h3>
-          <p>
-            {tab === "updates"
-              ? "手动来源可重新导入同一地址，解析新的固定版本后再预览更新。"
-              : "切换分类或到发现页选择需要的能力。"}
-          </p>
-        </div>
-      )}
-      {tab === "updates" && (
+      {tab === "mcp" ? (
+        <McpPanel />
+      ) : (
         <>
-          <Button
-            loading={action.pending === "refresh"}
-            disabled={!!action.pending}
-            onClick={() =>
-              void action
-                .run("refresh", workspaceApi.checkUpdates)
-                .then((r) => r && setUpdateNotes(r))
-            }
-          >
-            检查来源更新
-          </Button>
-          {updateNotes.length > 0 && (
-            <ul className="qb-help-note" role="status">
-              {updateNotes.map((n) => (
-                <li key={n}>{n}</li>
+          <div className="qb-catalog-toolbar">
+            <div className="qb-filter-pills">
+              {[
+                ["all", "全部"],
+                ...Object.entries(KIND_NAMES).filter(([k]) => k !== "mcp"),
+              ].map(([key, name]) => (
+                <button
+                  key={key}
+                  aria-pressed={category === key}
+                  onClick={() => setCategory(key)}
+                >
+                  {name}
+                </button>
               ))}
-            </ul>
+            </div>
+            <label className="qb-search-box">
+              <Search size={16} />
+              <input
+                aria-label="搜索扩展"
+                placeholder="搜索扩展…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </label>
+          </div>
+          {catalog.error && (
+            <p className="notice notice--danger">{catalog.error}</p>
           )}
+          {catalog.loading && !catalog.data && (
+            <p className="qb-muted" role="status">
+              正在读取扩展目录…
+            </p>
+          )}
+          <div className="qb-catalog-grid">
+            {list.map((m) => {
+              const Icon = KIND_ICON[m.kind];
+              const installed = installations.filter(
+                (i) => i.extension_id === m.id,
+              );
+              return (
+                <Link
+                  className="qb-extension-card"
+                  key={m.id}
+                  to={"/extensions/" + m.id}
+                >
+                  <div
+                    className={"qb-extension-icon qb-extension-icon-" + m.kind}
+                  >
+                    <Icon size={25} />
+                  </div>
+                  <span className="qb-extension-category">
+                    {KIND_NAMES[m.kind]}
+                  </span>
+                  <h3>{m.name}</h3>
+                  <p>{m.description}</p>
+                  <div className="qb-extension-foot">
+                    <span>
+                      {installed.length
+                        ? `已安装到 ${installed.length} 个环境`
+                        : m.clients.map((c) => CLIENT_NAMES[c]).join(" / ")}
+                    </span>
+                    <ArrowRight size={17} />
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+          {!list.length && !catalog.loading && (
+            <div className="qb-empty">
+              <Blocks size={30} />
+              <h3>
+                {tab === "updates"
+                  ? "精选目录中的已安装扩展已是当前版本"
+                  : tab === "installed"
+                    ? "还没有安装扩展"
+                    : "没有匹配的扩展"}
+              </h3>
+              <p>
+                {tab === "updates"
+                  ? "手动来源可重新导入同一地址，解析新的固定版本后再预览更新。"
+                  : "切换分类或到发现页选择需要的能力。"}
+              </p>
+            </div>
+          )}
+          {tab === "updates" && (
+            <>
+              <Button
+                loading={action.pending === "refresh"}
+                disabled={!!action.pending}
+                onClick={() =>
+                  void action
+                    .run("refresh", workspaceApi.checkUpdates)
+                    .then((r) => r && setUpdateNotes(r))
+                }
+              >
+                检查来源更新
+              </Button>
+              {updateNotes.length > 0 && (
+                <ul className="qb-help-note" role="status">
+                  {updateNotes.map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+          <p className="qb-help-note">
+            精选目录随程序发布。导入只读取元数据；安装和连接测试由你手动发起。扩展不会自动同步到其他账户。
+          </p>
         </>
       )}
-      <p className="qb-help-note">
-        精选目录随程序发布。导入只读取元数据；安装和连接测试由你手动发起。扩展不会自动同步到其他账户。
-      </p>
       <Modal
         open={importing}
         onClose={() => setImporting(false)}
@@ -241,55 +254,21 @@ export default function ExtensionCenter() {
   );
 }
 function ImportForm({ onDone }: { onDone: () => void }) {
-  const [kind, setKind] = useSession("import.kind", "skill");
   const [source, setSource] = useSession("import.source", "");
-  const [name, setName] = useSession("import.mcp.name", "");
-  const [config, setConfig] = useSession(
-    "import.mcp.config",
-    '{\n  "command": "",\n  "args": [],\n  "env": {}\n}',
-  );
   const action = useAction();
   return (
     <div className="qb-form">
       <label className="qb-field">
-        <span>导入类型</span>
-        <select value={kind} onChange={(e) => setKind(e.target.value)}>
-          <option value="skill">Skills · GitHub 或本地目录</option>
-          <option value="mcp">MCP · stdio 或 HTTP 配置</option>
-        </select>
+        <span>Skills · GitHub 仓库地址或本地目录</span>
+        <input
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          placeholder="https://github.com/owner/repo/tree/main/skills"
+        />
       </label>
-      {kind === "skill" ? (
-        <label className="qb-field">
-          <span>GitHub 仓库地址或本地目录</span>
-          <input
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-            placeholder="https://github.com/owner/repo/tree/main/skills"
-          />
-        </label>
-      ) : (
-        <>
-          <label className="qb-field">
-            <span>MCP 名称</span>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="my-mcp"
-            />
-          </label>
-          <label className="qb-field">
-            <span>连接配置 JSON</span>
-            <textarea
-              className="qb-code-input"
-              rows={9}
-              value={config}
-              onChange={(e) => setConfig(e.target.value)}
-            />
-          </label>
-        </>
-      )}
       <p className="qb-muted">
-        先扫描并加入目录，再选择目标环境安装。此步骤不会运行仓库脚本。
+        先扫描并加入目录，再选择目标环境安装。此步骤不会运行仓库脚本。 MCP
+        在「MCP」分页里添加或从已有配置导入。
       </p>
       <Button
         variant="primary"
@@ -298,17 +277,11 @@ function ImportForm({ onDone }: { onDone: () => void }) {
           void action
             .run(
               "import",
-              async () =>
-                kind === "skill"
-                  ? workspaceApi.importSkills(source)
-                  : [await workspaceApi.importMcp(name, config)],
+              async () => workspaceApi.importSkills(source),
               "扩展已加入目录",
             )
             .then((r) => {
-              if (r) {
-                setConfig('{\n  "command": "",\n  "args": []\n}');
-                onDone();
-              }
+              if (r) onDone();
             })
         }
       >

@@ -91,17 +91,8 @@ pub async fn extension_import_skills(
     operations::changed(&events::ui(&app), "catalog", "");
     result
 }
-#[tauri::command]
-pub async fn extension_import_mcp(
-    app: tauri::AppHandle,
-    name: String,
-    configuration: String,
-) -> Result<ExtensionManifest> {
-    let _guard = operations::exclusive_soon().await?;
-    let result = crate::extensions::import_mcp(&name, &configuration)?;
-    operations::changed(&events::ui(&app), "catalog", &result.id);
-    Ok(result)
-}
+// 原来这里有 `extension_import_mcp`（把一段 MCP 配置导进扩展目录）。2026-10-26 起 MCP 在「MCP」分页统一管
+// （阶段 5，M1：`mcp_save` / `mcp_import`），它跟着撤了。
 #[tauri::command]
 pub async fn extension_preview(
     request: crate::extensions::InstallRequest,
@@ -190,3 +181,51 @@ pub async fn official_configuration_migrate(
 
 // 原来这里有 `extension_connect_application`（扩展中心酒馆页那颗「接入已配置的本地安装」）。
 // 2026-09-29 酒馆变成面板的内置功能、从扩展中心撤掉，它跟着删了 —— 见 `extensions::RETIRED`。
+
+// ------------------------------------------------------------------ MCP 面板（阶段 5，cc-switch 的 M1）
+
+/// MCP 服务器和能写进去的目标。第一次打开时把原来扩展中心装的 MCP 迁进来。
+#[tauri::command]
+pub fn mcp_list() -> Result<qb_app::usecase::mcp_ops::McpView> {
+    qb_app::usecase::mcp_ops::list(&crate::repository::Repository::open()?)
+}
+
+/// 新建或修改一条，按它勾的目标写进各个配置（`previous_id` 是改名前的名字）。
+#[tauri::command]
+pub fn mcp_save(
+    server: qb_app::mcp::McpServer,
+    previous_id: Option<String>,
+) -> Result<qb_app::usecase::mcp_ops::McpView> {
+    qb_app::usecase::mcp_ops::save(
+        &crate::repository::Repository::open()?,
+        server,
+        previous_id.as_deref(),
+    )
+}
+
+/// 删掉一条（勾着的目标里一起删，使用者手写的别的 MCP 不动）。
+#[tauri::command]
+pub fn mcp_delete(id: String) -> Result<qb_app::usecase::mcp_ops::McpView> {
+    qb_app::usecase::mcp_ops::delete(&crate::repository::Repository::open()?, &id)
+}
+
+/// 勾上 / 取消一个目标。官方目录和各个工具都要使用者自己勾。
+#[tauri::command]
+pub fn mcp_set_target(
+    id: String,
+    target: String,
+    enabled: bool,
+) -> Result<qb_app::usecase::mcp_ops::McpView> {
+    qb_app::usecase::mcp_ops::set_target(
+        &crate::repository::Repository::open()?,
+        &id,
+        &target,
+        enabled,
+    )
+}
+
+/// 把一个目标里现有的 MCP 导进面板（不写任何文件）。
+#[tauri::command]
+pub fn mcp_import(target: String) -> Result<qb_app::usecase::mcp_ops::McpImportReport> {
+    qb_app::usecase::mcp_ops::import(&crate::repository::Repository::open()?, &target)
+}

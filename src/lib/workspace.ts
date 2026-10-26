@@ -10,6 +10,9 @@ import type { Workspace } from "./generated/Workspace";
 import type { Provider } from "./generated/Provider";
 import type { Credential } from "./generated/Credential";
 import type { Environment } from "./generated/Environment";
+import type { McpServer } from "./generated/McpServer";
+import type { McpView } from "./generated/McpView";
+import type { McpImportReport } from "./generated/McpImportReport";
 import type { Session } from "./generated/Session";
 import type { Client } from "./generated/Client";
 import type { IdentityKind } from "./generated/IdentityKind";
@@ -71,8 +74,15 @@ export const workspaceApi = {
   catalog: () => call<ExtensionManifest[]>("extension_catalog"),
   importSkills: (source: string) =>
     call<ExtensionManifest[]>("extension_import_skills", { source }),
-  importMcp: (name: string, configuration: string) =>
-    call<ExtensionManifest>("extension_import_mcp", { name, configuration }),
+  // MCP 面板（阶段 5，M1）。原来的「导入 MCP 进目录」撤了，MCP 都在这里管。
+  mcpList: () => call<McpView>("mcp_list"),
+  mcpSave: (server: McpServer, previousId: string | null) =>
+    call<McpView>("mcp_save", { server, previousId }),
+  mcpDelete: (id: string) => call<McpView>("mcp_delete", { id }),
+  mcpSetTarget: (id: string, target: string, enabled: boolean) =>
+    call<McpView>("mcp_set_target", { id, target, enabled }),
+  mcpImport: (target: string) =>
+    call<McpImportReport>("mcp_import", { target }),
   previewExtension: (request: InstallRequest) =>
     call<InstallPreview>("extension_preview", { request }),
   install: (request: InstallRequest) =>

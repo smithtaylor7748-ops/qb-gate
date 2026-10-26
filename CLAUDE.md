@@ -1232,6 +1232,31 @@ Claude Code、Codex、Gemini CLI、Grok Build，以及**没开直连档时**的 
 `workspace` 的 `the_desktop_config_carries_the_real_key_only_in_direct_mode`、
 `commands::station` 的 `the_desktop_config_view_never_shows_a_real_key` 和 `StationDesktopDirect.test.tsx`（不确认不切）。
 
+## MCP 面板：一条服务器、按目标写（2026-10-26，中转站重构阶段 5 · M1，照 cc-switch 的统一 MCP）
+
+扩展中心的「MCP」分页取代了原来目录里的 MCP 那一半（目录不再列 MCP 卡片，「导入 MCP 进目录」那条命令撤了）。
+转换在 `qb_extensions::mcp`（纯值：统一格式 ↔ 各家写法），写到哪、怎么写盘在 `qb_app::usecase::mcp_ops`。
+
+- **开关按目标，不按客户端**：cc-switch 一个客户端一个 `enabled_<app>`；QB Gate 的 Claude Code / Codex / Gemini CLI 都有中转环境、
+  官方默认目录、官方槽位好几份配置。目标 id 形如 `claude-code:relay`、`claude-code:slot:<标签>`、`codex:default`、`opencode`，
+  一条服务器记着自己勾了哪些（`McpServer.targets`）。新建的默认只勾 `claude-code:relay`；**官方那一侧（`official`）要使用者自己勾**。
+- ⛔ **只增删库里登记的那几条**：取消勾选、删除时只删这条服务器自己的键；从一个目标「导入」只读不写，同名但连接方式不一样的跳过、报出来，
+  不替使用者挑哪份对。
+- ⛔ 工具或目录不在（没装）就拒绝，不替它建；配置解析不了、MCP 那一节不是对象 / 表就停，不覆盖。
+- **各家写法的几个坑照 cc-switch**（`qb_extensions::mcp` 模块头那张表）：Codex / Grok **只写所选传输方式的字段**
+  （Codex 见到另一种的字段会拒绝整份 `config.toml`，别的 MCP 一起失效）、不写 `type`；Claude Code 在 Windows 上把 `npx` 一类包成 `cmd /c`；
+  Gemini 的 http 用 `httpUrl`、超时合成一个毫秒数；Hermes / MiniMax / Pi 自己的字段写的时候从原条目带过来；Pi 不收 SSE、只差 `-` / `_` 的名字算同一个。
+- **连接定义库里加密存**（`secret::seal`，跟原来扩展中心导入的 MCP 一样）：`env`、`headers` 里常有 Key。界面拿得到明文（使用者自己编辑要用）。
+- 写的是中转环境里有配置清单的那几份（Codex 的 `config.toml`、Gemini CLI 的 `.gemini/settings.json`、Grok Build 的 `config.toml`）时，
+  写完按那个软件的中转环境重新应用一次（`workspace::apply`），指纹对上 —— 不然下次启动会报「配置被外部改过」。
+- **原来扩展中心装的 MCP 第一次打开时迁进来**（`migrate_installations`，只迁一次，`metadata` 记 `mcp-migrated-installations`）：
+  名字照旧（安装时用的扩展 id），连接定义从那份配置里读回来，目标按装在哪推（中转环境 / 官方默认 / 槽位）；`installations` 老表留着能读。
+
+钉着这些的是 `qb_extensions::mcp` 的七个（各家写法、Codex 只写一种传输、内联表也删得掉、不是表就停）、
+`mcp_ops` 的 `a_server_lands_only_in_the_ticked_targets_and_leaves_the_user_s_own_alone`（库里不见明文 Key、没装不建目录）、
+`importing_links_identical_servers_and_reports_conflicts`（OpenCode 的注释留着）、`old_extension_center_installs_are_read_into_the_new_records`，
+和 `McpPanel.test.tsx`（官方目录要自己勾、没装的不列）。
+
 ---
 
 ### 桌面端走的是它自己的「第三方网关」模式，不是环境变量里的 base_url

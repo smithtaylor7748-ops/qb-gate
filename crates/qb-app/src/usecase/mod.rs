@@ -21,6 +21,8 @@ pub mod hook_ops;
 pub mod install_ops;
 pub mod ipv6_ops;
 pub mod locale_ops;
+/// MCP 面板：一条服务器勾哪些目标就写进哪些配置（中转站重构阶段 5，M1）。
+pub mod mcp_ops;
 pub mod purge_ops;
 pub mod settings_ops;
 pub mod station_batch;

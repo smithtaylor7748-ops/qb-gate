@@ -39,6 +39,8 @@ http-body-util.workspace = true
 # 测活要按并发上限一批批发（`buffer_unordered`），那一组在 alloc 后面。
 futures-util = { workspace = true, features = ["alloc"] }
 toml_edit.workspace = true
+# Hermes 的 config.yaml（阶段 5，MCP 同步只换 mcp_servers 那一节）。
+serde_yaml_ng.workspace = true
 ts-rs.workspace = true
 
 [target.'cfg(windows)'.dependencies]
