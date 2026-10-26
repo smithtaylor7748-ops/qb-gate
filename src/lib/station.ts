@@ -46,8 +46,12 @@ import type { OnboardingTarget } from "./generated/OnboardingTarget";
 import type { EditorLink } from "./generated/EditorLink";
 import type { CodexHistoryHome } from "./generated/CodexHistoryHome";
 import type { DesktopDirectView } from "./generated/DesktopDirectView";
+import type { ProjectChange } from "./generated/ProjectChange";
+import type { ProjectsView } from "./generated/ProjectsView";
 
 export type {
+  ProjectChange,
+  ProjectsView,
   AggregateModel,
   CoexistStatus,
   CoexistTool,
@@ -235,6 +239,24 @@ export const stationApi = {
   /** 只收这个软件自己的线；混进别的软件的线整份拒绝。 */
   saveDispatchQueue: (client: Client, order: string[]) =>
     call<DispatchQueue>("station_dispatch_queue_save", { client, order }),
+
+  // 项目（阶段 5，cc-switch 的 M4）：只换中转那一侧（线路、派单顺序、中转环境里的 MCP / Skills / 提示词），
+  // ⛔ 不碰官方账户和槽位。项目列表各软件共用，「当前项目」每个软件各记各的。
+  /** 项目列表和每个软件的当前项目。 */
+  projects: () => call<ProjectsView>("projects_list"),
+  /** 把这个软件现在的样子存成一个项目，并记成它的当前项目。 */
+  projectCreate: (name: string, client: Client) =>
+    call<ProjectsView>("projects_create", { name, client }),
+  projectRename: (id: string, name: string) =>
+    call<ProjectsView>("projects_rename", { id, name }),
+  /** 只删记录，不动任何配置。 */
+  projectDelete: (id: string) => call<ProjectsView>("projects_delete", { id }),
+  /** 换到这个项目（只这个软件那一组）：现在的样子先存回原来那个项目。尽力而为，没落成的回在 `warnings` 里。 */
+  projectApply: (id: string, client: Client) =>
+    call<ProjectChange>("projects_apply", { id, client }),
+  /** 不使用项目：先存回当前项目，再清掉这个软件的当前项目，什么配置都不动。 */
+  projectClear: (client: Client) =>
+    call<ProjectChange>("projects_clear", { client }),
   /**
    * 「我充值了，立刻重测」：熔断中的线马上转半开，下一发真实请求就是回探 —— 不额外花钱。
    * 回它原来是不是熔断着。

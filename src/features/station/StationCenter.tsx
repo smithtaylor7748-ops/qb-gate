@@ -86,6 +86,7 @@ import StationTurnState from "./StationTurnState";
 import StationClaudeCodeExtras from "./StationClaudeCodeExtras";
 import StationCodexHistory from "./StationCodexHistory";
 import StationDesktopDirect from "./StationDesktopDirect";
+import StationProjects from "./StationProjects";
 import RouteDialog from "./RouteDialog";
 
 /** 三个维度在界面上叫什么。跟调度设置弹窗里那份是同一套写法。 */
@@ -730,6 +731,15 @@ function StationBoard({
           ))}
         </div>
         <span style={{ flex: 1 }} />
+        {/* 项目（阶段 5 · M4）：只换这个软件中转那一侧，不碰官方账户。 */}
+        <StationProjects
+          client={client}
+          clientName={CLIENTS.find((c) => c.id === client)?.name ?? client}
+          onApplied={() => {
+            void refreshStatus();
+            onChanged();
+          }}
+        />
         <Button
           variant="primary"
           onClick={() => setRouteDialog({ editing: null })}

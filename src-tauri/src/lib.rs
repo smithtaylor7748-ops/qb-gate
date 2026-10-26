@@ -216,6 +216,13 @@ pub fn run() {
             commands::station::station_aggregate_config_problem,
             commands::station::station_dispatch_queue,
             commands::station::station_dispatch_queue_save,
+            // 项目（中转站重构阶段 5，M4）：只换中转那一侧，不碰官方账户。
+            commands::station::projects_list,
+            commands::station::projects_create,
+            commands::station::projects_rename,
+            commands::station::projects_delete,
+            commands::station::projects_apply,
+            commands::station::projects_clear,
             commands::station::station_route_retest,
             commands::station::station_dispatch_view,
             commands::station::station_probe_now,

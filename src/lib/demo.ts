@@ -40,6 +40,8 @@ import type { SkillCandidate } from "./generated/SkillCandidate";
 import type { OnboardingTarget } from "./generated/OnboardingTarget";
 import type { EditorLink } from "./generated/EditorLink";
 import type { CodexHistoryHome } from "./generated/CodexHistoryHome";
+import type { Project } from "./generated/Project";
+import type { ProjectsView } from "./generated/ProjectsView";
 /**
  * 演示数据 —— 只给截图和界面预览用。
  *
@@ -2026,6 +2028,43 @@ const demoPromptsView = () => ({
     drift: false,
   })),
 });
+/** 项目（阶段 5 · M4）的演示数据：一个存过 Claude Code 那一组的项目，Claude Code 正用着它。 */
+let demoProjects: Project[] = [
+  {
+    id: "project-demo",
+    name: "日常开发",
+    slots: {
+      "claude-code": {
+        route: R_MAIN,
+        queue: [R_CHEAP],
+        mcp: [],
+        skills: [],
+        prompt: "prompt-demo",
+      },
+    },
+    updated_ms: 1761400000000,
+  },
+];
+const demoProjectCurrent: Record<string, string> = {
+  "claude-code": "project-demo",
+};
+const demoProjectsView = (): ProjectsView => ({
+  projects: [...demoProjects]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((p) => ({ ...p, slots: { ...p.slots } })),
+  current: { ...demoProjectCurrent },
+});
+/** 这个软件现在的样子（演示里只有线路和派单顺序是真有状态的）。 */
+const demoProjectSnapshot = (who: string) => ({
+  route: stationCurrent[who] ?? null,
+  queue: [...(stationDispatch[who] ?? [])],
+  mcp: who === "claude-desktop" ? null : [],
+  skills: who === "claude-desktop" ? null : [],
+  prompt:
+    who === "claude-desktop"
+      ? null
+      : (demoPromptActive[`${who}:relay`] ?? null),
+});
 /** Skills 面板（阶段 5）的演示数据：一个装在 Claude Code 中转环境的。 */
 const DEMO_SKILL_CANDIDATE: SkillCandidate = {
   name: "webapp-testing",
@@ -3301,6 +3340,75 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       });
     }
     return out;
+  },
+  // 项目（阶段 5 · M4）。演示里只在内存里记；换项目照真后端：先存回原来那个，再落线路和派单顺序。
+  projects_list: () => demoProjectsView(),
+  projects_create: (args) => {
+    const who = String(args?.client ?? "claude-code");
+    const name = String(args?.name ?? "").trim();
+    if (!name) throw new Error("给项目起个名字");
+    const id = `project-${Date.now()}`;
+    demoProjects.push({
+      id,
+      name,
+      slots: { [who]: demoProjectSnapshot(who) },
+      updated_ms: Date.now(),
+    });
+    demoProjectCurrent[who] = id;
+    return demoProjectsView();
+  },
+  projects_rename: (args) => {
+    const p = demoProjects.find((x) => x.id === args?.id);
+    if (!p) throw new Error("没有这个项目");
+    p.name = String(args?.name ?? "").trim() || p.name;
+    return demoProjectsView();
+  },
+  projects_delete: (args) => {
+    demoProjects = demoProjects.filter((x) => x.id !== args?.id);
+    for (const [k, v] of Object.entries(demoProjectCurrent))
+      if (v === args?.id) delete demoProjectCurrent[k];
+    return demoProjectsView();
+  },
+  projects_apply: (args) => {
+    const who = String(args?.client ?? "claude-code");
+    const cur = demoProjectCurrent[who];
+    const p = demoProjects.find((x) => x.id === args?.id);
+    if (!p) throw new Error("没有这个项目");
+    const before = demoProjects.find((x) => x.id === cur);
+    if (before && before.id !== p.id)
+      before.slots = { ...before.slots, [who]: demoProjectSnapshot(who) };
+    const warnings: string[] = [];
+    const slot = p.slots[who];
+    if (!slot)
+      warnings.push(
+        "这个项目还没存过这个软件的设置：记成当前项目，什么都没动（换走时会自动存下）",
+      );
+    else {
+      if (slot.route && slot.route !== stationCurrent[who]) {
+        if (stationRoutes.some((r) => r.id === slot.route && r.client === who))
+          FIXTURES.station_select_route({
+            routeId: slot.route,
+            immediate: false,
+          });
+        else
+          warnings.push(`项目里存的线路「${slot.route}」已经不在了，上游没换`);
+      }
+      if (slot.queue)
+        if (stationSchedules.find((x) => x.client === who)?.enabled)
+          warnings.push(
+            "智能调度开着：派单顺序归调度排，项目里存的顺序没落（停了调度再换一次项目就会落）",
+          );
+        else stationDispatch[who] = [...slot.queue];
+    }
+    demoProjectCurrent[who] = p.id;
+    return { view: demoProjectsView(), warnings };
+  },
+  projects_clear: (args) => {
+    const who = String(args?.client ?? "claude-code");
+    const cur = demoProjects.find((x) => x.id === demoProjectCurrent[who]);
+    if (cur) cur.slots = { ...cur.slots, [who]: demoProjectSnapshot(who) };
+    delete demoProjectCurrent[who];
+    return { view: demoProjectsView(), warnings: [] };
   },
   station_dispatch_queue: (args) =>
     demoQueueOf(String(args?.client ?? "claude-code")),

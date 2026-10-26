@@ -434,30 +434,42 @@ pub fn station_select_route(
     // 那条线的 Key 是给 B 配的，账会记到 B 头上，而且完全看不出来。
     let db = crate::repository::Repository::open()?;
     let route: Route = db.get("station_routes", &route_id)?;
+    select_route_in(&state, &db, &route, immediate)?;
+    Ok(status_of(&state, route.client))
+}
+
+/// 选线的实际动作。手动点一行、换项目（阶段 5 · M4）都走这一条，不各写一份。
+fn select_route_in(
+    state: &AppState,
+    db: &crate::repository::Repository,
+    route: &Route,
+    immediate: bool,
+) -> Result<()> {
     {
         let mut s = state
             .station
             .lock()
             .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
         if immediate {
-            s.set_now(route.client, route_id.clone());
+            s.set_now(route.client, route.id.clone());
         } else {
-            s.request_switch(route.client, route_id.clone());
+            s.request_switch(route.client, route.id.clone());
         }
     }
     let now = chrono::Utc::now().timestamp_millis();
     // 记下来：面板重启后接着用这一条（原来只在内存里，重启后客户端收到 503「还没选上游」）。
     // 写不进去不挡这一次切换 —— 切换已经生效了，只是重启后不记得；记进审计日志。
-    if let Err(e) = station_ops::remember_current(&db, route.client, &route_id, now) {
+    if let Err(e) = station_ops::remember_current(db, route.client, &route.id, now) {
         crate::audit::write(&format!(
-            "中转站：已切到「{route_id}」，但没记下来（面板重启后不会接着用它）：{e}"
+            "中转站：已切到「{}」，但没记下来（面板重启后不会接着用它）：{e}",
+            route.id
         ));
     }
     // 调度开着时手动选的线钉住 4 小时（除非它挂了），不然下一跳调度就把它换回去了。
-    if station_ops::load_schedule(&db, route.client).is_ok_and(|s| s.enabled) {
-        pin_route(&db, route.client, Some(&route_id), now)?;
+    if station_ops::load_schedule(db, route.client).is_ok_and(|s| s.enabled) {
+        pin_route(db, route.client, Some(&route.id), now)?;
     }
-    Ok(status_of(&state, route.client))
+    Ok(())
 }
 
 /// 钉住 / 取消钉住，记一条动作。
@@ -818,23 +830,154 @@ pub fn station_dispatch_queue_save(
     order: Vec<String>,
 ) -> Result<qb_station::router::DispatchQueue> {
     let db = crate::repository::Repository::open()?;
-    if station_ops::load_schedule(&db, client)?.enabled {
+    save_queue_in(&state, &db, client, order)
+}
+
+/// 存派单顺序的实际动作（手排、换项目共用）。调度开着时拒收：顺序归调度排。
+fn save_queue_in(
+    state: &AppState,
+    db: &crate::repository::Repository,
+    client: Client,
+    order: Vec<String>,
+) -> Result<qb_station::router::DispatchQueue> {
+    if station_ops::load_schedule(db, client)?.enabled {
         return Err(GateError::Other(
             "智能调度开着时热备顺序由调度排（下一跳就会盖掉手排的）；要自己排先停调度，或者钉住一条".into(),
         ));
     }
-    let q = station_ops::save_dispatch_order(
-        &db,
-        client,
-        order,
-        chrono::Utc::now().timestamp_millis(),
-    )?;
+    let q =
+        station_ops::save_dispatch_order(db, client, order, chrono::Utc::now().timestamp_millis())?;
     state
         .station
         .lock()
         .map_err(|_| GateError::Other("中转站状态损坏".into()))?
         .set_queue(client, q.order.clone());
     Ok(q)
+}
+
+// ------------------------------------------------------------------ 项目（阶段 5，cc-switch 的 M4）
+//
+// 项目只换中转那一侧（线路、派单顺序、中转环境里的 MCP / Skills / 提示词），⛔ 永远不碰官方账户 / 槽位的切换。
+// 线路和派单顺序在本机路由的状态里，所以这几条命令放在这里；MCP / Skills / 提示词由 `project_ops` 落。
+
+/// 这个软件现在的线路和派单顺序（拍快照、换走前自动存都要它）。
+fn router_snapshot(
+    state: &AppState,
+    db: &crate::repository::Repository,
+    client: Client,
+) -> Result<qb_app::usecase::project_ops::RouterSnapshot> {
+    let route = state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?
+        .current(client);
+    Ok(qb_app::usecase::project_ops::RouterSnapshot {
+        route,
+        queue: station_ops::load_dispatch_queue(db, client)?.order,
+    })
+}
+
+/// 项目列表和每个软件的当前项目。
+#[tauri::command]
+pub fn projects_list() -> Result<qb_app::usecase::project_ops::ProjectsView> {
+    qb_app::usecase::project_ops::list(&crate::repository::Repository::open()?)
+}
+
+/// 新建项目：把这个软件现在的样子存成一个项目，并记成它的当前项目。
+#[tauri::command]
+pub fn projects_create(
+    state: State<'_, AppState>,
+    name: String,
+    client: Client,
+) -> Result<qb_app::usecase::project_ops::ProjectsView> {
+    let db = crate::repository::Repository::open()?;
+    let router = router_snapshot(&state, &db, client)?;
+    qb_app::usecase::project_ops::create(&db, &name, client, &router)
+}
+
+/// 改名（快照由换项目时的自动存维护，不另给「重拍」—— 跟 cc-switch 一样）。
+#[tauri::command]
+pub fn projects_rename(
+    id: String,
+    name: String,
+) -> Result<qb_app::usecase::project_ops::ProjectsView> {
+    if name.trim().is_empty() {
+        return Err(GateError::Other("给项目起个名字".into()));
+    }
+    qb_app::usecase::project_ops::update(
+        &crate::repository::Repository::open()?,
+        &id,
+        Some(&name),
+        None,
+    )
+}
+
+/// 删项目：只删这条记录，不动任何配置。
+#[tauri::command]
+pub fn projects_delete(id: String) -> Result<qb_app::usecase::project_ops::ProjectsView> {
+    qb_app::usecase::project_ops::delete(&crate::repository::Repository::open()?, &id)
+}
+
+/// 换到一个项目（只这个软件那一组）。尽力而为：哪一样没落成记成提醒，别的照落。
+///
+/// 线路走手动选线那条路（排队、下一发生效；调度开着时跟手动选一样钉住 4 小时）；
+/// 派单顺序只收这个软件还在的线，调度开着时不落（顺序归调度排），记一条提醒。
+#[tauri::command]
+pub fn projects_apply(
+    state: State<'_, AppState>,
+    id: String,
+    client: Client,
+) -> Result<qb_app::usecase::project_ops::ProjectChange> {
+    use qb_app::usecase::project_ops;
+    let db = crate::repository::Repository::open()?;
+    let router = router_snapshot(&state, &db, client)?;
+    let applied = project_ops::apply(&db, &id, client, &router)?;
+    let mut warnings = applied.warnings;
+    let routes: Vec<Route> = db.list("station_routes")?;
+    let mine = |rid: &str| routes.iter().find(|r| r.id == rid && r.client == client);
+    if let Some(rid) = applied.route.filter(|r| router.route.as_deref() != Some(r)) {
+        match mine(&rid) {
+            Some(route) => {
+                if let Err(e) = select_route_in(&state, &db, route, false) {
+                    warnings.push(format!("线路没换成：{e}"));
+                }
+            }
+            None => warnings.push(format!("项目里存的线路「{rid}」已经不在了，上游没换")),
+        }
+    }
+    if let Some(order) = applied.queue.filter(|q| *q != router.queue) {
+        let (kept, gone): (Vec<String>, Vec<String>) =
+            order.into_iter().partition(|rid| mine(rid).is_some());
+        if !gone.is_empty() {
+            warnings.push(format!("派单顺序里有 {} 条线已经不在了，跳过", gone.len()));
+        }
+        if station_ops::load_schedule(&db, client)?.enabled {
+            warnings.push(
+                "智能调度开着：派单顺序归调度排，项目里存的顺序没落（停了调度再换一次项目就会落）"
+                    .into(),
+            );
+        } else if let Err(e) = save_queue_in(&state, &db, client, kept) {
+            warnings.push(format!("派单顺序没落成：{e}"));
+        }
+    }
+    for w in &warnings {
+        crate::audit::write(&format!("项目：换到「{id}」时 —— {w}"));
+    }
+    Ok(project_ops::ProjectChange {
+        view: project_ops::list(&db)?,
+        warnings,
+    })
+}
+
+/// 不使用项目：先把当前项目这一组存一下，再清掉这个软件的当前项目，什么配置都不动。
+#[tauri::command]
+pub fn projects_clear(
+    state: State<'_, AppState>,
+    client: Client,
+) -> Result<qb_app::usecase::project_ops::ProjectChange> {
+    let db = crate::repository::Repository::open()?;
+    let router = router_snapshot(&state, &db, client)?;
+    qb_app::usecase::project_ops::clear_current(&db, client, &router)
 }
 
 /// 「我充值了，立刻重测」：熔断中的线马上转半开，下一发真实请求就是回探（不花额外的钱）。

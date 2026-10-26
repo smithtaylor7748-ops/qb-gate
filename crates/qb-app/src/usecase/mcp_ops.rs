@@ -103,7 +103,7 @@ fn open(s: Stored) -> Result<McpServer> {
     })
 }
 
-fn servers(db: &Repository) -> Result<Vec<McpServer>> {
+pub(crate) fn servers(db: &Repository) -> Result<Vec<McpServer>> {
     let mut out: Vec<McpServer> = db
         .list::<Stored>(TABLE)?
         .into_iter()
@@ -528,7 +528,13 @@ pub fn set_target(db: &Repository, id: &str, target: &str, on: bool) -> Result<M
     view(&place, db)
 }
 
-fn set_target_at(place: &Place, db: &Repository, id: &str, target: &str, on: bool) -> Result<()> {
+pub(crate) fn set_target_at(
+    place: &Place,
+    db: &Repository,
+    id: &str,
+    target: &str,
+    on: bool,
+) -> Result<()> {
     let mut s = db
         .find::<Stored>(TABLE, id)?
         .map(open)

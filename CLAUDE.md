@@ -1298,6 +1298,30 @@ Gemini CLI 的 `GEMINI.md`、Hermes 的 `SOUL.md`。**写进哪一份由使用�
 钉着这些的是 `prompt_ops` 的 `switching_prompts_never_loses_what_the_file_had`、
 `importing_reads_the_file_without_touching_it_and_minimax_has_a_limit` 和 `PromptsPanel.test.tsx`（正在用的删不了、没装的不列）。
 
+## 项目：只换中转那一侧（2026-10-26，中转站重构阶段 5 · M4，照 cc-switch 的 Profile）
+
+中转站页软件分段器那一行的「项目」按钮（`StationProjects.tsx`，照 cc-switch 的项目切换器 + 管理对话框，并成一个弹窗），
+后端 `usecase::project_ops`，六条命令在 `commands/station.rs`（`projects_list / create / rename / delete / apply / clear`）。
+一个项目按软件分组（`claude-code` / `claude-desktop` / `codex` / `gemini-cli` / `grok-build`）存快照：
+这个软件选的线路、派单顺序、中转环境里勾着的 MCP / Skills、中转环境用的提示词（桌面端只有前两样）。`None` = 这一项没拍过（换过去时不动），
+跟「拍到的就是空的」分开（cc-switch 同样）。项目列表各软件共用，「当前项目」每个软件各记各的（`metadata` 的 `project-current:<软件>`）。
+换项目时先把当前项目的这一组按现在的样子存一下，再落目标项目那一组；尽力而为，单项失败记成提醒（弹窗里列出来、写审计日志）、不整体回滚。
+快照只由「换走时自动存」维护，不另给「重拍」（cc-switch 同样）。
+
+- ⛔ **只碰中转那一侧，永远不碰官方账户 / 槽位的切换**：MCP / Skills / 提示词只动 `<软件>:relay` 那个目标（Grok Build 是它唯一那份），
+  官方目录一概不碰。`architecture.rs` 的 `project_module_can_never_reach_account_switching` 钉着：换项目会跑到的五个模块
+  （`project_ops`、`mcp_ops`、`skill_ops`、`prompt_ops`、`ext_place`）一个都不许提账户切换的入口（`account_ops`、`codex_accounts`、
+  `accounts::switch`、`killswitch`……）。
+- **线路和派单顺序走手动操作原来那两条路**（`select_route_in` / `save_queue_in`，手动点一行、手排顺序也用它们，不另写一份）：
+  线路排队、下一发生效，调度开着时跟手动选一样钉住 4 小时；项目里存的线路已经删了 —— 不换、记提醒，不替使用者另挑一条。
+  派单顺序只收这个软件还在的线；**调度开着时不落**（顺序归调度排，记提醒）。
+- **「不使用项目」先把当前项目这一组存一下再清**（cc-switch 只清指针：在项目里改过的设置一清就丢）；什么配置都不动。
+- 删项目只删记录，不动任何配置；删之前再确认一次。反重力不经本机路由，没有项目（建、换、清都拒绝）。
+
+钉着的是 `project_ops` 的 `switching_projects_saves_the_old_one_and_lands_the_new_one_on_the_relay_side_only`、
+`not_using_a_project_saves_it_first_and_touches_no_configuration`、上面那条架构测试，和 `StationProjects.test.tsx`
+（只说中转那一侧、没落成的列出来、删除先确认、新建只拍这个软件）。
+
 ---
 
 ### 桌面端走的是它自己的「第三方网关」模式，不是环境变量里的 base_url
@@ -1492,6 +1516,13 @@ Gemini CLI 的 `GEMINI.md`、Hermes 的 `SOUL.md`。**写进哪一份由使用�
 
 这一条是拿实机代价换来的：一条单测把使用者真实的 `lease.json` 写成了测试数据，
 而症状伪装成「功能正常工作」。
+
+**数据库这一半由代码守着**（2026-10-26 起）：测试程序里（cargo 的 `deps\<crate>-<哈希>`）`Repository::open()` /
+`open_in(真实目录)` 直接报错，单测一律 `open_in(临时目录)`。那天一条单测经 `extensions::catalog()` 间接开了真实的库，
+把它迁到了开发分支的结构版本 9，装着的面板（只认 3）当场停在「需要完成数据恢复」—— 间接调用读源码看不出来，规矩写着也没拦住。
+钉着的是 `repository` 的 `the_real_database_refuses_to_open_inside_a_test_binary`。⚠ 这道护栏只管测试程序：
+`npm run tauri dev` 和会开库的诊断例子（`usage-summary` 等）照样开真实的库、照样会把它迁上去 —— 本机装着旧版时别跑它们，
+要跑就先拷一份数据换个目录。
 
 ---
 

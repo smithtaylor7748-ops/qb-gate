@@ -304,6 +304,9 @@ fn main() {
         qb_app::skills::SkillsShHit::export_all_to(&root)?;
         // 提示词库（阶段 5）。
         qb_app::usecase::prompt_ops::PromptsView::export_all_to(&root)?;
+        // 项目（阶段 5 · M4）。
+        qb_app::usecase::project_ops::ProjectsView::export_all_to(&root)?;
+        qb_app::usecase::project_ops::ProjectChange::export_all_to(&root)?;
         // 官方 Codex turn-state 的界面状态（导出名 TurnStateStatus / TurnStateModelStatus）。
         qb_gate_lib::turnstate::Status::export_all_to(&root)?;
         qb_gate_lib::turnstate::ModelStatus::export_all_to(&root)?;

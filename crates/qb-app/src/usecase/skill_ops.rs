@@ -241,7 +241,7 @@ fn move_to_backup(place: &Place, path: &Path, note: &str) -> Result<PathBuf> {
 
 // ------------------------------------------------------------------ 库
 
-fn records(db: &Repository) -> Result<Vec<InstalledSkill>> {
+pub(crate) fn records(db: &Repository) -> Result<Vec<InstalledSkill>> {
     let mut out: Vec<InstalledSkill> = db.list(TABLE)?;
     out.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(out)
@@ -440,7 +440,13 @@ pub fn set_target(db: &Repository, id: &str, target: &str, on: bool) -> Result<S
     view(&place, db)
 }
 
-fn set_target_at(place: &Place, db: &Repository, id: &str, tid: &str, on: bool) -> Result<()> {
+pub(crate) fn set_target_at(
+    place: &Place,
+    db: &Repository,
+    id: &str,
+    tid: &str,
+    on: bool,
+) -> Result<()> {
     let mut s = record(db, id)?;
     let t = target(place, tid)?;
     let had = s.targets.iter().any(|x| x == tid);

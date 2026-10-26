@@ -160,7 +160,7 @@ fn active_key(target: &str) -> String {
     format!("prompt-active:{target}")
 }
 
-fn active(db: &Repository, target: &str) -> Option<String> {
+pub(crate) fn active(db: &Repository, target: &str) -> Option<String> {
     db.meta(&active_key(target))
         .ok()
         .flatten()
@@ -286,7 +286,7 @@ pub fn enable(db: &Repository, target: &str, id: &str) -> Result<PromptsView> {
     view(&place, db)
 }
 
-fn enable_at(place: &Place, db: &Repository, tid: &str, id: &str) -> Result<()> {
+pub(crate) fn enable_at(place: &Place, db: &Repository, tid: &str, id: &str) -> Result<()> {
     let t = target(place, tid)?;
     if !t.available {
         return Err(GateError::Other(format!(

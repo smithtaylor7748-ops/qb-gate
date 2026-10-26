@@ -1229,3 +1229,43 @@ fn components(g: &BTreeMap<String, BTreeSet<String>>) -> BTreeSet<Vec<String>> {
     }
     out
 }
+
+/// 项目（中转站重构阶段 5，M4）一键换的是**中转那一侧**：线路、派单顺序、中转环境里的 MCP / Skills / 提示词。
+/// 它要是够得着官方账户的切换，「换个项目顺便换个号」就只差一行代码 —— 那正是 CLAUDE.md 明确不做的「自动换号」。
+///
+/// 换项目会跑到的模块（项目本身 + 它调用的三个面板 + 共用的根目录）一个都不许提账户切换的入口。
+/// 读槽位列表（`slots_in`、`codex::list`）是为了列出目标，不算切换。
+#[test]
+fn project_module_can_never_reach_account_switching() {
+    let usecase = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri 一定有上级目录")
+        .join("crates/qb-app/src/usecase");
+    let forbidden = [
+        "account_ops",
+        "codex_accounts",
+        "accounts::switch",
+        "codex::switch",
+        "switch_with(",
+        "switch_in(",
+        "killswitch",
+        "gate_ops",
+        "turnstate_ops",
+    ];
+    for file in [
+        "project_ops.rs",
+        "mcp_ops.rs",
+        "skill_ops.rs",
+        "prompt_ops.rs",
+        "ext_place.rs",
+    ] {
+        let text = std::fs::read_to_string(usecase.join(file))
+            .unwrap_or_else(|e| panic!("读不到 {file}：{e}"));
+        for word in forbidden {
+            assert!(
+                !text.contains(word),
+                "{file} 提到了 {word} —— 换项目会跑到这个模块，它不许够得着官方账户的切换"
+            );
+        }
+    }
+}

@@ -296,11 +296,42 @@ const TABLES: &[&str] = &[
     "deeplink_pending",
 ];
 
+/// 这个进程是不是 cargo 编出来的测试程序：`<target>/<profile>/deps/<crate>-<16 位十六进制>`（Windows 上带 `.exe`）。
+///
+/// 2026-10-26 的教训：一条单测经 `extensions::catalog()` 间接调到了 [`Repository::open`]，把使用者真实的
+/// `workspace.sqlite3` 迁到了开发分支的结构版本 9，装着的面板（只认 3）当场停在「需要完成数据恢复」，
+/// 靠手工核验才救回来。「单测不许碰真实的运行期状态」写在 CLAUDE.md 里没拦住 —— 间接调用读源码看不出来。
+/// 现在测试程序里打开真实目录的库直接报错：漏网的那条单测当场红，真实的库一个字节不动。
+fn running_in_a_test_binary(exe: Option<&Path>) -> bool {
+    let Some(exe) = exe else {
+        return false;
+    };
+    let in_deps = exe
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|d| d == "deps");
+    let hashed = exe
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .and_then(|s| s.rsplit_once('-'))
+        .is_some_and(|(_, h)| h.len() == 16 && h.bytes().all(|b| b.is_ascii_hexdigit()));
+    in_deps && hashed
+}
+
 impl Repository {
     pub fn open() -> Result<Self> {
         Self::open_in(&crate::paths::state_dir())
     }
     pub fn open_in(root: &Path) -> Result<Self> {
+        // ⛔ 单测不许碰真实的运行期状态：测试程序里开真实目录的库一律拒绝（见 `running_in_a_test_binary`）。
+        if root == crate::paths::state_dir()
+            && running_in_a_test_binary(std::env::current_exe().ok().as_deref())
+        {
+            return Err(GateError::Other(
+                "测试里打开了真实运行期目录的数据库（Repository::open）：单测一律用 Repository::open_in(临时目录)，真实的库没有动"
+                    .into(),
+            ));
+        }
         std::fs::create_dir_all(root)?;
         let conn = Connection::open(root.join("workspace.sqlite3")).map_err(sql)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
@@ -1091,6 +1122,32 @@ mod tests {
         let p = std::env::temp_dir().join(format!("qb-commitdb-{}", crate::config_io::id()));
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+    /// 2026-10-26 那次：一条单测间接开了真实的库，把它迁到了开发分支的结构版本，装着的面板当场打不开。
+    #[test]
+    fn the_real_database_refuses_to_open_inside_a_test_binary() {
+        use super::running_in_a_test_binary;
+        use std::path::Path;
+        // 先认准「这就是测试程序」—— 认不出来就停在这里，下面那句永远不会去开真实的库。
+        assert!(running_in_a_test_binary(
+            std::env::current_exe().ok().as_deref()
+        ));
+        assert!(running_in_a_test_binary(Some(Path::new(
+            "D:/x/target/debug/deps/qb_app-0123456789abcdef.exe"
+        ))));
+        // 面板本体、开发时的 exe、诊断例子、碰巧叫 deps 的目录：一律放行。
+        for p in [
+            "C:/Users/a/AppData/Local/QB Gate/qb-gate.exe",
+            "D:/claude-gate/target/debug/qb-gate.exe",
+            "D:/claude-gate/target/debug/examples/usage-summary.exe",
+            "C:/tools/deps/qb-gate.exe",
+        ] {
+            assert!(!running_in_a_test_binary(Some(Path::new(p))), "{p}");
+        }
+        assert!(!running_in_a_test_binary(None));
+        // 护栏本身：判定在前，真实目录一个字节都不碰。
+        let err = Repository::open().err().expect("测试里开真实的库必须报错");
+        assert!(err.to_string().contains("open_in"), "{err}");
     }
     #[test]
     fn a_fresh_database_lands_on_the_latest_schema_and_reopening_is_a_no_op() {

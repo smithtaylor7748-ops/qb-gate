@@ -25,6 +25,8 @@ pub mod ipv6_ops;
 pub mod locale_ops;
 /// MCP 面板：一条服务器勾哪些目标就写进哪些配置（中转站重构阶段 5，M1）。
 pub mod mcp_ops;
+/// 项目：中转那一侧的一整套设置存成名字、一键换（中转站重构阶段 5，M4）。⛔ 碰不到账户切换。
+pub mod project_ops;
 /// 提示词库：每个目标挑一条写进它的提示词文件（中转站重构阶段 5，M3）。
 pub mod prompt_ops;
 pub mod purge_ops;

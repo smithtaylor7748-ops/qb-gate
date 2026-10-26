@@ -191,6 +191,14 @@ OpenClaw 的 `models.providers`、Hermes 的 `custom_providers` 列表与 `api_m
 **跟它不一样**：提示词不分客户端、一库共用，每个目标（中转环境 / 官方目录 / 槽位 / 各工具）各挑一条；改正在用的那条时，
 文件被手动改过的先另存一条再覆盖；不做 Pi 的提示词文件组和模板（cc-switch 的 `pi_prompt_files`）。
 
+**阶段 5 第四批（2026-10-26，项目，M4）**：`qb-app/src/usecase/project_ops.rs` 对应 cc-switch `services/profile.rs`
+（`ProfileScope` 按软件分组、`ProfilePayload` 的「没拍过 / 拍到空」两态、`plan_toggles` 的最小开关集、`apply` 先自动保存当前项目、尽力而为），
+命令对应 `commands/profile.rs` 的六条（`list / create / update / delete / clear_current / apply_profile`），
+界面 `src/features/station/StationProjects.tsx` 照 `components/profiles/ProfileSwitcher.tsx` + `ProfileManageDialog.tsx` 的布局与文案（`zh.json` 的 `profiles`）重做。
+**跟它不一样**：只存中转那一侧（线路、派单顺序、中转环境的 MCP / Skills / 提示词），不存也不切官方账户 / 槽位（cc-switch 存的是「当前供应商」，
+可以是官方账号）；分组多了 Gemini CLI、Grok Build；「不使用项目」先把当前项目这一组存一下再清（cc-switch 只清指针，在项目里改过的一清就丢）；
+弹出菜单和管理对话框并成一个弹窗（QB Gate 没有弹出菜单组件）。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text
