@@ -189,6 +189,8 @@ pub fn run() {
             // 桌面端直连档（阶段 4，写真 Key）。
             commands::station::station_desktop_direct,
             commands::station::station_desktop_direct_set,
+            // 聚合模型写进客户端配置时出的问题（阶段 4）。
+            commands::station::station_aggregate_config_problem,
             commands::station::station_dispatch_queue,
             commands::station::station_dispatch_queue_save,
             commands::station::station_route_retest,

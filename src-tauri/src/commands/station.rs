@@ -514,6 +514,7 @@ pub fn station_router_settings_save(
         .lock()
         .map_err(|_| GateError::Other("中转站状态损坏".into()))?
         .set_settings(settings.clone());
+    sync_aggregate_config(&state, settings.client)?;
     Ok(settings)
 }
 
@@ -530,6 +531,16 @@ pub fn station_aggregate_models(
         .lock()
         .map_err(|_| GateError::Other("中转站状态损坏".into()))?
         .aggregate_models(client))
+}
+
+/// 聚合模型写进这个软件的配置时出的问题（使用者自己的 modelPicker 形状不对、Codex 指着别的目录、
+/// 找不到 Codex 命令行……）。没问题是 `null`。路由设置的聚合那一节显示。
+#[tauri::command]
+pub fn station_aggregate_config_problem(client: Client) -> Result<Option<String>> {
+    Ok(qb_app::aggregate_published::problem(
+        &crate::repository::Repository::open()?,
+        client,
+    ))
 }
 
 // ------------------------------------------------------------------ 站点的备用地址（阶段 4，多端点）
@@ -979,11 +990,41 @@ pub async fn station_outbound_proxy_scan() -> Result<Vec<String>> {
 pub fn restore_router_state(state: &AppState) -> Result<()> {
     load_upstreams(state)?;
     let db = crate::repository::Repository::open()?;
-    let mut s = state
+    {
+        let mut s = state
+            .station
+            .lock()
+            .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
+        station_ops::restore_router(&db, &mut s)?;
+    }
+    // 阶段 4：阶段 3 开的聚合还没写进过客户端配置的话，这里补上（没变就什么都不做）。
+    for client in AGGREGATE_CLIENTS {
+        if let Err(e) = sync_aggregate_config(state, client) {
+            tracing::warn!("聚合模型没写进 {client:?} 的配置：{e}");
+        }
+    }
+    Ok(())
+}
+
+/// 聚合模型会写进配置的三个软件（`relay::client_models`）。
+const AGGREGATE_CLIENTS: [Client; 3] = [Client::ClaudeCode, Client::ClaudeDesktop, Client::Codex];
+
+/// 本机路由此刻发布的聚合模型记进库；跟上次记的不一样，就重写那个软件的中转环境配置（阶段 4）——
+/// `/model`、模型选择器里直接列出聚合的模型。写配置的是 `workspace::configuration_files`，它从库里读这一份。
+fn sync_aggregate_config(state: &AppState, client: Client) -> Result<()> {
+    if !AGGREGATE_CLIENTS.contains(&client) {
+        return Ok(());
+    }
+    let models = state
         .station
         .lock()
-        .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
-    station_ops::restore_router(&db, &mut s)
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?
+        .aggregate_models(client);
+    let db = crate::repository::Repository::open()?;
+    if qb_app::aggregate_published::store(&db, client, &models)? {
+        crate::workspace::apply(&crate::workspace::router_environment(client)?.id)?;
+    }
+    Ok(())
 }
 
 /// 启动这个软件,走当前选中的上游。**中转站页面上那个「启动」就是它。**
@@ -1334,6 +1375,8 @@ pub fn station_put_route(
     // 线路变了,上游表要跟着重装 —— 否则新加的线路转发时找不到 base_url。
     let state = app.state::<AppState>();
     load_upstreams(&state)?;
+    // 聚合名单里的线改了模型映射 / 名字，客户端配置里列的聚合模型跟着变。
+    sync_aggregate_config(&state, route.client)?;
     if let Some(old) = renamed_from {
         let mut router = state
             .station
@@ -1355,8 +1398,15 @@ pub fn station_remove_route(app: tauri::AppHandle, id: String) -> Result<Vec<Rou
     let db = crate::repository::Repository::open()?;
     // 删的是桌面端直连那条：先把桌面端换回本机路由，免得它指着一条不存在的线。
     qb_app::usecase::desktop_direct_ops::before_route_removed(&db, &id)?;
+    let client = db
+        .get::<Route>("station_routes", &id)
+        .ok()
+        .map(|r| r.client);
     db.remove("station_routes", &id)?;
     load_upstreams(&app.state::<AppState>())?;
+    if let Some(client) = client {
+        sync_aggregate_config(&app.state::<AppState>(), client)?;
+    }
     station_routes()
 }
 

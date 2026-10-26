@@ -456,8 +456,15 @@ cargo run -p qb-app --example antigravity-hub-quota -- --account <槽位 id>
       聚合关着照旧转给上游。
     - ⛔ **官方 Codex 是当前那条时，带前缀的模型一律拒绝**（`aggregated_models_are_refused_while_the_official_codex_line_is_current`）：
       Codex 这时带着官方登录的 `chatgpt-account-id` 等身份头，转去中转站就把官方身份交给了第三方。
-    - 阶段 3 **不写客户端的配置**：Codex 的模型目录、桌面端的模型条目、Claude Code 的网关模型发现开关都是阶段 4（配置写入引擎）的事；
-      现在要在客户端里手填 id（设置弹窗里有复制按钮）。
+    - **阶段 4 起写进客户端配置**（`relay::client_models`，2026-10-26）：Claude Code 写 `settings.json` 顶层 `modelPicker`、
+      桌面端写 `inferenceModels`、Codex 写一份模型目录（`qb-gate-model-catalog.json`）再拿 `model_catalog_json` 指过去。
+      ⛔ 只增删自己那几行（`qbg-` / `-qbg-`），使用者自己写的行、指着别处的 Codex 目录一律不碰（指着别处就不写、记下原因）；
+      ⛔ **Codex 目录 = 自带那一份原样 + 聚合的行接在后面**：设了 `model_catalog_json` Codex 就只认目录里的模型，
+      少了自带那一份内置模型就全没了。自带那一份现跑 `codex debug models --bundled` 拿（`aggregate_published::codex_bundled`），
+      跑不了就不写目录。聚合的行用中性模板（不带自定义工具），原生 Responses 线上同名的 GPT 照抄官方那行。
+      发布了哪些记在库里（`aggregate_published`），由路由设置存、线路存 / 删、面板启动时同步，变了才重写那个软件的配置；
+      写配置的仍然只有 `workspace::configuration_files` 一处。写不进去不挡启动，原因在路由设置的聚合那一节显示。
+      钉着的是 `relay::client_models` 的四个和 `workspace` 的 `published_aggregate_models_reach_the_client_configs`。
 20. **Codex 远程压缩（V2）的原生 Responses 那一半没搬**（cc-switch `codex_compaction::create_native_compaction_sse_stream`）：
     Codex 只对名叫 `OpenAI` 的 provider 发压缩触发，QB Gate 写的中转环境 provider 叫「本机路由」，这条路现在走不到。
     阶段 4 配置写入引擎要是改了 provider 名，**同一个提交里把它搬上**，否则 Codex 压缩时会直接 Fatal。

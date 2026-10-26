@@ -171,6 +171,9 @@ export const stationApi = {
    */
   aggregateModels: (client: Client) =>
     call<AggregateModel[]>("station_aggregate_models", { client }),
+  /** 聚合模型写进这个软件的配置时出的问题；没问题是 `null`。 */
+  aggregateConfigProblem: (client: Client) =>
+    call<string | null>("station_aggregate_config_problem", { client }),
   /**
    * 站点的备用地址（阶段 4，多端点）。主地址连不上时，同一发请求改打这些（同一把 Key），按上次测速从快到慢。
    * 主地址在站点自己身上（`Provider.base_url`），不在这份列表里。
@@ -506,11 +509,11 @@ export function parseModelList(text: string): string[] {
 export function aggregateHowTo(client: Client): string {
   switch (client) {
     case "codex":
-      return "Codex：启动时带 -m <id>，或在会话里 /model 手填 id。Codex 的模型目录要等配置写入那一阶段才自动列出来。";
+      return "Codex：存了之后写进中转环境的模型目录（Codex 自带的模型原样留着，聚合的接在后面），重开 Codex 后 /model 里就有；要本机装着 Codex 命令行。也能 -m <id> 手填。";
     case "claude-desktop":
-      return "Claude 桌面端：模型条目要等配置写入那一阶段才自动写进去；现在只能在第三方网关的模型设置里手填 id。";
+      return "Claude 桌面端：存了之后写进它的模型条目（inferenceModels，你自己写的条目不动），重开桌面端后选择器里就有。";
     default:
-      return "Claude Code：开了网关模型发现（CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY）的话 /model 里会列出来，要 2.1.243 以上；没开就 /model <id> 手填。";
+      return "Claude Code：存了之后写进 settings.json 的 modelPicker（你自己写的行不动），/model 里就列出来，要 2.1.243 以上；也能 /model <id> 手填。";
   }
 }
 

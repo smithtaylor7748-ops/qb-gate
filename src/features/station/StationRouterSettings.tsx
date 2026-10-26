@@ -62,6 +62,8 @@ export default function StationRouterSettings({
   // 聚合模型每条线「发布哪些模型」的输入框原文：边打边理会把刚打的逗号吃掉，存的时候才拆。
   const [modelText, setModelText] = useState<Record<string, string>>({});
   const [published, setPublished] = useState<AggregateModel[]>([]);
+  /** 聚合模型写进这个软件配置时出的问题（阶段 4）。 */
+  const [configProblem, setConfigProblem] = useState<string | null>(null);
 
   useEffect(() => {
     let dropped = false;
@@ -72,9 +74,13 @@ export default function StationRouterSettings({
       stationApi.dispatchQueue(client),
       stationApi.schedules(),
       stationApi.aggregateModels(client),
+      aggregateSupported(client)
+        ? stationApi.aggregateConfigProblem(client)
+        : Promise.resolve(null),
     ])
-      .then(([s, q, all, models]) => {
+      .then(([s, q, all, models, problem]) => {
         if (dropped) return;
+        setConfigProblem(problem);
         setSettings(s);
         setOrder(q.order);
         setScheduled(all.some((x) => x.client === client && x.enabled));
@@ -164,6 +170,8 @@ export default function StationRouterSettings({
       setSettings(saved);
       setModelText({ ...modelText, ...textOf(saved.aggregate.models) });
       setPublished(await stationApi.aggregateModels(client));
+      if (aggregateSupported(client))
+        setConfigProblem(await stationApi.aggregateConfigProblem(client));
       if (!scheduled) {
         const q = await stationApi.saveDispatchQueue(client, order);
         setOrder(q.order);
@@ -501,6 +509,11 @@ export default function StationRouterSettings({
           {agg.enabled && (
             <div>
               <span className="qb-st-k">现在发布的（保存后刷新）</span>
+              {configProblem && (
+                <p className="qb-st-note" role="alert">
+                  没写进配置：{configProblem}
+                </p>
+              )}
               {published.length === 0 ? (
                 <p className="qb-st-note">
                   还没有：勾上线、保存。没配 Key

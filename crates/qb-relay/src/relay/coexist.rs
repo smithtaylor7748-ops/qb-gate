@@ -699,7 +699,7 @@ mod tests {
 
     #[test]
     fn minimax_honours_its_data_dir_variables() {
-        let home = Path::new("C:/Users/u");
+        let home = Path::new("C:/Users/demo");
         let none = |_: &str| None;
         assert_eq!(
             CoexistTool::MiniMaxCode.config_candidates(home, none)[0],

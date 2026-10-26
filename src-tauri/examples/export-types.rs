@@ -288,6 +288,7 @@ fn main() {
         qb_gate_lib::commands::station::EndpointTestView::export_all_to(&root)?;
         // 共存型工具（阶段 4）。
         qb_app::usecase::coexist_ops::CoexistStatus::export_all_to(&root)?;
+        qb_app::relay::coexist::CoexistProtocol::export_all_to(&root)?;
         // 阶段 4 · C5。
         qb_app::usecase::claude_code_ops::OnboardingTarget::export_all_to(&root)?;
         qb_app::usecase::claude_code_ops::EditorLink::export_all_to(&root)?;

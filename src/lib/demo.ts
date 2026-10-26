@@ -3001,6 +3001,8 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     demoCoexistWritten.delete(`${id}|${String(args?.tool)}`);
     return demoCoexistOf(id);
   },
+  // 聚合模型写进配置时的问题（阶段 4）。演示里没有问题。
+  station_aggregate_config_problem: () => null,
   // 阶段 4 · C5 四个小件。演示里都只在内存里记。
   station_import_desktop_routes: () => {
     const added: Array<(typeof stationRoutes)[number]> = [];

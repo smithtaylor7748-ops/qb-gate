@@ -161,6 +161,15 @@ OpenClaw 的 `models.providers`、Hermes 的 `custom_providers` 列表与 `api_m
 `deploymentMode = 3p`，见 `workspace::desktop_gateway_json`），只换地址和 Key 两格；它的 `disableDeploymentModeChooser`、
 `coworkEgressAllowedHosts` 照旧不写；界面上不显示 Key；选的线不合格了报错而不是退回本机路由。
 
+**阶段 4 第八批（2026-10-26，聚合模型写进客户端配置，补阶段 3 那件）**：`qb-relay/src/relay/client_models.rs` 照 cc-switch
+`mode/controller.rs` 的 `with_stack_models`（Claude Code 顶层 `modelPicker`、`replaceBuiltInOptions` + 每个聚合模型一行）、
+`claude_desktop_config.rs` 的 `route_profile` / `inference_model_json`（`inferenceModels` 的 `name` + `labelOverride`）、
+`codex_config.rs` 的 `plan_codex_stack_catalog` 与 `codex_catalog_model_entry`（聚合行改 slug / 显示名、`comp_hash`、关 Responses Lite、
+`priority` 排在后面）和 `load_codex_bundled_models`（`codex debug models --bundled`）。`codex_native_template.json` 是 cc-switch
+`resources/codex_native_responses_template.json` 原样复制（MIT，见下面的许可全文）。**跟它不一样**：只增删 QB Gate 自己那几行，
+使用者手写的选择器行、模型条目、别处的 Codex 目录都不碰（cc-switch 聚合模式下整份换掉）；四档模型别名不改（QB Gate 的档位映射在线路上）；
+聚合行一律用中性模板，只有原生 Responses 线上与 Codex 自带同名的照抄官方行（它按前缀匹配、ProxyChat 用 gpt-5.5 骨架）。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text

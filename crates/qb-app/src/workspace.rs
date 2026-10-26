@@ -699,6 +699,15 @@ pub fn configuration_files(db: &Repository, e: &Environment) -> Result<Vec<Edit>
             // 会话内 hook，也要摘掉旧版本留下的那一份 —— 不摘的话它会继续
             // 逐次拦下中转请求，而界面上没有任何地方说得清为什么。
             crate::gate::hook::strip_from(&mut body);
+            // 阶段 4：聚合模型列进 `/model`（`relay::client_models`）。写不进去（使用者的 modelPicker 形状不对）
+            // 不挡启动，原因记下来给路由设置那一节显示。
+            let problem = crate::relay::client_models::claude_model_picker(
+                &mut body,
+                &crate::aggregate_published::listed(db, Client::ClaudeCode),
+            )
+            .err()
+            .map(|e| e.to_string());
+            crate::aggregate_published::set_problem(db, Client::ClaudeCode, problem.as_deref())?;
             edits.push(Edit {
                 path,
                 expected: old,
@@ -742,6 +751,12 @@ pub fn configuration_files(db: &Repository, e: &Environment) -> Result<Vec<Edit>
                 doc["model_providers"]["qb_relay"]["env_key"] = toml_edit::value("OPENAI_API_KEY");
             }
             doc["model_providers"]["qb_relay"]["requires_openai_auth"] = toml_edit::value(false);
+            // 阶段 4：聚合模型写进 Codex 的模型目录（自带那一份 + 聚合的行），`model_catalog_json` 指过去；
+            // 聚合关了就拿掉自己的指针、删掉目录文件。写不成不挡启动，原因记下来。
+            let problem = codex_catalog_edit(db, &dir, &mut doc, &mut edits)
+                .err()
+                .map(|e| e.to_string());
+            crate::aggregate_published::set_problem(db, Client::Codex, problem.as_deref())?;
             edits.push(Edit {
                 path,
                 expected: old,
@@ -783,10 +798,18 @@ pub fn configuration_files(db: &Repository, e: &Environment) -> Result<Vec<Edit>
             } else {
                 None
             };
-            let body = match &direct {
+            let mut body = match &direct {
                 Some(t) => desktop_gateway_json(&text, &t.base_url, Some(&t.key))?,
                 None => desktop_gateway_json(&text, &m.base_url, key.as_deref())?,
             };
+            // 阶段 4：聚合模型列进桌面端的模型选择器（`inferenceModels`，只增删自己那几条）。
+            let problem = crate::relay::client_models::desktop_inference_models(
+                &mut body,
+                &crate::aggregate_published::listed(db, Client::ClaudeDesktop),
+            )
+            .err()
+            .map(|e| e.to_string());
+            crate::aggregate_published::set_problem(db, Client::ClaudeDesktop, problem.as_deref())?;
             edits.push(Edit {
                 path,
                 expected: old,
@@ -837,6 +860,42 @@ fn text_edit(path: PathBuf, next: impl FnOnce(&str) -> Result<String>) -> Result
         expected: old,
         body: Some(body.into_bytes()),
     })
+}
+
+/// Codex 的聚合模型目录：有聚合模型就写目录、指过去；没有就拿掉自己的指针、删掉目录文件。
+/// 指针指着使用者自己的目录、找不到 Codex 命令行时回 `Err`（不写目录，`config.toml` 别的改动照常）。
+fn codex_catalog_edit(
+    db: &Repository,
+    dir: &Path,
+    doc: &mut toml_edit::DocumentMut,
+    edits: &mut Vec<Edit>,
+) -> Result<()> {
+    use crate::relay::client_models::{codex_catalog, codex_catalog_pointer, CODEX_CATALOG_FILE};
+    let listed = crate::aggregate_published::listed(db, Client::Codex);
+    let path = dir.join(CODEX_CATALOG_FILE);
+    let ours = path.display().to_string();
+    let old = config_io::read_optional(&path)?;
+    if listed.is_empty() {
+        codex_catalog_pointer(doc, &ours, false)?;
+        if old.is_some() {
+            edits.push(Edit {
+                path,
+                expected: old,
+                body: None,
+            });
+        }
+        return Ok(());
+    }
+    let bundled = crate::aggregate_published::codex_bundled(dir)?;
+    codex_catalog_pointer(doc, &ours, true)?;
+    edits.push(Edit {
+        path,
+        expected: old,
+        body: Some(serde_json::to_vec_pretty(&codex_catalog(
+            &bundled, &listed,
+        ))?),
+    });
+    Ok(())
 }
 
 /// 桌面端那份配置文件叫什么。
@@ -958,6 +1017,8 @@ const MANIFEST_IN_ENV_DIR: &[&str] = &[
     "auth.json",
     ".gemini/.env",
     ".gemini/settings.json",
+    // 阶段 4：Codex 的聚合模型目录。
+    crate::relay::client_models::CODEX_CATALOG_FILE,
 ];
 const MANIFEST_GROK: &str = "~/.grok/config.toml";
 
@@ -2055,6 +2116,76 @@ mod tests {
         let code = configuration_files(&db, &env(Client::ClaudeCode, true)).unwrap();
         let text = String::from_utf8(code[0].body.clone().unwrap()).unwrap();
         assert!(!text.contains("fixture-real-key"), "{text}");
+
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 阶段 4：本机路由发布的聚合模型（库里记着的那份）写进 Claude Code 的 `/model` 和桌面端的模型条目；
+    /// 聚合关了（记着的是空的）就把 Codex 那边自己的目录指针拿掉、目录文件删掉。
+    #[test]
+    fn published_aggregate_models_reach_the_client_configs() {
+        let root = std::env::temp_dir().join(config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        db.put("providers", "p", &provider("http://127.0.0.1:15721"))
+            .unwrap();
+        let model = |id: &str| qb_station::router::AggregateModel {
+            route_id: "gone".into(),
+            id: id.into(),
+            upstream: "glm-5".into(),
+            display_name: "glm-5（站 · 组）".into(),
+            one_m: false,
+        };
+        crate::aggregate_published::store(&db, Client::ClaudeCode, &[model("qbg-claude-a--glm-5")])
+            .unwrap();
+        crate::aggregate_published::store(
+            &db,
+            Client::ClaudeDesktop,
+            &[model("claude-fable-qbg-123456")],
+        )
+        .unwrap();
+        let json_of = |client: Client| -> serde_json::Value {
+            let edits = configuration_files(&db, &env(client, true)).unwrap();
+            serde_json::from_slice(edits[0].body.as_deref().unwrap()).unwrap()
+        };
+        let code = json_of(Client::ClaudeCode);
+        assert_eq!(
+            code["modelPicker"]["options"][0]["model"],
+            "qbg-claude-a--glm-5"
+        );
+        assert_eq!(
+            code["modelPicker"]["options"][0]["label"],
+            "glm-5（站 · 组）"
+        );
+        let desktop = json_of(Client::ClaudeDesktop);
+        assert_eq!(
+            desktop["inferenceModels"][0]["name"],
+            "claude-fable-qbg-123456"
+        );
+        assert_eq!(
+            crate::aggregate_published::problem(&db, Client::ClaudeCode),
+            None
+        );
+
+        // Codex：聚合空着，上一次留下的指针和目录要清掉。
+        let dir = config_io::environment_dir(&db.root, "e").unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        let catalog = dir.join(crate::relay::client_models::CODEX_CATALOG_FILE);
+        std::fs::write(&catalog, "{}").unwrap();
+        std::fs::write(
+            dir.join("config.toml"),
+            format!("model_catalog_json = {:?}\n", catalog.display().to_string()),
+        )
+        .unwrap();
+        let edits = configuration_files(&db, &env(Client::Codex, true)).unwrap();
+        let config = edits
+            .iter()
+            .find(|e| e.path.ends_with("config.toml"))
+            .unwrap();
+        let text = String::from_utf8(config.body.clone().unwrap()).unwrap();
+        assert!(!text.contains("model_catalog_json"), "{text}");
+        let gone = edits.iter().find(|e| e.path == catalog).unwrap();
+        assert!(gone.body.is_none(), "目录文件删掉");
 
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
