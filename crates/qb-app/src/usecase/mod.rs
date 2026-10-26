@@ -16,6 +16,8 @@ pub mod coexist_ops;
 /// Claude 桌面端直连档的开关（中转站重构阶段 4，写真 Key）。
 pub mod desktop_direct_ops;
 pub mod egress_checks;
+/// MCP / Skills / 提示词共用的根目录与目标（中转站重构阶段 5）。
+pub(crate) mod ext_place;
 pub mod gate_ops;
 pub mod hook_ops;
 pub mod install_ops;
@@ -25,6 +27,8 @@ pub mod locale_ops;
 pub mod mcp_ops;
 pub mod purge_ops;
 pub mod settings_ops;
+/// Skills 面板：装一次，勾哪些目标就复制到哪些 skills 目录（中转站重构阶段 5，M2）。
+pub mod skill_ops;
 pub mod station_batch;
 pub mod station_billing;
 pub mod station_liveness;

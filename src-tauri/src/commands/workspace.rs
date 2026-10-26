@@ -79,18 +79,8 @@ pub async fn session_stop(
 pub fn extension_catalog() -> Result<Vec<ExtensionManifest>> {
     crate::extensions::catalog()
 }
-#[tauri::command]
-pub async fn extension_import_skills(
-    app: tauri::AppHandle,
-    source: String,
-) -> Result<Vec<ExtensionManifest>> {
-    let _guard = operations::exclusive().await?;
-    let mut task = operations::Run::start(events::sink(&app), "导入 Skills", &source)?;
-    let result = crate::extensions::import_skills(&source).await;
-    let result = task.finish(result);
-    operations::changed(&events::ui(&app), "catalog", "");
-    result
-}
+// 原来这里有 `extension_import_skills`（把 Skills 导进扩展目录）。2026-10-26 起 Skills 在「Skills」分页管
+// （阶段 5，M2：`skills_discover` / `skills_install`），它跟着撤了。
 // 原来这里有 `extension_import_mcp`（把一段 MCP 配置导进扩展目录）。2026-10-26 起 MCP 在「MCP」分页统一管
 // （阶段 5，M1：`mcp_save` / `mcp_import`），它跟着撤了。
 #[tauri::command]
@@ -228,4 +218,102 @@ pub fn mcp_set_target(
 #[tauri::command]
 pub fn mcp_import(target: String) -> Result<qb_app::usecase::mcp_ops::McpImportReport> {
     qb_app::usecase::mcp_ops::import(&crate::repository::Repository::open()?, &target)
+}
+
+// ------------------------------------------------------------------ Skills 面板（阶段 5，cc-switch 的 M2）
+
+/// 装好的 Skill、目标、目标里面板没管着的、卸载留下的备份。第一次打开时把原来扩展中心装的 Skill 迁进来。
+#[tauri::command]
+pub fn skills_list() -> Result<qb_app::usecase::skill_ops::SkillsView> {
+    qb_app::usecase::skill_ops::list(&crate::repository::Repository::open()?)
+}
+
+/// GitHub 地址 / 本地目录里有哪些 Skill（只读元数据，不执行仓库脚本）。
+#[tauri::command]
+pub async fn skills_discover(source: String) -> Result<Vec<qb_app::skills::SkillCandidate>> {
+    qb_app::skills::discover(&source).await
+}
+
+/// 一个 ZIP 里有哪些 Skill（只读）。
+#[tauri::command]
+pub fn skills_discover_zip(path: String) -> Result<Vec<qb_app::skills::SkillCandidate>> {
+    qb_app::usecase::skill_ops::discover_zip(&path)
+}
+
+/// 装挑好的几个，复制到勾选的目标。
+#[tauri::command]
+pub async fn skills_install(
+    picked: Vec<qb_app::skills::SkillCandidate>,
+    targets: Vec<String>,
+) -> Result<qb_app::usecase::skill_ops::SkillsView> {
+    qb_app::usecase::skill_ops::install(picked, targets).await
+}
+
+/// 从 ZIP 装挑好的几个。
+#[tauri::command]
+pub fn skills_install_zip(
+    path: String,
+    names: Vec<String>,
+    targets: Vec<String>,
+) -> Result<qb_app::usecase::skill_ops::SkillsView> {
+    qb_app::usecase::skill_ops::install_zip(
+        &crate::repository::Repository::open()?,
+        &path,
+        names,
+        targets,
+    )
+}
+
+/// 勾上 / 取消一个目标（取消时那一份挪进备份）。
+#[tauri::command]
+pub fn skills_set_target(
+    id: String,
+    target: String,
+    enabled: bool,
+) -> Result<qb_app::usecase::skill_ops::SkillsView> {
+    qb_app::usecase::skill_ops::set_target(
+        &crate::repository::Repository::open()?,
+        &id,
+        &target,
+        enabled,
+    )
+}
+
+/// 卸载（文件挪进备份，能还原）。
+#[tauri::command]
+pub fn skills_uninstall(id: String) -> Result<qb_app::usecase::skill_ops::SkillsView> {
+    qb_app::usecase::skill_ops::uninstall(&crate::repository::Repository::open()?, &id)
+}
+
+/// 还原一次卸载。
+#[tauri::command]
+pub fn skills_restore(backup: String) -> Result<qb_app::usecase::skill_ops::SkillsView> {
+    qb_app::usecase::skill_ops::restore(&crate::repository::Repository::open()?, &backup)
+}
+
+/// 把目标里一个面板没管着的 Skill 导进来。
+#[tauri::command]
+pub fn skills_import(
+    target: String,
+    directory: String,
+) -> Result<qb_app::usecase::skill_ops::SkillsView> {
+    qb_app::usecase::skill_ops::import(&crate::repository::Repository::open()?, &target, &directory)
+}
+
+/// 看哪些有新的一版（联网，只在点的时候）。
+#[tauri::command]
+pub async fn skills_check_updates() -> Result<Vec<qb_app::usecase::skill_ops::SkillUpdate>> {
+    qb_app::usecase::skill_ops::check_updates().await
+}
+
+/// 换成新的一版。
+#[tauri::command]
+pub async fn skills_update(id: String) -> Result<qb_app::usecase::skill_ops::SkillsView> {
+    qb_app::usecase::skill_ops::update(id).await
+}
+
+/// 在 skills.sh 上搜（联网，只在点的时候）。
+#[tauri::command]
+pub async fn skills_search(query: String) -> Result<Vec<qb_app::skills::SkillsShHit>> {
+    qb_app::skills::search_skills_sh(&query).await
 }

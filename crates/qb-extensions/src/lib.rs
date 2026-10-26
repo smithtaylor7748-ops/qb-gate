@@ -31,3 +31,5 @@ pub mod extensions;
 /// 统一的 MCP 服务器与各家写法的转换（中转站重构阶段 5，cc-switch 的 M1）。
 pub mod mcp;
 pub mod plugins;
+/// Skills 的来源：GitHub / 本地目录里找 Skill、取文件、看更新，skills.sh 搜索（中转站重构阶段 5，M2）。
+pub mod skills;

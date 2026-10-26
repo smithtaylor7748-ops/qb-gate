@@ -1257,6 +1257,31 @@ Claude Code、Codex、Gemini CLI、Grok Build，以及**没开直连档时**的 
 `importing_links_identical_servers_and_reports_conflicts`（OpenCode 的注释留着）、`old_extension_center_installs_are_read_into_the_new_records`，
 和 `McpPanel.test.tsx`（官方目录要自己勾、没装的不列）。
 
+## Skills 面板：装一次、按目标复制（2026-10-26，中转站重构阶段 5 · M2，照 cc-switch 的 Skills 管理）
+
+扩展中心的「Skills」分页取代了原来目录里的 Skill 那一半（目录不再列 Skill 卡片，「手动导入」连同 `extension_import_skills` 撤了）。
+来源在 `qb_extensions::skills`（GitHub / 本地目录 / ZIP / skills.sh 搜索），装到哪、怎么同步在 `qb_app::usecase::skill_ops`；
+三个面板共用的根目录与目标在 `usecase::ext_place`。
+
+- **本体只放一份**（面板数据目录的 `skills\<名字>`，cc-switch 的 SSOT），目标里是**复制**过去的（cc-switch 默认先试符号链接；
+  Windows 上建链接要开发者模式或管理员，复制最稳）。目标同 MCP（`ext_place::Place::client_slots` + 各工具的 `skills` 目录）。
+- ⛔ **不覆盖不是面板装的同名 Skill**：目标里已经有同名目录、内容跟面板那一份对不上、又不是面板之前放的 —— 拒绝，界面让使用者「导入」接管。
+- ⛔ **删除先进备份**（`skill-backups\`）：取消勾选、卸载、更新替换下来的那一份都挪进去，不直接删；卸载的那一份带着记录、能还原
+  （还原后目标一个都不勾）。写目标时先写到旁边的临时目录再换上；不顺着联结点 / 符号链接写。
+- ⛔ **只读元数据、只下文件，不执行仓库里的任何脚本**（扩展中心原来那条照旧）：GitHub 走 API 拿目录树、raw 拿文件，
+  512 个 / 32 MB / 单个 8 MB；符号链接、子模块、Windows 上撞名的不收。ZIP 逐个读条目（`enclosed_name`，不用 `extract`），
+  `zip` 至少 9.0（9.0 以下有解压越界的公告）。
+- **「有没有更新」只比 Skill 自己那个目录**（目录下各文件的 git blob SHA 合成指纹），不比整个仓库的提交。
+- 联网只在点的时候：扫描 GitHub 来源、检查更新、搜 skills.sh。
+- **原来扩展中心装的 Skill 第一次打开时迁进来**（只迁一次，`metadata` 记 `skills-migrated-installations`）：从装着的目录复制一份当本体，
+  目标按装在哪推；`installations` 老表留着。Codex 也认 `skills` 目录了（原来扩展中心说「Codex 不读 Skills 目录」，那是旧版本的事）。
+- 联网的 async 命令**不跨 `.await` 拿着库连接**（`Repository` 不是 `Sync`，Tauri 要能跨线程的 future）：先联网、后开库。
+
+钉着这些的是 `qb_extensions::skills` 的五个（本地来源改过要重扫、ZIP 逐个读、名字规则）、
+`skill_ops` 的 `a_skill_is_copied_to_the_ticked_targets_and_removals_go_to_backups`（不覆盖别人的、没装不建、卸载能还原）、
+`importing_and_updating_follow_the_panel_copy`、`old_extension_center_skill_installs_are_read_into_the_new_records`，
+和 `SkillsPanel.test.tsx`（扫描之后才装、默认只放中转环境、没管着的能导入）。
+
 ---
 
 ### 桌面端走的是它自己的「第三方网关」模式，不是环境变量里的 base_url

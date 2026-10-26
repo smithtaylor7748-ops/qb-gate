@@ -13,6 +13,10 @@ import type { Environment } from "./generated/Environment";
 import type { McpServer } from "./generated/McpServer";
 import type { McpView } from "./generated/McpView";
 import type { McpImportReport } from "./generated/McpImportReport";
+import type { SkillsView } from "./generated/SkillsView";
+import type { SkillCandidate } from "./generated/SkillCandidate";
+import type { SkillUpdate } from "./generated/SkillUpdate";
+import type { SkillsShHit } from "./generated/SkillsShHit";
 import type { Session } from "./generated/Session";
 import type { Client } from "./generated/Client";
 import type { IdentityKind } from "./generated/IdentityKind";
@@ -72,8 +76,6 @@ export const workspaceApi = {
   ) => call<Session>("session_launch", { client, kind, id, workingDir }),
   stop: (id: string) => call<void>("session_stop", { id }),
   catalog: () => call<ExtensionManifest[]>("extension_catalog"),
-  importSkills: (source: string) =>
-    call<ExtensionManifest[]>("extension_import_skills", { source }),
   // MCP 面板（阶段 5，M1）。原来的「导入 MCP 进目录」撤了，MCP 都在这里管。
   mcpList: () => call<McpView>("mcp_list"),
   mcpSave: (server: McpServer, previousId: string | null) =>
@@ -83,6 +85,27 @@ export const workspaceApi = {
     call<McpView>("mcp_set_target", { id, target, enabled }),
   mcpImport: (target: string) =>
     call<McpImportReport>("mcp_import", { target }),
+  // Skills 面板（阶段 5，M2）。原来的「导入 Skills 进目录」撤了，Skills 都在这里管。
+  skillsList: () => call<SkillsView>("skills_list"),
+  skillsDiscover: (source: string) =>
+    call<SkillCandidate[]>("skills_discover", { source }),
+  skillsDiscoverZip: (path: string) =>
+    call<SkillCandidate[]>("skills_discover_zip", { path }),
+  skillsInstall: (picked: SkillCandidate[], targets: string[]) =>
+    call<SkillsView>("skills_install", { picked, targets }),
+  skillsInstallZip: (path: string, names: string[], targets: string[]) =>
+    call<SkillsView>("skills_install_zip", { path, names, targets }),
+  skillsSetTarget: (id: string, target: string, enabled: boolean) =>
+    call<SkillsView>("skills_set_target", { id, target, enabled }),
+  skillsUninstall: (id: string) => call<SkillsView>("skills_uninstall", { id }),
+  skillsRestore: (backup: string) =>
+    call<SkillsView>("skills_restore", { backup }),
+  skillsImport: (target: string, directory: string) =>
+    call<SkillsView>("skills_import", { target, directory }),
+  skillsCheckUpdates: () => call<SkillUpdate[]>("skills_check_updates"),
+  skillsUpdate: (id: string) => call<SkillsView>("skills_update", { id }),
+  skillsSearch: (query: string) =>
+    call<SkillsShHit[]>("skills_search", { query }),
   previewExtension: (request: InstallRequest) =>
     call<InstallPreview>("extension_preview", { request }),
   install: (request: InstallRequest) =>

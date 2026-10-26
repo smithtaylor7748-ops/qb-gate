@@ -463,22 +463,26 @@ try {
     .getByRole("button", { name: "Claude", exact: true, pressed: true })
     .waitFor();
   // 草稿跨页面留得住、Esc 关得掉小窗。这两条原来测在「服务商与环境」旧页的「添加服务商」
-  // 表单与「添加凭证」小窗上；那一页 2026-09-27 删了，同一条规矩改在扩展中心「手动导入」上测 ——
-  // 它的表单内容同样存在会话态里（`useSession`），关掉、切走、回来都还在。
+  // 表单与「添加凭证」小窗上；那一页 2026-09-27 删了，同一条规矩改在扩展中心「手动导入」上测；
+  // 2026-10-26「手动导入」撤了（阶段 5，Skills 有了自己的分页），改在 Skills 分页的「添加 Skill」上测 ——
+  // 它的来源地址同样存在会话态里（`useSession`），关掉、切走、回来都还在。
   await page.goto(origin + "/#/extensions");
-  await page.getByRole("button", { name: "手动导入" }).click();
+  await page.getByRole("tab", { name: "Skills" }).click();
+  await page.getByRole("button", { name: "添加 Skill" }).click();
   const importSource = page
     .locator("dialog[open]")
-    .getByLabel("GitHub 仓库地址或本地目录");
+    .getByLabel("GitHub 仓库 / 子目录地址，或本地目录");
   await importSource.fill("Draft survives navigation");
   await page.keyboard.press("Escape");
   assert.equal(await page.locator("dialog[open]").count(), 0);
   await page.getByRole("link", { name: /官方账户/ }).click();
   await page.goBack();
-  await page.getByRole("button", { name: "手动导入" }).click();
+  await page.getByRole("button", { name: "添加 Skill" }).click();
   assert.equal(await importSource.inputValue(), "Draft survives navigation");
   await page.keyboard.press("Escape");
   assert.equal(await page.locator("dialog[open]").count(), 0);
+  // 分页也存在会话态里：切回「发现」，后面看扩展列表的那几步才看得到卡片。
+  await page.getByRole("tab", { name: "发现" }).click();
   // 总览上的安全方块：点开是小窗，**不跳页**。使用者点名要的就是这个形态，
   // 所以这条要断言地址一个字都没变 —— 退化成跳页的话这里会红。
   await page.goto(origin + "/#/");

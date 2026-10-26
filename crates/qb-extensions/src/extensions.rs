@@ -61,12 +61,12 @@ fn valid_name(name: &str) -> bool {
 }
 
 #[derive(Deserialize)]
-struct SkillMetadata {
-    name: String,
-    description: String,
-    license: Option<String>,
+pub(crate) struct SkillMetadata {
+    pub name: String,
+    pub description: String,
+    pub license: Option<String>,
 }
-fn skill_metadata(text: &str) -> Result<SkillMetadata> {
+pub(crate) fn skill_metadata(text: &str) -> Result<SkillMetadata> {
     let normalized = text.replace("\r\n", "\n");
     let front = normalized
         .strip_prefix("---\n")
@@ -80,7 +80,7 @@ fn skill_metadata(text: &str) -> Result<SkillMetadata> {
     }
     Ok(m)
 }
-fn http() -> Result<reqwest::Client> {
+pub(crate) fn http() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent("QB-Gate/0.12")
         .timeout(std::time::Duration::from_secs(30))
@@ -100,13 +100,13 @@ async fn github_json(path: &str) -> Result<serde_json::Value> {
     }
     response.json().await.map_err(Into::into)
 }
-struct GitSource {
-    repo: String,
-    revision: String,
-    subdir: String,
-    tree: Vec<serde_json::Value>,
+pub(crate) struct GitSource {
+    pub repo: String,
+    pub revision: String,
+    pub subdir: String,
+    pub tree: Vec<serde_json::Value>,
 }
-async fn github_source(source: &str, revision: Option<&str>) -> Result<GitSource> {
+pub(crate) async fn github_source(source: &str, revision: Option<&str>) -> Result<GitSource> {
     let url =
         reqwest::Url::parse(source).map_err(|_| GateError::Other("GitHub 地址无效".into()))?;
     if url.scheme() != "https" || url.host_str() != Some("github.com") || !url.username().is_empty()
@@ -166,7 +166,7 @@ async fn github_source(source: &str, revision: Option<&str>) -> Result<GitSource
             .clone(),
     })
 }
-async fn blob(repo: &str, revision: &str, path: &str) -> Result<Vec<u8>> {
+pub(crate) async fn blob(repo: &str, revision: &str, path: &str) -> Result<Vec<u8>> {
     if path.split('/').any(|p| p == ".." || p.is_empty()) || path.contains('\\') {
         return Err(GateError::Other("仓库文件路径无效".into()));
     }
@@ -187,7 +187,7 @@ async fn blob(repo: &str, revision: &str, path: &str) -> Result<Vec<u8>> {
     }
     Ok(out)
 }
-fn reject_links(path: &Path) -> Result<()> {
+pub(crate) fn reject_links(path: &Path) -> Result<()> {
     for ancestor in path.ancestors() {
         let metadata = match std::fs::symlink_metadata(ancestor) {
             Ok(m) => m,
@@ -211,7 +211,7 @@ fn reject_links(path: &Path) -> Result<()> {
     }
     Ok(())
 }
-fn safe_relative(path: &str) -> bool {
+pub(crate) fn safe_relative(path: &str) -> bool {
     !path.is_empty()
         && path.split('/').all(|part| {
             !part.is_empty()
@@ -223,7 +223,7 @@ fn safe_relative(path: &str) -> bool {
                     .contains(&part.split('.').next().unwrap_or("").to_uppercase().as_str())
         })
 }
-fn local_files(root: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
+pub(crate) fn local_files(root: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
     fn walk(
         root: &Path,
         path: &Path,
@@ -278,87 +278,8 @@ fn local_files(root: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
     Ok(out)
 }
 
-pub async fn import_skills(source: &str) -> Result<Vec<ExtensionManifest>> {
-    let mut found = Vec::new();
-    if source.starts_with("https://") {
-        let g = github_source(source, None).await?;
-        for entry in &g.tree {
-            let Some(path) = entry["path"].as_str() else {
-                continue;
-            };
-            if !(path == "SKILL.md" || path.ends_with("/SKILL.md"))
-                || (!g.subdir.is_empty() && !path.starts_with(&format!("{}/", g.subdir)))
-            {
-                continue;
-            }
-            let bytes = blob(&g.repo, &g.revision, path).await?;
-            let metadata = skill_metadata(
-                std::str::from_utf8(&bytes).map_err(|e| GateError::Other(e.to_string()))?,
-            )?;
-            let dir = path.strip_suffix("/SKILL.md").unwrap_or("");
-            found.push(ExtensionManifest {
-                id: format!(
-                    "skill-{}-{}",
-                    metadata.name,
-                    &hex::encode(Sha256::digest(format!("{}/{}", g.repo, dir)))[..8]
-                ),
-                name: metadata.name,
-                description: metadata.description,
-                kind: ExtensionKind::Skill,
-                source: format!("https://github.com/{}/tree/HEAD/{}", g.repo, dir),
-                version: g.revision.clone(),
-                license: metadata.license.unwrap_or_else(|| "参见上游许可证".into()),
-                // Codex 不读 skills/ 目录，装进去不生效 —— 见 `supported`。
-                clients: vec![Client::ClaudeCode],
-                install_method: "github-skill".into(),
-                configuration: "{}".into(),
-                dependencies: vec![],
-            });
-            if found.len() >= 50 {
-                break;
-            }
-        }
-    } else {
-        reject_links(Path::new(source))?;
-        let root = Path::new(source).canonicalize()?;
-        let files = local_files(&root)?;
-        for (name, bytes) in files
-            .iter()
-            .filter(|(p, _)| p.as_str() == "SKILL.md" || p.ends_with("/SKILL.md"))
-        {
-            let m = skill_metadata(
-                std::str::from_utf8(bytes).map_err(|e| GateError::Other(e.to_string()))?,
-            )?;
-            let dir = root.join(name).parent().unwrap().to_path_buf();
-            found.push(ExtensionManifest {
-                id: format!(
-                    "skill-{}-{}",
-                    m.name,
-                    &hex::encode(Sha256::digest(dir.to_string_lossy().as_bytes()))[..8]
-                ),
-                name: m.name,
-                description: m.description,
-                kind: ExtensionKind::Skill,
-                source: dir.display().to_string(),
-                version: hash_files(&local_files(&dir)?),
-                license: m.license.unwrap_or_else(|| "参见本地许可证".into()),
-                // Codex 不读 skills/ 目录，装进去不生效 —— 见 `supported`。
-                clients: vec![Client::ClaudeCode],
-                install_method: "local-skill".into(),
-                configuration: "{}".into(),
-                dependencies: vec![],
-            });
-        }
-    }
-    if found.is_empty() {
-        return Err(GateError::Other("所选来源没有有效的 SKILL.md".into()));
-    }
-    let db = Repository::open()?;
-    for m in &found {
-        db.put("catalog", &m.id, m)?;
-    }
-    Ok(found)
-}
+// 原来这里有 `import_skills`（扫描来源、把 Skill 写进扩展目录）。2026-10-26 起换成 `skills::discover`（只读、不写目录），
+// 装在 Skills 面板（`qb-app::usecase::skill_ops`）；已经写进目录的老条目照旧读得到（`catalog_in`）。
 
 // 原来这里有 `import_mcp`（把一段 MCP 配置导进扩展目录、加密存在 `extension-config:*`）。2026-10-26 起 MCP 在
 // MCP 面板统一管（`qb-app::usecase::mcp_ops`），它跟着撤了；已经导入过的那几条照旧能装、能读（`mcp_configuration`）。
@@ -440,7 +361,7 @@ fn target_dir(db: &Repository, kind: IdentityKind, id: &str, client: Client) -> 
         Ok(path)
     }
 }
-fn hash_files(files: &BTreeMap<String, Vec<u8>>) -> String {
+pub(crate) fn hash_files(files: &BTreeMap<String, Vec<u8>>) -> String {
     let mut hash = Sha256::new();
     for (name, body) in files {
         hash.update(name.as_bytes());

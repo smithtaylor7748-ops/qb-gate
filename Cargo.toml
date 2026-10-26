@@ -102,6 +102,8 @@ url = "2"
 # 只改点名的键，注释、空行、键的写法照原文件。两个都是 cc-switch 用的同一个版本。
 json5 = "0.4.1"
 json-five = "0.3.1"
+# Skills 从 ZIP 装（2026-10-26，中转站重构阶段 5，cc-switch 的 `install_from_zip`）。只开 deflate（走已有的 flate2），不要加密、bzip2 这些；9.0 以下有解压越界的公告（RUSTSEC-2026-0367～0369）。
+zip = { version = "=9.0.2", default-features = false, features = ["deflate-flate2"] }
 # 反重力汉化引擎（0.26.0）要跟 Hub 的 Chrome DevTools 协议说话，那是本机回环上的
 # `ws://127.0.0.1`。只开最小 feature：不带 TLS —— 回环上没有 TLS，也不想为此多拉一套证书栈。
 # MIT，crates.io，`cargo deny` 的 licenses / sources 都过。

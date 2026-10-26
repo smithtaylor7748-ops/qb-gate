@@ -128,226 +128,112 @@ struct Target {
     reapply: Option<Client>,
 }
 
-/// 在哪找、写盘日志放哪。平时是真目录；单测换成临时目录（单测不碰真实状态）。
-struct Place {
-    home: PathBuf,
-    relay: BTreeMap<&'static str, PathBuf>,
-    claude_slots: Vec<(String, PathBuf)>,
-    codex_slots: Vec<(String, String, PathBuf)>,
-    env: fn(&str) -> Option<String>,
-    journal: Option<PathBuf>,
-    windows: bool,
-    reapply: bool,
+use super::ext_place::Place;
+
+/// 这个面板的目标：三个软件的目标（中转环境、官方默认、槽位）各落到它的 MCP 文件，再加 Grok Build 和四个共存型工具。
+fn targets(place: &Place) -> Vec<Target> {
+    use crate::relay::coexist::CoexistTool;
+    let h = &place.home;
+    let mut out: Vec<Target> = place
+        .client_slots()
+        .into_iter()
+        .map(|s| {
+            let (path, format, available) = if s.id == "claude-code:default" {
+                // 没设 `CLAUDE_CONFIG_DIR` 时 `.claude.json` 在使用者目录下，不在 `~\.claude` 里。
+                (
+                    h.join(".claude.json"),
+                    Format::ClaudeJson,
+                    s.available || h.join(".claude.json").is_file(),
+                )
+            } else if s.id.starts_with("claude-code:") {
+                (s.root.join(".claude.json"), Format::ClaudeJson, s.available)
+            } else if s.id.starts_with("codex:") {
+                (s.root.join("config.toml"), Format::CodexToml, s.available)
+            } else {
+                (
+                    s.root.join("settings.json"),
+                    Format::GeminiJson,
+                    s.available,
+                )
+            };
+            // Claude Code 中转环境的 `.claude.json` 不在配置清单里，写完不用重新应用。
+            let reapply = s.relay.filter(|c| *c != Client::ClaudeCode);
+            Target {
+                id: s.id,
+                label: s.label,
+                path,
+                format,
+                official: s.official,
+                available,
+                reapply,
+            }
+        })
+        .collect();
+    let t = |id: &str,
+             label: &str,
+             path: PathBuf,
+             format: Format,
+             available: bool,
+             reapply: Option<Client>| Target {
+        id: id.into(),
+        label: label.into(),
+        path,
+        format,
+        official: false,
+        available,
+        reapply,
+    };
+    // Grok Build 的中转配置本来就写在它自己的 `~\.grok\config.toml`（阶段 4）：只有这一份。
+    out.push(t(
+        "grok-build",
+        "Grok Build",
+        h.join(".grok").join("config.toml"),
+        Format::GrokToml,
+        h.join(".grok").is_dir(),
+        Some(Client::GrokBuild),
+    ));
+    out.push(t(
+        "opencode",
+        "OpenCode",
+        place.coexist_file(CoexistTool::OpenCode),
+        Format::OpenCode,
+        place.coexist_dir(CoexistTool::OpenCode).is_dir(),
+        None,
+    ));
+    let dir = place.coexist_dir(CoexistTool::MiniMaxCode);
+    out.push(t(
+        "minimax-code",
+        "MiniMax Code",
+        dir.join("mcp.json"),
+        Format::MiniMax,
+        dir.is_dir(),
+        None,
+    ));
+    out.push(t(
+        "hermes",
+        "Hermes",
+        place.coexist_file(CoexistTool::Hermes),
+        Format::Hermes,
+        place.coexist_dir(CoexistTool::Hermes).is_dir(),
+        None,
+    ));
+    let dir = h.join(".pi").join("agent");
+    out.push(t(
+        "pi",
+        "Pi",
+        dir.join("mcp.json"),
+        Format::Pi,
+        dir.is_dir(),
+        None,
+    ));
+    out
 }
 
-impl Place {
-    fn real(db: &Repository) -> Result<Self> {
-        let relay_dir = |c: Client| {
-            crate::config_io::environment_dir(&db.root, &crate::workspace::router_environment_id(c))
-        };
-        let roots = crate::accounts::AccountRoots::current();
-        let claude_slots = crate::accounts::slots_in(&roots)
-            .into_iter()
-            .map(|s| {
-                let dir = roots.slot_dir(&s.label);
-                (s.label, dir)
-            })
-            .collect();
-        let codex_root = qb_accounts::codex::root();
-        let codex_slots = qb_accounts::codex::list(&codex_root)
-            .map(|l| l.slots)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|s| {
-                let dir = qb_accounts::codex::directory(&codex_root, &s.id).ok()?;
-                Some((s.id, s.label, crate::workspace::codex_slot_dirs(&dir).0))
-            })
-            .collect();
-        Ok(Place {
-            home: dirs::home_dir().ok_or_else(|| GateError::Other("找不到用户目录".into()))?,
-            relay: BTreeMap::from([
-                ("claude-code", relay_dir(Client::ClaudeCode)?),
-                ("codex", relay_dir(Client::Codex)?),
-                ("gemini-cli", relay_dir(Client::GeminiCli)?),
-            ]),
-            claude_slots,
-            codex_slots,
-            env: |k| std::env::var(k).ok(),
-            journal: None,
-            windows: cfg!(windows),
-            reapply: true,
-        })
-    }
-
-    fn targets(&self) -> Vec<Target> {
-        use crate::relay::coexist::CoexistTool;
-        let h = &self.home;
-        let t = |id: &str,
-                 label: &str,
-                 path: PathBuf,
-                 format: Format,
-                 official: bool,
-                 available: bool,
-                 reapply: Option<Client>| Target {
-            id: id.into(),
-            label: label.into(),
-            path,
-            format,
-            official,
-            available,
-            reapply,
-        };
-        let mut out = vec![
-            t(
-                "claude-code:relay",
-                "Claude Code · 中转环境",
-                self.relay["claude-code"].join(".claude.json"),
-                Format::ClaudeJson,
-                false,
-                true,
-                None,
-            ),
-            t(
-                "claude-code:default",
-                "Claude Code · 官方默认目录",
-                h.join(".claude.json"),
-                Format::ClaudeJson,
-                true,
-                h.join(".claude").is_dir() || h.join(".claude.json").is_file(),
-                None,
-            ),
-        ];
-        for (label, dir) in &self.claude_slots {
-            out.push(t(
-                &format!("claude-code:slot:{label}"),
-                &format!("Claude Code · 官方槽位 {label}"),
-                dir.join(".claude.json"),
-                Format::ClaudeJson,
-                true,
-                dir.is_dir(),
-                None,
-            ));
-        }
-        out.push(t(
-            "codex:relay",
-            "Codex · 中转环境",
-            self.relay["codex"].join("config.toml"),
-            Format::CodexToml,
-            false,
-            true,
-            Some(Client::Codex),
-        ));
-        out.push(t(
-            "codex:default",
-            "Codex · 官方默认目录",
-            h.join(".codex").join("config.toml"),
-            Format::CodexToml,
-            true,
-            h.join(".codex").is_dir(),
-            None,
-        ));
-        for (id, label, home) in &self.codex_slots {
-            out.push(t(
-                &format!("codex:slot:{id}"),
-                &format!("Codex · 官方槽位 {label}"),
-                home.join("config.toml"),
-                Format::CodexToml,
-                true,
-                home.is_dir(),
-                None,
-            ));
-        }
-        out.push(t(
-            "gemini-cli:relay",
-            "Gemini CLI · 中转环境",
-            self.relay["gemini-cli"]
-                .join(".gemini")
-                .join("settings.json"),
-            Format::GeminiJson,
-            false,
-            true,
-            Some(Client::GeminiCli),
-        ));
-        out.push(t(
-            "gemini-cli:default",
-            "Gemini CLI · 官方默认目录",
-            h.join(".gemini").join("settings.json"),
-            Format::GeminiJson,
-            true,
-            h.join(".gemini").is_dir(),
-            None,
-        ));
-        // Grok Build 的中转配置本来就写在它自己的 `~\.grok\config.toml`（阶段 4）：只有这一份。
-        out.push(t(
-            "grok-build",
-            "Grok Build",
-            h.join(".grok").join("config.toml"),
-            Format::GrokToml,
-            false,
-            h.join(".grok").is_dir(),
-            Some(Client::GrokBuild),
-        ));
-        let coexist = |tool: CoexistTool| -> (PathBuf, bool) {
-            let candidates = tool.config_candidates(h, self.env);
-            let path = candidates
-                .iter()
-                .find(|p| p.is_file())
-                .cloned()
-                .unwrap_or_else(|| candidates[0].clone());
-            (path, tool.config_dir(h, self.env).is_dir())
-        };
-        let (p, a) = coexist(CoexistTool::OpenCode);
-        out.push(t(
-            "opencode",
-            "OpenCode",
-            p,
-            Format::OpenCode,
-            false,
-            a,
-            None,
-        ));
-        let dir = CoexistTool::MiniMaxCode.config_dir(h, self.env);
-        out.push(t(
-            "minimax-code",
-            "MiniMax Code",
-            dir.join("mcp.json"),
-            Format::MiniMax,
-            false,
-            dir.is_dir(),
-            None,
-        ));
-        let (p, a) = coexist(CoexistTool::Hermes);
-        out.push(t("hermes", "Hermes", p, Format::Hermes, false, a, None));
-        let dir = h.join(".pi").join("agent");
-        out.push(t(
-            "pi",
-            "Pi",
-            dir.join("mcp.json"),
-            Format::Pi,
-            false,
-            dir.is_dir(),
-            None,
-        ));
-        out
-    }
-
-    fn target(&self, id: &str) -> Result<Target> {
-        self.targets()
-            .into_iter()
-            .find(|t| t.id == id)
-            .ok_or_else(|| GateError::Other(format!("不认得这个目标：{id}")))
-    }
-
-    fn commit(&self, edits: Vec<crate::config_io::Edit>) -> Result<()> {
-        if edits.is_empty() {
-            return Ok(());
-        }
-        match &self.journal {
-            Some(dir) => crate::config_io::commit_in(dir, edits),
-            None => crate::config_io::commit(edits),
-        }
-        .map(drop)
-    }
+fn target(place: &Place, id: &str) -> Result<Target> {
+    targets(place)
+        .into_iter()
+        .find(|t| t.id == id)
+        .ok_or_else(|| GateError::Other(format!("不认得这个目标：{id}")))
 }
 
 // ------------------------------------------------------------------ 一份配置里的读写
@@ -485,8 +371,7 @@ fn write(t: &Target, text: &str, id: &str, spec: Option<&Value>, windows: bool) 
 // ------------------------------------------------------------------ 编排
 
 fn view(place: &Place, db: &Repository) -> Result<McpView> {
-    let targets = place
-        .targets()
+    let targets = targets(place)
         .into_iter()
         .map(|t| {
             let (entries, problem) = match read(&t.path).and_then(|(_, text)| entries(&t, &text)) {
@@ -524,7 +409,7 @@ fn sync(
     let mut edits = Vec::new();
     let mut reapply = Vec::new();
     for tid in all {
-        let t = place.target(tid)?;
+        let t = target(place, tid)?;
         let want = spec.filter(|_| next.contains(tid));
         if want.is_some() && !t.available {
             return Err(GateError::Other(format!(
@@ -551,22 +436,7 @@ fn sync(
         });
     }
     place.commit(edits)?;
-    if place.reapply {
-        for c in reapply {
-            // 只重新应用已经建过的中转环境（没建过就没有指纹要对）。
-            let db = Repository::open()?;
-            if db
-                .get::<crate::domain::Environment>(
-                    "environments",
-                    &crate::workspace::router_environment_id(c),
-                )
-                .is_ok()
-            {
-                crate::workspace::apply(&crate::workspace::router_environment_id(c))?;
-            }
-        }
-    }
-    Ok(())
+    place.reapply(&reapply)
 }
 
 /// 整份：服务器、目标。第一次打开时把原来扩展中心装的 MCP 迁进来（[`migrate_installations`]）。
@@ -699,7 +569,7 @@ fn same(a: &Value, b: &Value) -> bool {
 type Imported = (Vec<String>, Vec<String>, Vec<String>);
 
 fn import_at(place: &Place, db: &Repository, target: &str) -> Result<Imported> {
-    let t = place.target(target)?;
+    let t = self::target(place, target)?;
     let (_, text) = read(&t.path)?;
     let (mut added, mut linked, mut skipped) = (Vec::new(), Vec::new(), Vec::new());
     for (id, native) in entries(&t, &text)? {
@@ -775,7 +645,7 @@ fn migrate_installations(place: &Place, db: &Repository) -> Result<()> {
             _ if i.client == Client::ClaudeCode => format!("claude-code:slot:{}", i.environment_id),
             _ => "codex:default".to_string(),
         };
-        let Ok(t) = place.target(&target) else {
+        let Ok(t) = self::target(place, &target) else {
             continue;
         };
         let Ok((_, text)) = read(&t.path) else {
@@ -824,20 +694,7 @@ mod tests {
     use super::*;
 
     fn place(root: &Path) -> Place {
-        Place {
-            home: root.join("home"),
-            relay: BTreeMap::from([
-                ("claude-code", root.join("env-claude")),
-                ("codex", root.join("env-codex")),
-                ("gemini-cli", root.join("env-gemini")),
-            ]),
-            claude_slots: vec![("a".into(), root.join("slot-a"))],
-            codex_slots: Vec::new(),
-            env: |_| None,
-            journal: Some(root.join("journal")),
-            windows: false,
-            reapply: false,
-        }
+        Place::under(root)
     }
 
     fn server(targets: &[&str]) -> McpServer {

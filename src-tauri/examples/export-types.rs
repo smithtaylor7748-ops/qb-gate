@@ -297,6 +297,11 @@ fn main() {
         // MCP 面板（阶段 5）。
         qb_app::mcp::McpServer::export_all_to(&root)?;
         qb_app::usecase::mcp_ops::McpImportReport::export_all_to(&root)?;
+        // Skills 面板（阶段 5）。
+        qb_app::usecase::skill_ops::SkillsView::export_all_to(&root)?;
+        qb_app::usecase::skill_ops::SkillUpdate::export_all_to(&root)?;
+        qb_app::skills::SkillCandidate::export_all_to(&root)?;
+        qb_app::skills::SkillsShHit::export_all_to(&root)?;
         // 官方 Codex turn-state 的界面状态（导出名 TurnStateStatus / TurnStateModelStatus）。
         qb_gate_lib::turnstate::Status::export_all_to(&root)?;
         qb_gate_lib::turnstate::ModelStatus::export_all_to(&root)?;

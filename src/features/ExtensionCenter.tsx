@@ -5,7 +5,6 @@ import {
   ArrowRight,
   Blocks,
   Download,
-  FolderInput,
   Plug,
   Search,
   Sparkles,
@@ -30,6 +29,7 @@ import {
 import CodexEgressPanel from "../plugins/CodexEgressPanel";
 import AntigravityPanel from "../plugins/AntigravityPanel";
 import McpPanel from "./McpPanel";
+import SkillsPanel from "./SkillsPanel";
 
 const KIND_ICON = {
   application: Blocks,
@@ -54,7 +54,6 @@ export default function ExtensionCenter() {
   const [tab, setTab] = useSession("extensions.tab", "discover");
   const [category, setCategory] = useSession("extensions.category", "all");
   const [search, setSearch] = useSession("extensions.search", "");
-  const [importing, setImporting] = useSession("extensions.import.open", false);
   // 检查来源更新的结果原来直接丢掉了：点完什么都不显示。
   const [updateNotes, setUpdateNotes] = useSession<string[]>(
     "extensions.updates.notes",
@@ -73,6 +72,7 @@ export default function ExtensionCenter() {
   const list = (catalog.data ?? []).filter(
     (m) =>
       m.kind !== "mcp" &&
+      m.kind !== "skill" &&
       (SURFACED.has(m.id) ||
         installations.some((i) => i.extension_id === m.id)) &&
       (category === "all" || m.kind === category) &&
@@ -103,12 +103,6 @@ export default function ExtensionCenter() {
           <h1>扩展中心</h1>
           <p>发现适合你的能力，再装进需要它的环境。</p>
         </div>
-        <Button
-          icon={<FolderInput size={16} />}
-          onClick={() => setImporting(true)}
-        >
-          手动导入
-        </Button>
       </header>
       <div className="qb-tabs" role="tablist">
         {[
@@ -116,6 +110,7 @@ export default function ExtensionCenter() {
           ["installed", "已安装"],
           ["updates", "更新"],
           ["mcp", "MCP"],
+          ["skills", "Skills"],
         ].map(([key, name]) => (
           <button
             key={key}
@@ -130,13 +125,17 @@ export default function ExtensionCenter() {
       </div>
       {tab === "mcp" ? (
         <McpPanel />
+      ) : tab === "skills" ? (
+        <SkillsPanel />
       ) : (
         <>
           <div className="qb-catalog-toolbar">
             <div className="qb-filter-pills">
               {[
                 ["all", "全部"],
-                ...Object.entries(KIND_NAMES).filter(([k]) => k !== "mcp"),
+                ...Object.entries(KIND_NAMES).filter(
+                  ([k]) => k !== "mcp" && k !== "skill",
+                ),
               ].map(([key, name]) => (
                 <button
                   key={key}
@@ -243,54 +242,11 @@ export default function ExtensionCenter() {
           </p>
         </>
       )}
-      <Modal
-        open={importing}
-        onClose={() => setImporting(false)}
-        title="导入扩展"
-      >
-        <ImportForm onDone={() => setImporting(false)} />
-      </Modal>
     </>
   );
 }
-function ImportForm({ onDone }: { onDone: () => void }) {
-  const [source, setSource] = useSession("import.source", "");
-  const action = useAction();
-  return (
-    <div className="qb-form">
-      <label className="qb-field">
-        <span>Skills · GitHub 仓库地址或本地目录</span>
-        <input
-          value={source}
-          onChange={(e) => setSource(e.target.value)}
-          placeholder="https://github.com/owner/repo/tree/main/skills"
-        />
-      </label>
-      <p className="qb-muted">
-        先扫描并加入目录，再选择目标环境安装。此步骤不会运行仓库脚本。 MCP
-        在「MCP」分页里添加或从已有配置导入。
-      </p>
-      <Button
-        variant="primary"
-        loading={!!action.pending}
-        onClick={() =>
-          void action
-            .run(
-              "import",
-              async () => workspaceApi.importSkills(source),
-              "扩展已加入目录",
-            )
-            .then((r) => {
-              if (r) onDone();
-            })
-        }
-      >
-        扫描并导入
-      </Button>
-      {action.error && <p className="notice notice--danger">{action.error}</p>}
-    </div>
-  );
-}
+// 原来这里有 `ImportForm`（「手动导入」：把 Skills / MCP 导进扩展目录）。2026-10-26 起 Skills、MCP 各有自己的分页
+// （阶段 5，M1 / M2），导入都在那里做，它跟着撤了。
 function ExtensionDetail({ manifest: m }: { manifest: ExtensionManifest }) {
   const workspace = useWorkspace();
   const accounts = useResource("accounts", R.accounts);

@@ -178,6 +178,13 @@ OpenClaw 的 `models.providers`、Hermes 的 `custom_providers` 列表与 `api_m
 照 cc-switch `src/config/mcpPresets.ts` 的五个。**跟它不一样**：开关按目标（中转环境 / 官方目录 / 槽位 / 各工具），不按客户端；
 只增删登记过的那几条；官方目录要使用者自己勾；连接定义库里加密存；导入时同名不同定义的跳过而不是覆盖。
 
+**阶段 5 第二批（2026-10-26，Skills，M2）**：`qb-extensions/src/skills.rs` 与 `qb-app/src/usecase/skill_ops.rs` 对应 cc-switch
+`services/skill.rs` 的单一存放处（SSOT）+ 同步到各客户端 `skills` 目录（`get_app_skills_dir` 那张路径表）、`install_from_zip`、
+`search_skills_sh`（`https://skills.sh/api/search` 与仓库坐标校验）、`scan_unmanaged` / `import_from_apps`、`check_updates` / `update_skill`、
+卸载备份与还原。GitHub 取文件沿用 QB Gate 扩展中心原有的那一套（目录树 API + raw，只读不执行）。**跟它不一样**：一律复制不建链接；
+目标按中转环境 / 官方目录 / 槽位 / 各工具；不覆盖不是面板装的同名 Skill；更新只比 Skill 自己目录的指纹；不做「迁移存放位置到 `~/.agents/skills`」。
+新依赖 `zip`（MIT，9.0.2，只开 `deflate-flate2`）。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text

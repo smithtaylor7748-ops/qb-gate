@@ -34,6 +34,8 @@ import type { StationEndpoints } from "./generated/StationEndpoints";
 import type { CoexistStatus } from "./generated/CoexistStatus";
 import type { CoexistTool } from "./generated/CoexistTool";
 import type { McpServer } from "./generated/McpServer";
+import type { InstalledSkill } from "./generated/InstalledSkill";
+import type { SkillCandidate } from "./generated/SkillCandidate";
 import type { OnboardingTarget } from "./generated/OnboardingTarget";
 import type { EditorLink } from "./generated/EditorLink";
 import type { CodexHistoryHome } from "./generated/CodexHistoryHome";
@@ -1999,6 +2001,41 @@ const stationEndpoints: Record<string, StationEndpoints> = {
 };
 const demoEndpointsOf = (providerId: string): StationEndpoints =>
   (stationEndpoints[providerId] ??= { provider_id: providerId, endpoints: [] });
+/** Skills 面板（阶段 5）的演示数据：一个装在 Claude Code 中转环境的。 */
+const DEMO_SKILL_CANDIDATE: SkillCandidate = {
+  name: "webapp-testing",
+  description: "用 Playwright 测本地网页应用",
+  license: "Apache-2.0",
+  source: "https://github.com/anthropics/skills/tree/main/webapp-testing",
+  revision: "0000000000000000000000000000000000000000",
+  fingerprint: "demo",
+};
+let demoSkills: InstalledSkill[] = [
+  {
+    id: "skill-creator",
+    description: "帮你写新的 Skill",
+    license: "Apache-2.0",
+    source: "https://github.com/anthropics/skills/tree/main/skill-creator",
+    revision: "0000000000000000000000000000000000000000",
+    fingerprint: "demo",
+    hash: "demo",
+    targets: ["claude-code:relay"],
+    installed_ms: 1761400000000,
+    updated_ms: 1761400000000,
+  },
+];
+const demoSkillsView = () => ({
+  skills: demoSkills.map((s) => ({ ...s, targets: [...s.targets] })),
+  targets: DEMO_MCP_TARGETS.map((t) => ({
+    ...t,
+    path: `C:\\Users\\demo\\${t.id}\\skills`,
+    entries: demoSkills
+      .filter((s) => s.targets.includes(t.id))
+      .map((s) => s.id),
+  })),
+  unmanaged: [],
+  backups: [],
+});
 /** MCP 面板（阶段 5）的演示数据：一条写进了 Claude Code 中转环境的，目标里 OpenCode 当没装。 */
 let demoMcp: McpServer[] = [
   {
@@ -3024,6 +3061,45 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       endpoints: { ...e, endpoints: [...e.endpoints] },
     };
   },
+  // Skills 面板（阶段 5）。演示里只在内存里记；扫描回一个假的 Skill。
+  skills_list: () => demoSkillsView(),
+  skills_discover: () => [DEMO_SKILL_CANDIDATE],
+  skills_discover_zip: () => [DEMO_SKILL_CANDIDATE],
+  skills_install: (args) => {
+    const targets = (args?.targets as string[] | undefined) ?? [];
+    for (const c of (args?.picked as SkillCandidate[] | undefined) ?? [])
+      if (!demoSkills.some((s) => s.id === c.name))
+        demoSkills.push({
+          id: c.name,
+          description: c.description,
+          license: c.license,
+          source: c.source,
+          revision: c.revision,
+          fingerprint: c.fingerprint,
+          hash: c.fingerprint,
+          targets: [...targets],
+          installed_ms: Date.now(),
+          updated_ms: Date.now(),
+        });
+    return demoSkillsView();
+  },
+  skills_install_zip: () => demoSkillsView(),
+  skills_set_target: (args) => {
+    const s = demoSkills.find((x) => x.id === args?.id);
+    if (!s) throw new Error("没有这个 Skill");
+    s.targets = s.targets.filter((t) => t !== args?.target);
+    if (args?.enabled) s.targets.push(String(args?.target));
+    return demoSkillsView();
+  },
+  skills_uninstall: (args) => {
+    demoSkills = demoSkills.filter((s) => s.id !== args?.id);
+    return demoSkillsView();
+  },
+  skills_restore: () => demoSkillsView(),
+  skills_import: () => demoSkillsView(),
+  skills_check_updates: () => [],
+  skills_update: () => demoSkillsView(),
+  skills_search: () => [],
   // MCP 面板（阶段 5）。演示里只在内存里记；目标的「现有条目」跟着勾选变。
   mcp_list: () => demoMcpView(),
   mcp_save: (args) => {
