@@ -146,6 +146,12 @@ pub fn run() {
             commands::workspace::skills_check_updates,
             commands::workspace::skills_update,
             commands::workspace::skills_search,
+            // 提示词库（中转站重构阶段 5，M3）。
+            commands::workspace::prompts_list,
+            commands::workspace::prompts_save,
+            commands::workspace::prompts_delete,
+            commands::workspace::prompts_enable,
+            commands::workspace::prompts_import,
             commands::gate::gate_status,
             commands::gate::gate_lock_all,
             commands::gate::gate_unlock_all,

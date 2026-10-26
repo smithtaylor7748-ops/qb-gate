@@ -317,3 +317,40 @@ pub async fn skills_update(id: String) -> Result<qb_app::usecase::skill_ops::Ski
 pub async fn skills_search(query: String) -> Result<Vec<qb_app::skills::SkillsShHit>> {
     qb_app::skills::search_skills_sh(&query).await
 }
+
+// ------------------------------------------------------------------ 提示词库（阶段 5，cc-switch 的 M3）
+
+/// 提示词和能写进去的目标（每个目标各自用哪一条）。
+#[tauri::command]
+pub fn prompts_list() -> Result<qb_app::usecase::prompt_ops::PromptsView> {
+    qb_app::usecase::prompt_ops::list(&crate::repository::Repository::open()?)
+}
+
+/// 新建（`id` 留空）或修改；正在用的目标跟着重写。
+#[tauri::command]
+pub fn prompts_save(
+    prompt: qb_app::usecase::prompt_ops::Prompt,
+) -> Result<qb_app::usecase::prompt_ops::PromptsView> {
+    qb_app::usecase::prompt_ops::save(&crate::repository::Repository::open()?, prompt)
+}
+
+/// 删掉一条（正在用的不让删）。
+#[tauri::command]
+pub fn prompts_delete(id: String) -> Result<qb_app::usecase::prompt_ops::PromptsView> {
+    qb_app::usecase::prompt_ops::delete(&crate::repository::Repository::open()?, &id)
+}
+
+/// 在一个目标用上这一条（先把文件原来的内容存回库里）。
+#[tauri::command]
+pub fn prompts_enable(
+    target: String,
+    id: String,
+) -> Result<qb_app::usecase::prompt_ops::PromptsView> {
+    qb_app::usecase::prompt_ops::enable(&crate::repository::Repository::open()?, &target, &id)
+}
+
+/// 把一个目标里现在的文件导成一条（不写文件）。
+#[tauri::command]
+pub fn prompts_import(target: String) -> Result<qb_app::usecase::prompt_ops::PromptsView> {
+    qb_app::usecase::prompt_ops::import(&crate::repository::Repository::open()?, &target)
+}

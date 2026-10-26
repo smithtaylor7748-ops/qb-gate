@@ -35,6 +35,7 @@ import type { CoexistStatus } from "./generated/CoexistStatus";
 import type { CoexistTool } from "./generated/CoexistTool";
 import type { McpServer } from "./generated/McpServer";
 import type { InstalledSkill } from "./generated/InstalledSkill";
+import type { Prompt } from "./generated/Prompt";
 import type { SkillCandidate } from "./generated/SkillCandidate";
 import type { OnboardingTarget } from "./generated/OnboardingTarget";
 import type { EditorLink } from "./generated/EditorLink";
@@ -2001,6 +2002,30 @@ const stationEndpoints: Record<string, StationEndpoints> = {
 };
 const demoEndpointsOf = (providerId: string): StationEndpoints =>
   (stationEndpoints[providerId] ??= { provider_id: providerId, endpoints: [] });
+/** 提示词库（阶段 5）的演示数据：Claude Code 中转环境用着一条。 */
+let demoPrompts: Prompt[] = [
+  {
+    id: "prompt-demo",
+    name: "中文回答、先看再改",
+    content: "- 用中文回答\n- 改代码之前先读相关文件",
+    description: null,
+    created_ms: 1761400000000,
+    updated_ms: 1761400000000,
+  },
+];
+const demoPromptActive: Record<string, string> = {
+  "claude-code:relay": "prompt-demo",
+};
+const demoPromptsView = () => ({
+  prompts: demoPrompts.map((p) => ({ ...p })),
+  targets: DEMO_MCP_TARGETS.map((t) => ({
+    ...t,
+    path: `C:\\Users\\demo\\${t.id}\\CLAUDE.md`,
+    active: demoPromptActive[t.id] ?? null,
+    chars: demoPromptActive[t.id] ? 24 : null,
+    drift: false,
+  })),
+});
 /** Skills 面板（阶段 5）的演示数据：一个装在 Claude Code 中转环境的。 */
 const DEMO_SKILL_CANDIDATE: SkillCandidate = {
   name: "webapp-testing",
@@ -3061,6 +3086,26 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       endpoints: { ...e, endpoints: [...e.endpoints] },
     };
   },
+  // 提示词库（阶段 5）。演示里只在内存里记。
+  prompts_list: () => demoPromptsView(),
+  prompts_save: (args) => {
+    const p = args?.prompt as Prompt;
+    const id = p.id || `prompt-${Date.now()}`;
+    demoPrompts = demoPrompts.filter((x) => x.id !== id);
+    demoPrompts.unshift({ ...p, id, updated_ms: Date.now() });
+    return demoPromptsView();
+  },
+  prompts_delete: (args) => {
+    if (Object.values(demoPromptActive).includes(String(args?.id)))
+      throw new Error("正在用这一条：先在那里换成别的再删");
+    demoPrompts = demoPrompts.filter((x) => x.id !== args?.id);
+    return demoPromptsView();
+  },
+  prompts_enable: (args) => {
+    demoPromptActive[String(args?.target)] = String(args?.id);
+    return demoPromptsView();
+  },
+  prompts_import: () => demoPromptsView(),
   // Skills 面板（阶段 5）。演示里只在内存里记；扫描回一个假的 Skill。
   skills_list: () => demoSkillsView(),
   skills_discover: () => [DEMO_SKILL_CANDIDATE],

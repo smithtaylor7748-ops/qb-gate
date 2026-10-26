@@ -185,6 +185,12 @@ OpenClaw 的 `models.providers`、Hermes 的 `custom_providers` 列表与 `api_m
 目标按中转环境 / 官方目录 / 槽位 / 各工具；不覆盖不是面板装的同名 Skill；更新只比 Skill 自己目录的指纹；不做「迁移存放位置到 `~/.agents/skills`」。
 新依赖 `zip`（MIT，9.0.2，只开 `deflate-flate2`）。
 
+**阶段 5 第三批（2026-10-26，提示词，M3）**：`qb-app/src/usecase/prompt_ops.rs` 对应 cc-switch `services/prompt.rs` 的 `enable_prompt`
+（启用前把文件内容回填到用着的那条、没有就存「原始提示词」备份；同一处互斥）、`upsert_prompt` / `delete_prompt` / `import_from_file`，
+文件名表照 `prompt_files.rs` 的 `prompt_file_path`（Hermes 是 `SOUL.md`）、MiniMax Code 的 32 KiB 上限照 `validate_prompt_content`。
+**跟它不一样**：提示词不分客户端、一库共用，每个目标（中转环境 / 官方目录 / 槽位 / 各工具）各挑一条；改正在用的那条时，
+文件被手动改过的先另存一条再覆盖；不做 Pi 的提示词文件组和模板（cc-switch 的 `pi_prompt_files`）。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text

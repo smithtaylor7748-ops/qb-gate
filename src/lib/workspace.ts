@@ -17,6 +17,8 @@ import type { SkillsView } from "./generated/SkillsView";
 import type { SkillCandidate } from "./generated/SkillCandidate";
 import type { SkillUpdate } from "./generated/SkillUpdate";
 import type { SkillsShHit } from "./generated/SkillsShHit";
+import type { Prompt } from "./generated/Prompt";
+import type { PromptsView } from "./generated/PromptsView";
 import type { Session } from "./generated/Session";
 import type { Client } from "./generated/Client";
 import type { IdentityKind } from "./generated/IdentityKind";
@@ -106,6 +108,15 @@ export const workspaceApi = {
   skillsUpdate: (id: string) => call<SkillsView>("skills_update", { id }),
   skillsSearch: (query: string) =>
     call<SkillsShHit[]>("skills_search", { query }),
+  // 提示词库（阶段 5，M3）。
+  promptsList: () => call<PromptsView>("prompts_list"),
+  promptsSave: (prompt: Prompt) =>
+    call<PromptsView>("prompts_save", { prompt }),
+  promptsDelete: (id: string) => call<PromptsView>("prompts_delete", { id }),
+  promptsEnable: (target: string, id: string) =>
+    call<PromptsView>("prompts_enable", { target, id }),
+  promptsImport: (target: string) =>
+    call<PromptsView>("prompts_import", { target }),
   previewExtension: (request: InstallRequest) =>
     call<InstallPreview>("extension_preview", { request }),
   install: (request: InstallRequest) =>

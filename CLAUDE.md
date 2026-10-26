@@ -1282,6 +1282,22 @@ Claude Code、Codex、Gemini CLI、Grok Build，以及**没开直连档时**的 
 `importing_and_updating_follow_the_panel_copy`、`old_extension_center_skill_installs_are_read_into_the_new_records`，
 和 `SkillsPanel.test.tsx`（扫描之后才装、默认只放中转环境、没管着的能导入）。
 
+## 提示词库：每个目标挑一条（2026-10-26，中转站重构阶段 5 · M3，照 cc-switch 的 Prompts）
+
+扩展中心的「提示词」分页（`usecase::prompt_ops`）。一库提示词，每个目标挑一条，整份写进它的提示词文件：
+Claude Code 的 `CLAUDE.md`（在那个 `CLAUDE_CONFIG_DIR` 里）、Codex / Grok Build / OpenCode / OpenClaw / Pi / MiniMax Code 的 `AGENTS.md`、
+Gemini CLI 的 `GEMINI.md`、Hermes 的 `SOUL.md`。**写进哪一份由使用者选**（计划里那条）：目标同 MCP / Skills，各挑各的，
+记在 `metadata` 的 `prompt-active:<目标>`。
+
+- ⛔ **写之前先把文件现在的内容存回库里**（cc-switch 的「启用前回填」）：这个目标有用着的那一条 —— 文件被手动改过就回填进那一条；
+  没有 —— 文件里有内容、库里没有一模一样的，就存成一条「原始提示词」。换来换去，使用者原来写的东西不丢。
+- 改一条正在用的，用着它的目标跟着重写；那份文件在这期间被手动改过的，改动先另存一条「手动改过的」再覆盖。
+- 正在用的不能删；没有「停用」—— 要回到原来那样，就换回那条「原始提示词」（cc-switch 也是这样）。
+- MiniMax Code 的全局指令最多 32 KiB（cc-switch 的 `validate_prompt_content`）。
+
+钉着这些的是 `prompt_ops` 的 `switching_prompts_never_loses_what_the_file_had`、
+`importing_reads_the_file_without_touching_it_and_minimax_has_a_limit` 和 `PromptsPanel.test.tsx`（正在用的删不了、没装的不列）。
+
 ---
 
 ### 桌面端走的是它自己的「第三方网关」模式，不是环境变量里的 base_url

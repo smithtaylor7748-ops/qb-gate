@@ -30,6 +30,7 @@ import CodexEgressPanel from "../plugins/CodexEgressPanel";
 import AntigravityPanel from "../plugins/AntigravityPanel";
 import McpPanel from "./McpPanel";
 import SkillsPanel from "./SkillsPanel";
+import PromptsPanel from "./PromptsPanel";
 
 const KIND_ICON = {
   application: Blocks,
@@ -111,6 +112,7 @@ export default function ExtensionCenter() {
           ["updates", "更新"],
           ["mcp", "MCP"],
           ["skills", "Skills"],
+          ["prompts", "提示词"],
         ].map(([key, name]) => (
           <button
             key={key}
@@ -127,6 +129,8 @@ export default function ExtensionCenter() {
         <McpPanel />
       ) : tab === "skills" ? (
         <SkillsPanel />
+      ) : tab === "prompts" ? (
+        <PromptsPanel />
       ) : (
         <>
           <div className="qb-catalog-toolbar">
