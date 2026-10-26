@@ -354,3 +354,56 @@ pub fn prompts_enable(
 pub fn prompts_import(target: String) -> Result<qb_app::usecase::prompt_ops::PromptsView> {
     qb_app::usecase::prompt_ops::import(&crate::repository::Repository::open()?, &target)
 }
+
+// ------------------------------------------------------------------ 工具文件（阶段 5，C3 / C4 的附带件）
+
+/// OpenClaw / Hermes / Pi 自己的说明与记忆文件。
+#[tauri::command]
+pub fn tool_files_view(
+    tool: qb_app::relay::coexist::CoexistTool,
+) -> Result<qb_app::usecase::tool_files_ops::ToolFilesView> {
+    qb_app::usecase::tool_files_ops::view(tool)
+}
+
+/// 存一份（`revision` 是读的时候那个版本；新建传 `missing`）。
+#[tauri::command]
+pub fn tool_files_save(
+    tool: qb_app::relay::coexist::CoexistTool,
+    name: String,
+    content: String,
+    revision: String,
+) -> Result<qb_app::usecase::tool_files_ops::ToolFile> {
+    qb_app::usecase::tool_files_ops::save(tool, &name, &content, &revision)
+}
+
+/// 删一份（原内容先挪进面板的备份目录）。
+#[tauri::command]
+pub fn tool_files_delete(
+    tool: qb_app::relay::coexist::CoexistTool,
+    name: String,
+    revision: String,
+) -> Result<qb_app::usecase::tool_files_ops::ToolFilesView> {
+    qb_app::usecase::tool_files_ops::delete(tool, &name, &revision)
+}
+
+/// OpenClaw 每日记忆的全文搜索。
+#[tauri::command]
+pub fn tool_files_search(
+    query: String,
+) -> Result<Vec<qb_app::usecase::tool_files_ops::ToolFileHit>> {
+    qb_app::usecase::tool_files_ops::search(&query)
+}
+
+/// Hermes 两份记忆的开关与字数上限。
+#[tauri::command]
+pub fn tool_files_hermes_save(
+    settings: qb_app::usecase::tool_files_ops::HermesMemorySettings,
+) -> Result<qb_app::usecase::tool_files_ops::HermesMemorySettings> {
+    qb_app::usecase::tool_files_ops::hermes_save(&settings)
+}
+
+/// Hermes 的网页面板开着就回它的地址（只问本机端口）。
+#[tauri::command]
+pub async fn tool_files_hermes_web() -> Result<Option<String>> {
+    qb_app::usecase::tool_files_ops::hermes_web().await
+}

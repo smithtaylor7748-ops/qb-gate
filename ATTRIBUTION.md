@@ -209,6 +209,14 @@ OpenClaw 的 `models.providers`、Hermes 的 `custom_providers` 列表与 `api_m
 同一地址接着用已有站点；Skill 不从链接装（cc-switch 加进 `skill_repos`）；图标一律不收、不下载（`icon_fetch.rs` 不搬）；
 给 OpenCode / OpenClaw / Hermes / Pi 的站点链接拒绝；用量脚本认出来不导入（阶段 6）。
 
+**阶段 5 第六批（2026-10-26，工具文件，C3 / C4 的附带件）**：`qb-app/src/usecase/tool_files_ops.rs` 对应 cc-switch `commands/workspace.rs`
+（OpenClaw 工作区九份文件的白名单、`memory/YYYY-MM-DD.md` 的形状、全文搜索与片段）、`hermes_config.rs` 的记忆一节（`MEMORY.md` / `USER.md`、
+`memory:` 小节的开关与字数上限及其默认值）、`commands/hermes.rs` 的 `open_hermes_web_ui`（`HERMES_WEB_PORT` / 9119、`/api/status` 200 或 401 都算开着）、
+`services/pi_prompt_files.rs`（`SYSTEM.md` / `APPEND_SYSTEM.md` 不许空、`prompts/<名字>.md`、内容 SHA-256 当版本、`validate_template_slug`、1 MiB 上限）；
+界面 `src/features/ToolFilesPanel.tsx` 照它们的面板重做，OpenClaw 九份文件的说明取自 cc-switch 的中文文案。
+**跟它不一样**：三家合在扩展中心一个分页；工具没装不建目录；删除先挪进备份；三家都按内容哈希核对版本（cc-switch 只有 Pi 核）；
+不替使用者起 `hermes dashboard`；oh-my-opencode（`services/omo.rs`）没搬（理由在 CLAUDE.md 那一节）。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text

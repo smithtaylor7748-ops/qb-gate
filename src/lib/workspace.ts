@@ -19,6 +19,11 @@ import type { SkillUpdate } from "./generated/SkillUpdate";
 import type { SkillsShHit } from "./generated/SkillsShHit";
 import type { Prompt } from "./generated/Prompt";
 import type { PromptsView } from "./generated/PromptsView";
+import type { CoexistTool } from "./generated/CoexistTool";
+import type { HermesMemorySettings } from "./generated/HermesMemorySettings";
+import type { ToolFile } from "./generated/ToolFile";
+import type { ToolFileHit } from "./generated/ToolFileHit";
+import type { ToolFilesView } from "./generated/ToolFilesView";
 import type { Session } from "./generated/Session";
 import type { Client } from "./generated/Client";
 import type { IdentityKind } from "./generated/IdentityKind";
@@ -117,6 +122,25 @@ export const workspaceApi = {
     call<PromptsView>("prompts_enable", { target, id }),
   promptsImport: (target: string) =>
     call<PromptsView>("prompts_import", { target }),
+  // 工具文件（阶段 5，C3 / C4 的附带件）：OpenClaw / Hermes / Pi 自己的说明与记忆。
+  toolFiles: (tool: CoexistTool) =>
+    call<ToolFilesView>("tool_files_view", { tool }),
+  /** `revision` 是读的时候那个版本（新建传 `missing`）：这期间被别处改过就拒绝。 */
+  toolFileSave: (
+    tool: CoexistTool,
+    name: string,
+    content: string,
+    revision: string,
+  ) => call<ToolFile>("tool_files_save", { tool, name, content, revision }),
+  /** 原内容先挪进面板的备份目录。 */
+  toolFileDelete: (tool: CoexistTool, name: string, revision: string) =>
+    call<ToolFilesView>("tool_files_delete", { tool, name, revision }),
+  toolFilesSearch: (query: string) =>
+    call<ToolFileHit[]>("tool_files_search", { query }),
+  hermesMemorySave: (settings: HermesMemorySettings) =>
+    call<HermesMemorySettings>("tool_files_hermes_save", { settings }),
+  /** Hermes 的网页面板开着就回地址（只问本机端口）；没开回 `null`。 */
+  hermesWeb: () => call<string | null>("tool_files_hermes_web"),
   previewExtension: (request: InstallRequest) =>
     call<InstallPreview>("extension_preview", { request }),
   install: (request: InstallRequest) =>

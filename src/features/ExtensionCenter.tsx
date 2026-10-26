@@ -31,6 +31,7 @@ import AntigravityPanel from "../plugins/AntigravityPanel";
 import McpPanel from "./McpPanel";
 import SkillsPanel from "./SkillsPanel";
 import PromptsPanel from "./PromptsPanel";
+import ToolFilesPanel from "./ToolFilesPanel";
 
 const KIND_ICON = {
   application: Blocks,
@@ -113,6 +114,8 @@ export default function ExtensionCenter() {
           ["mcp", "MCP"],
           ["skills", "Skills"],
           ["prompts", "提示词"],
+          // 阶段 5（C3 / C4 的附带件）：OpenClaw / Hermes / Pi 自己的说明与记忆文件。
+          ["toolfiles", "工具文件"],
         ].map(([key, name]) => (
           <button
             key={key}
@@ -131,6 +134,8 @@ export default function ExtensionCenter() {
         <SkillsPanel />
       ) : tab === "prompts" ? (
         <PromptsPanel />
+      ) : tab === "toolfiles" ? (
+        <ToolFilesPanel />
       ) : (
         <>
           <div className="qb-catalog-toolbar">

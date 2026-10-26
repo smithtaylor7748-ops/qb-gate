@@ -41,6 +41,8 @@ pub mod station_liveness;
 pub mod station_ops;
 pub mod station_probe;
 pub mod token_summary;
+/// 共存型工具自己的说明 / 记忆文件（中转站重构阶段 5，C3 / C4 的附带件）：OpenClaw 工作区与每日记忆、Hermes 记忆、Pi 的系统提示词与模板。
+pub mod tool_files_ops;
 pub mod turnstate_ops;
 
 pub mod antigravity_ops;

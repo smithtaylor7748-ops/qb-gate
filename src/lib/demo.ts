@@ -2092,6 +2092,71 @@ const DEMO_DEEPLINK_PROVIDER: DeepLinkView = {
   ],
 };
 let demoDeepLink: DeepLinkEntry | null = null;
+/** 工具文件（阶段 5，C3 / C4 的附带件）的演示数据：三个工具都装着，OpenClaw 写过一天的记忆。 */
+const DEMO_TOOL_FIXED: Record<string, [string, string][]> = {
+  "open-claw": [
+    ["workspace/AGENTS.md", "Agent 操作指令和规则"],
+    ["workspace/SOUL.md", "Agent 人格和沟通风格"],
+    ["workspace/USER.md", "用户档案和偏好"],
+    ["workspace/IDENTITY.md", "Agent 名称和头像"],
+    ["workspace/TOOLS.md", "本地工具文档"],
+    ["workspace/MEMORY.md", "长期记忆和决策记录"],
+    ["workspace/HEARTBEAT.md", "心跳运行清单"],
+    ["workspace/BOOTSTRAP.md", "首次运行仪式"],
+    ["workspace/BOOT.md", "网关重启清单"],
+  ],
+  hermes: [
+    ["memories/MEMORY.md", "Agent 自己的笔记（会放进它的系统提示词）"],
+    ["memories/USER.md", "关于你的档案（同上）"],
+  ],
+  pi: [
+    ["SYSTEM.md", "整份替换 Pi 的系统提示词"],
+    ["APPEND_SYSTEM.md", "接在 Pi 的系统提示词后面"],
+  ],
+};
+const demoToolText: Record<string, Record<string, string>> = {
+  "open-claw": {
+    "workspace/SOUL.md": "说话温和，先听再答。",
+    "workspace/memory/2026-10-25.md": "- 帮使用者把中转站的线路理了一遍",
+  },
+  hermes: { "memories/USER.md": "喜欢简短的回答。" },
+  pi: { "prompts/review.md": "审一下这段代码：先说风险，再说改法。" },
+};
+let demoHermes = {
+  memory_enabled: true,
+  user_enabled: true,
+  memory_limit: 2200,
+  user_limit: 1375,
+};
+const demoToolFile = (tool: string, name: string, label: string | null) => {
+  const text = demoToolText[tool]?.[name];
+  return {
+    name,
+    label,
+    exists: text != null,
+    content: text ?? "",
+    revision: text == null ? "missing" : `demo-${text.length}`,
+    size: text?.length ?? 0,
+    modified_ms: text == null ? 0 : 1761400000000,
+  };
+};
+const demoToolFilesView = (tool: string) => ({
+  tool,
+  dir: `C:\\Users\\demo\\.${tool === "pi" ? "pi\\agent" : tool.replace("-", "")}`,
+  installed: true,
+  files: (DEMO_TOOL_FIXED[tool] ?? []).map(([n, l]) =>
+    demoToolFile(tool, n, l),
+  ),
+  entries: Object.keys(demoToolText[tool] ?? {})
+    .filter(
+      (n) => n.startsWith("workspace/memory/") || n.startsWith("prompts/"),
+    )
+    .sort((a, b) =>
+      tool === "open-claw" ? b.localeCompare(a) : a.localeCompare(b),
+    )
+    .map((n) => demoToolFile(tool, n, null)),
+  hermes: tool === "hermes" ? { ...demoHermes } : null,
+});
 /** Skills 面板（阶段 5）的演示数据：一个装在 Claude Code 中转环境的。 */
 const DEMO_SKILL_CANDIDATE: SkillCandidate = {
   name: "webapp-testing",
@@ -3394,6 +3459,36 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       skipped: [],
     };
   },
+  // 工具文件（阶段 5，C3 / C4 的附带件）。演示里只在内存里记；网页面板永远「没开着」。
+  tool_files_view: (args) =>
+    demoToolFilesView(String(args?.tool ?? "open-claw")),
+  tool_files_save: (args) => {
+    const tool = String(args?.tool ?? "open-claw");
+    const name = String(args?.name ?? "");
+    (demoToolText[tool] ??= {})[name] = String(args?.content ?? "");
+    const label =
+      (DEMO_TOOL_FIXED[tool] ?? []).find(([n]) => n === name)?.[1] ?? null;
+    return demoToolFile(tool, name, label);
+  },
+  tool_files_delete: (args) => {
+    const tool = String(args?.tool ?? "open-claw");
+    delete demoToolText[tool]?.[String(args?.name ?? "")];
+    return demoToolFilesView(tool);
+  },
+  tool_files_search: (args) => {
+    const q = String(args?.query ?? "").toLowerCase();
+    return Object.entries(demoToolText["open-claw"] ?? {})
+      .filter(
+        ([n, t]) =>
+          n.startsWith("workspace/memory/") && t.toLowerCase().includes(q),
+      )
+      .map(([n, t]) => ({ name: n, snippet: t.slice(0, 120), matches: 1 }));
+  },
+  tool_files_hermes_save: (args) => {
+    demoHermes = { ...(args?.settings as typeof demoHermes) };
+    return { ...demoHermes };
+  },
+  tool_files_hermes_web: () => null,
   // 项目（阶段 5 · M4）。演示里只在内存里记；换项目照真后端：先存回原来那个，再落线路和派单顺序。
   projects_list: () => demoProjectsView(),
   projects_create: (args) => {

@@ -154,6 +154,13 @@ pub fn run() {
             commands::workspace::prompts_delete,
             commands::workspace::prompts_enable,
             commands::workspace::prompts_import,
+            // 工具文件（阶段 5，C3 / C4 的附带件）：OpenClaw / Hermes / Pi 自己的说明与记忆。
+            commands::workspace::tool_files_view,
+            commands::workspace::tool_files_save,
+            commands::workspace::tool_files_delete,
+            commands::workspace::tool_files_search,
+            commands::workspace::tool_files_hermes_save,
+            commands::workspace::tool_files_hermes_web,
             commands::gate::gate_status,
             commands::gate::gate_lock_all,
             commands::gate::gate_unlock_all,

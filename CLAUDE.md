@@ -1359,6 +1359,34 @@ MCP 一个目标都不勾、提示词不启用、只留最新一条按编号清�
 「不导入」按编号清、粘贴的链接走同一个确认框、同名的 MCP 不再给导入按钮）。⚠ 真机一项都没走：装上新版之后点一条 `qbgate://` 链接
 （面板开着、没开着各一次），看注册表里那一条指向安装目录。
 
+## 工具文件：OpenClaw / Hermes / Pi 自己的说明与记忆（2026-10-26，中转站重构阶段 5，C3 / C4 的附带件，照 cc-switch）
+
+扩展中心「工具文件」分页（`ToolFilesPanel.tsx`），后端 `usecase::tool_files_ops`。只是这几个工具自己目录里 Markdown 的编辑器，
+不碰中转、不碰官方账户（工具目录跟共存那一块同一套：`Place::coexist_dir`）：
+
+- **OpenClaw**：`workspace\` 下九份（AGENTS / SOUL / USER / IDENTITY / TOOLS / MEMORY / HEARTBEAT / BOOTSTRAP / BOOT，cc-switch 的白名单）
+  和每日记忆 `workspace\memory\YYYY-MM-DD.md`（全文搜索不分大小写）；
+- **Hermes**：`memories\MEMORY.md` / `USER.md`，加 `config.yaml` 里 `memory:` 小节的四个键（`memory_enabled`、`user_profile_enabled`、
+  两个 `*_char_limit`；只改这四个，同一小节里别的键、别的小节、注释都不动）。网页面板只在它开着时打开（问
+  `127.0.0.1:<HERMES_WEB_PORT 或 9119>/api/status`，200 或 401 都算开着）。⛔ **不替使用者起 `hermes dashboard`**（cc-switch 会开终端跑它）：
+  那要起一个跑命令的终端，正撞「别把 shell 当启动目标」；没开着就提示使用者自己在终端里跑；
+- **Pi**：`SYSTEM.md`（整份替换系统提示词）/ `APPEND_SYSTEM.md`（接在后面），不许存空的（要停用就删掉那份文件，照 cc-switch）；
+  斜杠命令模板 `prompts\<名字>.md`，名字照 cc-switch 的 `validate_template_slug`（不许空白、`<>:"/\|?*`、首尾的点、Windows 保留名）。
+
+守住的几条：
+
+- ⛔ **文件名一律白名单 / 固定形状**，别的路径（含 `..`）一概不认；**工具目录不在（没装）就不写、不建**（cc-switch 会建），装了子目录按需建；
+- **写回前核对这期间没被别处改过**：版本 = 内容的 SHA-256（照 cc-switch 的 Pi，三家统一），对不上就拒绝、让使用者先刷新；
+  写盘走 `config_io::commit`；单份最多 1 MiB；
+- ⛔ **删除先进备份**（`tool-file-backups\<工具>\<时间>-<文件名>`；cc-switch 直接删）。
+- **oh-my-opencode 没搬**：cc-switch 把它做成 OpenCode 的一类「供应商」（`omo` / `omo-slim` 分类 + 各自的当前供应商指针），
+  切换时整份重写 `oh-my-opencode.json` 的 agents / categories，「停用」时**整份删掉**那个文件。QB Gate 的 OpenCode 只写自己那一条
+  `qb-gate-` 供应商、没有「OpenCode 的当前供应商」这套模型；要搬等于新做一块「agent 模型方案切换」，等使用者定（claude-op `23` §0.1）。
+
+钉着的是 `tool_files_ops` 的 `only_whitelisted_files_and_only_when_the_tool_is_installed`、
+`a_stale_revision_is_refused_and_deleting_keeps_a_backup`、`pi_templates_and_hermes_memory_settings` 和 `ToolFilesPanel.test.tsx`
+（按读的时候的版本存、删除先确认、没装只读、Hermes 设置存得上、网页面板答了才打开）。
+
 ---
 
 ### 桌面端走的是它自己的「第三方网关」模式，不是环境变量里的 base_url

@@ -311,6 +311,9 @@ fn main() {
         qb_app::usecase::deeplink_ops::DeepLinkEntry::export_all_to(&root)?;
         qb_app::usecase::deeplink_ops::DeepLinkChoice::export_all_to(&root)?;
         qb_app::usecase::deeplink_ops::DeepLinkOutcome::export_all_to(&root)?;
+        // 工具文件（阶段 5，C3 / C4 的附带件）。
+        qb_app::usecase::tool_files_ops::ToolFilesView::export_all_to(&root)?;
+        qb_app::usecase::tool_files_ops::ToolFileHit::export_all_to(&root)?;
         // 官方 Codex turn-state 的界面状态（导出名 TurnStateStatus / TurnStateModelStatus）。
         qb_gate_lib::turnstate::Status::export_all_to(&root)?;
         qb_gate_lib::turnstate::ModelStatus::export_all_to(&root)?;
