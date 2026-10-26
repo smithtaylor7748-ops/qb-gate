@@ -86,7 +86,7 @@ fn fingerprint(g: &GitSource, dir: &str) -> String {
     hex::encode(h.finalize())
 }
 
-fn tree_url(repo: &str, branch: &str, dir: &str) -> String {
+pub(crate) fn tree_url(repo: &str, branch: &str, dir: &str) -> String {
     if dir.is_empty() {
         format!("https://github.com/{repo}/tree/{branch}")
     } else {

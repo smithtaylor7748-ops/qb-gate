@@ -48,6 +48,7 @@ import AccountDialogs from "../pages/accounts/AccountDialogs";
 import Accounts from "./Accounts";
 import SecuritySheet from "./security/SecuritySheet";
 import UpdateDialog from "./UpdateDialog";
+import DeepLinkHost from "./DeepLinkImport";
 import {
   BRIDGE_CARD,
   bridgeHref,
@@ -521,6 +522,8 @@ function Layout() {
       {/* 「发现新版本」同理只挂一份：启动检查与设置页的「检查更新」都喊它（0.25.3）。
           挂在 RecoveryGuard 外面 —— 卡在「需要完成数据恢复」时也许正需要新版。 */}
       <UpdateDialog />
+      {/* 导入链接的确认框同样只挂一份（阶段 5）：点开的 qbgate://、粘贴的 ccswitch:// 都落到它。 */}
+      <DeepLinkHost />
       <Modal
         open={searchOpen}
         onClose={() => setSearchOpen(false)}

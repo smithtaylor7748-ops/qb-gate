@@ -76,8 +76,10 @@ pub fn run() {
     // 恰恰是最需要日志、而使用者最难复现的地方。
     logging::install();
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _| {
             use tauri::Manager;
+            // 面板开着时点了 `qbgate://` 链接：第二个实例被拦下，链接在它的参数里（阶段 5，导入链接）。
+            commands::import_links::receive(app, &args);
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
                 let _ = w.unminimize();
@@ -223,6 +225,11 @@ pub fn run() {
             commands::station::projects_delete,
             commands::station::projects_apply,
             commands::station::projects_clear,
+            // 导入链接（阶段 5，X4）：qbgate:// 点开的、粘贴的 ccswitch:// 都走这四条。
+            commands::import_links::deeplink_peek,
+            commands::import_links::deeplink_ack,
+            commands::import_links::deeplink_paste,
+            commands::import_links::deeplink_import,
             commands::station::station_route_retest,
             commands::station::station_dispatch_view,
             commands::station::station_probe_now,
@@ -421,6 +428,8 @@ pub fn run() {
                 app.state::<AppState>()
                     .set_refresh_ui(std::sync::Arc::new(move || tray::refresh(&handle)));
             }
+            // 冷启动：点 `qbgate://` 链接起的面板，链接是启动参数（阶段 5，导入链接）。界面挂上来时自己来取。
+            commands::import_links::receive(app.handle(), &std::env::args().collect::<Vec<_>>());
             // 每次启动拉一轮官方价目。
             //
             // **后台跑，不挡启动**：拉不到就继续用内置快照（见

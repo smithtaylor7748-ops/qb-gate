@@ -307,6 +307,10 @@ fn main() {
         // 项目（阶段 5 · M4）。
         qb_app::usecase::project_ops::ProjectsView::export_all_to(&root)?;
         qb_app::usecase::project_ops::ProjectChange::export_all_to(&root)?;
+        // 导入链接（阶段 5 · X4）：给界面的形状里没有明文 Key。
+        qb_app::usecase::deeplink_ops::DeepLinkEntry::export_all_to(&root)?;
+        qb_app::usecase::deeplink_ops::DeepLinkChoice::export_all_to(&root)?;
+        qb_app::usecase::deeplink_ops::DeepLinkOutcome::export_all_to(&root)?;
         // 官方 Codex turn-state 的界面状态（导出名 TurnStateStatus / TurnStateModelStatus）。
         qb_gate_lib::turnstate::Status::export_all_to(&root)?;
         qb_gate_lib::turnstate::ModelStatus::export_all_to(&root)?;

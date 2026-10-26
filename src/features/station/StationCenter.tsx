@@ -64,8 +64,10 @@ import {
   type RouteHealthView,
   type RouterStatus,
 } from "../../lib/station";
+import { useSession } from "../../lib/store";
 import { useWorkspace, workspaceApi } from "../../lib/workspace";
 import { Button, Modal, useToast } from "../../ui";
+import { DeepLinkPasteButton } from "../DeepLinkImport";
 import {
   Chart,
   dash,
@@ -152,9 +154,11 @@ export default function StationCenter() {
     }
   }, []);
 
+  // 别处加了线路（导入链接，阶段 5）会把这个数加一：停在这一页时也要重读线路池。
+  const [routesBump] = useSession("station.routes.bump", 0);
   useEffect(() => {
     void reload();
-  }, [reload]);
+  }, [reload, routesBump]);
 
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -172,7 +176,11 @@ function StationBoard({
   routes: Route[];
   onChanged: () => void;
 }) {
-  const [client, setClient] = useState<Client>("claude-code");
+  // 停在哪个软件分页记在会话态里：导入链接导进一条线路之后，跳过来就停在那个软件上（阶段 5）。
+  const [client, setClient] = useSession<Client>(
+    "station.client",
+    "claude-code",
+  );
   const [range, setRange] = useState<RangeId>("24h");
   const [gran, setGran] = useState<GranId>("hour");
 
@@ -740,6 +748,8 @@ function StationBoard({
             onChanged();
           }}
         />
+        {/* 导入链接（阶段 5 · X4）：粘贴中转站给的 qbgate:// / ccswitch:// 链接。 */}
+        <DeepLinkPasteButton />
         <Button
           variant="primary"
           onClick={() => setRouteDialog({ editing: null })}

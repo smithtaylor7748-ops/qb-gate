@@ -454,7 +454,7 @@ pub fn save(db: &Repository, server: McpServer, previous_id: Option<&str>) -> Re
     view(&place, db)
 }
 
-fn save_at(
+pub(crate) fn save_at(
     place: &Place,
     db: &Repository,
     mut server: McpServer,

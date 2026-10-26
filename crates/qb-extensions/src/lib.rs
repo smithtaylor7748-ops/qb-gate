@@ -6,6 +6,7 @@
 //! | 模块 | 干什么 |
 //! |---|---|
 //! | [`extensions`] | 目录、安装预览、落盘校验、卸载 |
+//! | [`deeplink`] | 导入链接（`qbgate://` / 粘贴的 `ccswitch://`）的解析：只解析、只核对，导入在 `qb-app::usecase::deeplink_ops`（阶段 5） |
 //! | [`mcp`] | 统一的 MCP 服务器：一份定义 → 各客户端配置里的写法（阶段 5；写到哪、怎么写盘在 `qb-app::usecase::mcp_ops`） |
 //! | [`plugins`] | 本机应用的接入与桥接：酒馆（SillyTavern 与三条桥；2026-09-29 起是面板的内置功能，不在扩展目录里）、Codex 出站、反重力汉化与审批 |
 //!
@@ -27,6 +28,8 @@ pub use qb_foundation::{audit, error, paths, sink};
 pub use qb_install::install;
 pub use qb_platform::{config_io, endpoint, process, repository, secret, sessions};
 
+/// 导入链接的解析（中转站重构阶段 5，cc-switch 的 X4 Deep Link）。
+pub mod deeplink;
 pub mod extensions;
 /// 统一的 MCP 服务器与各家写法的转换（中转站重构阶段 5，cc-switch 的 M1）。
 pub mod mcp;

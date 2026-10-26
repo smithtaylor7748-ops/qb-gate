@@ -42,6 +42,8 @@ import type { EditorLink } from "./generated/EditorLink";
 import type { CodexHistoryHome } from "./generated/CodexHistoryHome";
 import type { Project } from "./generated/Project";
 import type { ProjectsView } from "./generated/ProjectsView";
+import type { DeepLinkEntry } from "./generated/DeepLinkEntry";
+import type { DeepLinkView } from "./generated/DeepLinkView";
 /**
  * 演示数据 —— 只给截图和界面预览用。
  *
@@ -2065,6 +2067,31 @@ const demoProjectSnapshot = (who: string) => ({
       ? null
       : (demoPromptActive[`${who}:relay`] ?? null),
 });
+/** 导入链接（阶段 5 · X4）的演示数据：粘贴什么都当成这一条站点链接（Key 只有打码的，跟真后端一样）。 */
+const DEMO_DEEPLINK_PROVIDER: DeepLinkView = {
+  kind: "provider",
+  client: "claude-code",
+  name: "示例中转",
+  endpoints: ["https://relay.example.com", "https://backup.relay.example.com"],
+  key_masked: "sk-d…7a1f",
+  homepage: "https://relay.example.com",
+  notes: null,
+  model_map: {
+    exact: [],
+    haiku: null,
+    sonnet: null,
+    opus: "claude-opus-demo",
+    fable: null,
+    subagent: null,
+    default: "claude-sonnet-demo",
+  },
+  upstream_format: null,
+  existing_station: null,
+  ignored: [
+    "用量查询脚本：QB Gate 的自定义用量脚本要到阶段 6 才有，这一部分没导入",
+  ],
+};
+let demoDeepLink: DeepLinkEntry | null = null;
 /** Skills 面板（阶段 5）的演示数据：一个装在 Claude Code 中转环境的。 */
 const DEMO_SKILL_CANDIDATE: SkillCandidate = {
   name: "webapp-testing",
@@ -3340,6 +3367,32 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       });
     }
     return out;
+  },
+  // 导入链接（阶段 5 · X4）。粘贴什么都回那一条假的站点链接；导入只回一句话，不真的加线路。
+  deeplink_peek: () => demoDeepLink,
+  deeplink_ack: (args) => {
+    if (demoDeepLink?.id === Number(args?.id)) demoDeepLink = null;
+    return null;
+  },
+  deeplink_paste: (args) => {
+    const url = String(args?.url ?? "").trim();
+    if (!/^(qbgate|ccswitch):\/\//i.test(url))
+      throw new Error("只认 qbgate:// 或 ccswitch:// 开头的导入链接");
+    demoDeepLink = {
+      id: Date.now(),
+      scheme: url.split("://")[0].toLowerCase(),
+      view: DEMO_DEEPLINK_PROVIDER,
+    };
+    return demoDeepLink;
+  },
+  deeplink_import: () => {
+    demoDeepLink = null;
+    return {
+      message: "导入了「示例中转 · 默认分组」：要用它，在中转站页点这一行",
+      client: "claude-code",
+      route_id: null,
+      skipped: [],
+    };
   },
   // 项目（阶段 5 · M4）。演示里只在内存里记；换项目照真后端：先存回原来那个，再落线路和派单顺序。
   projects_list: () => demoProjectsView(),

@@ -56,6 +56,8 @@ pub struct AppState {
     /// 智能调度从站点账单拉来的健康度（按软件），连同拉取时刻。调度一跳 30 秒，账单最多
     /// 60 秒拉一次（`commands::station::BILLING_EVERY_MS`）—— 盯得太紧站点会限流，限流了健康度就读不到。
     pub billing_cache: std::sync::Mutex<BillingCache>,
+    /// 等使用者确认的导入链接（`qbgate://`，中转站重构阶段 5）。只在内存里、只留最新一条 —— 站点链接带着 Key，不落盘。
+    pub deeplinks: qb_app::usecase::deeplink_ops::Inbox,
 }
 
 /// 智能调度的账单缓存：按软件，`(拉取时刻, 每条线从账单来的健康度)`。

@@ -26,7 +26,11 @@ pub const WORKSPACE_CHANGED: &str = "workspace://changed";
 /// 托盘菜单要求跳到某一页。载荷是路由路径，例如 `/relays`。
 pub const NAVIGATE: &str = "workspace://navigate";
 
-/// 三个通道名，一次性导给前端。
+/// 来了一条导入链接（`qbgate://`，中转站重构阶段 5）。没有载荷：前端收到就去问后端那一条是什么
+/// （冷启动时链接比界面先到，事件没人收 —— 所以链接放在后端，事件只是「去看一眼」）。
+pub const DEEPLINK: &str = "workspace://deeplink";
+
+/// 四个通道名，一次性导给前端。
 ///
 /// 做成一个结构体而不是三个独立常量，是因为 ts-rs 导的是**类型**不是值 ——
 /// 有了这个结构体，前端那边才拿得到一份带着字面量类型的对象。
@@ -39,6 +43,8 @@ pub struct Channels {
     pub workspace_changed: &'static str,
     #[ts(type = "\"workspace://navigate\"")]
     pub navigate: &'static str,
+    #[ts(type = "\"workspace://deeplink\"")]
+    pub deeplink: &'static str,
 }
 
 impl Channels {
@@ -47,6 +53,7 @@ impl Channels {
             task: TASK,
             workspace_changed: WORKSPACE_CHANGED,
             navigate: NAVIGATE,
+            deeplink: DEEPLINK,
         }
     }
 }
@@ -70,6 +77,7 @@ mod tests {
         assert_eq!(c.task, TASK);
         assert_eq!(c.workspace_changed, WORKSPACE_CHANGED);
         assert_eq!(c.navigate, NAVIGATE);
+        assert_eq!(c.deeplink, DEEPLINK);
     }
 
     #[test]
@@ -79,5 +87,6 @@ mod tests {
         assert!(TASK.starts_with("gate://"));
         assert!(WORKSPACE_CHANGED.starts_with("workspace://"));
         assert!(NAVIGATE.starts_with("workspace://"));
+        assert!(DEEPLINK.starts_with("workspace://"));
     }
 }

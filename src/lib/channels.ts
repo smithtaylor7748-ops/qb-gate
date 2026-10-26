@@ -16,4 +16,5 @@ export const CHANNELS: Channels = {
   task: "gate://task",
   workspace_changed: "workspace://changed",
   navigate: "workspace://navigate",
+  deeplink: "workspace://deeplink",
 };

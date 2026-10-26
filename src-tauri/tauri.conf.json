@@ -51,5 +51,14 @@
     "publisher": "smithtaylor7748-ops",
     "homepage": "https://github.com/smithtaylor7748-ops/qb-gate",
     "copyright": "Copyright (C) 2026 smithtaylor7748-ops. AGPL-3.0-only."
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "qbgate"
+        ]
+      }
+    }
   }
 }

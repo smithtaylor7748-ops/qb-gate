@@ -199,6 +199,16 @@ OpenClaw 的 `models.providers`、Hermes 的 `custom_providers` 列表与 `api_m
 可以是官方账号）；分组多了 Gemini CLI、Grok Build；「不使用项目」先把当前项目这一组存一下再清（cc-switch 只清指针，在项目里改过的一清就丢）；
 弹出菜单和管理对话框并成一个弹窗（QB Gate 没有弹出菜单组件）。
 
+**阶段 5 第五批（2026-10-26，导入链接，X4）**：`qb-extensions/src/deeplink.rs` 对应 cc-switch `deeplink/parser.rs`（v1 链接格式、各资源的参数与白名单）、
+`deeplink/utils.rs`（`decode_base64_param` 的 `+` / 补位 / 两种字母表、地址只收 http(s)）、`deeplink/provider.rs` 的 `ApiFormat` 与
+`parse_and_merge_config` / `merge_*_config`（链接参数优先、配置只补空着的）、`deeplink/codex_link.rs` 与 `grok_link.rs` 的拒绝键和
+`env_key` 规则；`qb-app/src/usecase/deeplink_ops.rs` 对应 `deeplink/mod.rs` 的 `PendingDeepLink`（读不清除、按编号确认、只留最新一条）与
+`mcp.rs` / `prompt.rs` 的导入；确认框 `src/features/DeepLinkImport.tsx` 照 `components/DeepLinkImportDialog.tsx` 的布局重做。
+**跟它不一样**：系统里只注册 `qbgate://`、由安装包注册，不引 `tauri-plugin-deep-link`、运行时不写注册表；`ccswitch://` 只认粘贴的；
+回给界面的形状里没有明文 Key；导入后什么都不自动启用（cc-switch 的确认框里有「立即启用」开关）；站点导入成 QB Gate 的站点 + 凭证 + 线路、
+同一地址接着用已有站点；Skill 不从链接装（cc-switch 加进 `skill_repos`）；图标一律不收、不下载（`icon_fetch.rs` 不搬）；
+给 OpenCode / OpenClaw / Hermes / Pi 的站点链接拒绝；用量脚本认出来不导入（阶段 6）。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text

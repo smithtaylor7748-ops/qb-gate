@@ -171,7 +171,7 @@ fn client_key(c: Client) -> &'static str {
 /// 把 SQLite 站点与每条线路绑定的凭证装配成可转发的上游。
 ///
 /// **明文 Key 在这里取,取完就留在后端。**
-fn load_upstreams(state: &AppState) -> Result<usize> {
+pub(crate) fn load_upstreams(state: &AppState) -> Result<usize> {
     let db = crate::repository::Repository::open()?;
     let routes: Vec<Route> = db.list("station_routes")?;
     let providers: Vec<qb_contract::domain::Provider> = db.list("providers")?;
@@ -1154,7 +1154,7 @@ const AGGREGATE_CLIENTS: [Client; 3] = [Client::ClaudeCode, Client::ClaudeDeskto
 
 /// 本机路由此刻发布的聚合模型记进库；跟上次记的不一样，就重写那个软件的中转环境配置（阶段 4）——
 /// `/model`、模型选择器里直接列出聚合的模型。写配置的是 `workspace::configuration_files`，它从库里读这一份。
-fn sync_aggregate_config(state: &AppState, client: Client) -> Result<()> {
+pub(crate) fn sync_aggregate_config(state: &AppState, client: Client) -> Result<()> {
     if !AGGREGATE_CLIENTS.contains(&client) {
         return Ok(());
     }

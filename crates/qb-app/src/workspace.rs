@@ -68,8 +68,11 @@ fn check_revision(db: &Repository, table: &str, id: &str, expected: u32) -> Resu
     }
     Ok(next)
 }
-pub fn provider_save(mut p: Provider) -> Result<Provider> {
-    let db = Repository::open()?;
+pub fn provider_save(p: Provider) -> Result<Provider> {
+    provider_save_in(&Repository::open()?, p)
+}
+/// 同上，用给的库（导入链接的编排在临时库上测，单测不碰真实状态）。
+pub fn provider_save_in(db: &Repository, mut p: Provider) -> Result<Provider> {
     db.transaction(|| {
         if p.name.trim().is_empty() {
             return Err(GateError::Other("请填写服务商名称".into()));
@@ -78,7 +81,7 @@ pub fn provider_save(mut p: Provider) -> Result<Provider> {
         if p.id.is_empty() {
             p.id = config_io::id();
         }
-        p.revision = check_revision(&db, "providers", &p.id, p.revision)?;
+        p.revision = check_revision(db, "providers", &p.id, p.revision)?;
         db.put("providers", &p.id, &p)?;
         for mut e in db
             .list::<Environment>("environments")?
@@ -92,13 +95,21 @@ pub fn provider_save(mut p: Provider) -> Result<Provider> {
         Ok(p)
     })
 }
-pub fn credential_save(mut c: Credential, action: &str, key: Option<&str>) -> Result<Credential> {
-    let db = Repository::open()?;
+pub fn credential_save(c: Credential, action: &str, key: Option<&str>) -> Result<Credential> {
+    credential_save_in(&Repository::open()?, c, action, key)
+}
+/// 同上，用给的库。
+pub fn credential_save_in(
+    db: &Repository,
+    mut c: Credential,
+    action: &str,
+    key: Option<&str>,
+) -> Result<Credential> {
     db.transaction(|| {
         if c.id.is_empty() {
             c.id = config_io::id();
         }
-        c.revision = check_revision(&db, "credentials", &c.id, c.revision)?;
+        c.revision = check_revision(db, "credentials", &c.id, c.revision)?;
         if c.label.trim().is_empty() {
             return Err(GateError::Other("请输入凭证名称".into()));
         }

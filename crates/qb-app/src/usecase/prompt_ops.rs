@@ -185,7 +185,7 @@ fn prompts(db: &Repository) -> Result<Vec<Prompt>> {
     Ok(out)
 }
 
-fn view(place: &Place, db: &Repository) -> Result<PromptsView> {
+pub(crate) fn view(place: &Place, db: &Repository) -> Result<PromptsView> {
     let all = prompts(db)?;
     let targets = targets(place)
         .into_iter()
@@ -314,7 +314,7 @@ pub fn save(db: &Repository, prompt: Prompt) -> Result<PromptsView> {
     view(&place, db)
 }
 
-fn save_at(place: &Place, db: &Repository, mut p: Prompt) -> Result<String> {
+pub(crate) fn save_at(place: &Place, db: &Repository, mut p: Prompt) -> Result<String> {
     if p.name.trim().is_empty() {
         return Err(GateError::Other("给提示词起个名字".into()));
     }

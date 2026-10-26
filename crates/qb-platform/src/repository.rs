@@ -1137,7 +1137,7 @@ mod tests {
         ))));
         // 面板本体、开发时的 exe、诊断例子、碰巧叫 deps 的目录：一律放行。
         for p in [
-            "C:/Users/a/AppData/Local/QB Gate/qb-gate.exe",
+            "C:/Users/demo/AppData/Local/QB Gate/qb-gate.exe",
             "D:/claude-gate/target/debug/qb-gate.exe",
             "D:/claude-gate/target/debug/examples/usage-summary.exe",
             "C:/tools/deps/qb-gate.exe",

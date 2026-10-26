@@ -20,6 +20,9 @@
 pub mod accounts;
 pub mod backup;
 pub mod gate;
+/// 导入链接（`qbgate://`，中转站重构阶段 5）。模块名不叫 `deeplink`：workspace 里模块名要全局唯一，
+/// `qb_extensions::deeplink` 已经占了。
+pub mod import_links;
 pub mod install;
 pub mod ipv6;
 pub mod network;

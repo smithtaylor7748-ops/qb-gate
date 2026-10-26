@@ -1322,6 +1322,43 @@ Gemini CLI 的 `GEMINI.md`、Hermes 的 `SOUL.md`。**写进哪一份由使用�
 `not_using_a_project_saves_it_first_and_touches_no_configuration`、上面那条架构测试，和 `StationProjects.test.tsx`
 （只说中转那一侧、没落成的列出来、删除先确认、新建只拍这个软件）。
 
+## 导入链接：先确认，什么都不自动启用（2026-10-26，中转站重构阶段 5 · X4，照 cc-switch 的 Deep Link）
+
+格式照搬 cc-switch 的 v1（`<协议>://v1/import?resource=provider|mcp|prompt|skill&…`）。解析在 `qb_extensions::deeplink`
+（只解析、只核对），编排在 `usecase::deeplink_ops`，Tauri 那一层在 `commands/import_links.rs`（模块名不叫 `deeplink`：
+workspace 里模块名要全局唯一），全局只挂一份的确认框是 `DeepLinkImport.tsx`，中转站页头部有「从链接导入」。
+
+- **系统里只注册 `qbgate://`，而且是安装包注册的**：`tauri.conf.json` 的 `plugins.deep-link.desktop.schemes` 是给打包用的配置，
+  Tauri CLI 内嵌的 NSIS 模板按它写 `HKCU\Software\Classes\qbgate`，卸载时只删指向这份安装的那一条（2026-10-26 在
+  `@tauri-apps/cli` 2.11.4 的二进制里核过模板原文）。⛔ **运行时不注册、不引 `tauri-plugin-deep-link`**：Windows 上它多出来的
+  只有运行时写注册表（开发版一跑就把装好的面板的协议抢过去，cc-switch 开发版正是这么做的）和解析启动参数（冷启动看
+  `std::env::args()`，面板开着时单实例插件的回调本来就拿得到参数）。`ccswitch://` 是 cc-switch 的，**只认粘贴进来的**。
+- **链接放在后端、只在内存里、只留最新一条**（`AppState::deeplinks`）：冷启动时它比界面先到，事件
+  （`workspace://deeplink`）只是「去看一眼」；读不清除，显示过 / 点了「不导入」按编号清。⛔ 不落盘 —— 站点链接带着 Key
+  （迁移 9 建的 `deeplink_pending` 表因此没用上，留着不删：迁移只许追加）。审计日志只记「收到一条」，不记链接本身。
+- ⛔ **回给界面的形状里没有明文 Key**（`ProviderLinkView.key_masked` 只有打码的）：导入由后端拿着 Key 做。链接没带 Key 时
+  使用者在确认框里填，跟线路弹窗一样只从界面进后端、不回界面。
+- ⛔ **导入前一律确认，导入后什么都不自动启用**（计划里那条）：站点 → 一个站点（同一个主机名和端口已有就接着用、不改它）、
+  一把加密存的 Key、一条线路，**不切过去**；同一软件、站点、分组已经有线路就**在动任何东西之前**拒绝；其余地址进备用地址。
+  MCP → 列表，**一个目标都不勾**、不写任何客户端配置，同名已有的跳过；提示词 → 库，不启用；Skill **不从链接装**，
+  确认框只是带着来源（`https://github.com/<仓库>/tree/<分支>/<目录>`）去 Skills 分页，扫描、挑、装都由使用者来。
+  链接里的 `enabled=true`、用量脚本（`usage*`，阶段 6 才有）认出来但不照做，确认框列成「没照做的」。
+- **链接是不可信输入**（照 cc-switch）：地址只收 http / https；远程配置（`configUrl`）拒绝；图标（`icon` / `iconUrl`）丢掉、
+  不替链接下载；Codex / Grok Build 配置里让客户端执行命令或读本机凭据的键（`auth`、`aws`、`env_http_headers`、`mtls_cert_dir`……）
+  拒绝；只用 `env_key` 间接给 Key、链接自己又没给的拒绝（导进来等于把本机环境变量里的 Key 发到链接给的地址）；
+  给 OpenCode / OpenClaw / Hermes / Pi 的站点链接拒绝并说清楚怎么做（QB Gate 里它们的线路从「写进其他工具」来）。
+- **模型和协议照预设那一套落到线路上**：主模型进模型映射的「兜底」、各档进各档、`[1M]` 剥掉。**上游协议跟预设不一样 ——
+  链接写了就填**（只在跟这个软件的原生协议不同时填）：预设不填协议，是因为它知道的只是「官方端点长什么样」；
+  链接是这个站点自己说的，不填的话「只说 OpenAI Chat 的站」配给 Claude Code 一发都通不了。
+- 导入成了线路之后跟手动存线路一样重装上游、更新聚合模型（`load_upstreams` / `sync_aggregate_config`），界面跳到中转站页那个软件的分页
+  （分页记在会话态 `station.client`）。
+
+钉着的是 `qb_extensions::deeplink` 的六个（两种协议同一个格式、不可信的部分拒绝或照实报、协议要配得上软件、配置只补链接没写的、
+Codex / Grok 拒本机凭据、`+` 被解成空格照样解得出）、`deeplink_ops` 的三个（界面那一份里没有明文 Key、撞了在动任何东西之前停、
+MCP 一个目标都不勾、提示词不启用、只留最新一条按编号清）和 `DeepLinkImport.test.tsx`（确认之后才导入、填的 Key 和分组带过去、
+「不导入」按编号清、粘贴的链接走同一个确认框、同名的 MCP 不再给导入按钮）。⚠ 真机一项都没走：装上新版之后点一条 `qbgate://` 链接
+（面板开着、没开着各一次），看注册表里那一条指向安装目录。
+
 ---
 
 ### 桌面端走的是它自己的「第三方网关」模式，不是环境变量里的 base_url

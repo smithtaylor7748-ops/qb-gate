@@ -13,6 +13,8 @@ pub mod claude_code_ops;
 pub mod codex_history_ops;
 /// 把线路写进共存型工具（中转站重构阶段 4，写真 Key）。
 pub mod coexist_ops;
+/// 导入链接（中转站重构阶段 5，X4）：待处理的那一条、给界面看的（Key 打码）、确认之后导入。什么都不自动启用。
+pub mod deeplink_ops;
 /// Claude 桌面端直连档的开关（中转站重构阶段 4，写真 Key）。
 pub mod desktop_direct_ops;
 pub mod egress_checks;
