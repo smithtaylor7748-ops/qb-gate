@@ -2151,6 +2151,70 @@ try {
   await schedToggle(true).click();
   await schedToggle(false).waitFor();
 
+  // 中转站重构阶段 5：项目、导入链接、工具文件。
+  // 项目：头部按钮写着当前项目（演示里 Claude Code 正用着「日常开发」），弹窗里说清楚只换中转那一侧。
+  await page.goto(origin + "/#/relays");
+  await page.getByRole("button", { name: /项目：日常开发/ }).click();
+  const projDialog = page.locator("dialog[open]");
+  await projDialog.getByText(/官方账户和槽位一概不动/).waitFor();
+  await projDialog.getByLabel("新项目的名字").fill("写作");
+  await projDialog.getByRole("button", { name: /按现在的样子新建/ }).click();
+  await page.getByText("存成项目「写作」了").waitFor();
+  for (const width of [1320, 680]) {
+    await page.setViewportSize({ width, height: 940 });
+    await assertNoOverflow(page, `projects dialog ${width}`);
+  }
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("dialog[open]").count(), 0);
+  // 导入链接：粘贴一条给 CC Switch 的链接 → 确认框里 Key 只有打码的 → 确认了才导入，导完停在中转站页。
+  await page.getByRole("button", { name: "从链接导入", exact: true }).click();
+  await page
+    .getByLabel("导入链接")
+    .fill(
+      "ccswitch://v1/import?resource=provider&app=claude&name=x&endpoint=https%3A%2F%2Frelay.example.com&apiKey=sk-demo",
+    );
+  await page
+    .getByRole("button", { name: "看看里面是什么", exact: true })
+    .click();
+  await page.getByText("导入站点 · Claude Code", { exact: true }).waitFor();
+  await page.getByText("sk-d…7a1f", { exact: true }).waitFor();
+  await page.getByText(/不会切过去/).waitFor();
+  for (const width of [1320, 680]) {
+    await page.setViewportSize({ width, height: 940 });
+    await assertNoOverflow(page, `deeplink confirmation ${width}`);
+  }
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await page.getByRole("button", { name: "导入这条线路", exact: true }).click();
+  await page.getByText(/导入了「示例中转 · 默认分组」/).waitFor();
+  assert.equal(await page.locator("dialog[open]").count(), 0);
+  assert.match(page.url(), /#\/relays$/);
+  // 工具文件：扩展中心的新分页，三个工具都切得过去，窄屏不溢出；改一份存得上。
+  await page.goto(origin + "/#/extensions");
+  await page.getByRole("tab", { name: "工具文件" }).click();
+  await page.getByText("workspace/SOUL.md", { exact: true }).waitFor();
+  const toolPicker = page.getByRole("group", { name: "哪个工具" });
+  for (const [tool, file] of [
+    ["OpenClaw", "workspace/memory/2026-10-25.md"],
+    ["Hermes", "memories/USER.md"],
+    ["Pi", "prompts/review.md"],
+  ]) {
+    await toolPicker.getByRole("button", { name: tool, exact: true }).click();
+    await page.getByText(file, { exact: true }).waitFor();
+    await page.setViewportSize({ width: 680, height: 940 });
+    await assertNoOverflow(page, `tool files ${tool} 680`);
+    await page.setViewportSize({ width: 1320, height: 940 });
+  }
+  await page
+    .locator(".qb-mcp-row", { hasText: "prompts/review.md" })
+    .getByRole("button", { name: "编辑", exact: true })
+    .click();
+  await page.getByLabel("内容").fill("先说风险，再说改法，最后给补丁。");
+  await page.getByRole("button", { name: "存", exact: true }).click();
+  await page.getByText("存好了：prompts/review.md").waitFor();
+  // 分页存在会话态里：切回「发现」，跟这条流程之前一样。
+  await page.getByRole("tab", { name: "发现" }).click();
+
   assert.deepEqual(errors, []);
   const flows = [
     "catalog isolation",
@@ -2179,6 +2243,7 @@ try {
     "tavern panel library tabs: character detail, to trash with its chats and back, world entries whose Esc closes only the entry dialog, extension check then update, every tab without overflow at 680px",
     "relay router settings: dispatch queue and breaker pills without overflow at two widths, retest turns a tripped line half-open, failover switch saved and read back off; network section shows the key only when open to all interfaces, scan fills the proxy, the proxy box is not prefilled after saving",
     "relay schedule dispatch: tiers and liveness without overflow at two widths, paid probing off by default and spends nothing, switched on it shows a cost, pin shows a banner and an action, unpin clears it, the manual standby order is read-only while scheduling",
+    "stage 5: the project dialog says it only touches the relay side and creates from the current state, a pasted ccswitch link shows only a masked key and imports after confirming onto the relay page, the tool files tab switches between OpenClaw / Hermes / Pi without overflow and saves an edit",
   ];
   writeFileSync(
     "docs/ui-regression.json",
