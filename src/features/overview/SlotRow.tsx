@@ -53,8 +53,12 @@ export function switchLabel(s: Slot): string {
   return "切换";
 }
 
-/** 到期那一格的文字。 */
+/**
+ * 到期那一格的文字。服务端明确拒绝了这份登录（点刷新时问出来的，`login_problem`）
+ * 跟「从没登过」分开说 —— 前者是「登录已失效」，后者才是「未登录」。
+ */
 export function expiryText(s: Slot): string {
+  if (s.login_problem) return "登录已失效";
   return s.logged_in ? fmtDaysLeft(s.cli_days_left) : "未登录";
 }
 
@@ -70,7 +74,7 @@ export default function SlotRow({
   onOpen?: (label: string) => void;
   /** 右侧动作区。各个页面自己决定放什么。 */
   actions?: React.ReactNode;
-  /** 额度条右边的刷新图标（2026-09-23）。不给就不画。Claude 这一侧只重读本机，不联网。 */
+  /** 额度条右边的刷新图标（2026-09-23）。不给就不画。2026-10-26 起点它向官方问一次这个账户（阶段 6 · U2）。 */
   onRefresh?: () => void;
   refreshing?: boolean;
 }) {
@@ -98,7 +102,9 @@ export default function SlotRow({
           {s.plan ?? "套餐未知"}
         </span>
         <span className="slotrow-side">
-          <Pill tone={daysTone(s)}>{expiryText(s)}</Pill>
+          <Pill tone={daysTone(s)} title={s.login_problem ?? undefined}>
+            {expiryText(s)}
+          </Pill>
           {actions}
         </span>
       </div>

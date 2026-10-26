@@ -47,6 +47,10 @@ pub async fn launch_claude(
         )
         .await,
     )?;
+    // 点了「登录 / 启动」就把额度刷新问出来的「登录已失效」清掉（跟 GPT 的 `codex_accounts::launch` 同一条，阶段 6 · U2）。
+    if let Some(label) = slot.as_deref() {
+        usecase::login_health::forget(&usecase::login_health::claude_key(label));
+    }
     crate::app::start_watchdog(target.watch_mode(), &state, Some(app.clone()));
     operations::changed(&events::ui(&app), "session", &session.id);
     Ok(launch::LaunchResult {

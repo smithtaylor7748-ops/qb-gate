@@ -261,18 +261,20 @@ operations，是跨域编排而不是门禁自己的事。留在 `gate` 里正�
 0.32.0 这里还叫「反重力 Hub 的配额是全项目唯一一处联网」。之后使用者一步步放开：
 09-21 授权 GPT 与 Gemini CLI 查官方内部额度接口；09-23 删掉「不做后台轮询」那条规矩、
 要反重力账户照 cockpit-tools 把联网能拿到的都显示出来，并拍板「令牌过期时面板在内存里换新」。
+2026-10-26 中转站重构阶段 6 他勾的 U2 把 Claude 官方订阅额度也接了进来（推翻 09-24「Claude 从不联网」），节奏照旧。
 现在的来源：
 
-| 问什么                                               | 走哪条路                                                                                                         | 什么时候联网                         |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| Claude 的 5 小时 / 7 天                              | `plan-usage-history.json` + `.claude.json`                                                                       | **从不**（刷新图标只重读本机）       |
-| GPT 的 5 小时 / 7 天                                 | ChatGPT `backend-api/wham/usage`（那个 Codex 槽位的令牌，`usecase::tavern_quota`）                               | 点那一行的刷新图标                   |
-| GPT 的本机快照                                       | Codex 自己写在会话记录里的 `rate_limits`                                                                         | 从不                                 |
-| Gemini CLI 各模型额度                                | Code Assist `loadCodeAssist` + `retrieveUserQuota`（当前账户 CLI 那一半的令牌）                                  | 点用量卡 Gemini CLI 那一格的「刷新」 |
-| 反重力账户：档位、AI 积分、Claude / Gemini × 5h / 周 | `loadCodeAssist` + `retrieveUserQuotaSummary`（免费档再加 `fetchAvailableModels`），`usecase::antigravity_quota` | 点那一行的刷新图标                   |
-| 反重力 Hub：同上                                     | 同上，令牌是 Hub 在凭据管理器里那一份                                                                            | 点用量卡 Hub 那一格的「刷新」        |
-| 反重力 IDE 写在本机的邮箱 / 档位 / 各模型比例        | `state.vscdb` 的 `userStatus`                                                                                    | 从不（没点过刷新时的兜底）           |
-| 反重力 Hub 的邮箱                                    | 凭据里 `id_token` 的载荷，本机 base64 解码                                                                       | 从不                                 |
+| 问什么                                               | 走哪条路                                                                                                                                                | 什么时候联网                                |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| Claude 的 5 小时 / 7 天、按模型的周额度、超额用量    | Anthropic `api/oauth/usage`（那个槽位里 Claude Code 存的令牌，`usecase::claude_quota`，阶段 6 · U2）                                                    | 点那一行的刷新图标 / 详情里「向官方问一次」 |
+| Claude 的本机读数                                    | 桌面端的 `plan-usage-history.json` + Claude Code 的快照（`qb-accounts` 的 `accounts/usage.rs`）                                                         | 从不                                        |
+| GPT 的 5 小时 / 7 天                                 | ChatGPT `backend-api/wham/usage`，同一次并行问存下的重置 `wham/rate-limit-reset-credits`（阶段 6 · U2）；那个 Codex 槽位的令牌，`usecase::tavern_quota` | 点那一行的刷新图标                          |
+| GPT 的本机快照                                       | Codex 自己写在会话记录里的 `rate_limits`                                                                                                                | 从不                                        |
+| Gemini CLI 各模型额度                                | Code Assist `loadCodeAssist` + `retrieveUserQuota`（当前账户 CLI 那一半的令牌）                                                                         | 点用量卡 Gemini CLI 那一格的「刷新」        |
+| 反重力账户：档位、AI 积分、Claude / Gemini × 5h / 周 | `loadCodeAssist` + `retrieveUserQuotaSummary`（免费档再加 `fetchAvailableModels`），`usecase::antigravity_quota`                                        | 点那一行的刷新图标                          |
+| 反重力 Hub：同上                                     | 同上，令牌是 Hub 在凭据管理器里那一份                                                                                                                   | 点用量卡 Hub 那一格的「刷新」               |
+| 反重力 IDE 写在本机的邮箱 / 档位 / 各模型比例        | `state.vscdb` 的 `userStatus`                                                                                                                           | 从不（没点过刷新时的兜底）                  |
+| 反重力 Hub 的邮箱                                    | 凭据里 `id_token` 的载荷，本机 base64 解码                                                                                                              | 从不                                        |
 
 **只手动刷新是使用者 09-23 选的设计**（问他时给过「打开页面查一次」「自动轮询 + 手动」两个选项，
 他选了只手动）：打开页面、切页回来、打开酒馆弹窗都只读「最近一次」问到的（命令带 `refresh: false`，
@@ -297,6 +299,10 @@ operations，是跨域编排而不是门禁自己的事。留在 `gate` 里正�
    里那份立刻作废，桌面端下次换新时被登出、弹出登录页 —— cockpit-tools 也写着「官方客户端在用这个账户时
    不替它换」。GPT 的额度刷新只看本机时钟（JWT 的 `exp`），到点了就如实说「开一下桌面端它会自己换新」，
    **别把 `google_oauth` 接到 GPT 上**。
+   ⛔ **Claude 的令牌面板也永远不换**（阶段 6 · U2，`usecase::claude_quota`）：理由同 GPT，刷新令牌一换，
+   槽位里 Claude Code 那份就作废。访问令牌按 `.credentials.json` 的 `expiresAt` 到点了就**不发请求**，
+   如实说「用这个账户跑一次 Claude Code，它会自己换新，再点刷新」。cc-switch 会拿过期令牌硬问一次、
+   把 401 当结果，这里不照做。
 4. ⛔ **客户端标识不进仓库。** 换新要带签发那张令牌的客户端的 id / secret。**不许写成常量**：
    要换的那一刻从本机装的官方客户端里现读 —— 反重力走位置表 `install::antigravity::oauth_client_sources`
    （IDE 的 `resources\app\out\main.js`，读不出再扫语言服务器），Gemini CLI 走
@@ -314,10 +320,10 @@ operations，是跨域编排而不是门禁自己的事。留在 `gate` 里正�
 7. **请求形状照官方 IDE**：`User-Agent: antigravity/<本机 IDE 的 ideVersion> windows/<arch>`，
    `metadata.ideType = ANTIGRAVITY`。版本从 `product.json` 读，不写死（开源兼容性那一节）。
 8. **「登录已失效」只来自服务端的明确拒绝**（2026-09-23，`usecase::login_health`）。本机文件只说得出
-   「有没有令牌」；点刷新时 Google 回 `invalid_grant`、或 GPT 的访问令牌**没到点**却被回 401，才记一笔，
+   「有没有令牌」；点刷新时 Google 回 `invalid_grant`、或 GPT / Claude 的访问令牌**没到点**却被回 401 / 403，才记一笔，
    账户行上那一半改说「登录已失效」、露出「登录」。按**凭据文件的修改时刻 + 长度**记、不读内容，
    官方客户端重新登录或自己换新了令牌（文件一变）就自动作废；使用者点「登录 / 打开」时也清掉
-   （`codex_accounts::launch`、`antigravity_ops::gemini_login` 调 `login_health::forget`，2026-09-25 补上 ——
+   （`codex_accounts::launch`、`antigravity_ops::gemini_login`、Claude 那一笔在 `launch_claude` 里调 `login_health::forget`，2026-09-25 补上 ——
    原来只在移除槽位时清，点了登录那一行照样挂着「登录已失效」）；只在内存里。原因文案一律以
    「登录已失效」开头 —— 界面按这个前缀把它跟「从没登过」分开标红，改措辞之前先看两处前端。
    ⛔ **「访问令牌到点了」不许说成「登录失效」**：那是这一条要修的错本身。
@@ -1788,8 +1794,10 @@ DOMContentLoaded 上(文档 commit 了、`readyState` 停在 `interactive`,
 - 缓存写分 5 分钟 / 1 小时两档计价（1 小时 = 输入 ×2）—— 实机 Claude Code 的缓存写全是 1 小时档，按一档算少 37.5%；
 - 认不出价的模型单独列，**不拿别的模型的价去凑**；四类全 0 的（`<synthetic>` 报错）不算回复、不入账，单独数。
 
-⛔ Claude 的 5 小时 / 7 天**仍然从不联网**：使用者 09-24 被问到时选了「不加，保持只读本机」，
-别接 `/api/oauth/usage`。
+Claude 的 5 小时 / 7 天**平时仍然只读本机**。09-24 使用者被问到时选过「不加，保持只读本机」；
+2026-10-26 中转站重构阶段 6 他勾了 U2（官方订阅额度联网），`/api/oauth/usage` 接进来了，
+但节奏照「联网额度」那一节：只在点那一行的刷新图标 / 详情里「向官方问一次」时问这一个账户，只显示。
+⛔ 别给它加定时器、别在打开页面时问。
 
 **订阅页的等效倍率按 1 美元 = 7 元折成元**再除（`src/features/subscription/multiplier.ts` 的 `YUAN_PER_USD`）。
 中转站的倍率按站内额度算，常见充值是 1 元 = 1 美元额度，1× 就是「每 $1 牌价的用量付 1 元」；

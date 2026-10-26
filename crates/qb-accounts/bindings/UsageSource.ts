@@ -3,4 +3,4 @@
 /**
  * 这份读数是从哪儿来的。界面上要标，两个槽位的来源经常不一样。
  */
-export type UsageSource = "desktop" | "cache";
+export type UsageSource = "desktop" | "cache" | "official";

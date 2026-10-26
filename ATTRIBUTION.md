@@ -217,6 +217,17 @@ OpenClaw 的 `models.providers`、Hermes 的 `custom_providers` 列表与 `api_m
 **跟它不一样**：三家合在扩展中心一个分页；工具没装不建目录；删除先挪进备份；三家都按内容哈希核对版本（cc-switch 只有 Pi 核）；
 不替使用者起 `hermes dashboard`；oh-my-opencode（`services/omo.rs`）没搬（理由在 CLAUDE.md 那一节）。
 
+**阶段 6 第一批（2026-10-26，Claude 官方订阅额度，U2）**：`qb-app/src/usecase/claude_quota.rs` 对应 cc-switch `services/subscription.rs`
+的 Claude 那一段：端点 `api/oauth/usage` 与请求头（`anthropic-beta: oauth-2025-04-20`）、`parse_claude_quota` 的窗口规则（老的顶层窗口、
+认不出名字的也留着、`limits[]` 里 `weekly_scoped` / `weekly` 的按模型周额度盖掉同名老窗口、带 `scope.surface` 的子限额不并入、单行坏了只丢那一行、
+`KNOWN_TIERS` 的排列顺序）、`extra_usage` 的字段、`expiresAt` 秒 / 毫秒 / RFC3339 三种写法；超额用量的显示照 `SubscriptionQuotaFooter.tsx`。
+**跟它不一样**：只在点刷新图标 / 「向官方问一次」时问一个账户，没有定时器、打开页面不问；访问令牌按本机时钟到点了**不发请求、不替 Claude Code 换新**
+（cc-switch 会拿过期令牌硬问一次、把 401 当结果）；令牌没到点却被 401 / 403 才记「登录已失效」，凭据文件一变或点了启动就作废；
+结果只显示，横条上只盖 5 小时 / 7 天两根（比本机读数新才盖），其余窗口只在账户详情里摆；读的是 QB Gate 自己的槽位目录，不读 `~/.claude`。
+同一批给 GPT 的联网额度（`qb-app/src/usecase/tavern_quota.rs`）补上 cc-switch ChatGPT 那一段的两样：`parse_codex_credits_balance`
+（`credits` 的三个字段、余额是字符串也收）与 `query_codex_reset_credits` / `parse_codex_reset_credits`（`wham/rate-limit-reset-credits`、
+`OpenAI-Beta: codex-1`、不信 `available_count`、先到期的在前）。**跟它不一样**：Credits 只写个数，不按「1 Credit = $0.04」折成美元。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text

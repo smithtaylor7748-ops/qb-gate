@@ -28,6 +28,7 @@ import TavernPanel, { TavernPanelCorner } from "../tavern/TavernPanel";
 import { bridgeHref } from "../tavern/bridge/where";
 import { tavernBodyMissing } from "../../lib/tavernReady";
 import CodexQuotaBars, { type CodexQuotaState } from "./CodexQuotaBars";
+import { gptExtras, usableResets } from "../../lib/gptExtras";
 import Tile from "./Tile";
 import { Button, Card, ConfirmDialog, Modal, Pill, useToast } from "../../ui";
 
@@ -956,8 +957,10 @@ function CodexUsageCard({
     : tight
       ? `${Math.round(100 - tight.window.used)}%`
       : "—";
+  // 存下的限额重置（阶段 6 · U2）：只在联网问到的那份里有，跟来源写在同一行（窄档整行收掉，悬停里有全文）。
+  const resets = liveTight ? usableResets(quota?.live).length : 0;
   const quotaSource = liveTight
-    ? `在线 · ${stamp(quota?.live?.fetched_at)}`
+    ? `在线 · ${stamp(quota?.live?.fetched_at)}${resets ? ` · 存下重置 ${resets} 次` : ""}`
     : tight
       ? "本地快照"
       : quota?.loading
@@ -1052,7 +1055,16 @@ function CodexUsageCard({
         <div className="ustat" data-testid="codex-quota">
           <span className="ustat-name">剩余额度</span>
           <span className="ustat-value">{quotaValue}</span>
-          <span className="ustat-sub">{quotaSource}</span>
+          <span
+            className="ustat-sub"
+            title={
+              liveTight
+                ? [quotaSource, ...gptExtras(quota?.live)].join(" · ")
+                : undefined
+            }
+          >
+            {quotaSource}
+          </span>
         </div>
       </div>
       {/* 全零有两种：真没跑过，和读坏了。分开说 —— 「0」在界面上读起来是一句

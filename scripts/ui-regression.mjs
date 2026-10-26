@@ -1136,6 +1136,29 @@ try {
   // 反重力侧的交互：账户切换、两半的徽标、并入、启动要确认、
   // 汉化引擎（弹窗里）附加 / 停止翻真翻假、用量卡的配额格与明细弹窗。
   await page.setViewportSize({ width: 1320, height: 940 });
+  // 阶段 6 · U2：Claude 那一行的刷新图标也联网了，但还是只手动、只问点的那一行。
+  // 打开页面是本机读数（桌面端样本 / Claude Code 快照）；点第二行的图标，只有它换成「官方接口」。
+  const claudeRows = page.locator(".account-slot-list .slotrow");
+  assert.doesNotMatch(
+    await page.locator(".account-slot-list").innerText(),
+    /官方接口/,
+    "打开页面不该联网",
+  );
+  await claudeRows
+    .nth(1)
+    .getByRole("button", { name: "联网刷新这个账户的额度", exact: true })
+    .click();
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelectorAll(".account-slot-list .slotrow")[1]
+        ?.textContent?.includes("官方接口 ·") === true,
+  );
+  assert.doesNotMatch(
+    await claudeRows.first().innerText(),
+    /官方接口/,
+    "只该问点的那一行",
+  );
   await page.getByRole("button", { name: "反重力", exact: true }).click();
   // 0.32.0：两个页签合成一份列表 —— 演示三条账户，第一条两半都登了且激活。
   await page.getByTestId("ag-slot").first().waitFor();

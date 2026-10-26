@@ -86,6 +86,9 @@ pub enum UsageSource {
     Desktop,
     /// 槽位 `.claude.json` 里的 `cachedUsageUtilization`，Claude Code 写的。
     Cache,
+    /// 点刷新图标时向官方问的（`/api/oauth/usage`，中转站重构阶段 6 · U2）。这一层不产出它：
+    /// 由 `qb-app` 的 `claude_quota::overlay` 拿「最近一次」盖上来，比本机读数新才用。
+    Official,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, TS)]

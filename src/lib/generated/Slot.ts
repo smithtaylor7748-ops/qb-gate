@@ -62,7 +62,13 @@ plan_fetched_at: string | null,
  */
 desktop_profile: boolean, 
 /**
- * 五小时 / 七天窗口的用量与恢复时刻。读的是官方客户端写在本机的文件，
- * **不联网、不调接口**，详见 [`usage`]。两源都没有就是 `None`。
+ * 五小时 / 七天窗口的用量与恢复时刻。这一层读的是官方客户端写在本机的文件，**不联网**，详见 [`usage`]；
+ * 2026-10-26 起点刷新图标时 `qb-app` 会向官方问一次（`claude_quota`），比本机读数新就盖上来（来源标 `official`）。
+ * 都没有就是 `None`。
  */
-usage: SlotUsage | null, };
+usage: SlotUsage | null, 
+/**
+ * 联网额度那条路问出来的「服务端不认这份登录了」（以「登录已失效」开头的一句话）。
+ * 这一层永远给 `None`，由 `qb-app` 的 `claude_quota::overlay` 叠上来（跟 GPT 那边同一套 `login_health`）。
+ */
+login_problem: string | null, };

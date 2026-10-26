@@ -73,6 +73,21 @@ export default function AccountBand() {
   const tavernTask = useTask("tavern-start");
 
   const [busy, setBusy] = useState("");
+  /** 正在向官方问额度的那个槽位（阶段 6 · U2：一次只问一个）。 */
+  const [quotaFor, setQuotaFor] = useState<string | null>(null);
+  const refreshQuota = async (label: string) => {
+    if (quotaFor) return;
+    setQuotaFor(label);
+    try {
+      await api.claudeQuota(label, true);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      // 问成没问成都重读一遍：成了会盖上「官方接口」那份，被拒了那一行改说「登录已失效」。
+      await accounts.refresh().catch(() => undefined);
+      setQuotaFor(null);
+    }
+  };
   /** `-1` = 这个会话里还没手动翻过页，落在激活槽位那一页。 */
   const [pageRaw, setPage] = useSession("home.accounts.page", -1);
   const [askDesktop, setAskDesktop] = useState(false);
@@ -231,9 +246,9 @@ export default function AccountBand() {
                       key={s.label}
                       slot={s}
                       onOpen={requestAccountDetail}
-                      // 额度条右边的刷新图标（2026-09-23）：Claude 只重读本机，不联网。
-                      onRefresh={() => void accounts.refresh()}
-                      refreshing={accounts.loading}
+                      // 额度条右边的刷新图标：2026-10-26 起（阶段 6 · U2）点它向官方问一次这个账户，一次只问一个。
+                      onRefresh={() => void refreshQuota(s.label)}
+                      refreshing={quotaFor === s.label}
                       actions={
                         <>
                           {s.active ? (

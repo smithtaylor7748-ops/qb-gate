@@ -101,9 +101,13 @@ pub struct Slot {
     pub plan_fetched_at: Option<String>,
     /// 桌面端有没有这个槽位自己的资料目录 `%APPDATA%\Claude-<标签>`。
     pub desktop_profile: bool,
-    /// 五小时 / 七天窗口的用量与恢复时刻。读的是官方客户端写在本机的文件，
-    /// **不联网、不调接口**，详见 [`usage`]。两源都没有就是 `None`。
+    /// 五小时 / 七天窗口的用量与恢复时刻。这一层读的是官方客户端写在本机的文件，**不联网**，详见 [`usage`]；
+    /// 2026-10-26 起点刷新图标时 `qb-app` 会向官方问一次（`claude_quota`），比本机读数新就盖上来（来源标 `official`）。
+    /// 都没有就是 `None`。
     pub usage: Option<usage::SlotUsage>,
+    /// 联网额度那条路问出来的「服务端不认这份登录了」（以「登录已失效」开头的一句话）。
+    /// 这一层永远给 `None`，由 `qb-app` 的 `claude_quota::overlay` 叠上来（跟 GPT 那边同一套 `login_health`）。
+    pub login_problem: Option<String>,
 }
 
 /// 界面上怎么称呼一个槽位：**「邮箱 - 命名」**，读不到邮箱就只剩命名（0.27.0，使用者定的）。
@@ -150,15 +154,16 @@ pub fn account_uuid_of(slot_dir: &std::path::Path) -> Option<String> {
 /// `~/.claude.json` 的 `oauthAccount` 是官方客户端自己写下的一份档案缓存，
 /// 每个槽位目录里各有一份 —— 所以不用切过去就能看到每个槽位的套餐。
 ///
-/// 这符合第 1 条政策边界：读的是官方客户端**自己写在本机的文件**，
-/// 不发任何网络请求、不调用任何额度接口。用量（见 [`usage`]）同理 ——
-/// 它只用于显示，面板不据此做任何决定，切换依然只能由人手动触发。
+/// 这符合第 1 条政策边界：读的是官方客户端**自己写在本机的文件**，不发任何网络请求。
+/// 用量（见 [`usage`]）这一层同样只读本机；2026-10-26 起使用者点刷新图标时，`qb-app` 会带这个账户的令牌
+/// 向官方额度接口问一次（中转站重构阶段 6 · U2，使用者勾的）—— 两样都**只用于显示**，面板不据此做任何决定，
+/// 切换依然只能由人手动触发。
 ///
 /// **不要**顺手把 `organizationRateLimitTier` / `userRateLimitTier` 显示出来。
 /// 那两个字段名里带 rateLimit，展示它们会让这条边界变得可疑，
 /// 而它们对用户的价值几乎为零。
 pub const PLAN_CAVEAT: &str =
-    "套餐、计费方式与用量都读自官方客户端写在本机的文件（槽位的 .claude.json 与桌面端的 plan-usage-history.json），不联网、不调接口。";
+    "套餐、计费方式读自官方客户端写在本机的文件（槽位的 .claude.json），不联网；5 小时 / 7 天额度平时也只读本机（桌面端的 plan-usage-history.json 与 Claude Code 的快照），点那一行的刷新图标时才用这个账户的令牌向官方问一次，只显示、不做任何自动决定。";
 
 /// 剩余天数只能回答「名义上到期没」，回答不了「服务端还认不认」。
 ///
@@ -443,6 +448,7 @@ pub fn slots_in(r: &AccountRoots) -> Vec<Slot> {
                         .and_then(|v| v.get("organizationUuid"))
                         .and_then(|v| v.as_str()),
                 ),
+                login_problem: None,
                 label,
             })
         })
@@ -1005,6 +1011,7 @@ mod tests {
             plan_fetched_at: None,
             usage: None,
             desktop_profile: false,
+            login_problem: None,
         };
         assert!(s.logged_in, "过期不得影响可切换性");
         assert!(s.cli_days_left.is_some_and(|d| d < 0));

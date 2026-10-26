@@ -49,22 +49,23 @@ use std::time::Duration;
 use ts_rs::TS;
 
 /// 「最近一次」问到的结果，按槽位 id 存。**只存最近一次，没有 TTL。**
-struct Last<T>(Mutex<Option<HashMap<String, T>>>);
+/// Claude 的联网额度（`claude_quota`，阶段 6）用同一个。
+pub(crate) struct Last<T>(Mutex<Option<HashMap<String, T>>>);
 
 impl<T: Clone> Last<T> {
-    const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self(Mutex::new(None))
     }
-    fn get(&self, id: &str) -> Option<T> {
+    pub(crate) fn get(&self, id: &str) -> Option<T> {
         self.0.lock().ok()?.as_ref()?.get(id).cloned()
     }
-    fn put(&self, id: &str, value: T) {
+    pub(crate) fn put(&self, id: &str, value: T) {
         if let Ok(mut g) = self.0.lock() {
             g.get_or_insert_with(HashMap::new)
                 .insert(id.to_string(), value);
         }
     }
-    fn forget(&self, id: &str) {
+    pub(crate) fn forget(&self, id: &str) {
         if let Ok(mut g) = self.0.lock() {
             if let Some(m) = g.as_mut() {
                 m.remove(id);
@@ -102,6 +103,9 @@ pub fn forget_gemini(account_id: &str) {
 }
 
 const GPT_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+/// 存下的限额重置（中转站重构阶段 6 · U2，照 cc-switch `subscription.rs` 的 `query_codex_reset_credits`）。
+/// 跟额度同一次点击、并行问；问不到只是不显示，不连累额度本身。
+const GPT_RESETS_URL: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 const GEMINI_ENDPOINT: &str = "https://cloudcode-pa.googleapis.com/v1internal:";
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -126,6 +130,11 @@ pub struct TavernGptQuota {
     pub windows: Vec<TavernQuotaWindow>,
     pub fetched_at: String,
     pub source: String,
+    /// ChatGPT 订阅买的 Codex Credits 余额（额度用完之后才扣）。没有、不限量或为 0 时是 `None`（阶段 6 · U2）。
+    pub credits_balance: Option<f64>,
+    /// 存下的限额重置（Codex「存下重置、需要时再用」）：每一次的到期时刻（RFC3339，不过期是 `None`），
+    /// 先到期的在前，长度就是可用次数。没问到是 `None`（阶段 6 · U2）。
+    pub banked_resets: Option<Vec<Option<String>>>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -466,7 +475,55 @@ pub fn parse_gpt(body: &str, account: Option<String>) -> Result<TavernGptQuota> 
         windows,
         fetched_at: local_now(),
         source: GPT_USAGE_URL.into(),
+        credits_balance: v.get("credits").and_then(credits_balance),
+        banked_resets: None,
     })
+}
+
+/// `wham/usage` 的 `credits`：`{has_credits, unlimited, balance}`，`balance` 实测是字符串（`"62500"`），也收数字
+/// （cc-switch 的 `parse_codex_credits_balance`）。不限量、没有或为 0 时不显示。
+fn credits_balance(credits: &Value) -> Option<f64> {
+    if credits.get("has_credits").and_then(Value::as_bool) != Some(true)
+        || credits.get("unlimited").and_then(Value::as_bool) == Some(true)
+    {
+        return None;
+    }
+    let balance = match credits.get("balance")? {
+        Value::Number(n) => n.as_f64()?,
+        Value::String(s) => s.trim().parse::<f64>().ok()?,
+        _ => return None,
+    };
+    (balance.is_finite() && balance > 0.0).then_some(balance)
+}
+
+/// `wham/rate-limit-reset-credits` 的回复：不信 `available_count`，自己数 `status == "available"` 且还没过期的；
+/// 认不出的到期时刻当作不过期（宁可多显示一次也不吞掉）；先到期的在前，不过期的排最后（cc-switch 的 `parse_codex_reset_credits`）。
+fn parse_resets(body: &str, now: DateTime<Utc>) -> Option<Vec<Option<String>>> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let mut at: Vec<Option<DateTime<Utc>>> = v
+        .get("credits")?
+        .as_array()?
+        .iter()
+        .filter(|c| c.get("status").and_then(Value::as_str) == Some("available"))
+        .filter_map(|c| match c.get("expires_at").and_then(Value::as_str) {
+            None => Some(None),
+            Some(raw) => match DateTime::parse_from_rfc3339(raw) {
+                Ok(t) => {
+                    let t = t.with_timezone(&Utc);
+                    (t > now).then_some(Some(t))
+                }
+                Err(_) => Some(None),
+            },
+        })
+        .collect();
+    at.sort_by_key(|t| (t.is_none(), *t));
+    Some(at.into_iter().map(|t| t.map(|t| t.to_rfc3339())).collect())
+}
+
+/// 并行问的那一发存下的重置：任何失败都只是 `None`。
+async fn banked_resets(sent: reqwest::Result<reqwest::Response>) -> Option<Vec<Option<String>>> {
+    let response = sent.ok().filter(|r| r.status().is_success())?;
+    parse_resets(&response.text().await.ok()?, Utc::now())
 }
 
 /// 一个 GPT 槽位的额度（`slot_id = None` = 激活槽位，酒馆弹窗用）。**不改变激活账户。**
@@ -508,17 +565,23 @@ async fn fetch_gpt(slot_id: &str) -> Result<TavernGptQuota> {
         }
     }
     let http = client()?;
-    let mut request = http
-        .get(GPT_USAGE_URL)
-        .bearer_auth(&token)
-        .header("accept", "application/json");
-    if let Some(account_id) = qb_accounts::codex::chatgpt_account_id_from_home(&home)? {
-        request = request.header("ChatGPT-Account-Id", account_id);
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|e| GateError::Other(format!("GPT 额度接口连接失败：{e}")))?;
+    let account_id = qb_accounts::codex::chatgpt_account_id_from_home(&home)?;
+    let ask = |url: &str| {
+        let request = http
+            .get(url)
+            .bearer_auth(&token)
+            .header("accept", "application/json");
+        match &account_id {
+            Some(id) => request.header("ChatGPT-Account-Id", id),
+            None => request,
+        }
+    };
+    // 额度和存下的重置同一次点击、并行问（阶段 6 · U2）。后者只读、问不到不连累前者。
+    let (response, resets) = tokio::join!(
+        ask(GPT_USAGE_URL).send(),
+        ask(GPT_RESETS_URL).header("OpenAI-Beta", "codex-1").send()
+    );
+    let response = response.map_err(|e| GateError::Other(format!("GPT 额度接口连接失败：{e}")))?;
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     if status == StatusCode::UNAUTHORIZED {
@@ -539,7 +602,9 @@ async fn fetch_gpt(slot_id: &str) -> Result<TavernGptQuota> {
     if !status.is_success() {
         return Err(status_error(status, &body, "GPT"));
     }
-    parse_gpt(&body, Some(label))
+    let mut q = parse_gpt(&body, Some(label))?;
+    q.banked_resets = banked_resets(resets).await;
+    Ok(q)
 }
 
 /// GPT 的访问令牌到点了。**面板不替它换**（见模块头），只说怎么让官方客户端自己换。
@@ -1076,6 +1141,59 @@ mod tests {
         l.forget("a");
         assert_eq!(l.get("a"), None);
         assert_eq!(l.get("b"), Some(2), "忘掉一个不碰别的");
+    }
+
+    /// Codex Credits 余额（阶段 6 · U2）：字符串、数字都认；没有 / 不限量 / 0 不显示。
+    #[test]
+    fn credits_balance_is_shown_only_when_there_is_a_finite_balance() {
+        let with = |credits: &str| {
+            parse_gpt(
+                &format!(
+                    r#"{{"rate_limit":{{"primary_window":{{"used_percent":25,"limit_window_seconds":18000}}}},"credits":{credits}}}"#
+                ),
+                None,
+            )
+            .unwrap()
+            .credits_balance
+        };
+        assert_eq!(
+            with(r#"{"has_credits":true,"unlimited":false,"balance":"62500"}"#),
+            Some(62500.0)
+        );
+        assert_eq!(with(r#"{"has_credits":true,"balance":12.5}"#), Some(12.5));
+        assert_eq!(with(r#"{"has_credits":false,"balance":"9"}"#), None);
+        assert_eq!(
+            with(r#"{"has_credits":true,"unlimited":true,"balance":"9"}"#),
+            None
+        );
+        assert_eq!(with(r#"{"has_credits":true,"balance":"0"}"#), None);
+        assert_eq!(with(r#"{"has_credits":true,"balance":"很多"}"#), None);
+        // 额度本身不受影响：没有 credits 这一段照样解析。
+        assert_eq!(with("null"), None);
+    }
+
+    /// 存下的限额重置：只数可用且没过期的，先到期的在前、不过期的最后，认不出的到期时刻当不过期。
+    #[test]
+    fn banked_resets_count_only_available_unexpired_credits_soonest_first() {
+        let now = DateTime::parse_from_rfc3339("2026-10-26T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let body = r#"{"available_count":9,"credits":[
+            {"status":"available","expires_at":"2026-11-20T00:00:00Z"},
+            {"status":"used","expires_at":"2026-11-01T00:00:00Z"},
+            {"status":"available","expires_at":"2026-10-01T00:00:00Z"},
+            {"status":"available"},
+            {"status":"available","expires_at":"2026-11-02T08:00:00Z"},
+            {"status":"available","expires_at":"下周"}
+        ]}"#;
+        let got = parse_resets(body, now).unwrap();
+        assert_eq!(got.len(), 4, "不信 available_count，过期的和用掉的不算");
+        assert_eq!(got[0].as_deref(), Some("2026-11-02T08:00:00+00:00"));
+        assert_eq!(got[1].as_deref(), Some("2026-11-20T00:00:00+00:00"));
+        assert_eq!(got[2], None);
+        assert_eq!(got[3], None);
+        assert_eq!(parse_resets("not json", now), None);
+        assert_eq!(parse_resets(r#"{"credits":[]}"#, now), Some(vec![]));
     }
 
     /// OpenAI 的错误回复见过三种形状，代码都要认得出来；认不出来就是 `None`，不猜。

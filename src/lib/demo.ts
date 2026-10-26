@@ -44,6 +44,7 @@ import type { Project } from "./generated/Project";
 import type { ProjectsView } from "./generated/ProjectsView";
 import type { DeepLinkEntry } from "./generated/DeepLinkEntry";
 import type { DeepLinkView } from "./generated/DeepLinkView";
+import type { ClaudeQuota } from "./generated/ClaudeQuota";
 /**
  * 演示数据 —— 只给截图和界面预览用。
  *
@@ -404,6 +405,7 @@ const accounts: AccountsReport = {
       billing: "官网订阅",
       plan_fetched_at: "2026-09-12 09:04",
       desktop_profile: true,
+      login_problem: null,
       // 当前登录的那个：桌面端有实时样本，五小时窗口的恢复时刻是推算的。
       usage: {
         source: "desktop",
@@ -438,6 +440,7 @@ const accounts: AccountsReport = {
       billing: "Google Play 订阅",
       plan_fetched_at: "2026-09-10 21:37",
       desktop_profile: false,
+      login_problem: null,
       // 没登录的槽位不可能有实时数据 —— 物理限制。只有 Claude Code 留下的快照，
       // 而且是十天前的：`resets_at` 早过去了，所以两个窗口都没有恢复时刻。
       usage: {
@@ -473,6 +476,7 @@ const accounts: AccountsReport = {
       billing: null,
       plan_fetched_at: null,
       desktop_profile: false,
+      login_problem: null,
       // 两源都没有 —— 什么都不显示，不给假读数。
       usage: null,
     },
@@ -4012,7 +4016,8 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     return demoProbeReport;
   },
   browser_probe_last: () => demoProbeReport,
-  accounts_list: () => accounts,
+  // 克隆一份：额度演示会就地改槽位（盖上「官方接口」那份），同一个引用 React Query 看不出变了。
+  accounts_list: () => structuredClone(accounts),
   accounts_tokens: () => tokenUsage,
   accounts_token_summary: (args) => summaryFor(Number(args?.days ?? 1)),
   accounts_usage_overview: (args) =>
@@ -4020,6 +4025,11 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   // 演示里给「本地令牌已过期」那一档 —— 实机上它就是最常见的那个，
   // 而且它是唯一一个**不发请求**的分支，最该让人在截图里先看见。
   account_probe: () => accountProbe,
+  // 官方额度接口（阶段 6 · U2）：只在点了刷新图标 / 「向官方问一次」时才有，问到了就盖到那一行上。
+  claude_quota: (args) =>
+    askedOnly(`claude:${String(args?.label)}`, args?.refresh, () =>
+      claudeQuotaFixture(String(args?.label)),
+    ),
   egress_checks_scan: () => structuredClone(egress),
   egress_checks_fix: (args) => {
     const item = egress.items.find((it) => it.id === args?.id && it.fixable);
@@ -4427,6 +4437,66 @@ function askedOnly<T>(key: string, refresh: unknown, make: () => T): T | null {
   return (demoAsked.get(key) as T | undefined) ?? null;
 }
 
+/** Claude 官方额度接口的演示回复；同时像后端的 `overlay` 一样把 5 小时 / 7 天盖到那一行上。 */
+function claudeQuotaFixture(label: string): ClaudeQuota {
+  const now = Date.now();
+  const at = (ms: number) => new Date(now + ms).toISOString();
+  const week = at(3.1 * 86_400_000);
+  const q: ClaudeQuota = {
+    label,
+    windows: [
+      {
+        key: "five_hour",
+        label: "5 小时",
+        used_percent: 41,
+        resets_at: at(2.4 * 3_600_000),
+      },
+      { key: "seven_day", label: "7 天", used_percent: 58, resets_at: week },
+      {
+        key: "seven_day_opus",
+        label: "7 天 · Opus",
+        used_percent: 73,
+        resets_at: week,
+      },
+      {
+        key: "seven_day_sonnet",
+        label: "7 天 · Sonnet",
+        used_percent: 22,
+        resets_at: week,
+      },
+    ],
+    extra: {
+      enabled: true,
+      monthly_limit: 50,
+      used_credits: 6.4,
+      utilization: 12.8,
+      currency: "USD",
+    },
+    fetched_at: new Date(now).toISOString(),
+    source: "https://api.anthropic.com/api/oauth/usage",
+  };
+  const slot = accounts.slots.find((s) => s.label === label);
+  if (slot) {
+    const win = (key: string) => {
+      const w = q.windows.find((x) => x.key === key)!;
+      return {
+        used: w.used_percent,
+        resets_at: w.resets_at,
+        estimated: false,
+        reset_passed: false,
+      };
+    };
+    slot.usage = {
+      source: "official",
+      measured_at: q.fetched_at,
+      age_minutes: 0,
+      five_hour: win("five_hour"),
+      seven_day: win("seven_day"),
+    };
+  }
+  return q;
+}
+
 /** 本地 `YYYY-MM-DD HH:MM`，跟后端给的格式一样。 */
 function demoMinute(epochSec: number): string {
   const d = new Date(epochSec * 1000);
@@ -4460,6 +4530,9 @@ function gptQuotaFixture(account: string) {
     ],
     fetched_at: demoMinute(now) + ":00",
     source: "https://chatgpt.com/backend-api/wham/usage",
+    // 阶段 6 · U2：存下的限额重置两次（一次十天后到期、一次不过期），Credits 余额没有。
+    credits_balance: null,
+    banked_resets: [new Date((now + 10 * 86400) * 1000).toISOString(), null],
   };
 }
 

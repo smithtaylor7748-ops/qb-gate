@@ -1,8 +1,9 @@
 /**
  * 槽位横条上的额度：五小时 / 七天两条 + 恢复时刻 + 来源与时刻。
  *
- * 数据全部来自官方客户端写在本机的文件（见 `src-tauri/src/accounts/usage.rs`），
- * 零网络请求、零接口调用。
+ * 平时数据全部来自官方客户端写在本机的文件（见 `qb-accounts` 的 `accounts/usage.rs`），零网络请求。
+ * 2026-10-26 起（中转站重构阶段 6 · U2，使用者勾的）多一个来源：点刷新图标时带这个账户的令牌
+ * 向官方问一次（`usecase::claude_quota`），比本机读数新就用它、来源标「官方接口」。只显示，不做任何自动决定。
  *
  * # 条子为什么是「两段都上色」，不是一根进度条 ★
  *
@@ -53,10 +54,20 @@ const SEVEN_DAY_MIN = 7 * 24 * 60;
 const SOURCE_NAME: Record<SlotUsage["source"], string> = {
   desktop: "桌面端",
   cache: "Claude Code 快照",
+  official: "官方接口",
 };
 
-/** 恢复时刻：今天之内只给时分，跨天补上日期。 */
-function fmtReset(iso: string): string {
+const SOURCE_HINT: Record<SlotUsage["source"], string> = {
+  desktop:
+    "Claude 桌面端每约 15 分钟往本机写一条样本。它没开的时候不写 —— 那期间的读数就停在最后一条。",
+  cache:
+    "Claude Code 会话里留下的快照。这个槽位的桌面端历史里没有更新的样本 —— 它没在桌面端登录过，或者那阵子桌面端没开。",
+  official:
+    "你点刷新图标时，用这个账户在 Claude Code 里存的令牌向官方额度接口问的（只读，一次只问这一个账户）。不会自己再问，要新的就再点一次。",
+};
+
+/** 恢复时刻：今天之内只给时分，跨天补上日期。账户详情页的官方额度区也用它。 */
+export function fmtReset(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(
@@ -145,8 +156,8 @@ function WindowGauge({
 /**
  * 额度区右边那颗刷新图标（2026-09-23，三个账户页同一个位置）。
  *
- * ⛔ Claude 这一侧**不联网**：点它只是立刻重读一遍本机记录（桌面端的样本、Claude Code
- * 的快照）—— Claude 的额度只读本机这条没变。所以悬停文字要说清楚「不联网」。
+ * 2026-10-26 起（阶段 6 · U2）Claude 这一侧跟 GPT 一样：点它才带这个账户的令牌向官方问**一次**，
+ * 一次只问这一个账户，没有定时器。令牌到点了不问（说清楚怎么让 Claude Code 自己换新）。
  */
 function RefreshButton({
   onRefresh,
@@ -161,8 +172,8 @@ function RefreshButton({
       variant="ghost"
       className="slotusage-refresh"
       icon={<RefreshCw size={12} />}
-      aria-label="重读这个账户的额度"
-      title="立刻重读一遍本机的额度记录（不联网）"
+      aria-label="联网刷新这个账户的额度"
+      title="用这个账户的令牌向官方问一次额度（只读，一次只问这一个）"
       loading={refreshing}
       onClick={onRefresh}
     />
@@ -187,7 +198,7 @@ export default function SlotUsageBars({
         <div className="slotusage-bars">
           <span
             className="gauge-src"
-            title="这个槽位的桌面端样本和 Claude Code 快照里都还没有额度记录。用它跑一次 Claude Code 或开一次桌面端就会有。"
+            title="这个槽位的桌面端样本和 Claude Code 快照里都还没有额度记录。点右边的刷新图标向官方问一次，或者用它跑一次 Claude Code / 开一次桌面端。"
           >
             还没有额度读数
           </span>
@@ -230,14 +241,7 @@ export default function SlotUsageBars({
       {onRefresh && (
         <RefreshButton onRefresh={onRefresh} refreshing={refreshing} />
       )}
-      <span
-        className="gauge-src"
-        title={
-          usage.source === "desktop"
-            ? "Claude 桌面端每约 15 分钟往本机写一条样本。它没开的时候不写 —— 那期间的读数就停在最后一条。"
-            : "Claude Code 会话里留下的快照。这个槽位的桌面端历史里没有更新的样本 —— 它没在桌面端登录过，或者那阵子桌面端没开。"
-        }
-      >
+      <span className="gauge-src" title={SOURCE_HINT[usage.source]}>
         {SOURCE_NAME[usage.source]} · {fmtAge(usage.age_minutes)}
       </span>
     </div>

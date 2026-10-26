@@ -82,6 +82,7 @@ import type { PolicyScope } from "./generated/PolicyScope";
 import type { PolicyValue } from "./generated/PolicyValue";
 import type { Preset } from "./generated/Preset";
 import type { AccountProbe } from "./generated/AccountProbe";
+import type { ClaudeQuota } from "./generated/ClaudeQuota";
 import type { AccountProbeState } from "./generated/AccountProbeState";
 import type { Progress } from "./generated/Progress";
 import type { ProxyState } from "./generated/ProxyState";
@@ -151,6 +152,7 @@ import type { UpgradeChannel as Channel } from "./generated/UpgradeChannel";
 export type {
   AccountProbe,
   AccountProbeState,
+  ClaudeQuota,
   AccountsReport,
   AssetItem,
   AuthStyle,
@@ -411,13 +413,19 @@ export const api = {
   /**
    * 「这个账户现在还能用吗」—— 拿槽位里的令牌向官方发**一次**最小认证请求。
    *
-   * ⛔ 这是面板唯一一处带着官方身份对外发请求的地方。它打的是公开的
+   * ⛔ 带着 Claude 官方身份对外发请求的只有它和下面的 `claudeQuota`。它打的是公开的
    * `/v1/models`：不查额度、不打模型、不写回任何东西；本地令牌已过期时
    * 连请求都不发（免得把必然的 401 报成假警报）。
    * **调用之前必须已经拿到使用者当次的点击。**
    */
   accountProbe: (label: string) =>
     call<AccountProbe>("account_probe", { label }),
+  /**
+   * Claude 官方额度（中转站重构阶段 6 · U2）。`refresh = false` 只读「最近一次」，**绝不联网**；
+   * `true` 只在使用者点了刷新图标时传：带这个槽位的令牌问一次 `/api/oauth/usage`。结果只显示。
+   */
+  claudeQuota: (label: string, refresh: boolean) =>
+    call<ClaudeQuota | null>("claude_quota", { label, refresh }),
   /**
    * 出口一致性：跟当前出口 IP 对不上的那些东西。
    *

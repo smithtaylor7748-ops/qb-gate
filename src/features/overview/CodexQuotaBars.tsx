@@ -4,6 +4,7 @@ import type { CodexRateLimitScan } from "../../lib/generated/CodexRateLimitScan"
 import type { CodexWindow } from "../../lib/generated/CodexWindow";
 import type { TavernGptQuota } from "../../lib/generated/TavernGptQuota";
 import type { TavernQuotaWindow } from "../../lib/generated/TavernQuotaWindow";
+import { gptExtras } from "../../lib/gptExtras";
 
 export interface CodexQuotaState {
   local: CodexRateLimitScan | null;
@@ -202,7 +203,14 @@ export default function CodexQuotaBars({
         className={`gauge-src${state?.liveError || localReason ? " qb-tone-warn" : ""}`}
         title={
           online
-            ? `在线额度 · ${state?.live?.fetched_at ?? ""}${state?.liveError ? ` · 这次刷新没成：${state.liveError}` : ""}`
+            ? // 存下的重置、Credits 余额（阶段 6 · U2）只放悬停：这一行是固定高度的。
+              [
+                `在线额度 · ${state?.live?.fetched_at ?? ""}`,
+                ...gptExtras(state?.live),
+                ...(state?.liveError
+                  ? [`这次刷新没成：${state.liveError}`]
+                  : []),
+              ].join(" · ")
             : `Codex 本地快照 · ${scan?.found ? age(scan.found.age_minutes) : ""}${state?.liveError ? ` · 联网没问到：${state.liveError}` : ""}${localReason ? ` · ${localReason}` : ""}`
         }
       >

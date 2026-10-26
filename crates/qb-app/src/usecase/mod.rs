@@ -9,6 +9,8 @@ pub mod account_ops;
 pub mod account_probe;
 /// Claude Code 的两个小件：跳过首次确认、VS Code 插件联动（中转站重构阶段 4）。
 pub mod claude_code_ops;
+/// Claude 官方订阅额度（中转站重构阶段 6 · U2）：点刷新图标时问一次 `/api/oauth/usage`，只显示。
+pub mod claude_quota;
 /// Codex 会话归桶（中转站重构阶段 4）：先备份、逐个桶勾选、按账本还原。
 pub mod codex_history_ops;
 /// 把线路写进共存型工具（中转站重构阶段 4，写真 Key）。

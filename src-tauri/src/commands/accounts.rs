@@ -11,9 +11,21 @@ use crate::{
 
 // ------------------------------------------------------------------ 账户
 
+/// 列账户。叠上联网额度那条路的「最近一次」与「登录已失效」（阶段 6 · U2，`claude_quota::overlay`）——
+/// 这里**不联网**，只读内存里点刷新时问到的那份。
 #[tauri::command]
 pub fn accounts_list() -> accounts::AccountsReport {
-    accounts::report(&accounts::AccountRoots::current())
+    usecase::claude_quota::overlay(accounts::report(&accounts::AccountRoots::current()))
+}
+
+/// 一个 Claude 槽位的官方额度（阶段 6 · U2）。`refresh = false` 只读「最近一次」，**绝不联网**；
+/// `true` 是使用者点了那一行的刷新图标：带这个槽位的令牌问一次 `/api/oauth/usage`，结果只显示。
+#[tauri::command]
+pub async fn claude_quota(
+    label: String,
+    refresh: bool,
+) -> Result<Option<usecase::claude_quota::ClaudeQuota>> {
+    usecase::claude_quota::quota(&label, refresh).await
 }
 
 /// 新建一个空槽位。只由界面点击触发。
@@ -64,6 +76,8 @@ pub async fn accounts_delete(
         out.label,
         out.removed.join("、")
     ));
+    // 联网问到的额度、「登录已失效」那一笔都别再躺在内存里（同名槽位重建时会误认）。
+    usecase::claude_quota::forget(&out.label);
     // 托盘菜单是静态对象，不重建就还列着那个已经没了的槽位。
     tray::refresh(&app);
     Ok(out)
@@ -137,8 +151,8 @@ pub async fn accounts_usage_overview(
 
 /// 「这个账户现在还能用吗」—— 拿槽位里的令牌向官方发一次最小认证请求。
 ///
-/// **只由使用者当次点击触发。** 这是面板唯一一处带着官方身份对外发请求的地方，
-/// 判定与边界全在 `usecase::account_probe` 的文件头里：
+/// **只由使用者当次点击触发。** 带着 Claude 官方身份对外发请求的只有这里和额度刷新（`claude_quota`，阶段 6），
+/// 这一条的判定与边界全在 `usecase::account_probe` 的文件头里：
 /// 打的是公开的 `/v1/models`，不查额度、不打模型、不写回任何东西，
 /// 本地令牌已过期时**连请求都不发**（免得把必然的 401 报成假警报）。
 #[tauri::command]

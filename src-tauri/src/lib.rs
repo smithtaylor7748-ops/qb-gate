@@ -297,6 +297,8 @@ pub fn run() {
             commands::accounts::accounts_token_summary,
             commands::accounts::accounts_usage_overview,
             commands::accounts::account_probe,
+            // Claude 官方额度（中转站重构阶段 6 · U2）：只在点刷新图标时联网。
+            commands::accounts::claude_quota,
             commands::accounts::accounts_switch,
             commands::install::managed_status,
             commands::install::managed_probe_dir,

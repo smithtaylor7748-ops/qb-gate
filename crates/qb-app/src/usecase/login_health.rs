@@ -44,6 +44,11 @@ pub fn antigravity_ide_key(account_id: &str) -> String {
     format!("antigravity-ide:{account_id}")
 }
 
+/// 一个 Claude 账户槽位的键（中转站重构阶段 6，U2：Claude 的额度也联网了）。
+pub fn claude_key(label: &str) -> String {
+    format!("claude:{label}")
+}
+
 fn stamp(file: &Path) -> Stamp {
     let m = std::fs::metadata(file).ok()?;
     Some((m.modified().ok()?, m.len()))

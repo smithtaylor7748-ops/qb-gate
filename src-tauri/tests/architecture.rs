@@ -1269,3 +1269,43 @@ fn project_module_can_never_reach_account_switching() {
         }
     }
 }
+
+/// 联网额度（GPT / Gemini / 反重力，阶段 6 起加上 Claude 官方订阅额度 U2）**只显示**：
+/// 不按额度自动换号、不按额度改派单（CLAUDE.md「联网额度」，09-23 使用者选的设计）。
+/// 问额度的模块要是够得着切换的入口，「额度见底就换下一个号」就只差一行代码。
+#[test]
+fn quota_modules_never_drive_switching() {
+    let usecase = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri 一定有上级目录")
+        .join("crates/qb-app/src/usecase");
+    let forbidden = [
+        "account_ops",
+        "codex_accounts",
+        "accounts::switch",
+        "codex::switch",
+        "switch_with(",
+        "switch_in(",
+        "killswitch",
+        "gate_ops",
+        "turnstate_ops",
+        "station_ops",
+        "select_route",
+        "project_ops",
+    ];
+    for file in [
+        "claude_quota.rs",
+        "tavern_quota.rs",
+        "antigravity_quota.rs",
+        "login_health.rs",
+    ] {
+        let text = std::fs::read_to_string(usecase.join(file))
+            .unwrap_or_else(|e| panic!("读不到 {file}：{e}"));
+        for word in forbidden {
+            assert!(
+                !text.contains(word),
+                "{file} 提到了 {word} —— 额度只显示，问额度的模块不许够得着换号、派单的入口"
+            );
+        }
+    }
+}

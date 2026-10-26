@@ -72,6 +72,8 @@ fn main() {
         qb_gate_lib::usecase::token_summary::UsageOverview::export_all_to(&root)?;
         qb_gate_lib::usecase::token_summary::CodexUsageSummary::export_all_to(&root)?;
         qb_gate_lib::usecase::account_probe::ProbeResult::export_all_to(&root)?;
+        // Claude 官方额度（阶段 6 · U2）。
+        qb_gate_lib::usecase::claude_quota::ClaudeQuota::export_all_to(&root)?;
         qb_gate_lib::relay::presets::Preset::export_all_to(&root)?;
         qb_gate_lib::relay::WireApi::export_all_to(&root)?;
         qb_gate_lib::relay::AuthStyle::export_all_to(&root)?;

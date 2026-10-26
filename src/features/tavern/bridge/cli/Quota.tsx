@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../../../../lib/api";
+import { gptExtras } from "../../../../lib/gptExtras";
 import { Button, Gauge as QuotaBar } from "../../../../ui";
 import { errorText } from "../../card/common";
 import { resetLabel, type CliProvider } from "./meta";
@@ -25,6 +26,8 @@ interface Snapshot {
   meta: string | null;
   fetchedAt: string | null;
   rows: Row[];
+  /** GPT 那份附带的存下的重置、Codex Credits 余额（阶段 6 · U2），一样一句。 */
+  extras: string[];
 }
 
 async function read(
@@ -37,6 +40,7 @@ async function read(
     return {
       meta: q.account,
       fetchedAt: q.fetched_at || null,
+      extras: gptExtras(q),
       rows: q.windows.map((w, i) => ({
         key: `${w.label}#${i}`,
         name: w.label,
@@ -52,6 +56,7 @@ async function read(
   return {
     meta: q.tier ? `${q.tier}${q.project ? ` · ${q.project}` : ""}` : null,
     fetchedAt: q.fetched_at || null,
+    extras: [],
     rows: q.models.map((m, i) => ({
       // 汇总接口的桶没有 model_id / token_type（2026-09-25 起不再被合成一个），键要带上名字与序号。
       key: `${m.model_id}-${m.token_type}-${m.label}#${i}`,
@@ -155,6 +160,11 @@ export default function Quota({
             : "还没联网问过；登录 CLI 后点「刷新」问一次（只在你点的时候问）。"}
         </p>
       )}
+      {snap?.extras.map((line) => (
+        <small key={line} className="tavern-quota-meta">
+          {line}
+        </small>
+      ))}
       <small className="tavern-quota-meta">
         {snap?.fetchedAt ? `读取于 ${snap.fetchedAt}` : "尚未读取额度"}
       </small>

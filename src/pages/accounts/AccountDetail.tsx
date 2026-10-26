@@ -22,22 +22,24 @@
  * 这句话必须画在界面上，否则使用者会把这个数字当成「这个账户一共用了多少」。
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FolderOpen, KeyRound, LogIn, Stethoscope, Trash2 } from "lucide-react";
 
 import {
   api,
   type AccountProbe,
   type AccountProbeState,
+  type ClaudeQuota,
   type Slot,
+  type SlotUsage,
   type TokenUsage,
 } from "../../lib/api";
 import { R } from "../../lib/resources";
 import { res, useResource, useSession } from "../../lib/store";
 import { slotName } from "../../lib/slotName";
-import { Button, Modal, Pill, fmtDaysLeft } from "../../ui";
-import { daysTone } from "../../features/overview/SlotRow";
-import SlotUsageBars from "../../features/overview/SlotUsage";
+import { Button, Gauge, Modal, Pill, fmtDaysLeft } from "../../ui";
+import { daysTone, expiryText } from "../../features/overview/SlotRow";
+import SlotUsageBars, { fmtReset } from "../../features/overview/SlotUsage";
 import {
   DETAIL_KEY,
   requestDelete,
@@ -53,6 +55,21 @@ const RANGES = [
 ] as const;
 
 const NUM = new Intl.NumberFormat("zh-CN");
+
+/** 本地 `YYYY-MM-DD HH:MM`。官方接口那份是 UTC 的 RFC3339，原样摆出来没人看得懂。 */
+function fmtWhen(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** 额度读数下面那句：这份读数是怎么来的、什么时候才会变。 */
+const USAGE_NOTE: Record<SlotUsage["source"], string> = {
+  desktop: "桌面端约 15 分钟一条样本，没开时不写。",
+  cache: "Claude Code 会话里留下的快照，跑一次 Claude Code 才会更新。",
+  official: "点「向官方问一次」或总览那一行的刷新图标时问到的，不会自己再问。",
+};
 
 /** 一行「名字：值」。值读不出来时写「读不出来」，不留空。 */
 function Fact({
@@ -170,6 +187,132 @@ function ProbeRow({ label }: { label: string }) {
   );
 }
 
+/**
+ * 官方额度接口问到的全部窗口（中转站重构阶段 6 · U2）。
+ *
+ * 横条上只摆 5 小时 / 7 天两根；接口还给按模型的周额度（Fable / Opus / Sonnet）和超额用量，
+ * 这些只在这里摆。打开详情只读「最近一次」（`refresh: false`，后端绝不联网），
+ * 点按钮才带这个账户的令牌问一次 —— 跟「实测一次」一样，按钮上写明会联网。
+ */
+export function OfficialQuota({ slot: s }: { slot: Slot }) {
+  const accounts = useResource("accounts", R.accounts);
+  const [q, setQ] = useState<ClaudeQuota | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const label = s.label;
+
+  useEffect(() => {
+    let cancelled = false;
+    setQ(null);
+    setError(null);
+    api
+      .claudeQuota(label, false)
+      .then((v) => {
+        if (!cancelled) setQ(v);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [label]);
+
+  async function ask() {
+    setBusy(true);
+    setError(null);
+    try {
+      setQ(await api.claudeQuota(label, true));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+      // 问成了横条换成「官方接口」那份；被拒了那一行改说「登录已失效」。
+      await accounts.refresh().catch(() => undefined);
+    }
+  }
+
+  const never = !s.logged_in && !s.login_problem;
+  const now = Date.now();
+  const fetched = q ? new Date(q.fetched_at).getTime() : 0;
+  const extra = q?.extra?.enabled ? q.extra : null;
+  const money = (n: number | null) =>
+    n == null
+      ? "—"
+      : `${extra?.currency === "USD" ? "$" : ""}${n.toFixed(2)}${
+          extra?.currency && extra.currency !== "USD"
+            ? ` ${extra.currency}`
+            : ""
+        }`;
+
+  return (
+    <div className="mt-3" data-testid="claude-official-quota">
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <strong>官方接口</strong>
+        {q && <span className="notice">{fmtWhen(q.fetched_at)} 问的</span>}
+        <span className="ml-auto">
+          <Button
+            size="sm"
+            loading={busy}
+            disabled={never}
+            title={
+              never
+                ? "这个槽位还没登录过，没有令牌可用"
+                : "带这个账户在 Claude Code 里存的令牌向官方额度接口问一次（只读）"
+            }
+            onClick={() => void ask()}
+          >
+            向官方问一次
+          </Button>
+        </span>
+      </div>
+      {error && <p className="notice qb-tone-danger">{error}</p>}
+      {q ? (
+        <div className="slotusage-bars">
+          {q.windows.map((w) => {
+            const reset = w.resets_at ? new Date(w.resets_at).getTime() : NaN;
+            // 重置时刻夹在「问的时刻」与「现在」之间：这一格是重置之前的读数。
+            if (reset > fetched && reset <= now) {
+              return (
+                <Gauge
+                  key={w.key}
+                  name={w.label}
+                  used={null}
+                  note="已重置过，这份读数是重置之前的"
+                />
+              );
+            }
+            return (
+              <Gauge
+                key={w.key}
+                name={w.label}
+                used={w.used_percent}
+                extra={
+                  <span className="gauge-reset">
+                    ↻ {w.resets_at ? fmtReset(w.resets_at) : "未知"}
+                  </span>
+                }
+              />
+            );
+          })}
+        </div>
+      ) : (
+        !error && (
+          <p className="notice">
+            还没问过。打开详情不会联网；点「向官方问一次」才会带这个账户的令牌问官方（只读，一次只问这一个账户），
+            除了 5 小时 / 7 天，还有按模型的周额度和超额用量。
+          </p>
+        )
+      )}
+      {extra && (
+        <p className="notice mt-2">
+          超额用量：已用 {money(extra.used_credits)}
+          {extra.monthly_limit != null &&
+            ` / 月上限 ${money(extra.monthly_limit)}`}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Body({ slot: s, onClose }: { slot: Slot; onClose: () => void }) {
   const accounts = useResource("accounts", R.accounts);
 
@@ -180,8 +323,8 @@ function Body({ slot: s, onClose }: { slot: Slot; onClose: () => void }) {
         <Pill tone={s.active ? "accent" : "default"}>
           {s.active ? "当前账户" : "未使用"}
         </Pill>
-        <Pill tone={daysTone(s)}>
-          {s.logged_in ? fmtDaysLeft(s.cli_days_left) : "未登录"}
+        <Pill tone={daysTone(s)} title={s.login_problem ?? undefined}>
+          {expiryText(s)}
         </Pill>
         <span className="ml-auto flex flex-wrap gap-2">
           {!s.active && (
@@ -284,12 +427,16 @@ function Body({ slot: s, onClose }: { slot: Slot; onClose: () => void }) {
           <>
             <SlotUsageBars usage={s.usage} />
             <p className="notice mt-2">
-              测于 {s.usage.measured_at}。桌面端约 15 分钟一条样本，没开时不写。
+              测于 {fmtWhen(s.usage.measured_at)}。{USAGE_NOTE[s.usage.source]}
             </p>
           </>
         ) : (
-          <p className="notice">两个来源都没有这个槽位的读数。</p>
+          <p className="notice">本机两个来源都没有这个槽位的读数。</p>
         )}
+        {s.login_problem && (
+          <p className="notice qb-tone-danger">{s.login_problem}</p>
+        )}
+        <OfficialQuota slot={s} />
       </section>
 
       {/* -------------------------------------------------- token */}
