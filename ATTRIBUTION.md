@@ -278,7 +278,7 @@ function_call_output / reasoning、恢复命令 `claude --resume` / `codex resum
 nvm-windows、自定义 npm 前缀、全局 Scoop）照 `build_tool_search_paths` 认的那些地方。
 **跟它不一样**：版本只读文件（启动壳 → 包的 `package.json`），不对每一份跑 `--version`；命令行默认那份按合并后的 PATH 自己找，不起 `where.exe`；
 官方 PowerShell 脚本先下载、给人看全文与 SHA-256，确认后才跑那一份（cc-switch 是 `-EncodedCommand "irm … | iex"`），升级失败不自动接脚本；
-不搬 WSL；卸载只做 npm / pnpm / Volta（它的 `tool_uninstall.rs` 每个工具各一套，没搬）；Claude Code / Codex / Gemini CLI 不在这张卡里
+不搬 WSL；卸载只做 npm（含 nvm-windows 各版本 Node 下的）/ pnpm / Volta（它的 `tool_uninstall.rs` 每个工具各一套，没搬）；Claude Code / Codex / Gemini CLI 不在这张卡里
 （走软件页原来的托管安装与门禁）。
 
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：

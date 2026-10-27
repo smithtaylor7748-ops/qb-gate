@@ -176,7 +176,7 @@
 - **其他命令行工具**（软件页新卡）：OpenCode、Grok Build、OpenClaw、Hermes、Pi、MiniMax Code —— 装了几份、谁装的（npm / pnpm /
   Volta / nvm-windows / 官方安装器…）、什么版本、命令行用的是哪一份。看现状只读文件，不运行它们、不联网；「检查新版本」才问
   npm / GitHub / PyPI，新版要的 Node 本机不够就不给升级。用 npm 装、升级（交给装它的那个包管理器，写回同一处；认不出是谁装的就
-  不替你升，只告诉你怎么做）、卸载（npm / pnpm / Volta 装的那几份）。**官方 PowerShell 安装脚本（Grok Build、MiniMax Code、Hermes）
+  不替你升，只告诉你怎么做）、卸载（npm —— 包括 nvm-windows 各版本 Node 下的 —— / pnpm / Volta 装的那几份）。**官方 PowerShell 安装脚本（Grok Build、MiniMax Code、Hermes）
   先下载给你看全文和 SHA-256，你勾了「看过了」才运行那一份**，跑完删掉。这几个不归 IP 门禁管。
 - **别的 Node 管理器里的 Claude Code 也上锁了**：npm 包自带的那份 `claude.exe` 原来只认 `%APPDATA%\npm` 一处；
   装在 pnpm、Yarn、Bun、Volta、nvm-windows 的其他 Node 版本、自定义的 npm 全局前缀、`%ProgramFiles%\nodejs` 和全局 Scoop 里的
