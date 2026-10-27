@@ -60,6 +60,7 @@ fn main_window_commands<F: Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'stati
 }
 pub mod tray;
 pub mod update;
+pub mod window;
 
 // `crate::AppState` 在命令、托盘、启动三处出现几十次。
 // 搬进 `app` 之后原样再导出，调用点一个字不用改。
@@ -77,17 +78,15 @@ pub fn run() {
     logging::install();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
-            use tauri::Manager;
             // 面板开着时点了 `qbgate://` 链接：第二个实例被拦下，链接在它的参数里（阶段 5，导入链接）。
             commands::import_links::receive(app, &args);
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
-                let _ = w.unminimize();
-                let _ = w.set_focus();
-            }
+            // 开机自启收在托盘里、或者轻量模式把界面释放了的时候再双击快捷方式：叫出来（没有就重建）。
+            window::reveal(app, None);
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // 主窗口是藏着建的，页面第一次加载完才露面（阶段 7 · X7，见 `window` 的模块头）。
+        .on_page_load(window::on_page_load)
         // **关窗口 = 收进托盘，不是退出。**
         //
         // 退出会重锁全部副本（见下面 RunEvent::Exit 那段），而重锁挡住的是
@@ -100,10 +99,13 @@ pub fn run() {
         // 收进托盘之后看门狗还在跑、租约还在，门是有人看着的开 ——
         // 这跟「没人看着还敞着」是两码事，安全模型没有被放松。
         // 真要退出走托盘菜单的「退出 QB Gate」，那条路照旧重锁。
+        //
+        // 2026-10-27（阶段 7 · X7）：设置里开了「轻量模式」就不藏，让窗口真的关掉、WebView2 一起释放；
+        // 进程靠下面 `RunEvent::ExitRequested` 那一段留着。判断在 `window::keep_on_close`。
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // 托盘没建起来就照旧退出 —— 藏起一个叫不回来的窗口更糟。
-                if window.label() == "main" && tray::available() {
+                if window::keep_on_close(window.label(), tray::available()) {
                     api.prevent_close();
                     let _ = window.hide();
                     audit::write("面板收进托盘（门禁与看门狗继续运行）");
@@ -339,6 +341,9 @@ pub fn run() {
             commands::system::relay_presets,
             commands::system::settings_load,
             commands::system::settings_save,
+            // 开机自启（中转站重构阶段 7 · X7）：以注册表为准，不进设置文件。
+            commands::system::autostart_status,
+            commands::system::autostart_set,
             commands::backup::snapshot_list,
             commands::backup::snapshot_create,
             commands::backup::snapshot_restore,
@@ -477,6 +482,8 @@ pub fn run() {
                 if let Err(e) = tray::init(app.handle()) {
                     audit::write(&format!("托盘建立失败：{e}"));
                 }
+                // 启动恢复没过：开机自启也照常露面 —— 藏起来等于让使用者永远看不到要他处理的那件事。
+                window::start(app.handle(), false);
                 return Ok(());
             }
             #[cfg(windows)]
@@ -581,6 +588,10 @@ pub fn run() {
                             "面板启动：没能把中转站的路由设置 / 上次选中的线路装回去（这次要重新选）：{e}"
                         ));
                     }
+                    // 设置里开了「面板启动时拉起本机路由」（2026-10-27 使用者定的，默认关）才起。
+                    if settings::load().start_router_on_launch {
+                        commands::station::start_router_on_launch(&handle).await;
+                    }
                     // 智能调度是**落盘的承诺**：上次开着的，这次起来要接着跑。
                     // 不接回去的话，使用者重启一次面板，调度就悄悄停了 ——
                     // 而界面上那个开关还是「开」的（它读的是同一张表）。
@@ -619,11 +630,27 @@ pub fn run() {
             if let Err(e) = tray::init(app.handle()) {
                 audit::write(&format!("托盘建立失败（不影响面板使用）：{e}"));
             }
+            // 开机自启（阶段 7 · X7）带着 `--autostart` 起来：不露面，只留托盘。托盘没建起来就照常露面。
+            let silent = qb_platform::autostart::launched_by_autostart(std::env::args())
+                && tray::available();
+            window::start(app.handle(), silent);
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("启动 QB Gate 失败")
         .run(|_app, event| {
+            // 轻量模式（阶段 7 · X7）把最后一个窗口关掉时，Tauri 默认会退出整个程序。
+            // `code` 是 `None` 的只有这一种（「最后一个窗口关了」）；托盘的「退出」、一键更新走的是
+            // `app.exit(…)`，带着退出码，照常退。托盘没建起来就不拦 —— 那时候关窗口本来就该退出。
+            if let tauri::RunEvent::ExitRequested {
+                code: None, api, ..
+            } = &event
+            {
+                if tray::available() {
+                    api.prevent_exit();
+                    return;
+                }
+            }
             // **面板退出时把门关上。**
             //
             // 没有这一步的话：用户在租约期内关掉面板，claude.exe 上的

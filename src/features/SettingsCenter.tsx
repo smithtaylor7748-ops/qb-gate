@@ -125,6 +125,26 @@ function General() {
           ],
         ] as Toggle[]
       ).map(row)}
+      <h2 className="qb-subheading">后台运行</h2>
+      <p className="qb-muted">
+        门禁、看门狗、本机路由和智能调度都在面板进程里跑：关窗口只是收进托盘，托盘菜单的「退出
+        QB Gate」才真的停。
+      </p>
+      <AutostartRow />
+      {(
+        [
+          [
+            "lightweight_on_close",
+            "收进托盘时释放界面（轻量模式）",
+            "关窗口时把界面整个关掉、只留托盘，省下界面占的内存；再打开要重新加载一两秒，没保存的输入会丢。",
+          ],
+          [
+            "start_router_on_launch",
+            "面板启动时拉起本机路由",
+            "开机自启或重开面板后，走中转的桌面端和终端不用先去中转站页点「启动」；面板开着就一直占着 15721 端口（cc-switch 的本机代理默认也用它）。下次启动生效。",
+          ],
+        ] as Toggle[]
+      ).map(row)}
       <h2 className="qb-subheading">启动时对齐</h2>
       <p className="qb-muted">
         面板启动时把系统对齐到出口 IP 的归属地；已经一致就不做任何动作。
@@ -187,6 +207,50 @@ function General() {
         </ExternalLink>
       </div>
     </section>
+  );
+}
+/**
+ * 开机自启那一行（中转站重构阶段 7 · X7）。
+ *
+ * 勾不勾以注册表为准（`autostart_status` 的 `effective`：登记了、没被任务管理器禁用、指向这一份），
+ * 不在设置文件里另存 —— 使用者在任务管理器里关掉它，这里要跟着变成没勾。
+ */
+function AutostartRow() {
+  const status = useResource("autostart", R.autostart);
+  const action = useAction();
+  const s = status.data;
+  const note = !s
+    ? (status.error ?? "正在读取…")
+    : s.dev_build
+      ? "这是开发版，不登记开机自启（登记下去开机起的会是一份编译中间产物）。用装好的面板来开。"
+      : s.disabled_by_user
+        ? "已登记，但在任务管理器 / 设置 › 启动应用里被禁用了；在这里重新勾上会解除禁用。"
+        : s.registered && !s.points_here
+          ? `登记的是另一份 QB Gate：${s.command ?? "（读不出命令）"}。在这里勾上会改成这一份。`
+          : "登录 Windows 后自动打开面板并收在托盘里。写的是当前用户的启动项「QB Gate」，卸载面板时一起删。";
+  const warn = !!s && (s.disabled_by_user || (s.registered && !s.points_here));
+  return (
+    <label className="qb-setting-row">
+      <span>
+        <strong>开机自启</strong>
+        <small className={warn || status.error ? "notice--warn" : ""}>
+          {note}
+        </small>
+      </span>
+      <input
+        type="checkbox"
+        checked={!!s?.effective}
+        disabled={!s || s.dev_build || !!action.pending}
+        onChange={(e) => {
+          const on = e.target.checked;
+          void action.run(
+            "autostart",
+            () => api.autostartSet(on),
+            on ? "已登记开机自启" : "已取消开机自启",
+          );
+        }}
+      />
+    </label>
   );
 }
 /**

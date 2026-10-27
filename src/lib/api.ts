@@ -97,6 +97,7 @@ import type { Resolver } from "./generated/Resolver";
 import type { Risk } from "./generated/Risk";
 import type { SecretHit } from "./generated/SecretHit";
 import type { Settings } from "./generated/Settings";
+import type { AutostartStatus } from "./generated/AutostartStatus";
 import type { Slot } from "./generated/Slot";
 import type { SlotUsage } from "./generated/SlotUsage";
 import type { SnapshotEntry } from "./generated/SnapshotEntry";
@@ -221,6 +222,7 @@ export type {
   Risk,
   SecretHit,
   Settings,
+  AutostartStatus,
   Slot,
   SlotUsage,
   SnapshotEntry,
@@ -507,6 +509,11 @@ export const api = {
   ipv6Status: () => call<Ipv6Status>("ipv6_status"),
   ipv6Set: (disable: boolean) => call<Ipv6Status>("ipv6_set", { disable }),
   settingsSave: (next: Settings) => call<Settings>("settings_save", { next }),
+  // 开机自启（中转站重构阶段 7 · X7）：读写的是注册表里当前用户的启动项，不进设置文件。
+  // ⛔ `autostartSet` 只能由设置页那颗开关点出来 —— 别接到任何自动流程上。
+  autostartStatus: () => call<AutostartStatus>("autostart_status"),
+  autostartSet: (enabled: boolean) =>
+    call<AutostartStatus>("autostart_set", { enabled }),
 
   progressLoad: () => call<Progress>("progress_load"),
   progressSet: (id: string, state: StepState, risk: Risk, detail: string) =>

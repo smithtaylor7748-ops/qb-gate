@@ -167,6 +167,21 @@ pub struct Settings {
     ///
     /// 只经 `codex_locale_set` 改：`settings_save` 原样保留旧值（同 `update_skipped_version`）。
     pub gpt_ui_zh: bool,
+
+    /// 关窗口收进托盘时，把界面（WebView2）整个释放掉 —— cc-switch 的「轻量模式」
+    /// （2026-10-27，中转站重构阶段 7 · X7）。
+    ///
+    /// **默认 false**：释放之后再点托盘要重新加载一两秒，界面上没保存的输入（填到一半的弹窗）会丢 ——
+    /// 默认开就是「关个窗口把我刚填的东西弄没了」。门禁、看门狗、本机路由、智能调度都在后端，
+    /// 开不开它都照跑（`src-tauri/src/window.rs`）。
+    pub lightweight_on_close: bool,
+
+    /// 面板启动时（包括开机自启）把本机路由一起拉起来（2026-10-27，使用者定的：加开关、默认关）。
+    ///
+    /// **默认 false**，跟原来一样：路由只在中转站页点「启动」/ 开启识别时起。打开之后，重开面板或开机后
+    /// 配好第三方网关的桌面端、终端里的中转环境不用先去点一次「启动」；代价是面板开着就一直占着 15721
+    /// （cc-switch 的本机代理默认也用这个端口，两个同时开会撞）。
+    pub start_router_on_launch: bool,
 }
 
 /// `#[serde(default)]` 对 `bool` 给的是 `false`。要默认开的字段用这个 ——
@@ -193,6 +208,8 @@ impl Default for Settings {
             update_check_on_start: true,
             update_skipped_version: None,
             gpt_ui_zh: false,
+            lightweight_on_close: false,
+            start_router_on_launch: false,
         }
     }
 }
@@ -465,6 +482,25 @@ mod tests {
         assert!(s.update_skipped_version.is_none());
         let s: Settings = serde_json::from_str(r#"{"update_check_on_start":false}"#).unwrap();
         assert!(!s.update_check_on_start);
+    }
+
+    /// 阶段 7 的两个后台开关默认都是关的：升级上来的旧文件没有这两个键，
+    /// 关窗口还是「藏起来」、面板起来还是不碰 15721 —— 跟升级之前一模一样。
+    #[test]
+    fn the_background_switches_default_to_off() {
+        let d = Settings::default();
+        assert!(!d.lightweight_on_close);
+        assert!(!d.start_router_on_launch);
+        let s: Settings = serde_json::from_str(r#"{"codex_outside_gate":true}"#).unwrap();
+        assert!(!s.lightweight_on_close, "旧配置文件没有这个键，不能默成开");
+        assert!(
+            !s.start_router_on_launch,
+            "旧配置文件没有这个键，不能默成开"
+        );
+        let s: Settings =
+            serde_json::from_str(r#"{"lightweight_on_close":true,"start_router_on_launch":true}"#)
+                .unwrap();
+        assert!(s.lightweight_on_close && s.start_router_on_launch);
     }
 
     #[test]

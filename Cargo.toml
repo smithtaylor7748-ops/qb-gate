@@ -171,6 +171,11 @@ windows = { version = "0.58", features = [
   # 酒馆控制台（2026-09-29）：cmd 自己的报错（「'node' 不是内部或外部命令」）走 OEM 代码页，
   # 中文 Windows 上是 GBK，按 UTF-8 读就是一串替换字符。只用 MultiByteToWideChar，见 qb-platform 的 process.rs。
   "Win32_Globalization",
+  # 开机自启与环境变量清理（2026-10-27，中转站重构阶段 7）：直接调注册表 API，不起 reg.exe ——
+  # `reg add …\CurrentVersion\Run` 那一行命令本身就是杀软眼里的持久化特征。见 qb-platform 的 registry.rs。
+  "Win32_System_Registry",
+  # 改完用户环境变量广播一次 WM_SETTINGCHANGE（同上，只用 SendMessageTimeoutW）。
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 # profile 只认 workspace 根。留在成员 crate 里会被静默忽略 ——

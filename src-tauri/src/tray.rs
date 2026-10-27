@@ -24,8 +24,6 @@ use tauri::{
     AppHandle, Manager, Runtime,
 };
 
-use tauri::Emitter;
-
 pub const TRAY_ID: &str = "qbgate";
 
 /// 托盘图标到底建起来没有。
@@ -266,21 +264,16 @@ fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEvent) 
             });
         }
 
-        [ID_RELAY] => {
-            show_main(app);
-            let _ = app.emit(qb_contract::channels::NAVIGATE, "/relays");
-        }
+        // 窗口在就跳过去；被轻量模式释放了就带着这个地址重建（`window::reveal`）。
+        [ID_RELAY] => crate::window::reveal(app, Some("/relays")),
 
         _ => {}
     }
 }
 
+/// 开机自启收在托盘里时窗口还在（只是藏着）；轻量模式下窗口已经释放，要照配置重建 —— 都交给 `window::reveal`。
 fn show_main<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
-    }
+    crate::window::reveal(app, None);
 }
 
 #[cfg(test)]

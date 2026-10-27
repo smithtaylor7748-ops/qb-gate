@@ -20,6 +20,8 @@
 //! | [`readiness`] | 进程就绪态（启动恢复完成没、有没有被挡住） |
 //! | [`logging`] | `tracing` 装配与按天滚动 |
 //! | [`panic_hook`] | 崩溃现场落盘 |
+//! | [`registry`] | 读注册表、写 / 删当前用户这一侧的值、广播「环境变量改了」（2026-10-27） |
+//! | [`autostart`] | 开机自启登记在 `HKCU\…\Run` 的那一项（2026-10-27） |
 //!
 //! 判断归领域层。举个分界线：**「怎么上锁」在这里，「出口 IP 不合格所以要上锁」
 //! 在 `qb-gate`。** 混进来一条判断，这一层就会重新长成 `gate` 当年那个
@@ -39,6 +41,7 @@ pub use qb_foundation::{audit, error, paths, sink};
 
 #[cfg(windows)]
 pub mod acl;
+pub mod autostart;
 pub mod config_io;
 pub mod credentials;
 pub mod endpoint;
@@ -49,6 +52,7 @@ pub mod panic_hook;
 pub mod process;
 pub mod progress;
 pub mod readiness;
+pub mod registry;
 pub mod repository;
 pub mod secret;
 pub mod sessions;

@@ -781,6 +781,9 @@ const settings: Settings = {
   update_skipped_version: null,
   // 2026-09-25：GPT 界面语言的选择，照 Rust 的默认值关着（只经「汉化」弹窗改）。
   gpt_ui_zh: false,
+  // 2026-10-27（阶段 7 · X7）：两个后台开关照 Rust 的默认值关着。
+  lightweight_on_close: false,
+  start_router_on_launch: false,
 };
 
 const managed: ManagedStatus = {
@@ -4503,6 +4506,15 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     presets.filter((p) => !args?.target || p.target === args.target),
   snapshot_list: () => snapshots,
   settings_load: () => settings,
+  // 开机自启（阶段 7 · X7）：演示成「没登记」—— 演示页面不该假装改了谁的注册表。
+  autostart_status: () => ({
+    registered: false,
+    disabled_by_user: false,
+    command: null,
+    points_here: false,
+    effective: false,
+    dev_build: false,
+  }),
   progress_load: () => structuredClone(progress),
   progress_set: (args) => {
     const id = String(args?.id);

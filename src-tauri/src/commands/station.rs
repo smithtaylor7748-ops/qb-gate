@@ -271,6 +271,22 @@ async fn ensure_router(app: &tauri::AppHandle, client: Client) -> Result<RouterS
     Ok(status_of(&state, client))
 }
 
+/// 面板启动时拉起本机路由 —— 设置里「面板启动时拉起本机路由」开着才调（2026-10-27 使用者定的：加开关、默认关）。
+///
+/// 只起监听，不起任何客户端；起不来只记一笔审计、不挡启动 —— 多半是 15721 被别的程序占着
+/// （cc-switch 的本机代理默认也用这个端口）。没选过线路的软件照样回「还没选上游」，跟点「启动」之前一样。
+pub async fn start_router_on_launch(app: &tauri::AppHandle) {
+    match ensure_router(app, Client::ClaudeCode).await {
+        Ok(s) => crate::audit::write(&format!(
+            "面板启动：已拉起本机路由（{}）",
+            s.base_url.as_deref().unwrap_or("地址未知")
+        )),
+        Err(e) => crate::audit::write(&format!(
+            "面板启动：设置里开着「启动时拉起本机路由」，但没起来（端口可能被别的程序占着）：{e}"
+        )),
+    }
+}
+
 /// 路由起着的话停掉再按现在的网络设置起一次（换了监听范围 / 换了口令之后）。没起着就什么都不做。
 ///
 /// 停掉时在飞的请求照样跑完（`RouterHandle::stop`）；新的监听要等旧的那个真的放开端口，

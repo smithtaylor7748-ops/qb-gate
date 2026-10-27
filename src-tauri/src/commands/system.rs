@@ -170,7 +170,47 @@ pub async fn settings_save(mut next: settings::Settings) -> Result<settings::Set
             ));
         }
     }
+    // 阶段 7 · X7 的两个后台开关：只记一笔，生效时机各自不同（轻量模式下一次关窗口、拉起路由下一次启动）。
+    if before.lightweight_on_close != next.lightweight_on_close {
+        audit::write(if next.lightweight_on_close {
+            "设置：关窗口时释放界面（轻量模式）已打开"
+        } else {
+            "设置：关窗口时释放界面（轻量模式）已关闭"
+        });
+    }
+    if before.start_router_on_launch != next.start_router_on_launch {
+        audit::write(if next.start_router_on_launch {
+            "设置：面板启动时拉起本机路由 已打开（下次启动生效）"
+        } else {
+            "设置：面板启动时拉起本机路由 已关闭"
+        });
+    }
     Ok(settings::load())
+}
+
+// ------------------------------------------------------------------ 开机自启
+
+/// 开机自启现在的样子（读注册表，不联网、不改东西）。
+#[tauri::command]
+pub fn autostart_status() -> Result<qb_platform::autostart::AutostartStatus> {
+    qb_platform::autostart::status()
+}
+
+/// 登记 / 取消开机自启（阶段 7 · X7）。**只能由设置页那颗开关点出来** —— 别接到任何启动流程上：
+/// 程序自己给自己加开机启动项，是杀软眼里最典型的持久化行为。
+#[tauri::command]
+pub fn autostart_set(enabled: bool) -> Result<qb_platform::autostart::AutostartStatus> {
+    let s = if enabled {
+        qb_platform::autostart::enable()?
+    } else {
+        qb_platform::autostart::disable()?
+    };
+    audit::write(if enabled {
+        "设置：开机自启已登记（当前用户的启动项「QB Gate」，启动后收在托盘里）"
+    } else {
+        "设置：开机自启已取消"
+    });
+    Ok(s)
 }
 
 // 时区：没有命令了（2026-09-27）。切换由「设置 › 启动时对齐」在启动时做

@@ -1471,6 +1471,33 @@ Claude Code 和 Codex 留在本机的会话记录：列表（按来源筛、搜�
 - 许可：`rquickjs-sys` / `rquickjs-core` 包里顶层没有许可文件，QuickJS 自己的 MIT 在 `quickjs/LICENSE` —— 补在
   `docs/license-supplements.json`，安装包的 `THIRD_PARTY_NOTICES.txt` 才带得上。升级这个依赖要连这两条一起改。
 
+## 开机自启、轻量模式、启动时拉起本机路由（2026-10-27，中转站重构阶段 7 · X7，照 cc-switch 的 `auto_launch.rs` / `lightweight.rs`）
+
+设置页「常规 › 后台运行」三行。面板的定位不变 —— 它是个面板，不是后台服务：门禁、看门狗、本机路由、智能调度都活在面板进程里，
+**托盘的「退出 QB Gate」才真的停**（「智能调度是落盘的承诺，而且面板关了它就停」那一节照旧成立）。
+
+- **开机自启**（`qb_platform::autostart`）：写 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `QB Gate`，
+  内容 `"<qb-gate.exe>" --autostart`。带 `--autostart` 起来、启动恢复也过了，就不露面、只留托盘（`src-tauri/src/window.rs`）；
+  启动恢复没过照常露面（藏起来等于让使用者永远看不到要他处理的事）。
+  - ⛔ **值名必须等于 `tauri.conf.json` 的 `productName`**：Tauri 的 NSIS 卸载程序（升级时不跑）只删 `Run` 下名叫产品名的那一项
+    （2026-10-27 从 CLI 2.11.4 内嵌模板核过）。`src-tauri/tests/bundle.rs` 钉着；改产品名要连这里一起改，已经登记的那一项还得另想办法迁。
+  - ⛔ **只能由设置页那颗开关点出来**（`autostart_set`），别接到任何启动流程、导入链接、项目上 —— 程序自己给自己加开机启动项，
+    是杀软眼里最典型的持久化行为。写注册表走 `qb_platform::registry` 直接调 API，**不起 `reg.exe`**（`reg add …\Run` 这一行命令本身就是特征）。
+  - 状态以注册表为准、不进 `settings.json`：任务管理器 / 设置 › 启动应用里点「禁用」时 Windows 不删 `Run`，而是在
+    `…\Explorer\StartupApproved\Run` 记一条同名的二进制值（首字节奇数 = 禁用），面板读出来照实显示；在面板里重新打开会删掉那条禁用记录。
+  - 开发版（`debug_assertions`）拒绝登记：登记下去开机起的是 `target\debug` 里的中间产物，连着开发分支的库结构（坑 7.106 那一类）。
+- **主窗口藏着建**（`tauri.conf.json` 的 `visible: false`）：页面第一次加载完（`on_page_load`）才露面，8 秒还没加载完也照样露面 ——
+  托盘没建起来的机器上，永远不露面的窗口就是一个叫不回来的进程。顺带没了冷启动那一帧白底。
+- **轻量模式**（设置 `lightweight_on_close`，默认关）：关窗口时不藏，让它真的关掉、WebView2 一起释放；最后一个窗口没了 Tauri 默认会退出，
+  `RunEvent::ExitRequested` 在托盘可用时只拦 `code == None` 那一种（「最后一个窗口关了」）—— 托盘「退出」和一键更新走 `app.exit(0)`，照常退。
+  托盘、第二次启动（单实例回调）、`qbgate://` 链接都经 `window::reveal` 叫窗口：在就露面，不在就照配置重建（丢进异步任务 ——
+  同步回调里建窗口在 Windows 上会死锁，wry#583）。要带着去某一页（托盘「中转站」）就在重建时用初始化脚本先设好地址栏的 `#`。
+  默认关的理由：释放之后再打开要重新加载，填到一半的弹窗会丢。托盘没建起来就不释放（同「关窗口 = 收进托盘」的理由）。
+  `window` 不许回头调 `tray`（`tray` 要调 `window::reveal`），托盘在不在由调用方传进 `keep_on_close`。
+- **面板启动时拉起本机路由**（设置 `start_router_on_launch`，**默认关**，2026-10-27 使用者定的：「加开关，默认关」）：开着时，`setup` 里把路由设置
+  与上次选中的线装回去之后接着起监听（`commands::station::start_router_on_launch` → `ensure_router`），跟点「启动」时起的是同一个；
+  只起监听、不起任何客户端；起不来（15721 被占着，比如 cc-switch 的本机代理）只记审计、不挡启动。阶段 1 第 8 步留下的那一问就此有了答案。
+
 ---
 
 ### 桌面端走的是它自己的「第三方网关」模式，不是环境变量里的 base_url

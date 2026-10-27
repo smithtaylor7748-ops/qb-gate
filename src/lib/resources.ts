@@ -45,6 +45,8 @@ export const R = {
   accounts: res(() => api.accountsList(), { pollMs: 30_000 }),
   progress: res(() => api.progressLoad()),
   settings: res(() => api.settingsLoad()),
+  /** 开机自启（阶段 7 · X7）。读一次注册表，便宜；使用者可能在任务管理器里改它，所以每次打开设置页重读。 */
+  autostart: res(() => api.autostartStatus()),
   snapshots: res(() => api.snapshotList()),
 
   plugins: res(() => api.pluginList(), { pollMs: 20_000 }),
