@@ -34,6 +34,8 @@ pub mod probe;
 pub mod session_manager;
 pub mod station;
 pub mod system;
+/// 软件页「其他命令行工具」（中转站重构阶段 7 · X3）。
+pub mod tool_manager;
 pub mod workspace;
 
 pub mod antigravity;

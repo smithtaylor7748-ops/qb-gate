@@ -84,6 +84,9 @@ fn main() {
         qb_gate_lib::sysenv::envvars::EnvRemoval::export_all_to(&root)?;
         qb_gate_lib::sysenv::envvars::EnvBackupInfo::export_all_to(&root)?;
         qb_gate_lib::sysenv::envvars::EnvRestoreReport::export_all_to(&root)?;
+        qb_gate_lib::usecase::cli_tools_ops::CliToolsReport::export_all_to(&root)?;
+        qb_gate_lib::usecase::cli_tools_ops::CliToolLatest::export_all_to(&root)?;
+        qb_gate_lib::usecase::cli_tools_ops::Fetched::export_all_to(&root)?;
         qb_gate_lib::progress::StepRecord::export_all_to(&root)?;
         qb_gate_lib::progress::Progress::export_all_to(&root)?;
         qb_gate_lib::progress::StepState::export_all_to(&root)?;

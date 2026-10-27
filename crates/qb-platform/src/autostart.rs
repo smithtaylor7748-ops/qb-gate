@@ -1,3 +1,4 @@
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
 //! 开机自启（2026-10-27，中转站重构阶段 7 · X7，照 cc-switch v4.0.14 的 `auto_launch.rs`）。
 //!
 //! 登记在当前用户的 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，值名 `QB Gate`，

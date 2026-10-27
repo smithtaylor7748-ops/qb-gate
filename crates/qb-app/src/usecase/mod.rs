@@ -11,6 +11,8 @@ pub mod account_probe;
 pub mod claude_code_ops;
 /// Claude 官方订阅额度（中转站重构阶段 6 · U2）：点刷新图标时问一次 `/api/oauth/usage`，只显示。
 pub mod claude_quota;
+/// 其余六个命令行工具（中转站重构阶段 7 · X3）：现状只读文件；最新版本点了才问；官方脚本先给人看、确认后才跑。
+pub mod cli_tools_ops;
 /// Codex 会话归桶（中转站重构阶段 4）：先备份、逐个桶勾选、按账本还原。
 pub mod codex_history_ops;
 /// 把线路写进共存型工具（中转站重构阶段 4，写真 Key）。

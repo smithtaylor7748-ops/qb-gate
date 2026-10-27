@@ -1490,6 +1490,34 @@ Claude Code 和 Codex 留在本机的会话记录：列表（按来源筛、搜�
   新开的终端照样带着刚删掉的变量。已经开着的程序（包括面板自己）不受影响，界面上写明。广播最多等 5 秒，所以命令都是 async + `spawn_blocking`。
 - 单测经 `UserEnv` 用内存里的假注册表、临时目录；审计只写在命令层（坑 7.107）。
 
+## 其他命令行工具：看现状只读文件，官方脚本先给人看（2026-10-27，中转站重构阶段 7 · X3，照 cc-switch 的工具管理）
+
+软件页「其他命令行工具」卡（`features/CliToolsCard.tsx`）：OpenCode、Grok Build、OpenClaw、Hermes、Pi、MiniMax Code。
+位置与「交给谁做」在 `qb_install::install::cli_tools`（版本号那一半在 `cli_tools_version`），编排在 `usecase::cli_tools_ops`，
+命令在 `commands::tool_manager`。Claude Code / Codex / Gemini CLI **不在这里**：它们走上面各自的卡（托管安装、门禁上锁、清外部副本）。
+这六个不归门禁管、不进托管目录。
+
+- **看现状只读文件**（`cli_tools_status`，打开软件页就读）：按 cc-switch `build_tool_search_paths` 的 Windows 那一支找入口
+  （官方安装器的落点在前，npm / pnpm / Volta / nvm-windows / Scoop… 在后，最后是合并后的 PATH —— 进程 PATH + 注册表里用户与整机的 `Path`，
+  `%VAR%` 展开；一键更新后被拉起的面板进程 PATH 里可能没有用户那一半）。版本从 `.cmd` 启动壳顺着找到包目录读 `package.json`；
+  **不运行它们去问 `--version`**（cc-switch 会），读不出就说读不出。命令行默认用哪份按合并后的 PATH 自己找（`.exe` 先于 `.cmd`），不起 `where.exe`。
+- **联网只在点了之后**：「检查新版本」问 npm 的 dist-tags 专用地址（不拉整份 packument）、GitHub 最新发布、PyPI（Hermes 的 PyPI 停更了，
+  比本机旧的不显示）；同一次顺带问新版本的 `engines.node`，本机 Node 不够就不给「升级」按钮（cc-switch 的 `tool_node_requirement`，范围判断照搬）。
+- **升级锚定到命令行用的那一份**（`update_plan`）：npm / nvm-windows → 同一层的 `npm.cmd`（默认 `%APPDATA%\npm` 前缀用 PATH 上那个）；
+  pnpm / Volta → 同一层的 pnpm / volta；Grok 官方安装器 → `grok update`；MiniMax 官方安装器 → 重跑它的脚本、`MCODE_INSTALL_DIR` 指回同一处
+  （`mcode update` 在没有终端时什么都不装）；Hermes → `hermes update`；OpenCode 自己的安装器 → 只说「在终端里跑 opencode upgrade」
+  （它在 Windows 上可能弹交互提示，静默跑会挂住）。**认不出是谁装的就不替人升**：裸跑 npm 只会在别处另装一份，命令行用的版本不动。
+  好几份又分不清默认那一份，也不升。卸载只做 npm / nvm-windows / pnpm / Volta 装的那几类。
+- 起进程一律经 `winget::run_streaming_env`（每个参数一个 argv、隐藏窗口、等它退出、输出进进度条 `cli-tool`）；`.cmd` 直接当程序交给标准库
+  （它替批处理套 `cmd.exe`、按批处理的规矩转义）。装完 / 升完 / 卸完**回读盘核对**，不看退出码。锁只在命令层拿（坑 7.51）。
+- ⛔ **官方 PowerShell 安装脚本（Grok Build、MiniMax Code、Hermes）先下载给人看，确认之后才跑**：`cli_tools_script_fetch` 只连这个工具登记的
+  那一个地址（https，跳转到非 https 拒绝，大于 1 MiB 拒绝），存进面板数据目录 `tool-installers\`（补 UTF-8 BOM，坑 7.6）、算 SHA-256、
+  全文交给界面；`cli_tools_script_run` 只认那一份的编号**和**哈希，盘上的内容被改过也拒绝；`powershell -NoProfile -NonInteractive
+-ExecutionPolicy Bypass -File`（`-NonInteractive`：脚本要是停下来问东西就报错，不在看不见的窗口里永远等），跑完删掉。
+  cc-switch 是 `powershell -EncodedCommand "irm … | iex"` —— 拿到什么跑什么，而且是 base64（「杀软会把这个面板当木马」第 1 条）。
+  ⛔ **两步之间必须有人看过、勾过「看过了」**，别把它们串成一条命令；升级失败也不自动接脚本（cc-switch 的 `|| <官方脚本>` 没搬）。
+- WSL 里的工具不管（门禁锁不到 WSL 里的东西，阶段 7 的计划写明）。
+
 ## 开机自启、轻量模式、启动时拉起本机路由（2026-10-27，中转站重构阶段 7 · X7，照 cc-switch 的 `auto_launch.rs` / `lightweight.rs`）
 
 设置页「常规 › 后台运行」三行。面板的定位不变 —— 它是个面板，不是后台服务：门禁、看门狗、本机路由、智能调度都活在面板进程里，

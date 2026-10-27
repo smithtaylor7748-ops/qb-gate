@@ -44,7 +44,8 @@ export type TaskName =
   | "install-gemini-cli"
   | "self-update"
   | "claude-zh"
-  | "install-sillytavern";
+  | "install-sillytavern"
+  | "cli-tool";
 
 export interface TaskState {
   running: boolean;

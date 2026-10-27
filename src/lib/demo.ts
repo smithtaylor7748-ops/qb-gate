@@ -10,6 +10,7 @@ import {
 } from "./demoUsage";
 import { addDays, today as todayYmd, ymd } from "./dates";
 import type { BrowserReport } from "./generated/BrowserReport";
+import type { CliToolSource } from "./generated/CliToolSource";
 import type { AntigravityStatus } from "./generated/AntigravityStatus";
 import type { AntigravityAccount } from "./generated/AntigravityAccount";
 import type { AntigravityIdentity } from "./generated/AntigravityIdentity";
@@ -4435,6 +4436,20 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   probe_dns: () => dns,
   purity_criteria: () => criteria,
   detect_software: () => software,
+  // 其他命令行工具（阶段 7 · X3）：OpenClaw npm 装了一份、Pi 装了两份（版本对不上）、Grok 是官方安装器装的、
+  // 其余没装。路径都是虚构的演示用户。装 / 升 / 卸 / 跑脚本没有演示（只在装好的面板里可用）。
+  cli_tools_status: () => demoCliTools(),
+  cli_tools_latest: (args) => ({
+    tool: args?.tool ?? null,
+    latest: args?.tool === "openclaw" ? "2026.10.2" : "1.4.0",
+    from: "npm",
+    outdated: args?.tool === "openclaw",
+    node_required:
+      args?.tool === "openclaw" ? ">=24.16.0 <25 || >=26.1.0" : null,
+    node_current: "24.11.1",
+    node_ok: args?.tool === "openclaw" ? false : null,
+    problems: [],
+  }),
   install_probe: () => installProbe,
   claude_traces: () => traces,
   browser_audit: () => browserAudit,
@@ -5091,6 +5106,126 @@ function agOnlineQuota(paid: boolean) {
     windows_note: null,
     models: [],
     fetched_at: demoMinute(now),
+  };
+}
+
+/** 软件页「其他命令行工具」的演示数据（阶段 7 · X3）。 */
+function demoCliTools() {
+  const npmDir = "C:\\Users\\demo\\AppData\\Roaming\\npm";
+  const npmCmd = "C:\\Program Files\\nodejs\\npm.cmd";
+  const run = (shown: string) => ({ kind: "run" as const, shown });
+  const install = (pkg: string | null) =>
+    pkg
+      ? run(`& "${npmCmd}" i -g ${pkg}@latest`)
+      : {
+          kind: "manual" as const,
+          shown: "Hermes 没有 npm 包，用官方安装脚本装。",
+        };
+  const row = (
+    tool: string,
+    label: string,
+    command: string,
+    pkg: string | null,
+    script: string | null,
+    installs: Array<{
+      path: string;
+      source: CliToolSource;
+      version: string | null;
+      default: boolean;
+    }>,
+    update: { kind: "run" | "script" | "manual"; shown: string } | null,
+  ) => ({
+    tool,
+    label,
+    command,
+    installs: installs.map((i) => ({ ...i, package_dir: null })),
+    conflict:
+      installs.length > 1 &&
+      installs.some((i) => i.version !== installs[0].version),
+    npm_package: pkg,
+    script_url: script,
+    install: install(pkg),
+    update,
+  });
+  return {
+    npm: npmCmd,
+    tools: [
+      row("opencode", "OpenCode", "opencode", "opencode-ai", null, [], null),
+      row(
+        "grok-build",
+        "Grok Build",
+        "grok",
+        "@xai-official/grok",
+        "https://x.ai/cli/install.ps1",
+        [
+          {
+            path: "C:\\Users\\demo\\.grok\\bin\\grok.exe",
+            source: "installer",
+            version: null,
+            default: true,
+          },
+        ],
+        run("C:\\Users\\demo\\.grok\\bin\\grok.exe update"),
+      ),
+      row(
+        "openclaw",
+        "OpenClaw",
+        "openclaw",
+        "openclaw",
+        null,
+        [
+          {
+            path: `${npmDir}\\openclaw.cmd`,
+            source: "npm",
+            version: "2026.9.1",
+            default: true,
+          },
+        ],
+        run(`& "${npmCmd}" i -g openclaw@latest`),
+      ),
+      row(
+        "hermes",
+        "Hermes",
+        "hermes",
+        null,
+        "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1",
+        [],
+        null,
+      ),
+      row(
+        "pi",
+        "Pi",
+        "pi",
+        "@earendil-works/pi-coding-agent",
+        null,
+        [
+          {
+            path: "C:\\Users\\demo\\AppData\\Local\\pnpm\\pi.cmd",
+            source: "pnpm",
+            version: "1.3.2",
+            default: true,
+          },
+          {
+            path: `${npmDir}\\pi.cmd`,
+            source: "npm",
+            version: "1.2.0",
+            default: false,
+          },
+        ],
+        run(
+          "C:\\Users\\demo\\AppData\\Local\\pnpm\\pnpm.cmd add -g @earendil-works/pi-coding-agent@latest",
+        ),
+      ),
+      row(
+        "minimax-code",
+        "MiniMax Code",
+        "mcode",
+        "@minimax-ai/code",
+        "https://filecdn.minimax.chat/public/install.ps1",
+        [],
+        null,
+      ),
+    ],
   };
 }
 

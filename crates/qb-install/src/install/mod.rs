@@ -1,5 +1,8 @@
 pub mod browser_audit;
 pub mod chrome;
+/// 其余六个命令行工具（中转站重构阶段 7 · X3）。
+pub mod cli_tools;
+pub mod cli_tools_version;
 pub mod detect;
 pub mod inventory;
 pub mod managed;

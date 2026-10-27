@@ -28,6 +28,8 @@ export const R = {
   hook: res(() => api.hookStatus()),
 
   software: res(() => api.detectSoftware()),
+  /** 其他六个命令行工具装在哪、什么版本（阶段 7 · X3）。只读文件，不起程序、不联网 —— 打开软件页读一次。 */
+  cliTools: res(() => api.cliToolsStatus()),
   /**
    * 账户槽位。**要轮询** —— 用量读数是官方客户端自己往本机写的文件，
    * 桌面端约 15 分钟落一条样本，而这条资源原来没有 `pollMs` 也没有

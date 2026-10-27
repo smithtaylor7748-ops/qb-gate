@@ -43,6 +43,8 @@ pub const TASK_SELF_UPDATE: &str = "self-update";
 pub const TASK_CLAUDE_ZH: &str = "claude-zh";
 /// 软件页托管 SillyTavern（2026-09-29）：下载安装与更新共用一条进度，一次只做一件。
 pub const TASK_INSTALL_SILLYTAVERN: &str = "install-sillytavern";
+/// 软件页「其他命令行工具」（中转站重构阶段 7 · X3）：装 / 升 / 卸 / 跑官方脚本共用一条进度，一次只做一件。
+pub const TASK_CLI_TOOL: &str = "cli-tool";
 
 /// 上面全部任务名。**加常量就要加进这里**，否则核对测试抓不到。
 pub const ALL_TASKS: &[&str] = &[
@@ -65,6 +67,7 @@ pub const ALL_TASKS: &[&str] = &[
     TASK_SELF_UPDATE,
     TASK_CLAUDE_ZH,
     TASK_INSTALL_SILLYTAVERN,
+    TASK_CLI_TOOL,
 ];
 
 #[derive(Debug, Clone, Serialize)]

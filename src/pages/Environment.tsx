@@ -117,6 +117,7 @@ import {
 import { Col, TaskBlock } from "./softwareParts";
 import SillyTavernCard from "../features/tavern/SillyTavernCard";
 import BridgeSection from "../features/tavern/bridge/BridgeSection";
+import CliToolsCard from "../features/CliToolsCard";
 
 const CHROME_PAGE = "https://www.google.com/chrome/";
 const CODEX_STORE_PAGE = "https://apps.microsoft.com/detail/9plm9xgg6vks";
@@ -1267,6 +1268,11 @@ export default function Environment() {
         {/* 酒馆的 Gemini 桥（面板内置，每条请求起一次它的无交互模式）：2026-09-29 第三轮从账户页的弹窗搬来。 */}
         <BridgeSection provider="gemini" />
       </Card>
+
+      {/* ------------------------- 其他命令行工具（2026-10-27，中转站重构阶段 7 · X3） */}
+      {/* OpenCode / Grok Build / OpenClaw / Hermes / Pi / MiniMax Code：只读文件看现状，点了才联网，
+          官方脚本先给人看过才跑。不归门禁管，所以不跟上面那几张卡挤在一起。 */}
+      <CliToolsCard />
 
       {/* ---------------------------------------- SillyTavern（酒馆，2026-09-29） */}
       {/* 酒馆从扩展中心搬过来、变成面板的内置功能。第三轮对调之后这张卡只管「软件」：

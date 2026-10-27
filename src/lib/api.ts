@@ -29,6 +29,15 @@ import type { CheckItem } from "./generated/CheckItem";
 import type { CheckState } from "./generated/CheckState";
 import type { Checkup } from "./generated/Checkup";
 import type { ClaudeInstall } from "./generated/ClaudeInstall";
+import type { CliInstall } from "./generated/CliInstall";
+import type { CliScriptPurpose } from "./generated/CliScriptPurpose";
+import type { CliStep } from "./generated/CliStep";
+import type { CliTool } from "./generated/CliTool";
+import type { CliToolLatest } from "./generated/CliToolLatest";
+import type { CliToolScript } from "./generated/CliToolScript";
+import type { CliToolSource } from "./generated/CliToolSource";
+import type { CliToolStatus } from "./generated/CliToolStatus";
+import type { CliToolsReport } from "./generated/CliToolsReport";
 import type { CleanupReport } from "./generated/CleanupReport";
 import type { CreateOutcome } from "./generated/CreateOutcome";
 import type { DeleteOutcome } from "./generated/DeleteOutcome";
@@ -172,6 +181,15 @@ export type {
   CheckState,
   Checkup,
   ClaudeInstall,
+  CliInstall,
+  CliScriptPurpose,
+  CliStep,
+  CliTool,
+  CliToolLatest,
+  CliToolScript,
+  CliToolSource,
+  CliToolStatus,
+  CliToolsReport,
   CleanupReport,
   CreateOutcome,
   DeleteOutcome,
@@ -342,6 +360,21 @@ export const api = {
 
   // 环境
   detectSoftware: () => call<SoftwareReport>("detect_software"),
+
+  // 其他命令行工具（中转站重构阶段 7 · X3）。`cliToolsStatus` 只读文件；`cliToolsLatest` / `cliToolsScriptFetch`
+  // 会联网，只在点了之后调。⛔ `cliToolsScriptRun` 只能跟在使用者看过脚本、点了确认之后。
+  cliToolsStatus: () => call<CliToolsReport>("cli_tools_status"),
+  cliToolsLatest: (tool: CliTool) =>
+    call<CliToolLatest>("cli_tools_latest", { tool }),
+  cliToolsInstall: (tool: CliTool) =>
+    call<string>("cli_tools_install", { tool }),
+  cliToolsUpdate: (tool: CliTool) => call<string>("cli_tools_update", { tool }),
+  cliToolsUninstall: (tool: CliTool, path: string) =>
+    call<string>("cli_tools_uninstall", { tool, path }),
+  cliToolsScriptFetch: (tool: CliTool, purpose: CliScriptPurpose) =>
+    call<CliToolScript>("cli_tools_script_fetch", { tool, purpose }),
+  cliToolsScriptRun: (id: string, sha256: string) =>
+    call<string>("cli_tools_script_run", { id, sha256 }),
 
   /**
    * 安装走 winget 优先 + 官方安装器兜底。
