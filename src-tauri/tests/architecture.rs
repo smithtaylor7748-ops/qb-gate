@@ -425,6 +425,8 @@ const LAYERS: &[(&str, u8)] = &[
     ("qb-sysenv", 3),
     // 本机路由的纯逻辑（2026-10-17，搬 cc-switch）：错误分类、整流器、模型映射、用量解析。
     ("qb-proxy", 3),
+    // 用量脚本的沙箱（2026-10-26，阶段 6 · U4）：QuickJS，只算不联网，不认识任何别的 crate。
+    ("qb-script", 3),
     ("qb-app", 4),
     ("qb-gate", 5), // src-tauri 这个包就叫 qb-gate（产出 qb-gate.exe）
 ];

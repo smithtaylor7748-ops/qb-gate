@@ -1158,6 +1158,8 @@ function StationBoard({
                   key={s.lines[0].id}
                   routeId={s.lines[0].id}
                   group={s.lines[0].group}
+                  stationId={s.id}
+                  siteName={siteName(s.id)}
                 />
               </div>
               {s.lines.map((r) => (

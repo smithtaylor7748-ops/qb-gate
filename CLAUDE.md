@@ -1452,6 +1452,24 @@ Claude Code 和 Codex 留在本机的会话记录：列表（按来源筛、搜�
   旁边写明：官方账户的要门禁放行才起得来，中转环境的要本机路由开着，都要装了对应的命令行。
 - 界面一段最多 6000 字；导出 Markdown 时只截工具调用、工具输出和思考，使用者和助手说的话整段导出。
 
+## 用量脚本：给某个站点写一段 JS 问余额（2026-10-26，中转站重构阶段 6 · U4，照 cc-switch 的 `usage_script.rs`）
+
+站点卡表头那一格的「脚本」打开编辑器（`SiteUsageScript.tsx`）：一段求值成 `({ request, extractor })` 的 JS，面板发 `request`、
+把回复交给 `extractor`，它返回 `{ remaining, total?, used?, unit?, planName?, isValid?, invalidMessage? }`（或一组）。开着的话那一格就用它
+（`site_quota_ops` **脚本优先**于内置认得的那几家），节奏跟 U3 一样（打开页面问一次、5 分钟内复用、点刷新再问）；能「试跑」而不存。
+变量只有三个：`{{apiKey}}`（这条线路的 Key）、`{{baseUrl}}`、`{{origin}}`。存在库里 `site-usage-script:<站点 id>`。
+
+- **沙箱是独立的小 crate `qb-script`**（L3，`rquickjs` =0.8.1，跟 cc-switch 同一个版本，QuickJS 的 C 源码用本机 MSVC 编进来）：
+  只算 —— 不往里注入任何宿主函数，没有 `fetch` / 文件 / `require`；内存 16 MiB、栈 256 KiB、5 秒（解释器每轮看钟，到点中断）；
+  每一步新建运行时、用完即丢。`a_runaway_script_is_stopped_and_cannot_hog_memory`、`the_sandbox_has_no_way_out` 钉着。
+- ⛔ **请求地址必须跟站点同源（协议 + 主机 + 端口）而且是 https，没有例外**（本机回环地址的站点允许 http）。cc-switch 的
+  「自定义模板」会跳过同源检查 —— 那样一段脚本就能把这个站点的 Key 发到任何地方。不跟随跳转、回复最多 1 MiB、回复内容不进报错。
+  `the_request_must_stay_on_the_site_and_use_https`、`a_script_that_points_elsewhere_never_sends_the_key` 钉着。
+- Key 只在跑的那一刻换进 `{{apiKey}}`；**脚本存在库里不加密**，编辑器上写明别把 Key 直接写进去。
+- 结果只显示；导入链接里的用量脚本**照旧不导入**（阶段 5 的决定：链接带来的代码不在面板里跑）。
+- 许可：`rquickjs-sys` / `rquickjs-core` 包里顶层没有许可文件，QuickJS 自己的 MIT 在 `quickjs/LICENSE` —— 补在
+  `docs/license-supplements.json`，安装包的 `THIRD_PARTY_NOTICES.txt` 才带得上。升级这个依赖要连这两条一起改。
+
 ---
 
 ### 桌面端走的是它自己的「第三方网关」模式，不是环境变量里的 base_url

@@ -1901,6 +1901,38 @@ pub async fn station_site_quota(
     qb_app::usecase::site_quota_ops::quota(&route_id, force).await
 }
 
+/// 站点的用量脚本（中转站重构阶段 6 · U4）。没存过就是关着的空脚本。
+#[tauri::command]
+pub fn station_usage_script_get(
+    station_id: String,
+) -> Result<qb_app::usecase::usage_script_ops::UsageScript> {
+    qb_app::usecase::usage_script_ops::get(&crate::repository::Repository::open()?, &station_id)
+}
+
+/// 存站点的用量脚本。开着的话站点卡表头那一格就用它问余额（`site_quota_ops` 脚本优先）。
+#[tauri::command]
+pub fn station_usage_script_save(
+    station_id: String,
+    enabled: bool,
+    code: String,
+) -> Result<qb_app::usecase::usage_script_ops::UsageScript> {
+    qb_app::usecase::usage_script_ops::save(
+        &crate::repository::Repository::open()?,
+        &station_id,
+        enabled,
+        &code,
+    )
+}
+
+/// 用这条线路的 Key 把（还没存的）脚本试跑一遍。地址必须跟站点同源、https，跟正式跑一样。
+#[tauri::command]
+pub async fn station_usage_script_test(
+    route_id: String,
+    code: String,
+) -> Result<qb_station::station::site_quota::SiteQuota> {
+    qb_app::usecase::usage_script_ops::test(&route_id, &code).await
+}
+
 #[tauri::command]
 pub async fn station_billing_save(
     station_id: String,

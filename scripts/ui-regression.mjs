@@ -580,6 +580,34 @@ try {
   );
   await page.goBack();
   await page.locator(".qb-st-ctl").waitFor();
+  // 阶段 6 · U4：给认不出的那家（example）写一段用量脚本：模板预填、试跑有结果、开着存下之后表头改用它；
+  // 再关掉还原，后面的流程照旧看到「站点未提供」。
+  await page
+    .locator(".qb-st-quota", { hasText: "站点未提供" })
+    .getByRole("button", { name: "这个站点的用量脚本" })
+    .click();
+  await page.getByTestId("usage-script").waitFor();
+  await page.getByRole("button", { name: "用这条线路的 Key 试跑一次" }).click();
+  await page.getByTestId("usage-script-result").waitFor();
+  await page.setViewportSize({ width: 680, height: 940 });
+  await assertNoOverflow(page, "usage script editor 680");
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await page.getByLabel(/开着/).check();
+  await page.getByRole("button", { name: "存", exact: true }).click();
+  await page.getByTestId("usage-script").waitFor({ state: "hidden" });
+  const scripted = page.locator(".qb-st-quota", { hasText: "余额 $23.40" });
+  await scripted.waitFor();
+  await scripted.getByRole("button", { name: "这个站点的用量脚本" }).click();
+  await page.getByTestId("usage-script").waitFor();
+  // 等存过的那一份读回来（读回来之前勾选框是灰的）—— 不然 uncheck 看它没勾就直接返回了。
+  await page
+    .locator(
+      '[data-testid="usage-script"] input[type="checkbox"]:not([disabled])',
+    )
+    .waitFor();
+  await page.getByLabel(/开着/).uncheck();
+  await page.getByRole("button", { name: "存", exact: true }).click();
+  await page.locator(".qb-st-quota", { hasText: "站点未提供" }).waitFor();
   assert.equal(await page.locator(".qb-st-nudge").count(), 0);
   const relayButton = page.locator(".qb-st-launchbtn");
   await relayButton.click();

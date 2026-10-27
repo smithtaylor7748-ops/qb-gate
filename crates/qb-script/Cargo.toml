@@ -1,0 +1,14 @@
+[package]
+name = "qb-script"
+description = "QB Gate 的用量脚本沙箱：QuickJS，限内存、限栈、限时，不联网、不碰文件"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+rquickjs.workspace = true
+serde.workspace = true
+serde_json.workspace = true

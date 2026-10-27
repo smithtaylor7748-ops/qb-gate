@@ -40,10 +40,17 @@ fn remember(key: String, at: i64, q: SiteQuota) {
     }
 }
 
-/// 要问的东西：哪一家、哪把 Key、记在哪个缓存键下。读库这一步不跨 `await`。
+/// 怎么问：内置认得的那一家，或者这个站点开着的用量脚本（阶段 6 · U4，脚本优先）。
+enum How {
+    Builtin(Detected),
+    Script(String),
+}
+
+/// 要问的东西：怎么问、哪把 Key、站点地址、记在哪个缓存键下。读库这一步不跨 `await`。
 struct Ask {
-    detected: Detected,
+    how: How,
     key: String,
+    base_url: String,
     cache_key: String,
     site: String,
 }
@@ -58,19 +65,34 @@ fn prepare(route_id: &str) -> Result<Option<Ask>> {
     let provider: Provider = db
         .get("providers", &route.station_id)
         .map_err(|_| GateError::Other("这条线路的站点不存在".into()))?;
-    let Some(detected) = site_quota::detect(&provider.base_url) else {
-        return Ok(None);
+    // 开着的用量脚本优先（使用者自己写的，比内置的认法更懂这个站）；都没有就一个请求都不发。
+    let how = match super::usage_script_ops::enabled(&db, &route.station_id)? {
+        Some(code) => How::Script(code),
+        None => match site_quota::detect(&provider.base_url) {
+            Some(d) => How::Builtin(d),
+            None => return Ok(None),
+        },
     };
     let source = station_ops::source(&db, &route)?;
-    // Key 换了（同一个 id、版本加一）就不能再拿旧 Key 问到的那份顶着。
+    // Key 换了（同一个 id、版本加一）、脚本改了，都不能再拿旧的那份顶着。
     let credential: Credential = db.get(
         "credentials",
         route.credential_id.as_deref().unwrap_or_default(),
     )?;
+    let script_mark = match &how {
+        How::Script(code) => {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            code.hash(&mut h);
+            format!("#script-{:x}", h.finish())
+        }
+        How::Builtin(_) => String::new(),
+    };
     Ok(Some(Ask {
-        detected,
+        how,
         key: source.key,
-        cache_key: format!("{}#{}", credential.id, credential.revision),
+        base_url: source.base_url,
+        cache_key: format!("{}#{}{script_mark}", credential.id, credential.revision),
         site: provider.name,
     }))
 }
@@ -88,15 +110,19 @@ pub async fn quota(route_id: &str, force: bool) -> Result<Option<SiteQuota>> {
             }
         }
     }
-    let mut q = fetch(ask.detected, &ask.key, &station_billing::http_client()?).await?;
+    let mut q = match &ask.how {
+        How::Builtin(d) => fetch(*d, &ask.key, &station_billing::http_client()?).await?,
+        How::Script(code) => super::usage_script_ops::run(code, &ask.base_url, &ask.key).await?,
+    };
     q.route_id = route_id.to_string();
     remember(ask.cache_key, now, q.clone());
     crate::audit::write(&format!(
         "问了一次站点「{}」的{}（只读，不记内容）",
         ask.site,
-        match q.kind {
-            site_quota::SiteQuotaKind::Balance => "余额",
-            site_quota::SiteQuotaKind::Plan => "编程套餐额度",
+        match (&ask.how, q.kind) {
+            (How::Script(_), _) => "余额（用量脚本）",
+            (_, site_quota::SiteQuotaKind::Balance) => "余额",
+            (_, site_quota::SiteQuotaKind::Plan) => "编程套餐额度",
         }
     ));
     Ok(Some(q))

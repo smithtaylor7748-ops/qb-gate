@@ -8,10 +8,11 @@
  * ⛔ 问不到不画 0：有上一次就留着上一次（悬停里时刻照实），没有就说没问到、悬停看原因。
  */
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { FileCode, RefreshCw } from "lucide-react";
 import type { SiteQuota } from "../../lib/generated/SiteQuota";
 import { stationApi } from "../../lib/station";
 import { Button } from "../../ui";
+import SiteUsageScript from "./SiteUsageScript";
 
 /** `12.30 元` / `-$5.00`。 */
 export function money(n: number, unit: string): string {
@@ -80,15 +81,21 @@ function detail(q: SiteQuota, group: string): string {
 export default function StationSiteQuota({
   routeId,
   group,
+  stationId,
+  siteName,
 }: {
   /** 站点在这个软件下的第一条线路：用它那把 Key 问。 */
   routeId: string;
   group: string;
+  /** 给了才有「脚本」按钮（阶段 6 · U4：给这个站点写一段用量脚本）。 */
+  stationId?: string;
+  siteName?: string;
 }) {
   /** `undefined` = 还没回话；`null` = 认不出是哪一家（不联网）。 */
   const [q, setQ] = useState<SiteQuota | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [editing, setEditing] = useState(false);
   const load = useCallback(
     async (force: boolean) => {
       setBusy(true);
@@ -108,8 +115,37 @@ export default function StationSiteQuota({
     void load(false);
   }, [load]);
 
+  // 「脚本」：认不认得这一家都能写一段（阶段 6 · U4），存好之后立刻按新脚本问一次。
+  const script = stationId && (
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="qb-st-quota-refresh"
+        icon={<FileCode size={11} />}
+        aria-label="这个站点的用量脚本"
+        title="写一段脚本问这个站点的余额（请求只发到这个站点自己的地址）"
+        onClick={() => setEditing(true)}
+      />
+      {editing && (
+        <SiteUsageScript
+          stationId={stationId}
+          routeId={routeId}
+          siteName={siteName ?? stationId}
+          onClose={() => setEditing(false)}
+          onSaved={() => void load(true)}
+        />
+      )}
+    </>
+  );
+
   if (q === null && !error)
-    return <span className="bal">余额（整站共享）站点未提供</span>;
+    return (
+      <span className="bal qb-st-quota">
+        余额（整站共享）站点未提供
+        {script}
+      </span>
+    );
   if (q === undefined && !error)
     return <span className="bal">余额 · 读取中…</span>;
 
@@ -137,6 +173,7 @@ export default function StationSiteQuota({
         loading={busy}
         onClick={() => void load(true)}
       />
+      {script}
     </span>
   );
 }

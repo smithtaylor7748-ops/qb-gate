@@ -46,6 +46,7 @@ import type { DeepLinkEntry } from "./generated/DeepLinkEntry";
 import type { DeepLinkView } from "./generated/DeepLinkView";
 import type { ClaudeQuota } from "./generated/ClaudeQuota";
 import type { SiteQuota } from "./generated/SiteQuota";
+import type { UsageScript } from "./generated/UsageScript";
 import type { RelayUsageReport } from "./generated/RelayUsageReport";
 import type { RelayUsageTotals } from "./generated/RelayUsageTotals";
 import type { RelayUsageGroup } from "./generated/RelayUsageGroup";
@@ -2967,6 +2968,21 @@ function demoRelayRequests(
   return { items: rows.slice(offset, offset + limit), total: rows.length };
 }
 
+// ------------------------------------------------ 用量脚本（阶段 6 · U4）
+const demoUsageScripts = new Map<string, UsageScript>();
+function demoScriptQuota(routeId: string): SiteQuota {
+  return {
+    provider: "用量脚本",
+    kind: "balance",
+    balances: [{ remaining: 23.4, total: null, used: null, unit: "USD" }],
+    windows: [],
+    plan: "这把 Key 的额度",
+    warning: null,
+    fetched_at: new Date().toISOString(),
+    route_id: routeId,
+  };
+}
+
 // ------------------------------------------------ 会话管理器（阶段 6 · S1）
 //
 // 三个编出来的会话：中转环境里的 Claude Code、官方槽位 demo-main、Codex 默认目录。路径都在 C:\Users\demo 下面。
@@ -3436,10 +3452,36 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   // 列表走的是 useMemo，**它不更新**。于是「删掉一条，角标少了 1，行还在」。
   // 看起来像列表组件有 bug，实际是夹具跟真接口的行为不一样。
   station_routes: () => [...stationRoutes],
+  station_usage_script_get: (args): UsageScript =>
+    demoUsageScripts.get(String(args?.stationId)) ?? {
+      enabled: false,
+      code: "",
+      updated_at: null,
+    },
+  station_usage_script_save: (args): UsageScript => {
+    const code = String(args?.code ?? "");
+    if (args?.enabled && !code.trim()) throw new Error("脚本是空的，不能开");
+    const saved = {
+      enabled: Boolean(args?.enabled),
+      code,
+      updated_at: new Date().toISOString(),
+    };
+    demoUsageScripts.set(String(args?.stationId), saved);
+    return saved;
+  },
+  station_usage_script_test: (args): SiteQuota => {
+    // 跟后端一样：请求地址不在这个站点上就拒绝（演示里只看有没有写别的域名）。
+    if (/https?:\/\/(?!\{\{origin\}\})/.test(String(args?.code ?? "")))
+      throw new Error("请求地址必须跟站点同源 —— Key 不发给别的地方（演示）");
+    return demoScriptQuota(String(args?.routeId));
+  },
   // 站点卡表头的余额 / 套餐额度（阶段 6 · U3）：example 是普通中转站，认不出是哪一家 → null（后端不联网）；
   // moxi 演示成一家认得出的编程套餐站（名字是编的）。
   station_site_quota: (args): SiteQuota | null => {
     const route = stationRoutes.find((r) => r.id === args?.routeId);
+    // 阶段 6 · U4：开着用量脚本的站点用脚本那一份（演示里不真跑，给一份编好的）。
+    if (route && demoUsageScripts.get(route.station_id)?.enabled)
+      return demoScriptQuota(String(args?.routeId));
     if (route?.station_id !== "moxi") return null;
     const now = Date.now();
     return {

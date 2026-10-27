@@ -251,6 +251,13 @@ function_call_output / reasoning、恢复命令 `claude --resume` / `codex resum
 **跟它不一样**：只搬 Claude Code 和 Codex 两家；删除先挪进面板的回收站（cc-switch 直接删），两分钟内还在写的不让删；面板给界面的 id 带目标、拿回来逐项核对路径；
 不替使用者开终端（cc-switch 的 `launch_session_terminal` 没搬），恢复命令只复制；不读图片附件（`get_session_image` 没搬）。
 
+**阶段 6 第五批（2026-10-26，用量脚本，U4）**：`qb-script/src/lib.rs` 改写自 cc-switch `usage_script.rs` 的沙箱那一半（rquickjs 运行时的
+16 MiB 内存 / 256 KiB 栈 / 5 秒中断、模板变量替换、先求 `request` 再对回复跑 `extractor`、结果字段的类型检查 `validate_single_usage`）；
+`qb-app/src/usecase/usage_script_ops.rs` 是发请求那一半；编辑器 `src/features/station/SiteUsageScript.tsx` 照 `UsageScriptModal` 的信息量重做。
+新依赖 `rquickjs` 0.8.1（MIT，内含 QuickJS-ng 的 C 源码，MIT —— 许可原文补在 `docs/license-supplements.json`）。
+**跟它不一样**：请求地址一律同源 + https，没有「自定义模板」跳过同源检查的分支；不注入任何宿主函数；变量只有 `apiKey` / `baseUrl` / `origin`
+（不收 access token / user id 这类管理凭证）；结果挂在站点卡表头那一格（脚本优先于内置认得的那几家）；导入链接里的脚本不导入。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text

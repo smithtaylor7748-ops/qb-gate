@@ -29,6 +29,7 @@ import type { RouterStatus } from "./generated/RouterStatus";
 import type { ClientConfig } from "./generated/ClientConfig";
 import type { ProbeResult } from "./generated/ProbeResult";
 import type { SiteQuota } from "./generated/SiteQuota";
+import type { UsageScript } from "./generated/UsageScript";
 import type { RelayUsageReport } from "./generated/RelayUsageReport";
 import type { RelayRequestPage } from "./generated/RelayRequestPage";
 import type { TurnStateModelStatus } from "./generated/TurnStateModelStatus";
@@ -116,6 +117,20 @@ export const stationApi = {
    */
   siteQuota: (routeId: string, force: boolean) =>
     call<SiteQuota | null>("station_site_quota", { routeId, force }),
+
+  /** 站点的用量脚本（中转站重构阶段 6 · U4）。没存过就是关着的空脚本。 */
+  usageScript: (stationId: string) =>
+    call<UsageScript>("station_usage_script_get", { stationId }),
+  /** 存用量脚本；开着的话站点卡表头那一格就用它问余额（脚本优先于内置认得的那几家）。 */
+  saveUsageScript: (stationId: string, enabled: boolean, code: string) =>
+    call<UsageScript>("station_usage_script_save", {
+      stationId,
+      enabled,
+      code,
+    }),
+  /** 用这条线路的 Key 把还没存的脚本试跑一遍（地址必须跟站点同源、https）。 */
+  testUsageScript: (routeId: string, code: string) =>
+    call<SiteQuota>("station_usage_script_test", { routeId, code }),
 
   /**
    * 中转用量页（中转站重构阶段 6 · U1）：本机路由的请求按软件 / 时间档汇总，加全年热力图。只读本机库，不联网。

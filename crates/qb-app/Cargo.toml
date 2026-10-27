@@ -21,6 +21,8 @@ qb-probe.workspace = true
 qb-proxy.workspace = true
 tracing.workspace = true
 qb-relay.workspace = true
+# 用量脚本的沙箱（阶段 6 · U4）：只算，不联网；请求由 `usecase::usage_script_ops` 发。
+qb-script.workspace = true
 qb-station.workspace = true
 qb-sysenv.workspace = true
 serde.workspace = true

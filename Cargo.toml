@@ -59,6 +59,7 @@ qb-contract = { path = "crates/qb-contract" }
 qb-foundation = { path = "crates/qb-foundation" }
 qb-platform = { path = "crates/qb-platform" }
 qb-proxy = { path = "crates/qb-proxy" }
+qb-script = { path = "crates/qb-script" }
 
 serde = { version = "1", features = ["derive"] }
 # `preserve_order`（2026-10-17，中转站重构阶段 1 第 2 步）：对象按插入 / 解析顺序存，不再按字母序。
@@ -104,6 +105,10 @@ json5 = "0.4.1"
 json-five = "0.3.1"
 # Skills 从 ZIP 装（2026-10-26，中转站重构阶段 5，cc-switch 的 `install_from_zip`）。只开 deflate（走已有的 flate2），不要加密、bzip2 这些；9.0 以下有解压越界的公告（RUSTSEC-2026-0367～0369）。
 zip = { version = "=9.0.2", default-features = false, features = ["deflate-flate2"] }
+# 用量脚本的沙箱（2026-10-26，中转站重构阶段 6 · U4，cc-switch 的 `usage_script.rs` 用的同一个版本）。
+# rquickjs（MIT）带着 QuickJS（MIT）的 C 源码，构建时用本机的 MSVC 编进来（跟 Tauri 本来就要的工具链是同一套）；
+# 只在 `qb-script` 一个 crate 里用，那里不联网、不碰文件，内存 / 栈 / 时间都有上限。钉死版本：脚本引擎的行为不许悄悄变。
+rquickjs = { version = "=0.8.1" }
 # 反重力汉化引擎（0.26.0）要跟 Hub 的 Chrome DevTools 协议说话，那是本机回环上的
 # `ws://127.0.0.1`。只开最小 feature：不带 TLS —— 回环上没有 TLS，也不想为此多拉一套证书栈。
 # MIT，crates.io，`cargo deny` 的 licenses / sources 都过。
