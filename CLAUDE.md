@@ -1471,6 +1471,25 @@ Claude Code 和 Codex 留在本机的会话记录：列表（按来源筛、搜�
 - 许可：`rquickjs-sys` / `rquickjs-core` 包里顶层没有许可文件，QuickJS 自己的 MIT 在 `quickjs/LICENSE` —— 补在
   `docs/license-supplements.json`，安装包的 `THIRD_PARTY_NOTICES.txt` 才带得上。升级这个依赖要连这两条一起改。
 
+## 环境变量清理：只删当前用户那一处，先备份、能还原（2026-10-27，中转站重构阶段 7 · X5，照 cc-switch 的 `env_checker.rs` / `env_manager.rs`）
+
+环境体检「本机体检」末尾的「清理环境变量…」（`EnvCleanup.tsx`；修复中心那一节写着去哪找）。后端 `qb-sysenv::sysenv::envvars`，
+命令在 `commands::env_cleanup`（模块名不叫 `envvars`：workspace 里模块名要全局唯一）。
+
+- **「哪些变量算相关」全项目只有一张表**：`envvars::owner_of`（`ANTHROPIC_*` / `CLAUDE_CODE_*` / `CLAUDE_CONFIG_DIR` → Claude Code，
+  `OPENAI_*` / `CODEX_*` → Codex，`GEMINI_*` / `GOOGLE_GEMINI_*` → Gemini CLI，`XAI_API_KEY` / `GROK_DEFAULT_MODEL` → Grok Build，四个代理变量）。
+  体检那一项的 `checkup::is_watched_env` 也改成问它（Claude Code + 代理两类；`ANTHROPIC_` 从五个死名字变成按前缀认）。
+  ⚠ `purge_ops::is_owned_env`（完全卸载）**故意不并进来**：卸载问的是「专门为这个软件设的」，`OPENAI_*` / `GEMINI_API_KEY`
+  别的工具也在读，卸 Codex 时删它会误伤；清理问的是「会改变它去向的」，由使用者逐个勾。两件事两个口径，别合并。
+- ⛔ **只删 `owner_of` 认得的名字**：前端传来一个 `Path` 也删不掉（整次直接报错，什么都不动）。只删 HKCU；整机的（要管理员，面板不提权）
+  和只在面板进程里的（起面板的那个程序传进来的）只列出来、给步骤。**什么都不预先勾。**
+- ⛔ **先备份，备份写成功了才删**：面板数据目录 `env-backups\<编号>.json`，值用 DPAPI 封住、记着原来是不是 `REG_EXPAND_SZ`；
+  先写 `.tmp` 再改名。还原按原来的类型写回；现在有一个**不一样的**同名变量就不盖，报出来（cc-switch 直接盖）。
+  备份编号从界面传回来时只认面板自己起的那种形状，带 `..\` 的一律拒绝。
+- 改完广播 `WM_SETTINGCHANGE`（`qb_platform::registry::broadcast_environment_changed`）：不发的话资源管理器手里还是旧环境，
+  新开的终端照样带着刚删掉的变量。已经开着的程序（包括面板自己）不受影响，界面上写明。广播最多等 5 秒，所以命令都是 async + `spawn_blocking`。
+- 单测经 `UserEnv` 用内存里的假注册表、临时目录；审计只写在命令层（坑 7.107）。
+
 ## 开机自启、轻量模式、启动时拉起本机路由（2026-10-27，中转站重构阶段 7 · X7，照 cc-switch 的 `auto_launch.rs` / `lightweight.rs`）
 
 设置页「常规 › 后台运行」三行。面板的定位不变 —— 它是个面板，不是后台服务：门禁、看门狗、本机路由、智能调度都活在面板进程里，

@@ -4506,6 +4506,42 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     presets.filter((p) => !args?.target || p.target === args.target),
   snapshot_list: () => snapshots,
   settings_load: () => settings,
+  // 环境变量清理（阶段 7 · X5）：两个当前用户的（能删）、一个只在面板进程里的（不能删），值照真后端那样掩码过。
+  // 删 / 还原没有演示：那两条只在装好的面板里可用。
+  env_vars_scan: () => [
+    {
+      name: "ANTHROPIC_BASE_URL",
+      scope: "user",
+      owner: "claude-code",
+      shown: "https://relay.example.test",
+      expand: false,
+      removable: true,
+    },
+    {
+      name: "OPENAI_API_KEY",
+      scope: "user",
+      owner: "codex",
+      shown: "（已设置，值不显示）",
+      expand: false,
+      removable: true,
+    },
+    {
+      name: "HTTPS_PROXY",
+      scope: "process",
+      owner: "proxy",
+      shown: "http://127.0.0.1:7890",
+      expand: false,
+      removable: false,
+    },
+  ],
+  env_backups: () => [
+    {
+      id: "env-20261027-101500",
+      created: "2026-10-27T10:15:00+08:00",
+      names: ["GEMINI_API_KEY"],
+      restored_at: null,
+    },
+  ],
   // 开机自启（阶段 7 · X7）：演示成「没登记」—— 演示页面不该假装改了谁的注册表。
   autostart_status: () => ({
     registered: false,

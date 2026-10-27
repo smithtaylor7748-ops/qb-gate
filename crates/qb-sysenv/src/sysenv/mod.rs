@@ -13,6 +13,7 @@
 //! PowerShell 操作，不提升整个面板，失败如实报告。
 
 pub mod checkup;
+pub mod envvars;
 pub mod ipv6;
 pub mod locale;
 pub mod proxy;

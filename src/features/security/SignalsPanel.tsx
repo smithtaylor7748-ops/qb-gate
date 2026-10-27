@@ -35,6 +35,7 @@ import {
   useToast,
 } from "../../ui";
 import { useChecks } from "./useChecks";
+import EnvCleanup from "./EnvCleanup";
 
 const BAND_LABEL = { low: "低", medium: "中", high: "高" } as const;
 const BAND_TONE = { low: "ok", medium: "warn", high: "danger" } as const;
@@ -513,6 +514,15 @@ export function LocalCheckup() {
           ))}
         </div>
       )}
+
+      {/* 阶段 7 · X5：体检只报；要删的话在这里，逐个勾、先备份、能还原。不依赖先跑过体检。 */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="notice">
+          Claude Code、Codex、Gemini CLI、Grok Build
+          与代理相关的用户环境变量，可以先备份再删，删错了能还原。
+        </span>
+        <EnvCleanup />
+      </div>
     </Card>
   );
 }

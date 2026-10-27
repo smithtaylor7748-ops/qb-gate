@@ -80,6 +80,10 @@ fn main() {
         qb_gate_lib::relay::RelayTarget::export_all_to(&root)?;
         qb_gate_lib::settings::Settings::export_all_to(&root)?;
         qb_platform::autostart::AutostartStatus::export_all_to(&root)?;
+        qb_gate_lib::sysenv::envvars::EnvEntry::export_all_to(&root)?;
+        qb_gate_lib::sysenv::envvars::EnvRemoval::export_all_to(&root)?;
+        qb_gate_lib::sysenv::envvars::EnvBackupInfo::export_all_to(&root)?;
+        qb_gate_lib::sysenv::envvars::EnvRestoreReport::export_all_to(&root)?;
         qb_gate_lib::progress::StepRecord::export_all_to(&root)?;
         qb_gate_lib::progress::Progress::export_all_to(&root)?;
         qb_gate_lib::progress::StepState::export_all_to(&root)?;

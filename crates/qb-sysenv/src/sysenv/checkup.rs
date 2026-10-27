@@ -808,42 +808,27 @@ fn check_secrets() -> (CheckItem, Vec<SecretHit>) {
 
 // ------------------------------------------------------ 环境变量残留扫描
 
-/// 会影响 Claude Code 行为、或者会让面板与实际请求走两条路的环境变量。
+/// 这个变量名归不归「环境变量残留」这一项管：会影响 Claude Code 行为（`ANTHROPIC_*`、`CLAUDE_CODE_*`、
+/// `CLAUDE_CONFIG_DIR`），或者会让面板与实际请求走两条路（四个代理变量）的那些。
 ///
 /// 想法来自 Agent-Guard（它的 README 开篇就是「`.zshrc` 里还留着 `HTTPS_PROXY`
 /// 和 `ANTHROPIC_BASE_URL`」）。那个项目**没有源码可抄**（仓库只是落地页），
 /// 所以这里从头写，Windows 侧看的是 `HKCU\Environment` 与当前进程环境。
-const WATCHED_ENV: &[&str] = &[
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_MODEL",
-    "ANTHROPIC_SMALL_FAST_MODEL",
-    "CLAUDE_CONFIG_DIR",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "ALL_PROXY",
-    "NO_PROXY",
-];
-
-/// 按**前缀**算的那一档。
 ///
-/// `CLAUDE_CODE_*` 整族都会改 Claude Code 的行为（`CLAUDE_CODE_USE_BEDROCK`
-/// / `_USE_VERTEX` 直接把它切到另一个云端点），可它不是一个固定的名字表 ——
-/// 上游随时会加新的。0.19.2 之前这一项只认死名字，于是这一族**一个都查不到**，
-/// 而 purge 的归属判定（`purge_ops::is_owned_env`）和启动前的残留检查
-/// （`qb-accounts::residue`）早就认了它。同一件事三处口径不一样，
-/// 最松的那一处就是使用者看到的那一处。
-const WATCHED_ENV_PREFIX: &[&str] = &["CLAUDE_CODE_"];
-
-/// 这个变量名归不归「环境变量残留」这一项管。
+/// # 认法只有一处
 ///
-/// 用 `to_ascii_uppercase().starts_with` 而不是切片比较：变量名理论上
-/// 可以带非 ASCII，切到半个字符上会当场 panic。
+/// 2026-10-27 起问的是 [`super::envvars::owner_of`] —— 环境变量清理（阶段 7 · X5）用的同一张表。
+/// 原来这里自己有一张死名字表加一个 `CLAUDE_CODE_` 前缀：0.19.2 之前这一项只认死名字，
+/// `CLAUDE_CODE_USE_BEDROCK` / `_USE_VERTEX` 这一族**一个都查不到**，而 purge 的归属判定
+/// （`purge_ops::is_owned_env`）和启动前的残留检查（`qb-accounts::residue`）早就认了它。
+/// 同一件事几处口径不一样，最松的那一处就是使用者看到的那一处。现在 `ANTHROPIC_` 也按前缀认
+/// （`ANTHROPIC_CUSTOM_HEADERS`、`ANTHROPIC_DEFAULT_*_MODEL` 这些原来漏着）。
 pub fn is_watched_env(name: &str) -> bool {
-    let upper = name.to_ascii_uppercase();
-    WATCHED_ENV.iter().any(|w| w.eq_ignore_ascii_case(name))
-        || WATCHED_ENV_PREFIX.iter().any(|p| upper.starts_with(p))
+    use super::envvars::Owner;
+    matches!(
+        super::envvars::owner_of(name),
+        Some(Owner::ClaudeCode | Owner::Proxy)
+    )
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, TS)]
@@ -1015,9 +1000,10 @@ pub fn scan_env() -> (CheckItem, Vec<EnvHit>) {
         );
         if redirecting || proxied {
             it.manual = Some(
-                "改用户环境变量：设置 → 系统 → 系统信息 → 高级系统设置 → 环境变量。\
+                "当前用户的这几个可以用这张卡末尾的「清理环境变量…」删：逐个勾、先备份、能还原。\
+                 也可以自己改：设置 → 系统 → 系统信息 → 高级系统设置 → 环境变量。\
                  改完要重开终端 / 重开 Claude Code 才生效。\
-                 面板不替你删 —— 这些变量可能正是你别的工作要用的。"
+                 体检自己不删 —— 这些变量可能正是你别的工作要用的。"
                     .into(),
             );
         }

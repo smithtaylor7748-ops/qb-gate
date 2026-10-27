@@ -93,6 +93,13 @@ export const R = {
   checkup: res(() => api.checkupScan(), { auto: DEMO_ENABLED, persist: true }),
 
   /**
+   * 环境变量清理（阶段 7 · X5）的列表与备份。读注册表两处 + 一个目录，便宜；只在清理弹窗打开时有人订，
+   * 删 / 还原之后跟着活状态一起刷新。
+   */
+  envVars: res(() => api.envVarsScan()),
+  envBackups: res(() => api.envBackups()),
+
+  /**
    * 升级计划。**渠道由界面那个下拉决定，不许写死。**
    *
    * 写死 `'latest'` 的后果不是「少一个功能」，是**界面在说谎**：选了 stable
@@ -202,6 +209,8 @@ export const AFTER = {
   browser: ["software", "traces", "browserAudit"] as const,
   /** 改或还原系统代理之后：现状与那份备份都变了。 */
   proxy: ["proxy", "proxyBackup"] as const,
+  /** 删 / 还原当前用户的环境变量之后：本机体检里「环境变量残留」那一项测的就是它（阶段 7 · X5）。 */
+  env: ["checkup"] as const,
   //
   // ⚠ 出站锁规则表（`firewallRules`）与 Chrome 隐私审计（`browserAudit`）
   // **故意不在这张表里**。两份都是 `auto:false`，而 `invalidate` 对手动资源

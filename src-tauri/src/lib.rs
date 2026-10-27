@@ -172,6 +172,12 @@ pub fn run() {
             commands::gate::allowlist_add_current,
             commands::gate::country_presets,
             commands::probe::checkup_scan,
+            // 环境变量清理（中转站重构阶段 7 · X5）：只删当前用户那一处，先备份，能还原。
+            commands::env_cleanup::env_vars_scan,
+            commands::env_cleanup::env_vars_remove,
+            commands::env_cleanup::env_backups,
+            commands::env_cleanup::env_backup_restore,
+            commands::env_cleanup::env_backup_delete,
             commands::probe::browser_probe_start,
             commands::probe::browser_probe_wait,
             commands::probe::browser_probe_last,

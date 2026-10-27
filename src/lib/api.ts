@@ -37,6 +37,12 @@ import type { DesktopState } from "./generated/DesktopState";
 import type { DnsReport } from "./generated/DnsReport";
 import type { EgressChecks } from "./generated/EgressChecks";
 import type { EnvHit } from "./generated/EnvHit";
+import type { EnvEntry } from "./generated/EnvEntry";
+import type { EnvOwner } from "./generated/EnvOwner";
+import type { EnvScope } from "./generated/EnvScope";
+import type { EnvRemoval } from "./generated/EnvRemoval";
+import type { EnvBackupInfo } from "./generated/EnvBackupInfo";
+import type { EnvRestoreReport } from "./generated/EnvRestoreReport";
 import type { Evidence } from "./generated/Evidence";
 import type { ExternalMethod } from "./generated/ExternalMethod";
 import type { FirewallRule } from "./generated/FirewallRule";
@@ -174,6 +180,12 @@ export type {
   DnsReport,
   EgressChecks,
   EnvHit,
+  EnvEntry,
+  EnvOwner,
+  EnvScope,
+  EnvRemoval,
+  EnvBackupInfo,
+  EnvRestoreReport,
   Evidence,
   ExternalMethod,
   FirewallRule,
@@ -493,6 +505,14 @@ export const api = {
    * 读注册表与本地配置，**不联网、不改任何东西**。
    */
   checkupScan: () => call<Checkup>("checkup_scan"),
+  // 环境变量清理（中转站重构阶段 7 · X5）：只删当前用户那一处，先备份、能还原；值只给掩码过的。
+  envVarsScan: () => call<EnvEntry[]>("env_vars_scan"),
+  envVarsRemove: (names: string[]) =>
+    call<EnvRemoval>("env_vars_remove", { names }),
+  envBackups: () => call<EnvBackupInfo[]>("env_backups"),
+  envBackupRestore: (id: string) =>
+    call<EnvRestoreReport>("env_backup_restore", { id }),
+  envBackupDelete: (id: string) => call<void>("env_backup_delete", { id }),
 
   // 时区没有命令了：切换走「设置 › 启动时对齐」（面板启动时自动对到出口 IP），
   // 原值只进审计日志。原来的读 / 切 / 恢复三条 2026-09-27 删了 —— 「恢复」只认旧时区卡
