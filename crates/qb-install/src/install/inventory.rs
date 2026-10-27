@@ -31,7 +31,8 @@
 //! | `DesktopManaged` | `%APPDATA%\Claude*\claude-code\<版本>\claude.exe` —— **每个桌面端资料目录都算** | ✅ | 6（只取当前那份） |
 //! | `MsixManaged` | MSIX 版桌面端虚拟化目录里的同一种副本 | ✅ | — |
 //! | `Npm` | `%APPDATA%\npm\claude.cmd` 与 `PATH` 上的 `claude.cmd` | ❌ | 7 |
-//! | `NpmNative` | npm 包里自带的 `claude.exe` | ✅ | — |
+//! | `NpmNative` | npm 包里自带的 `claude.exe`：`%APPDATA%\npm`、PATH 上自定义的全局前缀、`%ProgramFiles%\nodejs`、`NVM_SYMLINK` | ✅ | — |
+//! | `ManagerNative` | 同一种 `claude.exe`，但在 pnpm 仓、Yarn / Bun / Volta 的全局目录、nvm-windows 没在用的那几个 Node 版本里（2026-10-27） | ✅ | — |
 //! | `Editor` | VS Code / Cursor / Windsurf 等扩展自带的 `claude.exe` | ✅ | — |
 //! | `DesktopStub` | `%LOCALAPPDATA%\AnthropicClaude\claude.exe`（桌面端存根） | ✅ | — |
 //!
@@ -70,7 +71,21 @@ pub struct Roots {
     pub scoop: Option<PathBuf>,
     /// 面板托管安装的根目录（v0.9.0，`settings::managed_apps_dir`）。
     pub managed: Option<PathBuf>,
+    /// `%ProgramData%`：全局 Scoop 默认装在它下面的 `scoop`（2026-10-27）。
+    pub program_data: Option<PathBuf>,
+    /// 几家 Node 管理器认的目录变量（2026-10-27，阶段 7 · X3）：`PNPM_HOME`、`NVM_HOME`、`NVM_SYMLINK`、
+    /// `VOLTA_HOME`、`SCOOP_GLOBAL`。没设的不在里面。
+    pub env: Vec<(String, PathBuf)>,
 }
+
+/// [`Roots::env`] 收哪几个。
+const ENV_DIRS: [&str; 5] = [
+    "PNPM_HOME",
+    "NVM_HOME",
+    "NVM_SYMLINK",
+    "VOLTA_HOME",
+    "SCOOP_GLOBAL",
+];
 
 impl Roots {
     pub fn current() -> Self {
@@ -104,7 +119,19 @@ impl Roots {
             path_dirs,
             scoop,
             managed: Some(crate::settings::managed_apps_dir()),
+            program_data: env_dir("ProgramData"),
+            env: ENV_DIRS
+                .iter()
+                .filter_map(|k| env_dir(k).map(|v| (k.to_string(), v)))
+                .collect(),
         }
+    }
+
+    fn env(&self, key: &str) -> Option<&Path> {
+        self.env
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .map(|(_, v)| v.as_path())
     }
 }
 
@@ -127,6 +154,12 @@ pub enum Kind {
     MsixManaged,
     Npm,
     NpmNative,
+    /// pnpm 仓、Yarn / Bun / Volta 的全局目录、nvm-windows 没在用的那几个 Node 版本里，npm 包自带的 `claude.exe`
+    /// （2026-10-27，中转站重构阶段 7 · X3 的「重复安装诊断」，照 cc-switch `build_tool_search_paths` 认的那些地方）。
+    ///
+    /// 跟 [`Kind::NpmNative`] 一样**只锁不启动**：它是完整可执行的副本，漏锁就是绕过入口（`CLAUDE.md`「每一个完整可执行的
+    /// claude.exe 副本都必须锁上」）。单独一类，是因为清外部副本时 `npm uninstall -g` 够不着它们 —— 得在装它的那个管理器里卸。
+    ManagerNative,
     Editor,
     DesktopStub,
 }
@@ -385,6 +418,125 @@ const EDITOR_DIRS: [&str; 7] = [
     ".kiro",
 ];
 
+// ------------------------------------------------- npm 包自带的那份（2026-10-27）
+
+/// 「在用的那个 npm」的全局前缀下的 `node_modules`（`%APPDATA%\npm` 那一处另外扫）：PATH 上放着 `claude.cmd` 的目录
+/// （自己 `npm config set prefix` 过的）、`%ProgramFiles%\nodejs`、`NVM_SYMLINK`（nvm-windows 让 npm 的全局前缀就是它）。
+/// 这几处 `npm uninstall -g` 够得着，归 [`Kind::NpmNative`]。
+fn npm_prefix_modules(r: &Roots) -> Vec<PathBuf> {
+    let default = r.roaming.as_ref().map(|ro| ro.join("npm"));
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut push = |prefix: &Path| {
+        if default.as_ref().is_some_and(|d| same_path(d, prefix)) {
+            return;
+        }
+        let nm = prefix.join("node_modules");
+        if nm.is_dir() && !out.iter().any(|x| same_path(x, &nm)) {
+            out.push(nm);
+        }
+    };
+    for d in &r.path_dirs {
+        if !norm(d).contains("\\windowsapps") && d.join("claude.cmd").is_file() {
+            push(d);
+        }
+    }
+    for pf in &r.program_files {
+        push(&pf.join("nodejs"));
+    }
+    if let Some(s) = r.env("NVM_SYMLINK") {
+        push(s);
+    }
+    out
+}
+
+/// 各家 Node 管理器自己的全局 `node_modules`（[`Kind::ManagerNative`]）：pnpm（`PNPM_HOME` 或 `%LOCALAPPDATA%\pnpm` 下的
+/// `global\<n>\node_modules`）、Yarn（`%LOCALAPPDATA%\Yarn\Data\global`）、Bun（`~\.bun\install\global`）、
+/// nvm-windows 的每一个 Node 版本目录（正在用的那个经 `NVM_SYMLINK` 先扫到，去重时留 `NpmNative`）。
+fn manager_modules(r: &Roots) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut push = |nm: PathBuf| {
+        if nm.is_dir() && !out.iter().any(|x| same_path(x, &nm)) {
+            out.push(nm);
+        }
+    };
+    let mut pnpm_homes: Vec<PathBuf> = r
+        .env("PNPM_HOME")
+        .map(Path::to_path_buf)
+        .into_iter()
+        .collect();
+    if let Some(l) = &r.local {
+        pnpm_homes.push(l.join("pnpm"));
+    }
+    for h in pnpm_homes {
+        for g in subdirs(&h.join("global")) {
+            push(g.join("node_modules"));
+        }
+    }
+    if let Some(l) = &r.local {
+        push(
+            l.join("Yarn")
+                .join("Data")
+                .join("global")
+                .join("node_modules"),
+        );
+    }
+    if let Some(h) = &r.home {
+        push(
+            h.join(".bun")
+                .join("install")
+                .join("global")
+                .join("node_modules"),
+        );
+    }
+    let mut nvm_homes: Vec<PathBuf> = r
+        .env("NVM_HOME")
+        .map(Path::to_path_buf)
+        .into_iter()
+        .collect();
+    if let Some(ro) = &r.roaming {
+        nvm_homes.push(ro.join("nvm"));
+    }
+    for h in nvm_homes {
+        for v in subdirs(&h) {
+            push(v.join("node_modules"));
+        }
+    }
+    out
+}
+
+/// Volta 的根目录：`VOLTA_HOME`，没设就是 `%LOCALAPPDATA%\Volta`。
+fn volta_roots(r: &Roots) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = r
+        .env("VOLTA_HOME")
+        .map(Path::to_path_buf)
+        .into_iter()
+        .collect();
+    if let Some(l) = &r.local {
+        let d = l.join("Volta");
+        if !out.iter().any(|x| same_path(x, &d)) {
+            out.push(d);
+        }
+    }
+    out
+}
+
+/// 全局 Scoop 的根：`SCOOP_GLOBAL`，没设就是 `%ProgramData%\scoop`。跟用户那份是同一个目录时（两个变量设成一样）不重复扫。
+fn scoop_global_roots(r: &Roots) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = r
+        .env("SCOOP_GLOBAL")
+        .map(Path::to_path_buf)
+        .into_iter()
+        .collect();
+    if let Some(pd) = &r.program_data {
+        let d = pd.join("scoop");
+        if !out.iter().any(|x| same_path(x, &d)) {
+            out.push(d);
+        }
+    }
+    out.retain(|d| r.scoop.as_ref().is_none_or(|s| !same_path(s, d)));
+    out
+}
+
 // ---------------------------------------------------------------- 扫描
 
 /// 把这台机器上所有 Claude Code 可执行副本找出来。**只读文件系统。**
@@ -551,6 +703,58 @@ pub fn scan(r: &Roots) -> Vec<Install> {
             .into_iter()
             .map(|p| (Kind::NpmNative, p)),
         );
+    }
+
+    // 2026-10-27（中转站重构阶段 7 · X3，「重复安装诊断」）：npm 包自带的那份 `claude.exe` 不只在 `%APPDATA%\npm`。
+    // 原来只扫那一处 —— 用 pnpm / Yarn / Bun / Volta / nvm-windows、或者自己设了全局前缀装的，`claude.cmd` 锁不住（批处理），
+    // 包里那份能直接跑的 exe 又不在表里：一个现成的绕过入口。npm 那一档先扫（去重时先扫到的留下，保住 `NpmNative` 的身份）。
+    for nm in npm_prefix_modules(r) {
+        found.extend(
+            find_named(&nm.join("@anthropic-ai"), "claude.exe", 6)
+                .into_iter()
+                .map(|p| (Kind::NpmNative, p)),
+        );
+    }
+    for nm in manager_modules(r) {
+        found.extend(
+            find_named(&nm.join("@anthropic-ai"), "claude.exe", 6)
+                .into_iter()
+                .map(|p| (Kind::ManagerNative, p)),
+        );
+        // pnpm 的真文件在 `.pnpm` 仓里：`node_modules\@anthropic-ai\claude-code` 只是指过去的联结点，`find_named` 不穿联结点。
+        for e in subdirs(&nm.join(".pnpm")) {
+            if name_lower(&e).starts_with("@anthropic-ai+claude-code") {
+                found.extend(
+                    find_named(&e, "claude.exe", 8)
+                        .into_iter()
+                        .map(|p| (Kind::ManagerNative, p)),
+                );
+            }
+        }
+    }
+    // Volta 把每个全局包放在 `tools\image\packages\<包>` 下。
+    for v in volta_roots(r) {
+        found.extend(
+            find_named(
+                &v.join("tools")
+                    .join("image")
+                    .join("packages")
+                    .join("@anthropic-ai"),
+                "claude.exe",
+                8,
+            )
+            .into_iter()
+            .map(|p| (Kind::ManagerNative, p)),
+        );
+    }
+    // 全局 Scoop（`scoop install -g`，`%ProgramData%\scoop` 或 `$env:SCOOP_GLOBAL`）：形状跟用户那份一样。
+    for s in scoop_global_roots(r) {
+        let app = s.join("apps").join("claude-code");
+        let current = app.join("current").join("claude.exe");
+        if current.is_file() {
+            found.push((Kind::Scoop, current));
+        }
+        found.extend(versioned_exes(&app).into_iter().map(|p| (Kind::Scoop, p)));
     }
 
     if let Some(l) = &r.local {
@@ -773,6 +977,8 @@ mod tests {
                 path_dirs: Vec::new(),
                 scoop: Some(self.base.join("home").join("scoop")),
                 managed: Some(self.base.join("managed")),
+                program_data: Some(self.base.join("pd")),
+                env: Vec::new(),
             }
         }
 
@@ -1037,6 +1243,102 @@ mod tests {
         assert!(!lockable_paths(&r).iter().any(|(q, _)| same_path(q, &cmd)));
         // 桥接要 exe，不能拿批处理糊弄过去。
         assert_eq!(preferred_exe(&r), None);
+    }
+
+    /// 阶段 7 · X3（照 cc-switch 认的那些地方）：npm 包自带的那份 `claude.exe` 还可能在 pnpm 仓、Yarn / Bun / Volta 的全局目录、
+    /// nvm-windows 的各个 Node 版本、自定义的 npm 前缀、`%ProgramFiles%\nodejs` 和全局 Scoop 里。原来只扫 `%APPDATA%\npm`，
+    /// 这些全是没锁的完整副本。它们**只锁不启动**；能用 `npm uninstall -g` 卸的归 `NpmNative`，别的归 `ManagerNative`。
+    #[test]
+    fn copies_inside_other_node_managers_are_locked_but_never_launched() {
+        let t = Tree::new("managers");
+        let pnpm = t.file(r"local\pnpm\global\5\node_modules\.pnpm\@anthropic-ai+claude-code@2.1.300\node_modules\@anthropic-ai\claude-code\bin\claude.exe");
+        let yarn =
+            t.file(r"local\Yarn\Data\global\node_modules\@anthropic-ai\claude-code\bin\claude.exe");
+        let bun = t.file(
+            r"home\.bun\install\global\node_modules\@anthropic-ai\claude-code\bin\claude.exe",
+        );
+        let volta =
+            t.file(r"local\Volta\tools\image\packages\@anthropic-ai\claude-code\bin\claude.exe");
+        let nvm_old =
+            t.file(r"roaming\nvm\v20.18.0\node_modules\@anthropic-ai\claude-code\bin\claude.exe");
+        let nodejs = t.file(r"pf\nodejs\node_modules\@anthropic-ai\claude-code\bin\claude.exe");
+        let custom = t.file(r"npm-global\node_modules\@anthropic-ai\claude-code\bin\claude.exe");
+        t.file(r"npm-global\claude.cmd");
+        let scoop_global = t.file(r"pd\scoop\apps\claude-code\current\claude.exe");
+        // pnpm 里一个名字只是沾边的包不算。
+        t.file(r"local\pnpm\global\5\node_modules\.pnpm\@anthropic-ai+sdk@1.0.0\node_modules\@anthropic-ai\sdk\claude.exe");
+        let mut r = t.roots();
+        r.path_dirs = vec![t.base.join("npm-global")];
+
+        let all = scan(&r);
+        let kind_of = |p: &Path| all.iter().find(|i| same_path(&i.path, p)).map(|i| i.kind);
+        for p in [&pnpm, &yarn, &bun, &volta, &nvm_old] {
+            assert_eq!(kind_of(p), Some(Kind::ManagerNative), "{}", p.display());
+        }
+        for p in [&nodejs, &custom] {
+            assert_eq!(kind_of(p), Some(Kind::NpmNative), "{}", p.display());
+        }
+        assert_eq!(kind_of(&scoop_global), Some(Kind::Scoop));
+        assert!(
+            !all.iter()
+                .any(|i| norm(&i.path).contains("@anthropic-ai+sdk")),
+            "只认 claude-code 那几个包"
+        );
+        let locked = lockable_paths(&r);
+        for p in [
+            &pnpm,
+            &yarn,
+            &bun,
+            &volta,
+            &nvm_old,
+            &nodejs,
+            &custom,
+            &scoop_global,
+        ] {
+            assert!(
+                locked.iter().any(|(q, _)| same_path(q, p)),
+                "{} 必须上锁",
+                p.display()
+            );
+        }
+        assert!(
+            all.iter()
+                .filter(|i| matches!(i.kind, Kind::ManagerNative | Kind::NpmNative))
+                .all(|i| !i.launchable),
+            "包里自带的那份只锁不启动"
+        );
+        // 能启动的只有 PATH 上那个 claude.cmd 与全局 Scoop 那份。
+        assert_eq!(preferred_cli(&r).map(|i| i.kind), Some(Kind::Scoop));
+    }
+
+    /// 全局 Scoop 的根跟用户那份设成同一个目录时不重复扫；环境变量指的位置照认。
+    #[test]
+    fn manager_roots_follow_their_environment_variables() {
+        let t = Tree::new("manager-env");
+        let pnpm =
+            t.file(r"custom-pnpm\global\5\node_modules\@anthropic-ai\claude-code\bin\claude.exe");
+        let nvm =
+            t.file(r"custom-nvm\v22.11.0\node_modules\@anthropic-ai\claude-code\bin\claude.exe");
+        let volta =
+            t.file(r"custom-volta\tools\image\packages\@anthropic-ai\claude-code\bin\claude.exe");
+        let mut r = t.roots();
+        r.env = vec![
+            ("PNPM_HOME".into(), t.base.join("custom-pnpm")),
+            ("NVM_HOME".into(), t.base.join("custom-nvm")),
+            ("VOLTA_HOME".into(), t.base.join("custom-volta")),
+            ("SCOOP_GLOBAL".into(), t.base.join("home").join("scoop")),
+        ];
+        let locked = lockable_paths(&r);
+        for p in [&pnpm, &nvm, &volta] {
+            assert!(
+                locked.iter().any(|(q, _)| same_path(q, p)),
+                "{}",
+                p.display()
+            );
+        }
+        assert!(scoop_global_roots(&r)
+            .iter()
+            .all(|d| !same_path(d, &t.base.join("home").join("scoop"))));
     }
 
     #[test]

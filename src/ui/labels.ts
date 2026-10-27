@@ -59,6 +59,8 @@ export const EXTERNAL_METHOD_LABEL: Record<ExternalMethod, string> = {
   scoop: "scoop 卸载",
   delete: "删除文件",
   registry: "删登记项",
+  // 2026-10-27（阶段 7 · X3）：别的包管理器里那几份，面板不执行，只告诉你在哪卸。
+  manual: "要你自己卸",
 };
 
 export const MANAGED_APP_LABEL: Record<ManagedApp, string> = {

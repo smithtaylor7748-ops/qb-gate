@@ -1815,7 +1815,13 @@ v0.8.0 之前四处各拼一份、已经对不上 —— 只用 winget 装的人
 
 - 面板托管的那份；
 - **版本库里留给回滚用的历史版本**（`versions/<版本>/`）；
-- 官方安装器的版本库、下载缓存、winget / Scoop / PATH 上的、编辑器扩展自带的。
+- 官方安装器的版本库、下载缓存、winget / Scoop / PATH 上的、编辑器扩展自带的；
+- **npm 包自带的那份，不管是谁装的**（2026-10-27，阶段 7 · X3 的「重复安装诊断」，照 cc-switch 认的那些地方）：`%APPDATA%\npm`、
+  PATH 上自定义的全局前缀、`%ProgramFiles%\nodejs`、`NVM_SYMLINK`（`Kind::NpmNative`），以及 pnpm 仓（`.pnpm` 里的真文件 ——
+  `node_modules\@anthropic-ai\claude-code` 只是联结点）、Yarn / Bun / Volta 的全局目录、nvm-windows 没在用的那几个 Node 版本
+  （`Kind::ManagerNative`）；全局 Scoop（`%ProgramData%\scoop`、`SCOOP_GLOBAL`）。原来只扫 `%APPDATA%\npm` 一处：
+  `claude.cmd` 锁不住（批处理），包里那份能直接跑的 exe 又不在表里。`ManagerNative` 只锁不启动；清外部副本对它们**不删**，
+  给出在哪个管理器里卸的那一句（`ExternalMethod::Manual`）—— 直接删包目录里的文件会让那个管理器的账本对不上。
 
 唯一的例外是桌面端 `app-<版本>\claude.exe` —— 给它加 Deny ACE 会让桌面端开新窗口
 就崩，只能靠看门狗收。

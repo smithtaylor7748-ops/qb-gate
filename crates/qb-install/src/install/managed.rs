@@ -1233,6 +1233,40 @@ pub enum Method {
     Delete,
     /// 删注册表里的卸载登记（文件早就不在了，登记还挂着）。
     Registry,
+    /// 面板不替你卸：它在别的包管理器里（pnpm / Yarn / Bun / Volta / nvm-windows 没在用的 Node 版本 / 全局 Scoop），
+    /// 得在那个管理器里卸，`action` 里是要跑的那一句（2026-10-27，中转站重构阶段 7 · X3）。清理时只列出来、不执行 ——
+    /// 直接删包目录里的文件会让那个管理器的账本对不上，`npm uninstall -g` 又够不着它们。
+    Manual,
+}
+
+/// 别的包管理器里那一份该怎么卸（给人看的一句话）。**纯函数**，按路径认是谁装的。
+pub fn manager_uninstall_hint(path: &Path) -> String {
+    const PKG: &str = "@anthropic-ai/claude-code";
+    let n = crate::install::inventory::norm(path);
+    if n.contains("\\pnpm\\") {
+        format!("这一份是 pnpm 装的：在终端里跑 pnpm remove -g {PKG}")
+    } else if n.contains("\\yarn\\") {
+        format!("这一份是 Yarn 装的：在终端里跑 yarn global remove {PKG}")
+    } else if n.contains("\\.bun\\") {
+        format!("这一份是 Bun 装的：在终端里跑 bun remove -g {PKG}")
+    } else if n.contains("\\volta\\") {
+        format!("这一份是 Volta 装的：在终端里跑 volta uninstall {PKG}")
+    } else if let Some(v) = n
+        .split_once("\\nvm\\")
+        .and_then(|(_, rest)| rest.split('\\').next())
+        .filter(|v| !v.is_empty())
+    {
+        format!("这一份装在 nvm-windows 的 Node {v} 里：先 nvm use {v}，再 npm uninstall -g {PKG}")
+    } else if is_global_scoop(path) {
+        "这一份是全局 Scoop 装的：在管理员终端里跑 scoop uninstall -g claude-code".into()
+    } else {
+        format!("用装它的那个包管理器卸载 {PKG}")
+    }
+}
+
+/// 全局 Scoop（`scoop install -g`）装的吗。默认在 `%ProgramData%\scoop` 下；`scoop uninstall` 不带 `-g` 卸不掉它。
+fn is_global_scoop(path: &Path) -> bool {
+    crate::install::inventory::norm(path).contains("\\programdata\\scoop\\")
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -1258,7 +1292,7 @@ pub fn plan_claude_externals(
     roaming: Option<&Path>,
 ) -> Vec<External> {
     use crate::install::inventory::Kind;
-    let mut out = Vec::new();
+    let mut out: Vec<External> = Vec::new();
     let mut npm = false;
     let mut winget = false;
     let mut scoop = false;
@@ -1269,6 +1303,23 @@ pub fn plan_claude_externals(
         match i.kind {
             Kind::Npm | Kind::NpmNative => npm = true,
             Kind::Winget => winget = true,
+            // 别的包管理器里那几份（2026-10-27）：同一个管理器、同一句命令只列一次。
+            Kind::ManagerNative | Kind::Scoop
+                if i.kind == Kind::ManagerNative || is_global_scoop(&i.path) =>
+            {
+                let action = manager_uninstall_hint(&i.path);
+                if !out
+                    .iter()
+                    .any(|e| e.method == Method::Manual && e.action == action)
+                {
+                    out.push(External {
+                        app: App::ClaudeCode,
+                        method: Method::Manual,
+                        target: i.path.display().to_string(),
+                        action,
+                    });
+                }
+            }
             Kind::Scoop => scoop = true,
             Kind::Native | Kind::NativeVersion | Kind::Programs | Kind::Path => {
                 out.push(External {
@@ -1287,6 +1338,8 @@ pub fn plan_claude_externals(
             | Kind::MsixManaged
             | Kind::Editor
             | Kind::DesktopStub => {}
+            // 上面那个带条件的分支已经收走了全部 `ManagerNative`；编译器看不出来，这里写明白。
+            Kind::ManagerNative => {}
         }
     }
     for s in stale {
@@ -1553,6 +1606,12 @@ pub async fn cleanup(app: App) -> Result<CleanupReport> {
     ];
 
     for e in &plan {
+        // 别的包管理器里那几份：面板不执行，只照实说要你做什么（`Method::Manual`）。
+        if e.method == Method::Manual {
+            rep.notes
+                .push(format!("要你自己做：{}（{}）", e.action, e.target));
+            continue;
+        }
         let r: std::result::Result<String, String> = match e.method {
             Method::Npm => {
                 let r = run("cmd", &["/d", "/c", "npm", "uninstall", "-g", &e.target]).await;
@@ -1599,6 +1658,8 @@ pub async fn cleanup(app: App) -> Result<CleanupReport> {
             )
             .await
             .map(|_| format!("已删除卸载登记 {}", e.target)),
+            // 上面已经挑出去了（只进提示，不执行）。
+            Method::Manual => continue,
             Method::Delete => {
                 let p = PathBuf::from(&e.target);
                 // 删之前再验一次签名：只删确实是 Anthropic / OpenAI 的那份，
@@ -2085,6 +2146,60 @@ mod tests {
         assert!(plan
             .iter()
             .all(|e| !e.target.contains("credentials") && !e.target.contains("claude-profile")));
+    }
+
+    /// 别的包管理器里那几份（阶段 7 · X3）：不删、不跑 `npm uninstall -g`（够不着），只告诉人去哪卸；
+    /// 同一个管理器的两个 exe 只列一句，全局 Scoop 不跟用户那份的 `scoop uninstall` 混在一起。
+    #[test]
+    fn copies_in_other_package_managers_become_instructions_not_deletions() {
+        use crate::install::inventory::{Install, Kind};
+        let mk = |kind, p: &str| Install {
+            kind,
+            path: PathBuf::from(p),
+            lockable: true,
+            launchable: false,
+            preferred: false,
+        };
+        let installs = vec![
+            mk(
+                Kind::ManagerNative,
+                r"C:\Users\me\AppData\Local\pnpm\global\5\node_modules\.pnpm\@anthropic-ai+claude-code@2.1.300\node_modules\@anthropic-ai\claude-code\bin\claude.exe",
+            ),
+            mk(
+                Kind::ManagerNative,
+                r"C:\Users\me\AppData\Local\pnpm\global\5\node_modules\.pnpm\@anthropic-ai+claude-code-win32-x64@2.1.300\node_modules\@anthropic-ai\claude-code-win32-x64\claude.exe",
+            ),
+            mk(
+                Kind::ManagerNative,
+                r"C:\Users\me\AppData\Roaming\nvm\v22.11.0\node_modules\@anthropic-ai\claude-code\bin\claude.exe",
+            ),
+            mk(
+                Kind::ManagerNative,
+                r"C:\Users\me\AppData\Local\Volta\tools\image\packages\@anthropic-ai\claude-code\bin\claude.exe",
+            ),
+            mk(
+                Kind::Scoop,
+                r"C:\ProgramData\scoop\apps\claude-code\current\claude.exe",
+            ),
+        ];
+        let plan = plan_claude_externals(&installs, &[], Path::new(r"C:\M"), None);
+        assert!(plan.iter().all(|e| e.method == Method::Manual), "{plan:?}");
+        let hints: Vec<&str> = plan.iter().map(|e| e.action.as_str()).collect();
+        assert_eq!(hints.len(), 4, "{hints:?}");
+        assert!(hints[0].contains("pnpm remove -g @anthropic-ai/claude-code"));
+        assert!(hints[1].contains("nvm use v22.11.0"));
+        assert!(hints[2].contains("volta uninstall @anthropic-ai/claude-code"));
+        assert!(hints[3].contains("scoop uninstall -g claude-code"));
+        assert_eq!(
+            manager_uninstall_hint(Path::new(
+                r"C:\Users\me\.bun\install\global\node_modules\@anthropic-ai\claude-code\bin\claude.exe"
+            )),
+            "这一份是 Bun 装的：在终端里跑 bun remove -g @anthropic-ai/claude-code"
+        );
+        assert!(manager_uninstall_hint(Path::new(
+            r"C:\Users\me\AppData\Local\Yarn\Data\global\node_modules\@anthropic-ai\claude-code\bin\claude.exe"
+        ))
+        .contains("yarn global remove"));
     }
 
     #[test]

@@ -3,4 +3,4 @@
 /**
  * 怎么清掉一份外部副本。
  */
-export type ExternalMethod = "npm" | "winget" | "scoop" | "delete" | "registry";
+export type ExternalMethod = "npm" | "winget" | "scoop" | "delete" | "registry" | "manual";

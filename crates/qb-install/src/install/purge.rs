@@ -342,6 +342,15 @@ fn plan_claude_code(f: &Facts, out: &mut Vec<Item>) {
                     "官方安装器装的或它留下的",
                 ))
             }
+            // 2026-10-27（阶段 7 · X3）：pnpm / Yarn / Bun / Volta / nvm 全局目录里 npm 包自带的那份。`npm uninstall -g`
+            // 够不着它们，只删这个 exe（删之前照样验签名）；包管理器里的登记留着，要在它里面再卸一次。
+            Kind::ManagerNative => out.push(Item::new(
+                t,
+                Category::Program,
+                Action::DeleteFile,
+                i.path.display().to_string(),
+                "别的 Node 管理器（pnpm / Yarn / Bun / Volta / nvm）里 npm 包自带的那份；只删这个程序，它在那个管理器里的登记要自己卸",
+            )),
             // 桌面端带的副本属于桌面端，编辑器扩展属于编辑器，MSIX 属于系统包管理。
             // 卸 Claude Code 不动它们 —— 要卸桌面端就选桌面端那一项。
             Kind::DesktopManaged | Kind::MsixManaged | Kind::Editor | Kind::DesktopStub => {}
