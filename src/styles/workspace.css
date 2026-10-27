@@ -1922,6 +1922,92 @@ body:has(.official-page) {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* 会话管理器（中转站重构阶段 6 · S1，`SessionsPanel.tsx`）。标题是按钮（打开阅读），一行放不下就省略号。 */
+.qb-session-open {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qb-session-open:hover {
+  color: var(--accent);
+}
+.qb-session-when {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.qb-session-trash-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qb-session {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.qb-session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.qb-session-resume,
+.qb-session-pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.qb-session-pre {
+  max-height: 320px;
+  overflow: auto;
+}
+.qb-session-msgs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.qb-session-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  min-width: 0;
+}
+.qb-session-msg--user {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
+.qb-session-who {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.qb-session-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .qb-icon-button {
   appearance: none;
   border: 1px solid transparent;

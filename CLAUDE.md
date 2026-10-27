@@ -1432,6 +1432,26 @@ MiniMax 国内 / 国际、OpenCode Go）。认哪一家、怎么解析在 `qb-st
   **最早那条记录之前的格子不画**（说不出那天用没用），有记录以来没请求的是中性灰。表格版是「按月看」。
 - 一个联网请求都没有；数字写法跟 `/usage` 共用 `lib/usageFormat.ts`（没记到的写「—」、不到一分钱写「<$0.01」）。
 
+## 会话管理器：扩展中心「会话」分页（2026-10-26，中转站重构阶段 6 · S1，照 cc-switch 的 `session_manager`）
+
+Claude Code 和 Codex 留在本机的会话记录：列表（按来源筛、搜标题 / 项目目录 / 会话 id，可选连内容一起搜）、阅读（分页、工具调用
+和输出折叠）、导出 Markdown（保存框，`dialog:allow-save`）、复制恢复命令、删除（先进回收站，能放回去）。后端 `usecase::session_ops`，
+命令在 `commands::session_manager`（模块名不叫 `sessions`：`qb_platform::sessions` 已经占了），界面 `SessionsPanel.tsx`。
+放在扩展中心而不是侧栏：侧栏六个入口在 680×640 那一档已经是满的（`routes.ts`）。
+
+- **读哪些地方**跟 MCP / Skills 同一张目标表（`ext_place::Place::client_slots`）：中转环境、官方默认目录、每个官方槽位。
+  Claude Code 读 `projects\<项目>\<会话>.jsonl`，Codex 读 `sessions\YYYY\MM\DD\rollout-*.jsonl` 与 `archived_sessions\`。
+  Gemini CLI、OpenCode、Pi 的没搬（cc-switch 各写了一个解析器，格式各变各的）。
+- **标题**取第一条像样的提问：跳过 `isMeta`、`<command-name>` 这类尖括号包起来的回显、Codex 塞进去的 `<environment_context>`；
+  Codex 只看 `response_item`（`event_msg` 里同一句话是重复的）。开头只读 256 KB，按（路径、修改时刻、大小）缓存在内存里。
+- ⛔ **会话 id 是 `<目标 id>|<相对路径>`**，拿回来时核对目标在表里、路径只在 `projects/` / `sessions/` / `archived_sessions/` 下、
+  没有 `..`、是 `.jsonl` —— `a_forged_id_cannot_reach_another_file` 钉着。
+- ⛔ **删除 = 挪进 `state_dir\session-trash`**（跟酒馆同一套 `tavern_library::Trash`，Claude Code 同名的目录一起挪），
+  **两分钟内还在写的不让删**（多半正开着）；审计那一行写在命令层 —— 写在 usecase 里单测会往真实的 `ip-gate.log` 里追加。
+- **恢复命令只复制**（PowerShell，路径单引号转义；默认目录不设变量，别处设 `CLAUDE_CONFIG_DIR` / `CODEX_HOME`），不替使用者开终端。
+  旁边写明：官方账户的要门禁放行才起得来，中转环境的要本机路由开着，都要装了对应的命令行。
+- 界面一段最多 6000 字；导出 Markdown 时只截工具调用、工具输出和思考，使用者和助手说的话整段导出。
+
 ---
 
 ### 桌面端走的是它自己的「第三方网关」模式，不是环境变量里的 base_url

@@ -50,6 +50,9 @@ import type { RelayUsageReport } from "./generated/RelayUsageReport";
 import type { RelayUsageTotals } from "./generated/RelayUsageTotals";
 import type { RelayUsageGroup } from "./generated/RelayUsageGroup";
 import type { RelayRequestPage } from "./generated/RelayRequestPage";
+import type { SessionSummary } from "./generated/SessionSummary";
+import type { SessionDetail } from "./generated/SessionDetail";
+import type { TrashEntry } from "./generated/TrashEntry";
 /**
  * 演示数据 —— 只给截图和界面预览用。
  *
@@ -2964,6 +2967,154 @@ function demoRelayRequests(
   return { items: rows.slice(offset, offset + limit), total: rows.length };
 }
 
+// ------------------------------------------------ 会话管理器（阶段 6 · S1）
+//
+// 三个编出来的会话：中转环境里的 Claude Code、官方槽位 demo-main、Codex 默认目录。路径都在 C:\Users\demo 下面。
+const demoSessionSources = [
+  {
+    id: "claude-code:relay",
+    label: "Claude Code · 中转环境",
+    client: "claude-code",
+  },
+  {
+    id: "claude-code:slot:demo-main",
+    label: "Claude Code · 官方槽位 demo-main",
+    client: "claude-code",
+  },
+  { id: "codex:default", label: "Codex · 官方默认目录", client: "codex" },
+];
+const demoSessions: SessionSummary[] = [
+  {
+    id: "claude-code:relay|projects/D--work-shop/1f0c9a2e.jsonl",
+    client: "claude-code",
+    source: "claude-code:relay",
+    source_label: "Claude Code · 中转环境",
+    official: false,
+    session_id: "1f0c9a2e-5b7d-4c11-9e2a-000000000001",
+    title: "把商品页的价格改成按地区显示，顺便补上单测",
+    cwd: "D:\\work\\shop",
+    started_at: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+    updated_at: new Date(Date.now() - 40 * 60_000).toISOString(),
+    size: 482_311,
+    path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\environments\\qb-router-claude-code\\projects\\D--work-shop\\1f0c9a2e.jsonl`,
+  },
+  {
+    id: "claude-code:slot:demo-main|projects/D--notes/7a1b2c3d.jsonl",
+    client: "claude-code",
+    source: "claude-code:slot:demo-main",
+    source_label: "Claude Code · 官方槽位 demo-main",
+    official: true,
+    session_id: "7a1b2c3d-0000-4000-8000-000000000002",
+    title: "整理一下这周的会议记录，按项目分组",
+    cwd: "D:\\notes",
+    started_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+    updated_at: new Date(Date.now() - 2 * 86_400_000 + 1_800_000).toISOString(),
+    size: 96_402,
+    path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\claude-profile-demo-main\\projects\\D--notes\\7a1b2c3d.jsonl`,
+  },
+  {
+    id: "codex:default|sessions/2026/10/24/rollout-2026-10-24T09-12-00-abc.jsonl",
+    client: "codex",
+    source: "codex:default",
+    source_label: "Codex · 官方默认目录",
+    official: true,
+    session_id: "abc00000-0000-4000-8000-000000000003",
+    title: "CI 里的 lint 挂了，看一下是哪条规则",
+    cwd: "D:\\work\\api",
+    started_at: new Date(Date.now() - 2.5 * 86_400_000).toISOString(),
+    updated_at: new Date(Date.now() - 2.4 * 86_400_000).toISOString(),
+    size: 210_877,
+    path: `${HOME}\\.codex\\sessions\\2026\\10\\24\\rollout-2026-10-24T09-12-00-abc.jsonl`,
+  },
+];
+const demoSessionTrash: TrashEntry[] = [];
+/** 回收站里那几项原来是哪个会话（放回去时插回列表）。 */
+const demoSessionRemoved = new Map<string, SessionSummary>();
+function demoSessionList(args: Record<string, unknown> | undefined) {
+  const text = String(args?.text ?? "")
+    .trim()
+    .toLowerCase();
+  const source = (args?.source as string | null | undefined) ?? null;
+  const items = demoSessions.filter(
+    (x) =>
+      (!source || x.source === source) &&
+      (!text ||
+        `${x.title} ${x.cwd ?? ""} ${x.session_id}`
+          .toLowerCase()
+          .includes(text)),
+  );
+  return {
+    items,
+    total: items.length,
+    sources: demoSessionSources.map((src) => ({
+      ...src,
+      count: demoSessions.filter((x) => x.source === src.id).length,
+    })),
+    search_truncated: false,
+  };
+}
+function demoSessionRead(id: string): SessionDetail {
+  const s = demoSessions.find((x) => x.id === id);
+  if (!s) throw new Error("这个会话 id 不对（可能已经删了或挪走了）");
+  const codex = s.client === "codex";
+  const at = s.started_at;
+  return {
+    summary: s,
+    messages: [
+      {
+        role: "user",
+        kind: "text",
+        name: null,
+        text: s.title,
+        truncated: false,
+        at,
+      },
+      {
+        role: "assistant",
+        kind: "thinking",
+        name: null,
+        text: "先看一下相关的文件和测试。",
+        truncated: false,
+        at,
+      },
+      {
+        role: "assistant",
+        kind: "tool_use",
+        name: codex ? "shell" : "Read",
+        text: codex
+          ? '{"command":["npm","run","lint"]}'
+          : '{"file_path":"src/price.ts"}',
+        truncated: false,
+        at,
+      },
+      {
+        role: "tool",
+        kind: "tool_result",
+        name: null,
+        text: "（演示）工具输出的前几行……",
+        truncated: false,
+        at,
+      },
+      {
+        role: "assistant",
+        kind: "text",
+        name: null,
+        text: "改好了，测试也补上了。",
+        truncated: false,
+        at: s.updated_at,
+      },
+    ],
+    total: 5,
+    offset: 0,
+    resume: codex
+      ? `Set-Location -LiteralPath '${s.cwd}'; codex resume ${s.session_id}`
+      : `Set-Location -LiteralPath '${s.cwd}'; $env:CLAUDE_CONFIG_DIR = '${s.path.slice(0, s.path.indexOf("\\projects\\"))}'; claude --resume ${s.session_id}`,
+    resume_note: s.official
+      ? "这是官方账户的会话：门禁开着时 Windows 会拒绝直接启动，先在面板里放行；还要装了对应的命令行。"
+      : "这是中转环境的会话：要本机路由开着（从中转站页起一次这个软件就会拉起它），还要装了对应的命令行。",
+  };
+}
+
 // 一轮检验：倍率对不上（实扣是标称的 1.3 倍），缓存和成功率量到了，
 // 上下文窗口 / 最大输出 / 首字这一轮没测到 —— **没测到会压低可信度**，
 // 这正是 `trust_of` 的语义：分母是六项全额，不是「测到的那几项」。
@@ -4059,6 +4210,46 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       Number(args?.days ?? 7),
     ),
   station_usage_requests: (args) => demoRelayRequests(args),
+  sessions_list: (args) => demoSessionList(args),
+  sessions_read: (args) => demoSessionRead(String(args?.id)),
+  sessions_export: () => null,
+  sessions_delete: (args) => {
+    const at = demoSessions.findIndex((x) => x.id === args?.id);
+    if (at < 0) throw new Error("这个会话 id 不对（可能已经删了或挪走了）");
+    const [s] = demoSessions.splice(at, 1);
+    const entry: TrashEntry = {
+      id: `demo-${Date.now()}-session-1`,
+      kind: "session",
+      name: `${s.source_label} · ${s.title}`,
+      originals: [s.path],
+      deleted_at: "2026-10-26 12:00",
+      size: s.size,
+    };
+    demoSessionTrash.unshift(entry);
+    demoSessionRemoved.set(entry.id, s);
+    return entry;
+  },
+  sessions_trash: () => [...demoSessionTrash],
+  sessions_trash_restore: (args) => {
+    const at = demoSessionTrash.findIndex((t) => t.id === args?.id);
+    if (at < 0) throw new Error("回收站里没有这一项");
+    const [entry] = demoSessionTrash.splice(at, 1);
+    const back = demoSessionRemoved.get(entry.id);
+    if (back) {
+      demoSessions.push(back);
+      demoSessions.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+      demoSessionRemoved.delete(entry.id);
+    }
+    return entry;
+  },
+  sessions_trash_purge: (args) => {
+    const n = args?.id ? 1 : demoSessionTrash.length;
+    if (args?.id) {
+      const at = demoSessionTrash.findIndex((t) => t.id === args.id);
+      if (at >= 0) demoSessionTrash.splice(at, 1);
+    } else demoSessionTrash.length = 0;
+    return n;
+  },
   station_audits: (args) => (args?.routeId === R_CHEAP ? stationAudits : []),
   station_run_audit: (args) => ({
     ...stationAudits[0],

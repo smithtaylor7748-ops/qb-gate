@@ -2262,6 +2262,50 @@ try {
   await page.getByLabel("内容").fill("先说风险，再说改法，最后给补丁。");
   await page.getByRole("button", { name: "存", exact: true }).click();
   await page.getByText("存好了：prompts/review.md").waitFor();
+  // 中转站重构阶段 6 · S1：会话分页。列表、按来源筛、读一个（弹窗里有恢复命令）、删除要确认，窄屏不溢出。
+  await page.getByRole("tab", { name: "会话" }).click();
+  await page.getByTestId("sessions-panel").waitFor();
+  await page
+    .getByRole("group", { name: "哪一处的会话" })
+    .getByRole("button", { name: /Codex · 官方默认目录/ })
+    .click();
+  // 按来源筛之后别处的那几个要消失（列表是重新读的，等它换完）。
+  await page
+    .getByRole("button", { name: /把商品页的价格/ })
+    .waitFor({ state: "detached" });
+  await page
+    .getByRole("button", { name: "CI 里的 lint 挂了，看一下是哪条规则" })
+    .waitFor();
+  await page
+    .getByRole("group", { name: "哪一处的会话" })
+    .getByRole("button", { name: "全部", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "把商品页的价格改成按地区显示，顺便补上单测" })
+    .click();
+  await page.getByTestId("session-reader").waitFor();
+  assert.match(
+    await page.getByLabel("恢复命令").innerText(),
+    /claude --resume 1f0c9a2e/,
+  );
+  await page.setViewportSize({ width: 680, height: 940 });
+  await assertNoOverflow(page, "session reader 680");
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await page.getByRole("button", { name: "删除（挪进回收站）" }).click();
+  await page.getByRole("button", { name: "挪进回收站", exact: true }).click();
+  await page.getByTestId("session-reader").waitFor({ state: "hidden" });
+  // 删掉的会话从列表里消失（列表重新读，等它换完）。
+  await page
+    .getByRole("button", { name: /把商品页的价格/ })
+    .waitFor({ state: "detached" });
+  await page.getByText("会话回收站", { exact: true }).click();
+  await page.getByRole("button", { name: "放回去", exact: true }).click();
+  await page
+    .getByRole("button", { name: "把商品页的价格改成按地区显示，顺便补上单测" })
+    .waitFor();
+  await page.setViewportSize({ width: 680, height: 940 });
+  await assertNoOverflow(page, "sessions tab 680");
+  await page.setViewportSize({ width: 1320, height: 940 });
   // 分页存在会话态里：切回「发现」，跟这条流程之前一样。
   await page.getByRole("tab", { name: "发现" }).click();
 
@@ -2293,7 +2337,7 @@ try {
     "tavern panel library tabs: character detail, to trash with its chats and back, world entries whose Esc closes only the entry dialog, extension check then update, every tab without overflow at 680px",
     "relay router settings: dispatch queue and breaker pills without overflow at two widths, retest turns a tripped line half-open, failover switch saved and read back off; network section shows the key only when open to all interfaces, scan fills the proxy, the proxy box is not prefilled after saving",
     "relay schedule dispatch: tiers and liveness without overflow at two widths, paid probing off by default and spends nothing, switched on it shows a cost, pin shows a banner and an action, unpin clears it, the manual standby order is read-only while scheduling",
-    "stage 5: the project dialog says it only touches the relay side and creates from the current state, a pasted ccswitch link shows only a masked key and imports after confirming onto the relay page, the tool files tab switches between OpenClaw / Hermes / Pi without overflow and saves an edit",
+    "stage 5: the project dialog says it only touches the relay side and creates from the current state, a pasted ccswitch link shows only a masked key and imports after confirming onto the relay page, the tool files tab switches between OpenClaw / Hermes / Pi without overflow and saves an edit; stage 6: the sessions tab filters by source, reads a session with its resume command, deletes only after confirming and restores from the trash without overflow",
   ];
   writeFileSync(
     "docs/ui-regression.json",

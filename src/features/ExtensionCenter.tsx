@@ -32,6 +32,7 @@ import McpPanel from "./McpPanel";
 import SkillsPanel from "./SkillsPanel";
 import PromptsPanel from "./PromptsPanel";
 import ToolFilesPanel from "./ToolFilesPanel";
+import SessionsPanel from "./SessionsPanel";
 
 const KIND_ICON = {
   application: Blocks,
@@ -116,6 +117,8 @@ export default function ExtensionCenter() {
           ["prompts", "提示词"],
           // 阶段 5（C3 / C4 的附带件）：OpenClaw / Hermes / Pi 自己的说明与记忆文件。
           ["toolfiles", "工具文件"],
+          // 阶段 6（S1）：Claude Code / Codex 的本机会话记录。
+          ["sessions", "会话"],
         ].map(([key, name]) => (
           <button
             key={key}
@@ -136,6 +139,8 @@ export default function ExtensionCenter() {
         <PromptsPanel />
       ) : tab === "toolfiles" ? (
         <ToolFilesPanel />
+      ) : tab === "sessions" ? (
+        <SessionsPanel />
       ) : (
         <>
           <div className="qb-catalog-toolbar">

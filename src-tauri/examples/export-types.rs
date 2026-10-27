@@ -252,6 +252,9 @@ fn main() {
         // 中转用量页（中转站重构阶段 6 · U1）。
         qb_gate_lib::usecase::relay_usage_ops::RelayUsageReport::export_all_to(&root)?;
         qb_gate_lib::usecase::relay_usage_ops::RelayRequestPage::export_all_to(&root)?;
+        // 会话管理器（中转站重构阶段 6 · S1）。
+        qb_gate_lib::usecase::session_ops::SessionList::export_all_to(&root)?;
+        qb_gate_lib::usecase::session_ops::SessionDetail::export_all_to(&root)?;
         // 倍率三态。界面照它分「标称·未核实」/「已核实」/ 划掉标称写实测,
         // 少一个分支就会把没检验过的显示成属实。
         qb_gate_lib::station::route::RateTrust::export_all_to(&root)?;

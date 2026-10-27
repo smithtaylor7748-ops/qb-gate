@@ -244,6 +244,13 @@ Command Code 没搬。
 **跟它不一样**：切点不对齐到本地零点（被切开的那一天由明细和汇总相加，测试钉着不重复）；汇总的 token / 花费列可以是 NULL（「没记」不是 0）；
 不读各家客户端的会话日志（`session_usage*.rs` 没搬，只统计经本机路由的请求）；热力图最早记录之前的格子不画。
 
+**阶段 6 第四批（2026-10-26，会话管理器，S1）**：`qb-app/src/usecase/session_ops.rs` 对应 cc-switch `session_manager/`（列表、内容、导出、删除）
+与 `session_manager/providers/claude.rs`、`codex.rs`、`codex_items.rs` 的读法（Claude Code 的 `projects/<项目>/<会话>.jsonl`、`isMeta` 与
+`summary` 行、content 块的 text / tool_use / tool_result / thinking；Codex 的 `session_meta`、`response_item` 的 message / function_call /
+function_call_output / reasoning、恢复命令 `claude --resume` / `codex resume`）；界面 `src/features/SessionsPanel.tsx` 照 `components/sessions` 的信息量重做。
+**跟它不一样**：只搬 Claude Code 和 Codex 两家；删除先挪进面板的回收站（cc-switch 直接删），两分钟内还在写的不让删；面板给界面的 id 带目标、拿回来逐项核对路径；
+不替使用者开终端（cc-switch 的 `launch_session_terminal` 没搬），恢复命令只复制；不读图片附件（`get_session_image` 没搬）。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text

@@ -51,7 +51,7 @@ export const NAV: NavEntry[] = [
     path: "/extensions",
     name: "扩展",
     icon: Blocks,
-    hint: "酒馆、MCP、Skills",
+    hint: "MCP、Skills、会话",
   },
   { path: "/settings", name: "设置", icon: Settings, hint: "偏好、备份与帮助" },
 ];

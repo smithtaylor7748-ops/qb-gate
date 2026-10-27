@@ -28,6 +28,8 @@ pub mod ipv6;
 pub mod network;
 pub mod plugins;
 pub mod probe;
+/// 会话管理器（中转站重构阶段 6 · S1）。模块名不叫 `sessions`：`qb_platform::sessions` 已经占了。
+pub mod session_manager;
 pub mod station;
 pub mod system;
 pub mod workspace;
