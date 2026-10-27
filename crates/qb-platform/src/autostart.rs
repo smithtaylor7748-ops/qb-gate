@@ -164,12 +164,9 @@ mod tests {
 
     #[test]
     fn the_command_quotes_a_path_with_spaces_and_reads_back() {
-        let exe = Path::new(r"C:\Users\张三\AppData\Local\QB Gate\qb-gate.exe");
+        let exe = Path::new(r"D:\软件 张三\QB Gate\qb-gate.exe");
         let c = command_for(exe);
-        assert_eq!(
-            c,
-            r#""C:\Users\张三\AppData\Local\QB Gate\qb-gate.exe" --autostart"#
-        );
+        assert_eq!(c, r#""D:\软件 张三\QB Gate\qb-gate.exe" --autostart"#);
         assert_eq!(exe_in(&c).as_deref(), Some(exe));
         assert!(launched_by_autostart(["qb-gate.exe", ARG]));
         assert!(!launched_by_autostart(["qb-gate.exe", "--autostartx"]));
@@ -197,8 +194,8 @@ mod tests {
     #[test]
     fn exe_paths_compare_like_windows_does() {
         assert!(same_exe(
-            Path::new(r"C:\Users\A\AppData\Local\QB Gate\qb-gate.exe"),
-            Path::new("c:/users/a/appdata/local/qb gate/QB-GATE.EXE")
+            Path::new(r"C:\Users\Me\AppData\Local\QB Gate\qb-gate.exe"),
+            Path::new("c:/users/me/appdata/local/qb gate/QB-GATE.EXE")
         ));
         assert!(!same_exe(
             Path::new(r"C:\a\qb-gate.exe"),

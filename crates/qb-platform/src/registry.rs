@@ -401,7 +401,7 @@ mod tests {
     fn text_round_trips_through_the_wire_format_with_a_trailing_nul() {
         for s in [
             "",
-            "C:\\Users\\张三\\bin",
+            "D:\\工具\\张三\\bin",
             "%USERPROFILE%\\.local\\bin",
             " 两头有空格 ",
         ] {

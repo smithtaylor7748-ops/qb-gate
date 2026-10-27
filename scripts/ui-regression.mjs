@@ -2337,6 +2337,106 @@ try {
   // 分页存在会话态里：切回「发现」，跟这条流程之前一样。
   await page.getByRole("tab", { name: "发现" }).click();
 
+  // 阶段 7（2026-10-27）：设置页「后台运行」三行默认都不勾；软件页「其他命令行工具」检查新版本之后，
+  // 新版要的 Node 本机不够就不给升级、没装的 Hermes 只有官方脚本那条路；本机体检末尾的「清理环境变量…」
+  // 什么都不预先勾，只在面板进程里的那种不能勾。
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await page.goto(origin + "/#/settings/general", {
+    waitUntil: "domcontentloaded",
+  });
+  await page.getByRole("heading", { name: "后台运行", exact: true }).waitFor();
+  for (const name of [
+    /^开机自启/,
+    /^收进托盘时释放界面/,
+    /^面板启动时拉起本机路由/,
+  ]) {
+    const box = page.getByRole("checkbox", { name });
+    await box.waitFor();
+    assert.equal(await box.isChecked(), false, `${name} 默认不该勾上`);
+  }
+  await page.setViewportSize({ width: 680, height: 940 });
+  await assertNoOverflow(page, "settings background rows 680");
+  await page.setViewportSize({ width: 1320, height: 940 });
+
+  await page.goto(origin + "/#/software", { waitUntil: "domcontentloaded" });
+  const cliCard = page.locator(".card").filter({
+    has: page.getByRole("heading", { name: "其他命令行工具", exact: true }),
+  });
+  await cliCard.waitFor();
+  const openclawRow = cliCard
+    .locator(".row")
+    .filter({ hasText: "OpenClaw" })
+    .first();
+  await openclawRow
+    .getByRole("button", { name: "检查新版本", exact: true })
+    .click();
+  await openclawRow.getByText("可升级 → 2026.10.2", { exact: true }).waitFor();
+  assert.equal(
+    await openclawRow
+      .getByRole("button", { name: "升级", exact: true })
+      .isDisabled(),
+    true,
+    "新版要的 Node 本机不够时不给升级",
+  );
+  await cliCard.getByText(/装了 2 份/).waitFor();
+  const hermesRow = cliCard
+    .locator(".row")
+    .filter({ hasText: "Hermes" })
+    .first();
+  assert.equal(
+    await hermesRow
+      .getByRole("button", { name: "用 npm 装", exact: true })
+      .isDisabled(),
+    true,
+    "Hermes 没有 npm 包",
+  );
+  await hermesRow
+    .getByRole("button", { name: "用官方脚本装…", exact: true })
+    .waitFor();
+  for (const width of [1180, 680]) {
+    await page.setViewportSize({ width, height: 940 });
+    await assertNoOverflow(page, `software page other CLI tools ${width}`);
+  }
+  await page.setViewportSize({ width: 1320, height: 940 });
+
+  await page.goto(origin + "/#/", { waitUntil: "domcontentloaded" });
+  await page
+    .getByRole("button", { name: "一键修复 / 明细", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "详细处理", exact: true })
+    .nth(2)
+    .click();
+  await page
+    .getByRole("button", { name: "清理环境变量…", exact: true })
+    .click();
+  const envDialog = page
+    .locator("dialog[open]")
+    .filter({ hasText: "先备份，再删除勾选的" })
+    .last();
+  await envDialog
+    .getByRole("checkbox", { name: "ANTHROPIC_BASE_URL" })
+    .waitFor();
+  const envBoxes = envDialog.getByRole("checkbox");
+  assert.equal(await envBoxes.count(), 2, "只有当前用户那一处的能勾");
+  for (let i = 0; i < 2; i++) {
+    assert.equal(await envBoxes.nth(i).isChecked(), false, "什么都不预先勾");
+  }
+  assert.equal(
+    await envDialog
+      .getByRole("button", { name: /先备份，再删除勾选的 0 个/ })
+      .isDisabled(),
+    true,
+  );
+  await envDialog.getByText("GEMINI_API_KEY", { exact: true }).waitFor();
+  await page.setViewportSize({ width: 680, height: 940 });
+  await assertNoOverflow(page, "environment variable cleanup 680");
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+
   assert.deepEqual(errors, []);
   const flows = [
     "catalog isolation",
@@ -2366,6 +2466,7 @@ try {
     "relay router settings: dispatch queue and breaker pills without overflow at two widths, retest turns a tripped line half-open, failover switch saved and read back off; network section shows the key only when open to all interfaces, scan fills the proxy, the proxy box is not prefilled after saving",
     "relay schedule dispatch: tiers and liveness without overflow at two widths, paid probing off by default and spends nothing, switched on it shows a cost, pin shows a banner and an action, unpin clears it, the manual standby order is read-only while scheduling",
     "stage 5: the project dialog says it only touches the relay side and creates from the current state, a pasted ccswitch link shows only a masked key and imports after confirming onto the relay page, the tool files tab switches between OpenClaw / Hermes / Pi without overflow and saves an edit; stage 6: the sessions tab filters by source, reads a session with its resume command, deletes only after confirming and restores from the trash without overflow",
+    "stage 7: the three background switches in settings start unchecked; other CLI tools check for a new version and hold back the update when Node is too old, an uninstalled Hermes offers only its official script; the environment-variable cleanup ticks nothing and offers only current-user variables; no overflow at 680px",
   ];
   writeFileSync(
     "docs/ui-regression.json",

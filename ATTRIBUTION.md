@@ -258,6 +258,29 @@ function_call_output / reasoning、恢复命令 `claude --resume` / `codex resum
 **跟它不一样**：请求地址一律同源 + https，没有「自定义模板」跳过同源检查的分支；不注入任何宿主函数；变量只有 `apiKey` / `baseUrl` / `origin`
 （不收 access token / user id 这类管理凭证）；结果挂在站点卡表头那一格（脚本优先于内置认得的那几家）；导入链接里的脚本不导入。
 
+**阶段 7 第一批（2026-10-27，开机自启与轻量模式，X7）**：`qb-platform/src/autostart.rs` 对应 cc-switch `auto_launch.rs`（登记 / 取消 / 查询），
+`src-tauri/src/window.rs` 对应 `lightweight.rs`（释放 / 重建主窗口）与 `lib.rs` 里静默启动、页面加载完才露面那一段。
+**跟它不一样**：不引 `auto-launch` crate，直接调注册表 API（`qb-platform/src/registry.rs`，自写）；只登记 Windows 的 `Run`，值名钉死成产品名
+（Tauri 的卸载程序会删它）；认 `StartupApproved` 里的「禁用」；开发版拒绝登记；轻量模式是「关窗口时释放」的设置（默认关），不是托盘开关；
+重建窗口放进异步任务；托盘的「中转站」在重建时用初始化脚本设好地址栏的 `#`。另加「面板启动时拉起本机路由」开关（cc-switch 没有这一项）。
+
+**阶段 7 第二批（2026-10-27，环境变量清理，X5）**：`qb-sysenv/src/sysenv/envvars.rs` 对应 cc-switch `services/env_checker.rs`
+（按软件认关键字：`ANTHROPIC*` / `OPENAI*` / `GEMINI*` / `GOOGLE_GEMINI*`、两个 xAI 变量，测试一起搬）与 `services/env_manager.rs`（删之前备份、按备份还原）。
+**跟它不一样**：关键字表跟体检那一项合成一张（多认 `CLAUDE_CODE_*`、`CLAUDE_CONFIG_DIR`、`CODEX_*`、四个代理变量）；只删 HKCU、只删认得的名字；
+备份的值用 DPAPI 封住、记着 `REG_EXPAND_SZ`；还原遇到不一样的同名值不盖；改完广播 `WM_SETTINGCHANGE`；没有 shell 配置文件那一半（只发 Windows 版）。
+
+**阶段 7 第三批（2026-10-27，命令行工具管理，X3）**：`qb-install/src/install/cli_tools.rs` 对应 cc-switch `commands/misc.rs` 工具管理那一段
+（`build_tool_search_paths` 的 Windows 那一支、`effective_path_string` / `expand_env_chars`、`infer_install_source`、六个工具的 npm 包名与额外参数、
+官方安装脚本地址、`anchored_command_from_paths` 的 Windows 版判断顺序）；`cli_tools_version.rs` 对应 `parse_semver` / `compare_semver` /
+`github_release_version_from_json` / `release_display_version` / `drop_latest_behind_local` 与 `commands/tool_node_requirement.rs` 的范围判断（测试一起搬）；
+`qb-app/src/usecase/cli_tools_ops.rs` 对应 `get_tool_versions` / `run_tool_lifecycle_action` / `probe_tool_installations` 的编排；
+界面 `src/features/CliToolsCard.tsx` 照它「应用」页的信息量重做。`inventory.rs` 新增的那几处 Claude Code 落点（pnpm 仓、Yarn / Bun / Volta、
+nvm-windows、自定义 npm 前缀、全局 Scoop）照 `build_tool_search_paths` 认的那些地方。
+**跟它不一样**：版本只读文件（启动壳 → 包的 `package.json`），不对每一份跑 `--version`；命令行默认那份按合并后的 PATH 自己找，不起 `where.exe`；
+官方 PowerShell 脚本先下载、给人看全文与 SHA-256，确认后才跑那一份（cc-switch 是 `-EncodedCommand "irm … | iex"`），升级失败不自动接脚本；
+不搬 WSL；卸载只做 npm / pnpm / Volta（它的 `tool_uninstall.rs` 每个工具各一套，没搬）；Claude Code / Codex / Gemini CLI 不在这张卡里
+（走软件页原来的托管安装与门禁）。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text

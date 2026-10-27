@@ -13,13 +13,14 @@ final_url: string,
 /**
  * 下载到的原样字节的 SHA-256。
  */
-sha256: string, size: bigint, 
+sha256: string, size: number, 
 /**
  * 跑的时候会带的环境变量（升级 MiniMax Code 时指定写回哪个目录）。
  */
 env: Array<[string, string]>, 
 /**
- * 脚本全文（有损 UTF-8）；超过 256 KiB 的部分不显示，`truncated` 为真。**不落进 json 那一份**。
+ * 脚本全文（有损 UTF-8）；超过 256 KiB 的部分不显示，`truncated` 为真。
+ * **不落进 json 那一份**：存说明文件时它还是空的，全文只在交给界面的那一份里。
  */
 text: string, truncated: boolean, 
 /**

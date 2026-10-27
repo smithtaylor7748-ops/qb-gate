@@ -1000,12 +1000,12 @@ mod tests {
 
     #[test]
     fn shim_parsing_handles_scoped_names_yarn_parents_and_absolute_paths() {
-        let dir = Path::new(r"C:\Users\a\AppData\Local\Yarn\bin");
+        let dir = Path::new(r"C:\Users\me\AppData\Local\Yarn\bin");
         let yarn = r#"@"%~dp0\..\Data\global\node_modules\@earendil-works\pi-coding-agent\dist\cli.js" %*"#;
         assert_eq!(
             norm(&package_dir_from_shim(yarn, dir, "@earendil-works/pi-coding-agent").unwrap()),
             norm(Path::new(
-                r"C:\Users\a\AppData\Local\Yarn\Data\global\node_modules\@earendil-works\pi-coding-agent"
+                r"C:\Users\me\AppData\Local\Yarn\Data\global\node_modules\@earendil-works\pi-coding-agent"
             ))
         );
         let abs = r#""D:\npm-global\node_modules\openclaw\openclaw.mjs" %*"#;
@@ -1025,47 +1025,49 @@ mod tests {
     fn sources_are_read_from_the_entry_path() {
         let s = |p: &str| source_of(CliTool::OpenClaw, Path::new(p));
         assert_eq!(
-            s(r"C:\Users\a\AppData\Roaming\npm\openclaw.cmd"),
+            s(r"C:\Users\me\AppData\Roaming\npm\openclaw.cmd"),
             Source::Npm
         );
         assert_eq!(s(r"C:\Program Files\nodejs\openclaw.cmd"), Source::Npm);
         assert_eq!(
-            s(r"C:\Users\a\AppData\Roaming\nvm\v24.16.0\openclaw.cmd"),
+            s(r"C:\Users\me\AppData\Roaming\nvm\v24.16.0\openclaw.cmd"),
             Source::Nvm
         );
         assert_eq!(
-            s(r"C:\Users\a\AppData\Local\pnpm\openclaw.cmd"),
+            s(r"C:\Users\me\AppData\Local\pnpm\openclaw.cmd"),
             Source::Pnpm
         );
         assert_eq!(
-            s(r"C:\Users\a\AppData\Local\Volta\bin\openclaw.exe"),
+            s(r"C:\Users\me\AppData\Local\Volta\bin\openclaw.exe"),
             Source::Volta
         );
         assert_eq!(
-            s(r"C:\Users\a\AppData\Local\Yarn\bin\openclaw.cmd"),
+            s(r"C:\Users\me\AppData\Local\Yarn\bin\openclaw.cmd"),
             Source::Yarn
         );
-        assert_eq!(s(r"C:\Users\a\.bun\bin\openclaw.exe"), Source::Bun);
-        assert_eq!(s(r"C:\Users\a\scoop\shims\openclaw.exe"), Source::Scoop);
+        assert_eq!(s(r"C:\Users\me\.bun\bin\openclaw.exe"), Source::Bun);
+        assert_eq!(s(r"C:\Users\me\scoop\shims\openclaw.exe"), Source::Scoop);
         assert_eq!(s(r"D:\tools\openclaw.exe"), Source::Unknown);
         assert_eq!(
             source_of(
                 CliTool::GrokBuild,
-                Path::new(r"C:\Users\a\.grok\bin\grok.exe")
+                Path::new(r"C:\Users\me\.grok\bin\grok.exe")
             ),
             Source::Installer
         );
         assert_eq!(
             source_of(
                 CliTool::MiniMaxCode,
-                Path::new(r"C:\Users\a\.minimax-code\mcode.cmd")
+                Path::new(r"C:\Users\me\.minimax-code\mcode.cmd")
             ),
             Source::Installer
         );
         assert_eq!(
             source_of(
                 CliTool::Hermes,
-                Path::new(r"C:\Users\a\AppData\Local\Programs\Python\Python312\Scripts\hermes.exe")
+                Path::new(
+                    r"C:\Users\me\AppData\Local\Programs\Python\Python312\Scripts\hermes.exe"
+                )
             ),
             Source::Python
         );
@@ -1120,13 +1122,13 @@ mod tests {
     #[test]
     fn effective_path_merges_and_expands() {
         let lookup = |n: &str| match n {
-            "USERPROFILE" => Some(r"C:\Users\a".to_string()),
+            "USERPROFILE" => Some(r"C:\Users\me".to_string()),
             "LOOP" => Some("%LOOP%".to_string()),
             _ => None,
         };
         assert_eq!(
             expand_vars(r"%USERPROFILE%\.local\bin;%NOPE%\x;%LOOP%", &lookup),
-            r"C:\Users\a\.local\bin;%NOPE%\x;%LOOP%"
+            r"C:\Users\me\.local\bin;%NOPE%\x;%LOOP%"
         );
         let merged = merge_path_lists(&[r"C:\A;C:\b\".to_string(), r"c:\a;C:\B;;C:\C".to_string()]);
         assert_eq!(merged.len(), 3, "{merged:?}");

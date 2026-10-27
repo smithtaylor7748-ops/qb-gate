@@ -2298,6 +2298,16 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "json-five",
+      "version": "0.3.1",
+      "license": "MIT",
+      "source": "https://github.com/spyoungtech/json-five-rs",
+      "licenseFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
       "name": "json-patch",
       "version": "3.0.1",
       "license": "MIT/Apache-2.0",
@@ -2305,6 +2315,16 @@
       "licenseFiles": [
         "LICENSE-APACHE",
         "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "json5",
+      "version": "0.4.1",
+      "license": "ISC",
+      "source": "https://github.com/callum-oakley/json5-rs",
+      "licenseFiles": [
+        "LICENCE"
       ]
     },
     {
@@ -2962,6 +2982,50 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "pest_derive",
+      "version": "2.9.4",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/pest-parser/pest",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "pest_generator",
+      "version": "2.9.4",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/pest-parser/pest",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "pest_meta",
+      "version": "2.9.4",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/pest-parser/pest",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "pest",
+      "version": "2.9.4",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/pest-parser/pest",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
       "name": "phf_codegen",
       "version": "0.13.1",
       "license": "MIT",
@@ -3219,6 +3283,17 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "psm",
+      "version": "0.1.24",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/rust-lang/stacker/",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
       "name": "qb-accounts",
       "version": "0.25.6",
       "license": "AGPL-3.0-only",
@@ -3313,6 +3388,14 @@
       "version": "0.25.6",
       "license": "AGPL-3.0-only",
       "source": "https://crates.io/crates/qb-relay/0.25.6",
+      "licenseFiles": []
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "qb-script",
+      "version": "0.25.6",
+      "license": "AGPL-3.0-only",
+      "source": "https://crates.io/crates/qb-script/0.25.6",
       "licenseFiles": []
     },
     {
@@ -3586,6 +3669,37 @@
       "source": "https://github.com/modelcontextprotocol/rust-sdk/",
       "licenseFiles": [
         "https://raw.githubusercontent.com/modelcontextprotocol/rust-sdk/3e636cab26c013eca5131103c03d20237f12c4df/LICENSE"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "rquickjs-core",
+      "version": "0.8.1",
+      "license": "MIT",
+      "source": "https://github.com/DelSkayn/rquickjs.git",
+      "licenseFiles": [
+        "https://github.com/DelSkayn/rquickjs/blob/v0.8.1/LICENSE"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "rquickjs-sys",
+      "version": "0.8.1",
+      "license": "MIT",
+      "source": "https://github.com/DelSkayn/rquickjs.git",
+      "licenseFiles": [
+        "rquickjs-sys 0.8.1 crate, quickjs/LICENSE (QuickJS-ng C sources bundled into the binary)",
+        "https://github.com/DelSkayn/rquickjs/blob/v0.8.1/LICENSE"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "rquickjs",
+      "version": "0.8.1",
+      "license": "MIT",
+      "source": "https://github.com/DelSkayn/rquickjs.git",
+      "licenseFiles": [
+        "LICENSE"
       ]
     },
     {
@@ -4205,6 +4319,17 @@
       "version": "1.2.1",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/storyyeller/stable_deref_trait",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "stacker",
+      "version": "0.1.25",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/rust-lang/stacker",
       "licenseFiles": [
         "LICENSE-APACHE",
         "LICENSE-MIT"
@@ -5033,6 +5158,17 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "typed-path",
+      "version": "0.12.4",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/chipsenkbeil/typed-path",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
       "name": "typeid",
       "version": "1.0.3",
       "license": "MIT OR Apache-2.0",
@@ -5050,6 +5186,17 @@
       "source": "https://github.com/paholg/typenum",
       "licenseFiles": [
         "LICENSE",
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "ucd-trie",
+      "version": "0.1.7",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/BurntSushi/ucd-generate",
+      "licenseFiles": [
         "LICENSE-APACHE",
         "LICENSE-MIT"
       ]
@@ -5117,6 +5264,16 @@
       "licenseFiles": [
         "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-MIT",
         "https://raw.githubusercontent.com/open-i18n/rust-unic/5878605364af97a3358368a6eaef02104af2e016/LICENSE-APACHE"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "unicode-general-category",
+      "version": "1.1.0",
+      "license": "Apache-2.0",
+      "source": "https://github.com/yeslogic/unicode-general-category",
+      "licenseFiles": [
+        "LICENSE"
       ]
     },
     {
@@ -6498,6 +6655,16 @@
       "version": "0.11.8",
       "license": "Unicode-3.0",
       "source": "https://github.com/unicode-org/icu4x",
+      "licenseFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "zip",
+      "version": "9.0.2",
+      "license": "MIT",
+      "source": "https://github.com/zip-rs/zip2",
       "licenseFiles": [
         "LICENSE"
       ]
