@@ -1413,6 +1413,25 @@ MiniMax 国内 / 国际、OpenCode Go）。认哪一家、怎么解析在 `qb-st
 - 没搬：ZenMux（要另填管理地址和管理 Key）、火山方舟（要账号 AK/SK、V4 签名 —— 比 API Key 大得多的凭证，不往面板里存）、
   智谱团队版（要组织 / 项目 ID）、Command Code（四个未公开的 `/alpha` 路由，预设里也没有它）。要加先问使用者。
 
+## 中转用量页 `/relays/usage`（2026-10-26，中转站重构阶段 6 · U1，照 cc-switch 的用量页）
+
+本机路由五个软件（Claude Code、桌面端、Codex、Gemini CLI、Grok Build）的请求：概览、按天 / 今天按小时的趋势（`ui/BarChart`，
+站内花费 / 官方价折算 / Token / 请求数四选一，一张图一个量）、全年热力图（`ui/YearHeatmap`）、按软件 / 站点 / 模型三张表、
+逐条日志（按模型、只看失败筛，分页）。从中转站页总览那一格的「用量明细」进来（带着当前软件），不进侧栏；能滚动。
+后端 `usecase::relay_usage_ops`，命令 `station_usage_report` / `station_usage_requests`（读之前先把内存里没落库的那批写掉）。
+
+- **按天汇总表 `usage_daily`（迁移 10）**：`router_requests` 只留 30 天，裁之前在**同一个事务**里先按「本地日期 + 软件 + 线路 +
+  模型 + 上游模型」加进汇总（`Repository::prune_router_requests`）。汇总和明细永远不重叠，相加就是全部 ——
+  `pruning_rolls_requests_into_usage_daily_without_counting_twice` 钉着。token / 花费那几列可以是 NULL（「没记」，不是 0），
+  合并时 NULL 加 NULL 还是 NULL。⛔ 迁移 10 之前被裁掉的明细已经没了，汇总只从现在起攒。
+- 「成功」的口径全项目一个：没记故障、状态码 2xx（`RouterRequest::ok`）；SQL 那边是 `OK_SQL`，状态码 NULL 也算失败（`coalesce` 成 0，
+  不然「只看失败」会漏掉断在半路的）。
+- ⛔ **只有经本机路由的请求**：共存型工具和桌面端直连档写的是真 Key、不经路由，这里看不到 —— 页面上写明。cc-switch 会去读
+  OpenCode / Pi 等各家的会话日志补这一块，没搬（解析器太大、各家格式各变各的；要做先问使用者）。
+- 热力图：一个色相由浅到深（`--chart-1` 往底色里 `color-mix`，样式在 `workspace.css` 的 `.qb-heat-*`），四档按有请求那些天的四分位切；
+  **最早那条记录之前的格子不画**（说不出那天用没用），有记录以来没请求的是中性灰。表格版是「按月看」。
+- 一个联网请求都没有；数字写法跟 `/usage` 共用 `lib/usageFormat.ts`（没记到的写「—」、不到一分钱写「<$0.01」）。
+
 ---
 
 ### 桌面端走的是它自己的「第三方网关」模式，不是环境变量里的 base_url

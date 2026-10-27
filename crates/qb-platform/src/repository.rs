@@ -181,7 +181,97 @@ const MIGRATIONS: &[&str] = &[
      CREATE TABLE IF NOT EXISTS prompts(id TEXT PRIMARY KEY,body TEXT NOT NULL);
      CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,body TEXT NOT NULL);
      CREATE TABLE IF NOT EXISTS deeplink_pending(id TEXT PRIMARY KEY,body TEXT NOT NULL);",
+    // 10：本机路由请求日志的按日汇总（2026-10-26，中转站重构阶段 6 · U1；计划里阶段 1 的 `usage_daily`，阶段 4 挪过来）。
+    //
+    // `router_requests` 只留 30 天。裁掉之前先把那些行按「本地日期 + 软件 + 线路 + 模型 + 上游模型」加进这张表
+    // （同一个事务，[`Repository::prune_router_requests`]），一年的趋势和热力图就从这里接着读。
+    // 汇总里的行和还留着的明细**永远不重叠**（明细裁掉的那一刻才进汇总），两边直接相加就是全部。
+    // token / 花费那几列可以是 NULL：那几天的请求一条都没记到 —— 是「没记」，不是 0。
+    "CREATE TABLE IF NOT EXISTS usage_daily(
+        day TEXT NOT NULL,
+        client TEXT NOT NULL,
+        route_id TEXT NOT NULL,
+        model TEXT NOT NULL DEFAULT '',
+        upstream_model TEXT NOT NULL DEFAULT '',
+        requests INTEGER NOT NULL DEFAULT 0,
+        failed INTEGER NOT NULL DEFAULT 0,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cache_read_tokens INTEGER,
+        cache_write_tokens INTEGER,
+        station_cost REAL,
+        official_cost REAL,
+        PRIMARY KEY(day, client, route_id, model, upstream_model));",
 ];
+
+/// 本机路由用量的一行：一天 × 软件 × 线路 × 模型 × 上游模型（迁移 10 的 `usage_daily`，或者还没裁掉的明细现算的）。
+///
+/// token / 花费是 `None` = 这一格里一条都没记到，不是 0。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
+pub struct UsageDayRow {
+    /// 本地日期 `YYYY-MM-DD`。
+    pub day: String,
+    pub client: String,
+    pub route_id: String,
+    pub model: String,
+    pub upstream_model: String,
+    pub requests: u64,
+    pub failed: u64,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
+    pub station_cost: Option<f64>,
+    pub official_cost: Option<f64>,
+}
+
+/// 今天按小时的那一格（只从明细里算）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, serde::Deserialize)]
+pub struct UsageHourRow {
+    /// 本地小时 0–23。
+    pub hour: u32,
+    pub requests: u64,
+    pub failed: u64,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
+    pub station_cost: Option<f64>,
+    pub official_cost: Option<f64>,
+}
+
+/// 用量页「逐条日志」那一页的条件（[`Repository::router_request_page`]）。新的在前。
+#[derive(Debug, Clone, Default)]
+pub struct RouterRequestPage {
+    pub client: Option<String>,
+    pub route_id: Option<String>,
+    /// 客户端请求里写的模型（精确匹配）。
+    pub model: Option<String>,
+    /// 只要失败的（跟 `RouterRequest::ok` 同一个口径：有故障、或者状态码不是 2xx）。
+    pub failed_only: bool,
+    pub since_ms: Option<i64>,
+    pub offset: u32,
+    pub limit: u32,
+}
+
+/// 「成功」的 SQL 写法，跟 `qb_station::router::RouterRequest::ok` 一字不差：没记故障、状态码 2xx。
+/// 状态码是 NULL（连不上、断在半路）时那个与运算是 NULL —— `coalesce` 成 0，不然 `NOT` 一下还是 NULL，
+/// 「只看失败」就会把这些漏掉。`USAGE_SUMS` 里的 `CASE WHEN … ELSE 1` 对 NULL 本来就落到「失败」。
+const OK_SQL: &str = "coalesce((fault IS NULL AND status BETWEEN 200 AND 299), 0)";
+
+/// 明细按某个分组键汇总成用量列（`usage_daily` 的那几列）的 SELECT 片段。
+const USAGE_SUMS: &str =
+    "count(*), sum(CASE WHEN (fault IS NULL AND status BETWEEN 200 AND 299) THEN 0 ELSE 1 END),
+        sum(input_tokens), sum(output_tokens), sum(cache_read_tokens), sum(cache_write_tokens),
+        sum(station_cost), sum(official_cost)";
+
+/// 两个可空的和相加：都是 NULL 才是 NULL（一边没记、一边记了，就是记了的那一边）。
+fn add_nullable(column: &str) -> String {
+    format!(
+        "{column} = CASE WHEN excluded.{column} IS NULL THEN {column} \
+         WHEN {column} IS NULL THEN excluded.{column} ELSE {column} + excluded.{column} END"
+    )
+}
 
 /// 用正经列存的高频表（不走通用的 `(id, body)`）。列名跟第 3 层那个类型的字段**同名**。
 ///
@@ -660,8 +750,205 @@ COMMIT;"
     }
 
     /// 删掉 `before_ms` 之前的请求日志（走 `at_ms` 的索引）。返回删了几条。
+    ///
+    /// 删之前把它们按天加进 `usage_daily`（迁移 10）—— **同一个事务**：要么汇总进去了再删，要么都没发生，
+    /// 不会出现「明细删了、汇总没进」或者「进了汇总、明细还在」（那样两边相加就重复算）。
     pub fn prune_router_requests(&self, before_ms: i64) -> Result<usize> {
-        self.prune_columns(&ROUTER_REQUESTS, before_ms)
+        let upsert = [
+            "requests = requests + excluded.requests".to_string(),
+            "failed = failed + excluded.failed".to_string(),
+            add_nullable("input_tokens"),
+            add_nullable("output_tokens"),
+            add_nullable("cache_read_tokens"),
+            add_nullable("cache_write_tokens"),
+            add_nullable("station_cost"),
+            add_nullable("official_cost"),
+        ]
+        .join(", ");
+        self.transaction(|| {
+            self.conn
+                .execute(
+                    &format!(
+                        "INSERT INTO usage_daily(day, client, route_id, model, upstream_model, requests, failed,
+                                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+                                station_cost, official_cost)
+                         SELECT date(at_ms / 1000, 'unixepoch', 'localtime'), client, route_id, model, upstream_model,
+                                {USAGE_SUMS}
+                           FROM router_requests WHERE at_ms < ?1
+                          GROUP BY 1, 2, 3, 4, 5
+                         ON CONFLICT(day, client, route_id, model, upstream_model) DO UPDATE SET {upsert}"
+                    ),
+                    [before_ms],
+                )
+                .map_err(sql)?;
+            self.prune_columns(&ROUTER_REQUESTS, before_ms)
+        })
+    }
+
+    /// 本机路由的按日用量：`usage_daily` 里 `since_day`（含）之后的，加上还没裁掉的明细里 `since_ms`（含）之后现算的。
+    ///
+    /// 两边不重叠（见迁移 10），同一个键可能各出一行 —— 调用方相加。`since_ms` 应当是 `since_day` 那天本地零点。
+    pub fn usage_days(
+        &self,
+        since_day: &str,
+        since_ms: i64,
+        client: Option<&str>,
+    ) -> Result<Vec<UsageDayRow>> {
+        let by_client = if client.is_some() {
+            "AND client = ?3"
+        } else {
+            ""
+        };
+        let query = format!(
+            "SELECT day, client, route_id, model, upstream_model, requests, failed,
+                    input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, station_cost, official_cost
+               FROM usage_daily WHERE day >= ?1 {by_client}
+             UNION ALL
+             SELECT date(at_ms / 1000, 'unixepoch', 'localtime'), client, route_id, model, upstream_model, {USAGE_SUMS}
+               FROM router_requests WHERE at_ms >= ?2 {by_client}
+              GROUP BY 1, 2, 3, 4, 5"
+        );
+        let mut stmt = self.conn.prepare(&query).map_err(sql)?;
+        let map = |r: &rusqlite::Row<'_>| {
+            Ok(UsageDayRow {
+                day: r.get(0)?,
+                client: r.get(1)?,
+                route_id: r.get(2)?,
+                model: r.get(3)?,
+                upstream_model: r.get(4)?,
+                requests: r.get::<_, i64>(5)?.max(0) as u64,
+                failed: r.get::<_, i64>(6)?.max(0) as u64,
+                input_tokens: r.get::<_, Option<i64>>(7)?.map(|v| v.max(0) as u64),
+                output_tokens: r.get::<_, Option<i64>>(8)?.map(|v| v.max(0) as u64),
+                cache_read_tokens: r.get::<_, Option<i64>>(9)?.map(|v| v.max(0) as u64),
+                cache_write_tokens: r.get::<_, Option<i64>>(10)?.map(|v| v.max(0) as u64),
+                station_cost: r.get(11)?,
+                official_cost: r.get(12)?,
+            })
+        };
+        let rows = match client {
+            Some(c) => stmt.query_map(params![since_day, since_ms, c], map),
+            None => stmt.query_map(params![since_day, since_ms], map),
+        }
+        .map_err(sql)?;
+        rows.map(|r| r.map_err(sql)).collect()
+    }
+
+    /// 今天（`since_ms` 起）按本地小时的用量，只从明细里算。
+    pub fn usage_hours(&self, since_ms: i64, client: Option<&str>) -> Result<Vec<UsageHourRow>> {
+        let by_client = if client.is_some() {
+            "AND client = ?2"
+        } else {
+            ""
+        };
+        let query = format!(
+            "SELECT CAST(strftime('%H', at_ms / 1000, 'unixepoch', 'localtime') AS INTEGER), {USAGE_SUMS}
+               FROM router_requests WHERE at_ms >= ?1 {by_client}
+              GROUP BY 1 ORDER BY 1"
+        );
+        let mut stmt = self.conn.prepare(&query).map_err(sql)?;
+        let map = |r: &rusqlite::Row<'_>| {
+            Ok(UsageHourRow {
+                hour: r.get::<_, i64>(0)?.clamp(0, 23) as u32,
+                requests: r.get::<_, i64>(1)?.max(0) as u64,
+                failed: r.get::<_, i64>(2)?.max(0) as u64,
+                input_tokens: r.get::<_, Option<i64>>(3)?.map(|v| v.max(0) as u64),
+                output_tokens: r.get::<_, Option<i64>>(4)?.map(|v| v.max(0) as u64),
+                cache_read_tokens: r.get::<_, Option<i64>>(5)?.map(|v| v.max(0) as u64),
+                cache_write_tokens: r.get::<_, Option<i64>>(6)?.map(|v| v.max(0) as u64),
+                station_cost: r.get(7)?,
+                official_cost: r.get(8)?,
+            })
+        };
+        let rows = match client {
+            Some(c) => stmt.query_map(params![since_ms, c], map),
+            None => stmt.query_map(params![since_ms], map),
+        }
+        .map_err(sql)?;
+        rows.map(|r| r.map_err(sql)).collect()
+    }
+
+    /// 汇总表里最早的那一天（没有就是 `None`）。界面上说「最早能看到哪天」。
+    pub fn usage_first_day(&self) -> Result<Option<String>> {
+        let rolled: Option<String> = self
+            .conn
+            .query_row("SELECT min(day) FROM usage_daily", [], |r| r.get(0))
+            .map_err(sql)?;
+        let live: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT date(min(at_ms) / 1000, 'unixepoch', 'localtime') FROM router_requests",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        Ok(match (rolled, live) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        })
+    }
+
+    /// 用量页「逐条日志」的一页（新的在前）与符合条件的总条数。走索引；模型、失败两个条件在索引之后筛。
+    pub fn router_request_page<T: DeserializeOwned>(
+        &self,
+        q: &RouterRequestPage,
+    ) -> Result<(Vec<T>, u64)> {
+        let mut clauses: Vec<String> = Vec::new();
+        let mut args: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(since) = q.since_ms {
+            clauses.push("at_ms >= ?".into());
+            args.push(since.into());
+        }
+        if let Some(client) = &q.client {
+            clauses.push("client = ?".into());
+            args.push(client.clone().into());
+        }
+        if let Some(route) = &q.route_id {
+            clauses.push("route_id = ?".into());
+            args.push(route.clone().into());
+        }
+        if let Some(model) = &q.model {
+            clauses.push("model = ?".into());
+            args.push(model.clone().into());
+        }
+        if q.failed_only {
+            clauses.push(format!("NOT {OK_SQL}"));
+        }
+        let filter = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
+        };
+        let total: i64 = self
+            .conn
+            .query_row(
+                &format!("SELECT count(*) FROM router_requests {filter}"),
+                rusqlite::params_from_iter(args.iter()),
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        let mut page_args = args;
+        page_args.push(i64::from(q.limit.clamp(1, 500)).into());
+        page_args.push(i64::from(q.offset).into());
+        let table = &ROUTER_REQUESTS;
+        let query = format!(
+            "SELECT {} FROM router_requests {filter} ORDER BY at_ms DESC, rowid DESC LIMIT ? OFFSET ?",
+            table.columns.join(",")
+        );
+        let mut stmt = self.conn.prepare(&query).map_err(sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(page_args), |r| {
+                let mut object = serde_json::Map::new();
+                for (i, column) in table.columns.iter().enumerate() {
+                    object.insert((*column).to_string(), from_cell(table, column, r.get(i)?));
+                }
+                Ok(serde_json::Value::Object(object))
+            })
+            .map_err(sql)?;
+        let items = rows
+            .map(|r| Ok(serde_json::from_value(r.map_err(sql)?)?))
+            .collect::<Result<Vec<T>>>()?;
+        Ok((items, total.max(0) as u64))
     }
 
     // ------------------------------------------------------------ 测活记录（迁移 7）
@@ -1440,6 +1727,147 @@ mod tests {
         // 裁旧的按时间走。
         assert_eq!(db.prune_router_requests(2_500).unwrap(), 2);
         assert_eq!(ids(all), ["4", "3"]);
+        drop(db);
+        std::fs::remove_dir_all(p).unwrap();
+    }
+
+    /// 迁移 10：裁明细之前先按天汇总进 `usage_daily`；汇总 + 剩下的明细 = 裁之前的全部，不多不少。
+    #[test]
+    fn pruning_rolls_requests_into_usage_daily_without_counting_twice() {
+        let p = fixture();
+        let db = Repository::open_in(&p).unwrap();
+        let day = |ms: i64| -> String {
+            db.conn
+                .query_row(
+                    "SELECT date(?1 / 1000, 'unixepoch', 'localtime')",
+                    [ms],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        let d1 = 1_767_000_000_000_i64;
+        let d2 = d1 + 3 * 86_400_000;
+        // 断在半路：没有状态码、也没记故障 —— 不算成功（跟 `RouterRequest::ok` 一样）。
+        let mut dropped = sample_request("3", d1 + 1_000, "claude-code", "x");
+        dropped["status"] = serde_json::Value::Null;
+        // 一条 token / 花费一样都没记到的。
+        let mut blank = sample_request("4", d1 + 2_000, "codex", "y");
+        for k in [
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_write_tokens",
+            "cache_write_1h_tokens",
+            "station_cost",
+            "official_cost",
+        ] {
+            blank[k] = serde_json::Value::Null;
+        }
+        db.insert_router_requests(&[
+            sample_request("1", d1, "claude-code", "x"),
+            sample_request("2", d1 + 500, "claude-code", "x"),
+            dropped,
+            blank,
+            sample_request("5", d2, "claude-code", "x"),
+        ])
+        .unwrap();
+        let since = d1 - 86_400_000;
+        let totals = |rows: &[UsageDayRow]| {
+            (
+                rows.iter().map(|r| r.requests).sum::<u64>(),
+                rows.iter().map(|r| r.failed).sum::<u64>(),
+                rows.iter().filter_map(|r| r.input_tokens).sum::<u64>(),
+            )
+        };
+        let before = db.usage_days(&day(since), since, None).unwrap();
+        assert_eq!(totals(&before), (5, 1, 48));
+        assert_eq!(db.prune_router_requests(d2).unwrap(), 4);
+        let after = db.usage_days(&day(since), since, None).unwrap();
+        assert_eq!(totals(&after), totals(&before), "汇总 + 明细要等于裁之前");
+        let cc = after
+            .iter()
+            .find(|r| r.day == day(d1) && r.client == "claude-code")
+            .unwrap();
+        assert_eq!((cc.requests, cc.failed, cc.input_tokens), (3, 1, Some(36)));
+        assert_eq!(cc.model, "claude-opus-5");
+        assert_eq!(cc.upstream_model, "relay-opus");
+        let cx = after.iter().find(|r| r.client == "codex").unwrap();
+        assert_eq!(
+            (cx.input_tokens, cx.station_cost),
+            (None, None),
+            "没记到不是 0"
+        );
+
+        // 晚到的同一天再裁一次：并进同一行，不是第二行，NULL 那几列也加得对。
+        db.insert_router_requests(&[sample_request("6", d1 + 3_000, "codex", "y")])
+            .unwrap();
+        db.prune_router_requests(d2).unwrap();
+        let again = db.usage_days(&day(since), since, Some("codex")).unwrap();
+        assert_eq!(again.len(), 1);
+        assert_eq!((again[0].requests, again[0].input_tokens), (2, Some(12)));
+        assert_eq!(db.usage_first_day().unwrap(), Some(day(d1)));
+        drop(db);
+        std::fs::remove_dir_all(p).unwrap();
+    }
+
+    #[test]
+    fn the_request_page_counts_failures_even_without_a_status_code() {
+        let p = fixture();
+        let db = Repository::open_in(&p).unwrap();
+        let mut dropped = sample_request("2", 2_000, "claude-code", "x");
+        dropped["status"] = serde_json::Value::Null;
+        let mut refused = sample_request("3", 3_000, "codex", "y");
+        refused["status"] = serde_json::json!(503);
+        refused["fault"] = serde_json::json!("upstream-down");
+        db.insert_router_requests(&[
+            sample_request("1", 1_000, "claude-code", "x"),
+            dropped,
+            refused,
+        ])
+        .unwrap();
+        let ids = |q: RouterRequestPage| -> (Vec<String>, u64) {
+            let (rows, total) = db.router_request_page::<serde_json::Value>(&q).unwrap();
+            (
+                rows.into_iter()
+                    .map(|v| v["id"].as_str().unwrap().to_string())
+                    .collect(),
+                total,
+            )
+        };
+        let all = RouterRequestPage {
+            limit: 2,
+            ..Default::default()
+        };
+        assert_eq!(ids(all.clone()), (vec!["3".into(), "2".into()], 3));
+        assert_eq!(
+            ids(RouterRequestPage {
+                offset: 2,
+                ..all.clone()
+            }),
+            (vec!["1".into()], 3)
+        );
+        assert_eq!(
+            ids(RouterRequestPage {
+                failed_only: true,
+                limit: 10,
+                ..Default::default()
+            }),
+            (vec!["3".into(), "2".into()], 2),
+            "没有状态码的也是失败"
+        );
+        assert_eq!(
+            ids(RouterRequestPage {
+                client: Some("claude-code".into()),
+                model: Some("claude-opus-5".into()),
+                limit: 10,
+                ..Default::default()
+            })
+            .1,
+            2
+        );
+        let hours = db.usage_hours(0, None).unwrap();
+        assert_eq!(hours.iter().map(|h| h.requests).sum::<u64>(), 3);
+        assert_eq!(hours.iter().map(|h| h.failed).sum::<u64>(), 2);
         drop(db);
         std::fs::remove_dir_all(p).unwrap();
     }

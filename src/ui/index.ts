@@ -14,6 +14,11 @@ export { default as PageHeader } from "./PageHeader";
 export { default as Pill } from "./Pill";
 export { default as ProgressBar } from "./ProgressBar";
 export { default as Skeleton } from "./Skeleton";
+export {
+  default as YearHeatmap,
+  YearHeatmapLegend,
+  type HeatDay,
+} from "./YearHeatmap";
 
 export { Modal, ConfirmDialog } from "./Modal";
 export { ToastProvider, useToast } from "./Toast";

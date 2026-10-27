@@ -1561,6 +1561,12 @@ pub fn station_remove_route(app: tauri::AppHandle, id: String) -> Result<Vec<Rou
 /// 老的 `request_logs` 由迁移 5 搬了过来。
 #[tauri::command]
 pub fn station_logs(state: State<'_, AppState>, limit: Option<u32>) -> Result<Vec<RouterRequest>> {
+    let db = flushed_logs(&state)?;
+    station_ops::router_requests(&db, None, None, limit.unwrap_or(200))
+}
+
+/// 把手里还没落库的那批请求日志写掉，回开着的库。日志页、用量页读之前都先走这一步。
+fn flushed_logs(state: &AppState) -> Result<crate::repository::Repository> {
     let drained = {
         let mut s = state
             .station
@@ -1578,7 +1584,45 @@ pub fn station_logs(state: State<'_, AppState>, limit: Option<u32>) -> Result<Ve
         }
         return Err(e);
     }
-    station_ops::router_requests(&db, None, None, limit.unwrap_or(200))
+    Ok(db)
+}
+
+/// 中转用量页（中转站重构阶段 6 · U1）：本机路由的请求按软件 / 时间档汇总，加全年热力图。
+/// `client` 不给 = 五个软件全部；`days` 1 = 今天、0 = 全部。只读本机库，不联网（`usecase::relay_usage_ops`）。
+#[tauri::command]
+pub fn station_usage_report(
+    state: State<'_, AppState>,
+    client: Option<Client>,
+    days: u32,
+) -> Result<qb_app::usecase::relay_usage_ops::RelayUsageReport> {
+    let db = flushed_logs(&state)?;
+    qb_app::usecase::relay_usage_ops::report(&db, client.map(client_key), days)
+}
+
+/// 中转用量页的逐条日志：按软件 / 线路 / 模型 / 只看失败筛，分页（明细只留 30 天）。
+#[tauri::command]
+pub fn station_usage_requests(
+    state: State<'_, AppState>,
+    client: Option<Client>,
+    route_id: Option<String>,
+    model: Option<String>,
+    failed_only: bool,
+    offset: u32,
+    limit: u32,
+) -> Result<qb_app::usecase::relay_usage_ops::RelayRequestPage> {
+    let db = flushed_logs(&state)?;
+    qb_app::usecase::relay_usage_ops::requests(
+        &db,
+        &qb_platform::repository::RouterRequestPage {
+            client: client.map(|c| client_key(c).to_string()),
+            route_id,
+            model,
+            failed_only,
+            since_ms: None,
+            offset,
+            limit,
+        },
+    )
 }
 
 // ------------------------------------------------------------------ 站点检验

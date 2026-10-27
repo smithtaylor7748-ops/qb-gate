@@ -23,6 +23,8 @@ const ROUTES = [
   "usage?side=claude",
   "usage?side=gpt",
   "usage?side=antigravity",
+  // 中转站重构阶段 6 · U1：中转用量页（趋势、全年热力图、几张表、逐条日志；热力图在 680px 那一档要缩得下）。
+  "relays/usage",
   "settings",
 ];
 // 截图沿用旧文件名 —— README.md 引着 workspace-light.png / extensions-light.png。
@@ -564,6 +566,20 @@ try {
     await page.getByText("余额（整站共享）站点未提供", { exact: true }).count(),
     1,
   );
+  // 阶段 6 · U1：总览那一格的「用量明细」进中转用量页，带着当前这个软件；回来还在中转站页。
+  await page.getByRole("link", { name: "用量明细" }).click();
+  await page.getByTestId("relay-usage").waitFor();
+  assert.match(page.url(), /#\/relays\/usage\?client=claude-code$/);
+  assert.ok(
+    (await page.locator(".qb-heat rect").count()) > 0,
+    "热力图没画出来",
+  );
+  assert.match(
+    await page.getByTestId("relay-usage").innerText(),
+    /共存型工具.*不经本机路由，这里看不到/,
+  );
+  await page.goBack();
+  await page.locator(".qb-st-ctl").waitFor();
   assert.equal(await page.locator(".qb-st-nudge").count(), 0);
   const relayButton = page.locator(".qb-st-launchbtn");
   await relayButton.click();

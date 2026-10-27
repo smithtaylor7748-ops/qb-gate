@@ -236,6 +236,14 @@ OpenCode Go 三个窗口与 0% 时的占位重置时刻、秒 / 毫秒时间戳�
 缺字段算成用光、阶跃 / 硅基缺余额按 0）；回复内容不原样进报错；打开页面时同一把 Key 5 分钟内只问一次；ZenMux、火山方舟（AK/SK 签名）、智谱团队版、
 Command Code 没搬。
 
+**阶段 6 第三批（2026-10-26，中转用量页，U1）**：按天汇总照 cc-switch `database/dao/usage_rollup.rs` 的做法 —— 明细超过保留期时
+**同一个事务里先按本地日期汇总、再删**，汇总行跟已有的同一天合并；页面的几块（概览、按天趋势、全年热力图、按供应商 / 模型、请求日志）
+照 `services/usage_stats.rs` 与前端 `components/usage` 的信息量。代码是按 QB Gate 自己的 `router_requests` 列重写的
+（`qb-platform` 的迁移 10 与 `prune_router_requests` / `usage_days` / `router_request_page`、`qb-app/src/usecase/relay_usage_ops.rs`、
+`src/features/station/RelayUsage.tsx`、`src/ui/YearHeatmap.tsx`），没有搬它的 SQL 或组件。
+**跟它不一样**：切点不对齐到本地零点（被切开的那一天由明细和汇总相加，测试钉着不重复）；汇总的 token / 花费列可以是 NULL（「没记」不是 0）；
+不读各家客户端的会话日志（`session_usage*.rs` 没搬，只统计经本机路由的请求）；热力图最早记录之前的格子不画。
+
 cc-switch 的 MIT 许可全文（安装包的 `licenses/` 目录带着本文件，就是带着这段声明）：
 
 ```text

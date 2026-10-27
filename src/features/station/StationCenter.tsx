@@ -46,6 +46,8 @@ import {
   Zap,
 } from "lucide-react";
 
+import { Link } from "react-router-dom";
+
 import type { Axis } from "../../lib/generated/Axis";
 import type { Client } from "../../lib/generated/Client";
 import type { Floors } from "../../lib/generated/Floors";
@@ -76,6 +78,7 @@ import {
   RANGES,
   rangeOf,
   stamp,
+  STATION_CLIENTS,
   tokenMix,
   type GranId,
   type RangeId,
@@ -132,14 +135,7 @@ function num(v: number): string {
   return String(Number(v.toFixed(2)));
 }
 
-const CLIENTS: { id: Client; name: string; short: string }[] = [
-  { id: "claude-code", name: "Claude Code", short: "Claude Code" },
-  { id: "claude-desktop", name: "Claude 桌面端", short: "桌面端" },
-  { id: "codex", name: "Codex 桌面端", short: "Codex 桌面端" },
-  // 阶段 4 的两档中转命令行（排在后面，前三个分页的位置不变）。
-  { id: "gemini-cli", name: "Gemini CLI", short: "Gemini CLI" },
-  { id: "grok-build", name: "Grok Build", short: "Grok Build" },
-];
+const CLIENTS = STATION_CLIENTS;
 
 export default function StationCenter() {
   const [routes, setRoutes] = useState<Route[]>([]);
@@ -853,6 +849,13 @@ function StationBoard({
               <option value="hour">按小时</option>
               <option value="day">按天</option>
             </select>
+            {/* 中转站重构阶段 6 · U1：能滚动的用量明细页（趋势、全年热力图、按站点 / 模型、逐条日志）。 */}
+            <Link
+              to={`/relays/usage?client=${client}`}
+              className="btn btn--sm btn--ghost"
+            >
+              用量明细
+            </Link>
           </div>
 
           <Chart rows={mineLogs} range={range} gran={gran} />

@@ -34,6 +34,8 @@ pub mod project_ops;
 /// 提示词库：每个目标挑一条写进它的提示词文件（中转站重构阶段 5，M3）。
 pub mod prompt_ops;
 pub mod purge_ops;
+/// 中转用量（中转站重构阶段 6 · U1）：本机路由五个软件的趋势、全年热力图、按站点 / 模型、逐条日志；只读本机库。
+pub mod relay_usage_ops;
 pub mod settings_ops;
 /// 站点卡表头的余额 / 编程套餐额度（中转站重构阶段 6 · U3）：打开页面或点刷新时问，认不出是哪一家就不问。
 pub mod site_quota_ops;

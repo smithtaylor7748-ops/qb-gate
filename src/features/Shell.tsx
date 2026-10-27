@@ -74,6 +74,8 @@ const PAGES = {
   // 0.32.0：用量明细。**不进 NAV** —— 只从三张用量卡的页脚按钮进来。
   usage: () => import("./Usage"),
   relays: () => import("./station/StationCenter"),
+  // 中转站重构阶段 6 · U1：中转用量。**不进 NAV** —— 从中转站页总览那一格的「用量明细」进来，侧栏「中转站」跟着亮。
+  relayUsage: () => import("./station/RelayUsage"),
   extensions: () => import("./ExtensionCenter"),
   software: () => import("./Software"),
   subscription: () => import("./subscription/Subscription"),
@@ -81,6 +83,7 @@ const PAGES = {
 };
 const Usage = lazy(PAGES.usage);
 const StationCenter = lazy(PAGES.relays);
+const RelayUsage = lazy(PAGES.relayUsage);
 const ExtensionCenter = lazy(PAGES.extensions);
 const Software = lazy(PAGES.software);
 const Subscription = lazy(PAGES.subscription);
@@ -495,6 +498,7 @@ function Layout() {
                       <Route path="/" element={<Accounts />} />
                       <Route path="/usage" element={<Usage />} />
                       <Route path="/relays" element={<StationCenter />} />
+                      <Route path="/relays/usage" element={<RelayUsage />} />
                       <Route
                         path="/extensions/:id?"
                         element={<ExtensionCenter />}

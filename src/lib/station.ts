@@ -29,6 +29,8 @@ import type { RouterStatus } from "./generated/RouterStatus";
 import type { ClientConfig } from "./generated/ClientConfig";
 import type { ProbeResult } from "./generated/ProbeResult";
 import type { SiteQuota } from "./generated/SiteQuota";
+import type { RelayUsageReport } from "./generated/RelayUsageReport";
+import type { RelayRequestPage } from "./generated/RelayRequestPage";
 import type { TurnStateModelStatus } from "./generated/TurnStateModelStatus";
 import type { Schedule } from "./generated/Schedule";
 import type { Session } from "./generated/Session";
@@ -114,6 +116,23 @@ export const stationApi = {
    */
   siteQuota: (routeId: string, force: boolean) =>
     call<SiteQuota | null>("station_site_quota", { routeId, force }),
+
+  /**
+   * 中转用量页（中转站重构阶段 6 · U1）：本机路由的请求按软件 / 时间档汇总，加全年热力图。只读本机库，不联网。
+   * `client: null` = 五个软件全部；`days` 1 = 今天、0 = 全部。
+   */
+  usageReport: (client: Client | null, days: number) =>
+    call<RelayUsageReport>("station_usage_report", { client, days }),
+
+  /** 中转用量页的逐条日志（新的在前；明细只留 30 天，更早的只剩按天汇总）。 */
+  usageRequests: (q: {
+    client: Client | null;
+    routeId: string | null;
+    model: string | null;
+    failedOnly: boolean;
+    offset: number;
+    limit: number;
+  }) => call<RelayRequestPage>("station_usage_requests", q),
 
   /**
    * 官方 Codex 的 turn-state 注入开关 + 账号规则（实验功能，默认关闭，只对 Codex）。

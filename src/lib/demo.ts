@@ -46,6 +46,10 @@ import type { DeepLinkEntry } from "./generated/DeepLinkEntry";
 import type { DeepLinkView } from "./generated/DeepLinkView";
 import type { ClaudeQuota } from "./generated/ClaudeQuota";
 import type { SiteQuota } from "./generated/SiteQuota";
+import type { RelayUsageReport } from "./generated/RelayUsageReport";
+import type { RelayUsageTotals } from "./generated/RelayUsageTotals";
+import type { RelayUsageGroup } from "./generated/RelayUsageGroup";
+import type { RelayRequestPage } from "./generated/RelayRequestPage";
 /**
  * 演示数据 —— 只给截图和界面预览用。
  *
@@ -2793,6 +2797,173 @@ const stationLogs = (() => {
   return rows.sort((a, b) => Number(b.at_ms - a.at_ms));
 })();
 
+// ------------------------------------------------ 中转用量页（阶段 6 · U1）
+//
+// 近 7 天按上面那份 `stationLogs` 逐条算；更早的一年里断断续续地编几天（按天汇总的那种），
+// 也挂在同一批线路和模型上 —— 这样按软件、按站点、按模型三张表加起来都等于概览那个总数。
+type DemoUsageItem = {
+  day: string;
+  hour: number | null;
+  client: string;
+  route: string;
+  model: string;
+  totals: RelayUsageTotals;
+};
+const blankTotals = (): RelayUsageTotals => ({
+  requests: 0,
+  failed: 0,
+  input_tokens: null,
+  output_tokens: null,
+  cache_read_tokens: null,
+  cache_write_tokens: null,
+  station_cost: null,
+  official_cost: null,
+});
+const plusN = (a: number | null, b: number | null) =>
+  a == null ? b : b == null ? a : a + b;
+function addTotals(t: RelayUsageTotals, x: RelayUsageTotals) {
+  t.requests += x.requests;
+  t.failed += x.failed;
+  t.input_tokens = plusN(t.input_tokens, x.input_tokens);
+  t.output_tokens = plusN(t.output_tokens, x.output_tokens);
+  t.cache_read_tokens = plusN(t.cache_read_tokens, x.cache_read_tokens);
+  t.cache_write_tokens = plusN(t.cache_write_tokens, x.cache_write_tokens);
+  t.station_cost = plusN(t.station_cost, x.station_cost);
+  t.official_cost = plusN(t.official_cost, x.official_cost);
+}
+const demoUsageItems: DemoUsageItem[] = (() => {
+  const items: DemoUsageItem[] = stationLogs.map((r) => {
+    const at = new Date(Number(r.at_ms));
+    const ok = r.fault == null && r.status != null && r.status < 300;
+    const n = (x: bigint | null) => (x == null ? null : Number(x));
+    return {
+      day: ymd(at),
+      hour: at.getHours(),
+      client: r.client,
+      route: r.route_id,
+      model: r.model,
+      totals: {
+        requests: 1,
+        failed: ok ? 0 : 1,
+        input_tokens: n(r.input_tokens),
+        output_tokens: n(r.output_tokens),
+        cache_read_tokens: n(r.cache_read_tokens),
+        cache_write_tokens: n(r.cache_write_tokens),
+        station_cost: r.station_cost,
+        official_cost: r.official_cost,
+      },
+    };
+  });
+  const rand = seeded(20261026);
+  const today = todayYmd();
+  for (let i = 8; i < 230; i++) {
+    if (rand() < 0.35) continue;
+    const s = LOG_SHAPES[Math.floor(rand() * LOG_SHAPES.length)];
+    const k = Math.round(4 + rand() * s.perDay * 1.4);
+    items.push({
+      day: addDays(today, -i),
+      hour: null,
+      client: s.client,
+      route: s.route,
+      model: s.models[0],
+      totals: {
+        requests: k,
+        failed: Math.round(k * (1 - s.succ)),
+        input_tokens: k * 9_000,
+        output_tokens: k * 700,
+        cache_read_tokens: k * 54_000,
+        cache_write_tokens: k * 2_200,
+        station_cost: k * 0.0075,
+        official_cost: k * 0.062,
+      },
+    });
+  }
+  return items;
+})();
+const demoSiteName: Record<string, string> = {
+  example: "我的 API 服务",
+  moxi: "备用中转",
+};
+function demoGroups(
+  items: DemoUsageItem[],
+  keyOf: (x: DemoUsageItem) => [string, string],
+): RelayUsageGroup[] {
+  const m = new Map<string, RelayUsageGroup>();
+  for (const x of items) {
+    const [key, label] = keyOf(x);
+    const g = m.get(key) ?? { key, label, totals: blankTotals() };
+    addTotals(g.totals, x.totals);
+    m.set(key, g);
+  }
+  return [...m.values()].sort(
+    (a, b) =>
+      b.totals.requests - a.totals.requests || a.key.localeCompare(b.key),
+  );
+}
+function demoByDay(items: DemoUsageItem[]) {
+  const m = new Map<string, RelayUsageTotals>();
+  for (const x of items) {
+    const t = m.get(x.day) ?? blankTotals();
+    addTotals(t, x.totals);
+    m.set(x.day, t);
+  }
+  return [...m.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([day, totals]) => ({ day, totals }));
+}
+function demoRelayUsage(client: string | null, days: number): RelayUsageReport {
+  const today = todayYmd();
+  const mine = demoUsageItems.filter((x) => !client || x.client === client);
+  const first = mine.reduce<string | null>(
+    (a, x) => (a == null || x.day < a ? x.day : a),
+    null,
+  );
+  const start = days === 0 ? (first ?? today) : addDays(today, -(days - 1));
+  const inRange = mine.filter((x) => x.day >= start);
+  const totals = blankTotals();
+  for (const x of inRange) addTotals(totals, x.totals);
+  const hours = new Map<number, RelayUsageTotals>();
+  if (days === 1)
+    for (const x of inRange)
+      if (x.hour != null) {
+        const t = hours.get(x.hour) ?? blankTotals();
+        addTotals(t, x.totals);
+        hours.set(x.hour, t);
+      }
+  const yearStart = addDays(today, -370);
+  return {
+    client,
+    days,
+    totals,
+    series: demoByDay(inRange),
+    hours: [...hours.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([hour, t]) => ({ hour, totals: t })),
+    by_client: demoGroups(inRange, (x) => [x.client, x.client]),
+    by_site: demoGroups(inRange, (x) => {
+      const station = x.route.split(US)[1] ?? x.route;
+      return [station, demoSiteName[station] ?? station];
+    }),
+    by_model: demoGroups(inRange, (x) => [x.model, x.model]),
+    year: demoByDay(mine.filter((x) => x.day >= yearStart)),
+    first_day: first,
+  };
+}
+function demoRelayRequests(
+  args: Record<string, unknown> | undefined,
+): RelayRequestPage {
+  const rows = stationLogs.filter(
+    (r) =>
+      (!args?.client || r.client === args.client) &&
+      (!args?.model || r.model === args.model) &&
+      (!args?.failedOnly ||
+        !(r.fault == null && r.status != null && r.status < 300)),
+  );
+  const offset = Number(args?.offset ?? 0);
+  const limit = Number(args?.limit ?? 50);
+  return { items: rows.slice(offset, offset + limit), total: rows.length };
+}
+
 // 一轮检验：倍率对不上（实扣是标称的 1.3 倍），缓存和成功率量到了，
 // 上下文窗口 / 最大输出 / 首字这一轮没测到 —— **没测到会压低可信度**，
 // 这正是 `trust_of` 的语义：分母是六项全额，不是「测到的那几项」。
@@ -3882,6 +4053,12 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     return { ...s };
   },
   station_logs: () => stationLogs,
+  station_usage_report: (args) =>
+    demoRelayUsage(
+      (args?.client as string | null | undefined) ?? null,
+      Number(args?.days ?? 7),
+    ),
+  station_usage_requests: (args) => demoRelayRequests(args),
   station_audits: (args) => (args?.routeId === R_CHEAP ? stationAudits : []),
   station_run_audit: (args) => ({
     ...stationAudits[0],

@@ -55,6 +55,12 @@
       "passed": true
     },
     {
+      "route": "relays/usage",
+      "width": 1180,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 1180,
       "theme": "light",
@@ -115,6 +121,12 @@
       "passed": true
     },
     {
+      "route": "relays/usage",
+      "width": 944,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 944,
       "theme": "light",
@@ -175,6 +187,12 @@
       "passed": true
     },
     {
+      "route": "relays/usage",
+      "width": 786,
+      "theme": "light",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 786,
       "theme": "light",
@@ -230,6 +248,12 @@
     },
     {
       "route": "usage?side=antigravity",
+      "width": 680,
+      "theme": "light",
+      "passed": true
+    },
+    {
+      "route": "relays/usage",
       "width": 680,
       "theme": "light",
       "passed": true
@@ -295,6 +319,12 @@
       "passed": true
     },
     {
+      "route": "relays/usage",
+      "width": 1180,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 1180,
       "theme": "dark",
@@ -355,6 +385,12 @@
       "passed": true
     },
     {
+      "route": "relays/usage",
+      "width": 944,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 944,
       "theme": "dark",
@@ -415,6 +451,12 @@
       "passed": true
     },
     {
+      "route": "relays/usage",
+      "width": 786,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 786,
       "theme": "dark",
@@ -475,6 +517,12 @@
       "passed": true
     },
     {
+      "route": "relays/usage",
+      "width": 680,
+      "theme": "dark",
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 680,
       "theme": "dark",
@@ -544,6 +592,13 @@
       "passed": true
     },
     {
+      "route": "relays/usage",
+      "width": 944,
+      "theme": "light",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 944,
       "theme": "light",
@@ -614,6 +669,13 @@
       "passed": true
     },
     {
+      "route": "relays/usage",
+      "width": 944,
+      "theme": "dark",
+      "scale": 1.25,
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 944,
       "theme": "dark",
@@ -684,6 +746,13 @@
       "passed": true
     },
     {
+      "route": "relays/usage",
+      "width": 786,
+      "theme": "light",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
       "route": "settings",
       "width": 786,
       "theme": "light",
@@ -748,6 +817,13 @@
     },
     {
       "route": "usage?side=antigravity",
+      "width": 786,
+      "theme": "dark",
+      "scale": 1.5,
+      "passed": true
+    },
+    {
+      "route": "relays/usage",
       "width": 786,
       "theme": "dark",
       "scale": 1.5,

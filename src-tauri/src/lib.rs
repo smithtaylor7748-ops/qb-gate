@@ -259,6 +259,8 @@ pub fn run() {
             commands::station::station_put_route,
             commands::station::station_remove_route,
             commands::station::station_logs,
+            commands::station::station_usage_report,
+            commands::station::station_usage_requests,
             commands::station::station_refresh_health,
             commands::station::station_decide,
             commands::station::station_audits,

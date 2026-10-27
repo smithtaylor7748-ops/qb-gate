@@ -11,6 +11,19 @@
  */
 
 import type { RouterRequest } from "../../lib/station";
+import type { Client } from "../../lib/generated/Client";
+
+/**
+ * 有中转那一档的五个软件，分页的顺序就是这个顺序（中转站页、中转用量页共用；2026-10-26 从 `StationCenter` 挪过来）。
+ * 阶段 4 的两档中转命令行排在后面，前三个分页的位置不变。
+ */
+export const STATION_CLIENTS: { id: Client; name: string; short: string }[] = [
+  { id: "claude-code", name: "Claude Code", short: "Claude Code" },
+  { id: "claude-desktop", name: "Claude 桌面端", short: "桌面端" },
+  { id: "codex", name: "Codex 桌面端", short: "Codex 桌面端" },
+  { id: "gemini-cli", name: "Gemini CLI", short: "Gemini CLI" },
+  { id: "grok-build", name: "Grok Build", short: "Grok Build" },
+];
 
 /** 时间范围。`hours` 只用来算起点，「全部」给一个够大的数。 */
 export const RANGES = [

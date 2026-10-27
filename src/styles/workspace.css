@@ -1744,6 +1744,51 @@ body:has(.official-page) {
   color: var(--text-3);
 }
 
+/* 全年热力图（中转站重构阶段 6 · U1，`src/ui/YearHeatmap.tsx`）。一个色相（`--chart-1`）往底色里掺出四档，
+   掺得越少越深；暗色主题同一个公式自动翻成越亮越多。「没有请求」是中性灰，不带色相。
+   悬停那一格描一圈正文色 —— 换填充色会把它读成另一档。 */
+.qb-heat {
+  position: relative;
+  min-width: 0;
+  outline: none;
+  border-radius: var(--radius-md);
+}
+.qb-heat:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-border);
+}
+.qb-heat-axis {
+  font-size: 9px;
+  fill: var(--text-3);
+}
+.qb-heat-0 {
+  fill: var(--surface-2);
+}
+.qb-heat-1 {
+  fill: color-mix(in oklab, var(--chart-1) 30%, var(--surface));
+}
+.qb-heat-2 {
+  fill: color-mix(in oklab, var(--chart-1) 55%, var(--surface));
+}
+.qb-heat-3 {
+  fill: color-mix(in oklab, var(--chart-1) 78%, var(--surface));
+}
+.qb-heat-4 {
+  fill: var(--chart-1);
+}
+.qb-heat-on {
+  stroke: var(--text);
+  stroke-width: 1.5px;
+}
+.qb-heat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
 /* 费用构成的表头行：跟下面几行同一套列宽，只是字小、不画条。 */
 .qb-usage-mixhead {
   font-size: 11px;

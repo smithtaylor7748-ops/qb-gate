@@ -50,6 +50,7 @@ import { setSession, useResource } from "../lib/store";
 import { resetIn } from "../lib/antigravityQuota";
 import { daysFrom, lastDays, shortDay, today as todayYmd } from "../lib/dates";
 import { slotName } from "../lib/slotName";
+import { NUM, pct, short, usd, usdTick } from "../lib/usageFormat";
 import type { AccountSpend } from "../lib/generated/AccountSpend";
 import type { AntigravityIdentity } from "../lib/generated/AntigravityIdentity";
 import type { AntigravityUsage } from "../lib/generated/AntigravityUsage";
@@ -69,7 +70,6 @@ import {
   type BarDatum,
 } from "../ui";
 
-const NUM = new Intl.NumberFormat("zh-CN");
 const RANGES: [number, string][] = [
   [1, "今天"],
   [7, "7 天"],
@@ -81,33 +81,6 @@ const REFRESH_MS = 60_000;
 /** 最近请求每页几条。 */
 const PAGE = 50;
 
-function short(n: number): string {
-  if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(2) + "B";
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
-  return NUM.format(n);
-}
-/** ⛔ `null` → 「—」，**绝不显示 0%** —— 那是断言，没数据不是。 */
-function pct(v: number | null | undefined): string {
-  return v == null ? "—" : `${Math.round(v * 100)}%`;
-}
-const USD = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-/** 美元。`null` → 「—」；不到一分钱的写「<$0.01」，不写成 $0.00。 */
-function usd(v: number | null | undefined): string {
-  if (v == null) return "—";
-  if (v > 0 && v < 0.01) return "<$0.01";
-  return USD.format(v);
-}
-/** 坐标轴上的美元：去掉多余的零。 */
-function usdTick(v: number): string {
-  if (v >= 1000) return `$${Number((v / 1000).toFixed(1))}K`;
-  return `$${Number(v.toFixed(2))}`;
-}
 function tokenTotal(x: {
   input: number;
   output: number;
