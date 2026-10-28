@@ -39,7 +39,7 @@ All three pages share one layout: the overall score on top, login slots on the l
 
 - **Login slots**: keep several of your own logins for the same app, shown as "email - name". Only you can switch them, by clicking, and only one is active at a time.
 - **Launch and close all**: the exit IP is checked before anything starts. "Close all" only closes processes that really belong to these apps; it never kills by process name.
-- **Quota**: Claude's 5-hour / 7-day quota is read from local files only. GPT and Antigravity quotas also come from local records, and the official service is asked only when you click that row's refresh icon (one account at a time, no timers). The numbers are only displayed and never switch accounts automatically.
+- **Quota**: Claude, GPT and Antigravity quotas come from local records, and the official service is asked only when you click that row's refresh icon (one account at a time, no timers; if Claude's local access token has expired, nothing is sent and the token is not refreshed for it). The numbers are only displayed and never switch accounts automatically.
 - **Usage details**: what today, the last 7 days and the last 30 days would cost at official API prices in USD. This is **not a bill**, and subscriptions are not charged this way. There is also a daily bar chart and breakdowns by model, by account and by recent request.
 - **GPT (Codex desktop)**: starting or switching an account only closes the Codex window the panel opened itself and leaves others alone, so a second window never "suddenly pops up". When a login token expires, it tells you plainly that opening the desktop app will renew it, instead of claiming you are logged out.
 - **Antigravity (Google Antigravity)**: start and close Hub and IDE from here; keep several IDE login slots (one Google account each, and you log in inside the IDE's own window); see account tier, AI credits and the 5-hour / weekly quota for both the Claude and Gemini groups; and see how many tokens you used locally. Antigravity itself cannot go through relay stations.
@@ -99,7 +99,7 @@ All three pages share one layout: the overall score on top, login slots on the l
 
 - **No automatic account switching**: nothing switches accounts when a quota runs out, you get rate-limited or you see a 429. Only you can switch accounts, and **only one account is active at a time**.
 - **Every account must legitimately belong to you.**
-- **Quota is display-only**: Claude is read from local files only; GPT, Gemini CLI and Antigravity ask the official service only when you click the refresh icon, and nothing is decided automatically from the numbers.
+- **Quota is display-only**: Claude, GPT, Gemini CLI and Antigravity read local records and ask the official service only when you click the refresh icon, and nothing is decided automatically from the numbers.
 - **No device-fingerprint changes, no identity spoofing, no built-in proxy or VPN**: it only controls which network exit your local AI apps run under.
 
 ## Disclaimer

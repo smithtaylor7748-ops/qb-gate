@@ -1,4 +1,4 @@
-<!-- release-notes: 0.25.6 -->
+<!-- release-notes: 0.25.8 -->
 <!--
   这份文件是「这一版更新了什么」的唯一来源，发版时由 scripts/update-manifest.mjs 读：
   中文那一段进 update.json（面板里「发现新版本」弹窗显示的就是它），中英两段一起进 GitHub Release 的正文。

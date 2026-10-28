@@ -3109,7 +3109,7 @@ dependencies = [
 
 [[package]]
 name = "qb-accounts"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3128,7 +3128,7 @@ dependencies = [
 
 [[package]]
 name = "qb-app"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3168,7 +3168,7 @@ dependencies = [
 
 [[package]]
 name = "qb-contract"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "serde",
  "serde_json",
@@ -3177,7 +3177,7 @@ dependencies = [
 
 [[package]]
 name = "qb-extensions"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -3209,7 +3209,7 @@ dependencies = [
 
 [[package]]
 name = "qb-foundation"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3224,7 +3224,7 @@ dependencies = [
 
 [[package]]
 name = "qb-gate"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3269,7 +3269,7 @@ dependencies = [
 
 [[package]]
 name = "qb-install"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3288,7 +3288,7 @@ dependencies = [
 
 [[package]]
 name = "qb-iplock"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3309,7 +3309,7 @@ dependencies = [
 
 [[package]]
 name = "qb-launch"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3327,7 +3327,7 @@ dependencies = [
 
 [[package]]
 name = "qb-platform"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -3350,7 +3350,7 @@ dependencies = [
 
 [[package]]
 name = "qb-probe"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "chrono",
  "qb-foundation",
@@ -3364,7 +3364,7 @@ dependencies = [
 
 [[package]]
 name = "qb-proxy"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "async-stream",
  "base64 0.22.1",
@@ -3385,7 +3385,7 @@ dependencies = [
 
 [[package]]
 name = "qb-relay"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "json-five",
  "json5",
@@ -3402,7 +3402,7 @@ dependencies = [
 
 [[package]]
 name = "qb-script"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "rquickjs",
  "serde",
@@ -3411,7 +3411,7 @@ dependencies = [
 
 [[package]]
 name = "qb-station"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "chrono",
  "qb-contract",
@@ -3423,7 +3423,7 @@ dependencies = [
 
 [[package]]
 name = "qb-sysenv"
-version = "0.25.6"
+version = "0.25.8"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
