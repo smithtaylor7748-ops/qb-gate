@@ -61,38 +61,49 @@ export default function Console() {
     offset: 0,
   });
 
-  /** 读一次；`more` 时立刻接着读。返回下一次该隔多久再读。 */
-  const pull = useCallback(async (prev: boolean): Promise<number> => {
-    for (let round = 0; round < 8; round++) {
-      const c = await api.tavernConsole(
-        prev,
-        cursor.current.run,
-        cursor.current.offset,
-      );
-      const fresh = c.run !== cursor.current.run;
-      cursor.current = { run: c.run, offset: c.offset };
-      setView((v) => {
-        const base = fresh ? EMPTY : v;
-        const lines = [...base.lines, ...c.lines];
-        const hints = [...base.hints];
-        for (const h of c.hints)
-          if (!hints.some((x) => x.id === h.id)) hints.push(h);
-        return {
-          exists: c.exists,
-          run: c.run,
-          offset: c.offset,
-          startedAt: c.started_at,
-          path: c.path,
-          running: c.running,
-          truncated: fresh ? c.truncated : base.truncated,
-          lines: lines.length > KEEP ? lines.slice(lines.length - KEEP) : lines,
-          hints,
-        };
-      });
-      if (!c.more) return c.running ? FAST_MS : SLOW_MS;
-    }
-    return FAST_MS;
-  }, []);
+  /**
+   * 读一次；`more` 时立刻接着读。返回下一次该隔多久再读。
+   *
+   * ⛔ `stale()` 为真就丢掉这一读、不再接着读：切了「这一次 / 上一次」（或分页关了）的时候，
+   * 上一轮那一读可能还在路上，回来晚了会把刚清空的视图和游标改回那一份日志 ——
+   * 「上一次」又不再读第二遍，于是一直显示「这一次」的报错和提示（2026-10-28 发 0.25.8 时 CI 上红过）。
+   */
+  const pull = useCallback(
+    async (prev: boolean, stale: () => boolean): Promise<number> => {
+      for (let round = 0; round < 8; round++) {
+        const c = await api.tavernConsole(
+          prev,
+          cursor.current.run,
+          cursor.current.offset,
+        );
+        if (stale()) return SLOW_MS;
+        const fresh = c.run !== cursor.current.run;
+        cursor.current = { run: c.run, offset: c.offset };
+        setView((v) => {
+          const base = fresh ? EMPTY : v;
+          const lines = [...base.lines, ...c.lines];
+          const hints = [...base.hints];
+          for (const h of c.hints)
+            if (!hints.some((x) => x.id === h.id)) hints.push(h);
+          return {
+            exists: c.exists,
+            run: c.run,
+            offset: c.offset,
+            startedAt: c.started_at,
+            path: c.path,
+            running: c.running,
+            truncated: fresh ? c.truncated : base.truncated,
+            lines:
+              lines.length > KEEP ? lines.slice(lines.length - KEEP) : lines,
+            hints,
+          };
+        });
+        if (!c.more) return c.running ? FAST_MS : SLOW_MS;
+      }
+      return FAST_MS;
+    },
+    [],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -105,7 +116,7 @@ export default function Console() {
       let wait = SLOW_MS;
       if (document.visibilityState !== "hidden") {
         try {
-          wait = await pull(previous);
+          wait = await pull(previous, () => !alive);
           if (alive) setError("");
         } catch (e) {
           if (alive) setError(errorText(e));

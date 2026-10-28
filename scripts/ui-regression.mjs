@@ -1939,6 +1939,11 @@ try {
     "颜色码被原样印出来了",
   );
   await consoleTab.getByRole("button", { name: "上一次", exact: true }).click();
+  // 先等「上一次」那份自己的时刻：「SillyTavern 1.18.0」这一次的报错日志里也有，切过去那一瞬间旧内容还在。
+  // （2026-10-28 发 0.25.8 时 CI 红在下面那条断言，查出来是 Console 里切换时在路上的那一读回来晚了 —— 已修，单测钉着。）
+  await consoleTab
+    .getByText("起于 2026-09-28 21:10:03", { exact: true })
+    .waitFor();
   await consoleTab
     .getByText("SillyTavern 1.18.0", { exact: true })
     .first()
