@@ -26,7 +26,7 @@
     "@tauri-apps/plugin-opener": "^2.2.2",
     "lucide-react": "^1.43.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react-dom": "^19.3.0",
     "react-router-dom": "^7.18.3"
   },
   "devDependencies": {
@@ -36,7 +36,7 @@
     "@testing-library/react": "^16.3.3",
     "@types/node": "^24.0.0",
     "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
+    "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "6.1.1",
     "jsdom": "^26.1.0",
     "prettier": "^3.9.6",
