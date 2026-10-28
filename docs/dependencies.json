@@ -3295,89 +3295,89 @@
     {
       "ecosystem": "cargo",
       "name": "qb-accounts",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-accounts/0.25.6",
+      "source": "https://crates.io/crates/qb-accounts/0.25.8",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-app",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-app/0.25.6",
+      "source": "https://crates.io/crates/qb-app/0.25.8",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-contract",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-contract/0.25.6",
+      "source": "https://crates.io/crates/qb-contract/0.25.8",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-extensions",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-extensions/0.25.6",
+      "source": "https://crates.io/crates/qb-extensions/0.25.8",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-foundation",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-foundation/0.25.6",
+      "source": "https://crates.io/crates/qb-foundation/0.25.8",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-install",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-install/0.25.6",
+      "source": "https://crates.io/crates/qb-install/0.25.8",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-iplock",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-iplock/0.25.6",
+      "source": "https://crates.io/crates/qb-iplock/0.25.8",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-launch",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-launch/0.25.6",
+      "source": "https://crates.io/crates/qb-launch/0.25.8",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-platform",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-platform/0.25.6",
+      "source": "https://crates.io/crates/qb-platform/0.25.8",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-probe",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-probe/0.25.6",
+      "source": "https://crates.io/crates/qb-probe/0.25.8",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-proxy",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-proxy/0.25.6",
+      "source": "https://crates.io/crates/qb-proxy/0.25.8",
       "licenseFiles": [
         "LICENSE-cc-switch"
       ]
@@ -3385,33 +3385,33 @@
     {
       "ecosystem": "cargo",
       "name": "qb-relay",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-relay/0.25.6",
+      "source": "https://crates.io/crates/qb-relay/0.25.8",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-script",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-script/0.25.6",
+      "source": "https://crates.io/crates/qb-script/0.25.8",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-station",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-station/0.25.6",
+      "source": "https://crates.io/crates/qb-station/0.25.8",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-sysenv",
-      "version": "0.25.6",
+      "version": "0.25.8",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-sysenv/0.25.6",
+      "source": "https://crates.io/crates/qb-sysenv/0.25.8",
       "licenseFiles": []
     },
     {
@@ -6876,9 +6876,9 @@
     {
       "ecosystem": "npm",
       "name": "@oxc-project/types",
-      "version": "0.149.0",
+      "version": "0.155.0",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/@oxc-project/types/-/types-0.149.0.tgz",
+      "source": "https://registry.npmjs.org/@oxc-project/types/-/types-0.155.0.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE"
@@ -6899,13 +6899,11 @@
     {
       "ecosystem": "npm",
       "name": "@rolldown/binding-win32-x64-msvc",
-      "version": "1.2.8",
+      "version": "1.2.15",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.2.8.tgz",
+      "source": "https://registry.npmjs.org/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.2.15.tgz",
       "development": true,
-      "licenseFiles": [
-        "https://www.npmjs.com/package/rolldown/v/1.2.8#LICENSE"
-      ]
+      "licenseFiles": []
     },
     {
       "ecosystem": "npm",
@@ -7177,9 +7175,9 @@
     {
       "ecosystem": "npm",
       "name": "@vitest/expect",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/@vitest/expect/-/expect-4.1.11.tgz",
+      "source": "https://registry.npmjs.org/@vitest/expect/-/expect-4.1.12.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE"
@@ -7188,9 +7186,9 @@
     {
       "ecosystem": "npm",
       "name": "@vitest/mocker",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/@vitest/mocker/-/mocker-4.1.11.tgz",
+      "source": "https://registry.npmjs.org/@vitest/mocker/-/mocker-4.1.12.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE"
@@ -7199,9 +7197,9 @@
     {
       "ecosystem": "npm",
       "name": "@vitest/pretty-format",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-4.1.11.tgz",
+      "source": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-4.1.12.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE"
@@ -7210,9 +7208,9 @@
     {
       "ecosystem": "npm",
       "name": "@vitest/runner",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/@vitest/runner/-/runner-4.1.11.tgz",
+      "source": "https://registry.npmjs.org/@vitest/runner/-/runner-4.1.12.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE"
@@ -7221,9 +7219,9 @@
     {
       "ecosystem": "npm",
       "name": "@vitest/snapshot",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-4.1.11.tgz",
+      "source": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-4.1.12.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE"
@@ -7232,9 +7230,9 @@
     {
       "ecosystem": "npm",
       "name": "@vitest/spy",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/@vitest/spy/-/spy-4.1.11.tgz",
+      "source": "https://registry.npmjs.org/@vitest/spy/-/spy-4.1.12.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE"
@@ -7243,9 +7241,9 @@
     {
       "ecosystem": "npm",
       "name": "@vitest/utils",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/@vitest/utils/-/utils-4.1.11.tgz",
+      "source": "https://registry.npmjs.org/@vitest/utils/-/utils-4.1.12.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE"
@@ -7309,9 +7307,9 @@
     {
       "ecosystem": "npm",
       "name": "chai",
-      "version": "6.2.2",
+      "version": "6.3.0",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/chai/-/chai-6.2.2.tgz",
+      "source": "https://registry.npmjs.org/chai/-/chai-6.3.0.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE"
@@ -7705,9 +7703,9 @@
     {
       "ecosystem": "npm",
       "name": "nanoid",
-      "version": "3.3.19",
+      "version": "3.3.20",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.19.tgz",
+      "source": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.20.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE"
@@ -7806,9 +7804,9 @@
     {
       "ecosystem": "npm",
       "name": "postcss",
-      "version": "8.5.28",
+      "version": "8.5.32",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/postcss/-/postcss-8.5.28.tgz",
+      "source": "https://registry.npmjs.org/postcss/-/postcss-8.5.32.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE"
@@ -7905,9 +7903,9 @@
     {
       "ecosystem": "npm",
       "name": "rolldown",
-      "version": "1.2.8",
+      "version": "1.2.15",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/rolldown/-/rolldown-1.2.8.tgz",
+      "source": "https://registry.npmjs.org/rolldown/-/rolldown-1.2.15.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE"
@@ -7980,9 +7978,9 @@
     {
       "ecosystem": "npm",
       "name": "source-map-js",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "license": "BSD-3-Clause",
-      "source": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
+      "source": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.2.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE"
@@ -8077,9 +8075,9 @@
     {
       "ecosystem": "npm",
       "name": "tinyrainbow",
-      "version": "3.1.1",
+      "version": "3.2.0",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/tinyrainbow/-/tinyrainbow-3.1.1.tgz",
+      "source": "https://registry.npmjs.org/tinyrainbow/-/tinyrainbow-3.2.0.tgz",
       "development": true,
       "licenseFiles": [
         "LICENCE"
@@ -8154,9 +8152,9 @@
     {
       "ecosystem": "npm",
       "name": "vite",
-      "version": "8.3.0",
+      "version": "8.3.5",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/vite/-/vite-8.3.0.tgz",
+      "source": "https://registry.npmjs.org/vite/-/vite-8.3.5.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE.md"
@@ -8165,9 +8163,9 @@
     {
       "ecosystem": "npm",
       "name": "vitest",
-      "version": "4.1.11",
+      "version": "4.1.12",
       "license": "MIT",
-      "source": "https://registry.npmjs.org/vitest/-/vitest-4.1.11.tgz",
+      "source": "https://registry.npmjs.org/vitest/-/vitest-4.1.12.tgz",
       "development": true,
       "licenseFiles": [
         "LICENSE.md"
