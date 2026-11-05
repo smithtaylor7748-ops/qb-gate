@@ -69,6 +69,12 @@ export const antigravityApi = {
     ),
   /** 放回列表：目录改名挪回，绝不复制。 */
   restore: (key: string) => call<void>("antigravity_restore", { key }),
+  /** 这一条 Gemini CLI 那一半的联网额度（不切换激活账户）。`refresh: false` 只读最近一次。 */
+  cliQuota: (id: string, refresh: boolean) =>
+    call<import("./generated/TavernGeminiQuota").TavernGeminiQuota | null>(
+      "antigravity_cli_quota",
+      { id, refresh },
+    ),
   /** 把 `from` 那条并进 `into`。**只改索引，不搬目录**。 */
   accountAttach: (into: string, from: string) =>
     call<void>("antigravity_account_attach", { into, from }),

@@ -99,16 +99,18 @@ impl Source {
 // ------------------------------------------------------------------ 给界面的形状
 
 /// 哪一组额度。Google 的分组叫「Claude and GPT models」—— Claude 与 GPT-OSS 共用一份。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, serde::Deserialize, TS)]
 #[ts(export, rename = "AntigravityQuotaGroup")]
 #[serde(rename_all = "kebab-case")]
 pub enum QuotaGroup {
     Claude,
     Gemini,
+    /// 「Gemini 4 Argon（周）」：`gemini-argon-wtu-weekly` / `argon:weekly`，只有周额度。
+    Argon,
 }
 
 /// 哪个窗口。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, serde::Deserialize, TS)]
 #[ts(export, rename = "AntigravityQuotaSpan")]
 #[serde(rename_all = "kebab-case")]
 pub enum QuotaSpan {
@@ -117,7 +119,7 @@ pub enum QuotaSpan {
 }
 
 /// 一格额度。
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize, TS)]
 #[ts(export)]
 pub struct AntigravityQuotaWindow {
     pub group: QuotaGroup,
@@ -136,7 +138,7 @@ pub struct AntigravityQuotaWindow {
 }
 
 /// 一个账户联网问到的额度。
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize, TS)]
 #[ts(export)]
 pub struct AntigravityOnlineQuota {
     /// 档位 id（`g1-pro-tier` / `free-tier`）与名字，原样。
@@ -155,6 +157,10 @@ pub struct AntigravityOnlineQuota {
     pub models: Vec<AntigravityModelQuota>,
     /// 这次是什么时候问的，本地 `YYYY-MM-DD HH:MM`。
     pub fetched_at: String,
+    /// 读数来自落盘的「上次成功」（面板重启后）：那一次成功的时刻（RFC3339）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_success: Option<String>,
 }
 
 // ------------------------------------------------------------------ 内存里的东西
@@ -177,8 +183,23 @@ static WORKING_CLIENT: Mutex<Option<(PathBuf, usize)>> = Mutex::new(None);
 /// 那份档位、AI 积分、四格都是 A 的，不许挂在 B 的邮箱底下显示（2026-09-25 查出）。
 /// 两边都读得出邮箱、又对不上时就当没问过；读不出来时说不清，照旧给。
 pub fn last(source: &Source) -> Option<AntigravityOnlineQuota> {
-    let (asked, q) = LAST.lock().ok()?.as_ref()?.get(&source.key()).cloned()?;
-    same_account(asked.as_deref(), who(source).as_deref()).then_some(q)
+    let now = who(source);
+    let mem = LAST
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref()?.get(&source.key()).cloned());
+    if let Some((asked, q)) = mem {
+        return same_account(asked.as_deref(), now.as_deref()).then_some(q);
+    }
+    // 面板重启后：落盘的「上次成功」，登的人换了就作废。
+    super::quota_disk::get::<AntigravityOnlineQuota>(
+        &format!("antigravity:{}", source.key()),
+        now.as_deref(),
+    )
+    .map(|(mut q, at)| {
+        q.last_success = Some(at);
+        q
+    })
 }
 
 /// 问的时候登的是谁 vs 现在登的是谁。两边都读得出、又对不上 → 不是同一个人。**纯函数。**
@@ -191,6 +212,12 @@ fn same_account(asked: Option<&str>, now: Option<&str>) -> bool {
 
 fn remember(source: &Source, q: &AntigravityOnlineQuota) {
     let asked = who(source);
+    super::quota_disk::put(
+        &format!("antigravity:{}", source.key()),
+        asked.as_deref(),
+        None,
+        q,
+    );
     if let Ok(mut g) = LAST.lock() {
         g.get_or_insert_with(HashMap::new)
             .insert(source.key(), (asked, q.clone()));
@@ -220,6 +247,7 @@ pub fn forget(source: &Source) {
         }
     }
     TOKENS.forget(&key);
+    super::quota_disk::forget(&format!("antigravity:{key}"));
     if let Source::Account(id) = source {
         login_health::forget(&login_health::antigravity_ide_key(id));
     }
@@ -332,6 +360,7 @@ pub async fn fetch(source: &Source) -> Result<AntigravityOnlineQuota> {
         windows_note,
         models,
         fetched_at: local_minute(now()).unwrap_or_default(),
+        last_success: None,
     })
 }
 
@@ -786,7 +815,9 @@ fn bucket_kind(b: &Value) -> Option<(QuotaGroup, QuotaSpan)> {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_ascii_lowercase();
-    let group = if id.starts_with("gemini") {
+    let group = if id.contains("argon") {
+        QuotaGroup::Argon
+    } else if id.starts_with("gemini") {
         QuotaGroup::Gemini
     } else if id.starts_with("3p") || id.starts_with("claude") {
         QuotaGroup::Claude
@@ -795,7 +826,7 @@ fn bucket_kind(b: &Value) -> Option<(QuotaGroup, QuotaSpan)> {
     };
     let span = if id.ends_with("5h") || window == "5h" {
         QuotaSpan::FiveHour
-    } else if id.ends_with("weekly") || window == "weekly" {
+    } else if id.ends_with("weekly") || window == "weekly" || id.ends_with(":weekly") {
         QuotaSpan::Weekly
     } else {
         return None;
@@ -1085,6 +1116,7 @@ mod tests {
             windows_note: Some("x".into()),
             models: Vec::new(),
             fetched_at: "2026-09-23 07:00".into(),
+            last_success: None,
         };
         remember(&s, &q);
         assert_eq!(last(&s), Some(q));

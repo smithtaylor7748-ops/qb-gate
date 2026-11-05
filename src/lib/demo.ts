@@ -5548,6 +5548,7 @@ const ROUND_C_DEMO: Record<string, (args: Record<string, unknown>) => unknown> =
           ]
         : [],
     account_email_accept: () => null,
+    antigravity_cli_quota: () => null,
     codex_official_refresh: () => ({
       refreshed: true,
       detail: "官方 Codex CLI 已自己换新",

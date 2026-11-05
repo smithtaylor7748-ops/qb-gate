@@ -63,6 +63,7 @@ pub mod claude_zh_ops;
 pub mod codex_accounts;
 pub mod codex_official;
 pub mod credential_status;
+pub mod quota_disk;
 pub mod codex_locale;
 pub mod google_oauth;
 pub mod login_health;

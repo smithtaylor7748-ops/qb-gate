@@ -2,7 +2,7 @@
  * Switching stays manual and retains the existing account dialog and process checks.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   MonitorSmartphone,
   PlayCircle,
@@ -25,7 +25,7 @@ import { AFTER, R } from "../../lib/resources";
 import { invalidate, useResource, useSession } from "../../lib/store";
 import { endTask, resetTask, useTask } from "../../lib/tasks";
 import { slotName } from "../../lib/slotName";
-import { Button, Card, ConfirmDialog, Modal, useToast } from "../../ui";
+import { Button, Card, ConfirmDialog, Modal, Pill, useToast } from "../../ui";
 import ClaudeZhCleanup from "../zh/ClaudeZhCleanup";
 
 import {
@@ -42,6 +42,8 @@ import KillBar from "./KillBar";
 import SlotRow, { switchLabel } from "./SlotRow";
 import CredentialBadge, { useCredentials } from "./CredentialBadge";
 import { credentialApi } from "../../lib/credentials";
+import QuotaRefreshAll from "./QuotaRefreshAll";
+import type { ClaudeQuota } from "../../lib/generated/ClaudeQuota";
 
 /** Numbered pages keep launch controls beside the account list. */
 const PER_PAGE = 4;
@@ -78,11 +80,70 @@ export default function AccountBand() {
   const [busy, setBusy] = useState("");
   /** 正在向官方问额度的那个槽位（阶段 6 · U2：一次只问一个）。 */
   const [quotaFor, setQuotaFor] = useState<string | null>(null);
+  /** 每个槽位联网问到的那份（含落盘的「上次成功」）：行上补 Sonnet 周额度和超额。 */
+  const [claudeLive, setClaudeLive] = useState<Record<string, ClaudeQuota>>({});
+  const labelsKey = (accounts.data?.slots ?? [])
+    .map((s) => s.label)
+    .join("\u0000");
+  useEffect(() => {
+    const labels = labelsKey ? labelsKey.split("\u0000") : [];
+    void Promise.all(
+      labels.map((l) =>
+        api
+          .claudeQuota(l, false)
+          .then((q) => [l, q] as const)
+          .catch(() => [l, null] as const),
+      ),
+    ).then((pairs) =>
+      setClaudeLive(
+        Object.fromEntries(
+          pairs.filter((p): p is [string, ClaudeQuota] => !!p[1]),
+        ),
+      ),
+    );
+  }, [labelsKey]);
+  /** 「全部刷新」：按顺序问，同一个邮箱只问一次；停用 / 没登录 / 令牌到点（面板不替 Claude 换）的跳过。 */
+  async function refreshAllClaude(): Promise<string> {
+    const seen = new Set<string>();
+    let ok = 0;
+    const skipped: string[] = [];
+    for (const s of accounts.data?.slots ?? []) {
+      const c = creds.map[s.label];
+      const who = (s.email ?? s.label).toLowerCase();
+      if (seen.has(who)) continue;
+      seen.add(who);
+      if (
+        !s.logged_in ||
+        (c &&
+          [
+            "disabled",
+            "forbidden",
+            "logged_out",
+            "relogin",
+            "access_expired",
+          ].includes(c.kind))
+      ) {
+        skipped.push(`${s.label}（${c?.label ?? "没登录"}）`);
+        continue;
+      }
+      try {
+        const q = await api.claudeQuota(s.label, true);
+        if (q) setClaudeLive((m) => ({ ...m, [s.label]: q }));
+        ok += 1;
+      } catch {
+        skipped.push(`${s.label}（没问成）`);
+      }
+    }
+    await accounts.refresh().catch(() => undefined);
+    creds.reload();
+    return `问了 ${ok} 个账户${skipped.length ? `；跳过 ${skipped.join("、")}` : ""}`;
+  }
   const refreshQuota = async (label: string) => {
     if (quotaFor) return;
     setQuotaFor(label);
     try {
-      await api.claudeQuota(label, true);
+      const q = await api.claudeQuota(label, true);
+      if (q) setClaudeLive((m) => ({ ...m, [label]: q }));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -197,6 +258,7 @@ export default function AccountBand() {
                 账户槽位
               </h2>
               <span className="ml-auto flex flex-shrink-0 gap-1.5">
+                <QuotaRefreshAll run={() => refreshAllClaude()} />
                 <Button
                   size="sm"
                   icon={<RefreshCw size={12} />}
@@ -254,6 +316,7 @@ export default function AccountBand() {
                       refreshing={quotaFor === s.label}
                       actions={
                         <>
+                          <ClaudeExtras q={claudeLive[s.label]} />
                           {/* 凭证徽标：Claude 的令牌面板不碰，到点只给「切换并打开」。 */}
                           <CredentialBadge
                             status={creds.map[s.label]}
@@ -483,6 +546,46 @@ export default function AccountBand() {
       >
         <ClaudeZhCleanup onDone={() => invalidate("claudeZhLeftovers")} />
       </Modal>
+    </>
+  );
+}
+
+/** 行上补的两样：Sonnet 周额度（有才画）、超额（开着才画）。过了重置时刻不画旧数。 */
+function ClaudeExtras({ q }: { q: ClaudeQuota | undefined }) {
+  if (!q) return null;
+  const now = Date.now();
+  const sonnet = q.windows.find((w) => w.key === "seven_day_sonnet");
+  const sonnetLive =
+    sonnet && !(sonnet.resets_at && Date.parse(sonnet.resets_at) <= now);
+  const extra = q.extra?.enabled ? q.extra : null;
+  const when = q.last_success
+    ? `上次成功：${new Date(q.last_success).toLocaleString()}`
+    : `官方接口 · ${q.fetched_at}`;
+  return (
+    <>
+      {sonnetLive && (
+        <Pill tone="default" title={`7 天 · Sonnet · ${when}`}>
+          Sonnet 剩 {Math.max(0, Math.round(100 - sonnet.used_percent))}%
+        </Pill>
+      )}
+      {extra && extra.utilization != null && (
+        <Pill
+          tone="warn"
+          title={[
+            "超额用量",
+            extra.used_credits != null ? `已用 ${extra.used_credits}` : "",
+            extra.monthly_limit != null ? `月上限 ${extra.monthly_limit}` : "",
+            extra.resets_at
+              ? `重置于 ${new Date(extra.resets_at).toLocaleString()}`
+              : "",
+            when,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        >
+          超额 {Math.round(extra.utilization)}%
+        </Pill>
+      )}
     </>
   );
 }

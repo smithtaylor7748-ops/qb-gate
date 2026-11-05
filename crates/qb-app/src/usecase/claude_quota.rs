@@ -47,7 +47,7 @@ const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const EXPIRY_SLACK_MS: i64 = 60_000;
 
 /// 一个额度窗口。
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize, TS)]
 #[ts(export)]
 pub struct ClaudeQuotaWindow {
     /// 接口里的名字（`five_hour`、`seven_day`、`seven_day_opus`……）。
@@ -61,7 +61,7 @@ pub struct ClaudeQuotaWindow {
 }
 
 /// 超额用量（用完订阅额度之后按量付费那一块）。
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize, TS)]
 #[ts(export)]
 pub struct ClaudeExtraUsage {
     pub enabled: bool,
@@ -69,9 +69,13 @@ pub struct ClaudeExtraUsage {
     pub used_credits: Option<f64>,
     pub utilization: Option<f64>,
     pub currency: Option<String>,
+    /// 超额那一块什么时候重置（RFC3339）。读不到就是 `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resets_at: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize, TS)]
 #[ts(export)]
 pub struct ClaudeQuota {
     /// 槽位标签。
@@ -81,6 +85,10 @@ pub struct ClaudeQuota {
     /// 问的时刻（RFC3339）。
     pub fetched_at: String,
     pub source: String,
+    /// 读数来自落盘的「上次成功」（面板重启后）：那一次成功的时刻（RFC3339）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_success: Option<String>,
 }
 
 /// 「最近一次」问到的，按槽位标签存。**只存最近一次，没有 TTL。**
@@ -89,6 +97,7 @@ static LAST: Last<ClaudeQuota> = Last::new();
 /// 槽位删了之后调：额度和「登录已失效」那一笔都别再躺在内存里。
 pub fn forget(label: &str) {
     LAST.forget(label);
+    super::quota_disk::forget(&format!("claude:{label}"));
     login_health::forget(&login_health::claude_key(label));
 }
 
@@ -138,8 +147,25 @@ pub fn parse(body: &Value, label: &str) -> Result<ClaudeQuota> {
                 windows.push(w);
             }
         }
+        // Sonnet 周额度的别名（`_4` / `_model`）：正名没有时才认。
+        if !windows.iter().any(|w| w.key == "seven_day_sonnet") {
+            for alias in ["seven_day_sonnet_4", "seven_day_sonnet_model", "seven_day_model"] {
+                if let Some(w) = obj
+                    .get(alias)
+                    .and_then(|v| legacy_window("seven_day_sonnet", v))
+                {
+                    windows.push(w);
+                    break;
+                }
+            }
+        }
         for (key, v) in obj {
-            if key == "extra_usage" || key == "limits" || KNOWN.contains(&key.as_str()) {
+            if key == "extra_usage"
+                || key == "limits"
+                || KNOWN.contains(&key.as_str())
+                || key.starts_with("seven_day_sonnet")
+                || key == "seven_day_model"
+            {
                 continue;
             }
             if let Some(w) = legacy_window(key, v) {
@@ -221,6 +247,10 @@ pub fn parse(body: &Value, label: &str) -> Result<ClaudeQuota> {
                 .get("currency")
                 .and_then(Value::as_str)
                 .map(str::to_string),
+            resets_at: e
+                .get("resets_at")
+                .and_then(Value::as_str)
+                .map(str::to_string),
         });
     Ok(ClaudeQuota {
         label: label.to_string(),
@@ -228,6 +258,7 @@ pub fn parse(body: &Value, label: &str) -> Result<ClaudeQuota> {
         extra,
         fetched_at: chrono::Utc::now().to_rfc3339(),
         source: USAGE_URL.into(),
+        last_success: None,
     })
 }
 
@@ -264,16 +295,42 @@ fn client() -> Result<reqwest::Client> {
 /// 一个 Claude 槽位的额度。`refresh = false` 只读「最近一次」，绝不联网；`true` 联网问一次（见模块头）。
 pub async fn quota(label: &str, refresh: bool) -> Result<Option<ClaudeQuota>> {
     let label = label.trim();
-    if !refresh {
-        return Ok(LAST.get(label));
-    }
     let dir = AccountRoots::current().slot_dir(label);
+    let ident = account_identity(&dir);
+    if !refresh {
+        if let Some(q) = LAST.get(label) {
+            return Ok(Some(q));
+        }
+        return Ok(
+            super::quota_disk::get::<ClaudeQuota>(&format!("claude:{label}"), ident.as_deref())
+                .map(|(mut q, at)| {
+                    q.last_success = Some(at);
+                    q
+                }),
+        );
+    }
     let q = fetch_at(&dir, label, &client()?, USAGE_URL).await?;
     LAST.put(label, q.clone());
+    super::quota_disk::put(
+        &format!("claude:{label}"),
+        ident.as_deref(),
+        login_health::fingerprint(&dir.join(".credentials.json")),
+        &q,
+    );
     crate::audit::write(&format!(
         "问了一次 Claude 槽位「{label}」的额度（只读，不记内容）"
     ));
     Ok(Some(q))
+}
+
+/// 这个槽位登的是谁：`.claude.json` 里 `oauthAccount` 的 accountUuid / 邮箱。只读本机。
+fn account_identity(dir: &Path) -> Option<String> {
+    let v: Value = serde_json::from_slice(&std::fs::read(dir.join(".claude.json")).ok()?).ok()?;
+    let a = v.get("oauthAccount")?;
+    a.get("accountUuid")
+        .or_else(|| a.get("emailAddress"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 /// 访问令牌到点了：**面板不替它换**，只说怎么让 Claude Code 自己换。
@@ -647,6 +704,7 @@ mod tests {
             extra: None,
             fetched_at: (now - chrono::Duration::minutes(30)).to_rfc3339(),
             source: USAGE_URL.into(),
+            last_success: None,
         };
         let u = as_slot_usage(&q, now.timestamp_millis()).unwrap();
         assert_eq!(u.source, UsageSource::Official);

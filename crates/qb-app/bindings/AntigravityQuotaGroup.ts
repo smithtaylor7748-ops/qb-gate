@@ -3,4 +3,4 @@
 /**
  * 哪一组额度。Google 的分组叫「Claude and GPT models」—— Claude 与 GPT-OSS 共用一份。
  */
-export type AntigravityQuotaGroup = "claude" | "gemini";
+export type AntigravityQuotaGroup = "claude" | "gemini" | "argon";

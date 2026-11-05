@@ -464,6 +464,7 @@ pub fn run() {
             commands::accounts::account_credentials,
             commands::accounts::account_email_accept,
             commands::codex_commands::codex_official_refresh,
+            commands::antigravity::antigravity_cli_quota,
         ]))
         .setup(|app| {
             use tauri::Manager;

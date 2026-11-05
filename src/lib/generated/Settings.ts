@@ -173,4 +173,13 @@ lightweight_on_close: boolean,
  * 配好第三方网关的桌面端、终端里的中转环境不用先去点一次「启动」；代价是面板开着就一直占着 15721
  * （cc-switch 的本机代理默认也用这个端口，两个同时开会撞）。
  */
-start_router_on_launch: boolean, };
+start_router_on_launch: boolean, 
+/**
+ * GPT 子页联网额度自动刷新的间隔（分钟，0 = 关；没有 = 默认 10）。只在窗口可见时跑，
+ * 跳过停用和无权限的账户。旧配置文件没有这个键，落到默认 10。
+ */
+gpt_quota_auto_minutes?: number, 
+/**
+ * 同上，反重力子页。Claude 子页没有自动刷新。
+ */
+antigravity_quota_auto_minutes?: number, };

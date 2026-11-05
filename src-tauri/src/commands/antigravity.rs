@@ -346,3 +346,12 @@ pub async fn gemini_cli_install(app: tauri::AppHandle) -> Result<String> {
         }
     }
 }
+
+/// 账户行上 Gemini CLI 那一半的联网额度（不切换激活账户）。`refresh = false` 只读最近一次，绝不联网。
+#[tauri::command]
+pub async fn antigravity_cli_quota(
+    id: String,
+    refresh: bool,
+) -> Result<Option<qb_app::usecase::tavern_quota::TavernGeminiQuota>> {
+    qb_app::usecase::tavern_quota::gemini_quota_for(&id, refresh).await
+}

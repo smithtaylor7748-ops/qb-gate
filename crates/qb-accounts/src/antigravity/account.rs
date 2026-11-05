@@ -294,6 +294,17 @@ pub fn active_cli(root: &Path) -> Result<Option<(String, PathBuf, bool)>> {
     }))
 }
 
+/// 指定那一条的 CLI 那一半：`(标签, GEMINI_CLI_HOME, 登录没)`。没有那一半就是 `None`。
+/// 账户行上「刷新 Gemini CLI 额度」用：不切换激活账户。
+pub fn cli_of(root: &Path, id: &str) -> Result<Option<(String, PathBuf, bool)>> {
+    let index = load(root)?;
+    let e = entry_of(&index, id)?;
+    Ok(e.cli_dir.map(|d| {
+        let (ok, _) = gemini::login_state(&d);
+        (e.label, d, ok)
+    }))
+}
+
 /// 一条槽位的 CLI 目录（给「登录 CLI」用）。没有那一半就现建一个。
 pub fn ensure_cli_dir(root: &Path, id: &str) -> Result<PathBuf> {
     let mut index = load(root)?;

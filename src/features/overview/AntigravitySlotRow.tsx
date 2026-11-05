@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 /**
  * 反重力账户列表里的一行（0.32.0）。
  *
@@ -37,9 +37,9 @@ import type { ReactNode } from "react";
  * 原来行首还有一颗「打开 / 登录」，2026-09-23 使用者删了：起 IDE 走右边的启动磁贴，
  * 没登录时 IDE 徽标旁边本来就有「登录」。
  */
-import { RefreshCw, Trash2 } from "lucide-react";
+import { Info, RefreshCw, Trash2 } from "lucide-react";
 
-import { Button, Gauge, Pill } from "../../ui";
+import { Button, Gauge, Modal, Pill } from "../../ui";
 import { slotName } from "../../lib/slotName";
 import {
   countdown,
@@ -84,6 +84,11 @@ export interface SlotRowProps {
   onAttachHere: () => void;
   /** 凭证徽标（`CredentialBadge`），由父组件给。 */
   credential?: ReactNode;
+  /** Gemini CLI 那一半最近一次问到的额度摘要（悬停用）；`undefined` = 没问过。 */
+  cliSummary?: string;
+  cliLoading?: boolean;
+  /** 联网问一次这一条 Gemini CLI 那一半的额度。 */
+  onRefreshCli?: () => void;
 }
 
 /** 这一行缺的那一半，正好是 `from` 那一行有的吗。 */
@@ -174,6 +179,16 @@ function WindowGauge({
 }) {
   const name = spanLabel(span);
   if (!w) return <Gauge className="gauge--mini" name={name} used={null} />;
+  // 过了重置时刻就不画旧百分比。
+  if (w.reset_epoch != null && w.reset_epoch * 1000 <= now)
+    return (
+      <Gauge
+        className="gauge--mini"
+        name={name}
+        used={null}
+        note="已重置 · 点刷新"
+      />
+    );
   return (
     <Gauge
       className="gauge--mini"
@@ -209,12 +224,15 @@ function GroupRow({
   group,
   windows,
   now,
+  weeklyOnly = false,
 }: {
   group: AntigravityQuotaGroup;
   windows: AntigravityQuotaWindow[];
   now: number;
+  weeklyOnly?: boolean;
 }) {
   const [five, week] = groupWindows(windows, group);
+  const onlyWeek = weeklyOnly || group === "argon";
   return (
     <div className="ag-group">
       <span
@@ -222,12 +240,14 @@ function GroupRow({
         title={
           group === "claude"
             ? "Claude 与 GPT-OSS 共用这一份额度（Google 的分组）"
-            : "Gemini 各模型共用这一份额度"
+            : group === "argon"
+              ? "Gemini 4 Argon 单独的一份周额度"
+              : "Gemini 各模型共用这一份额度"
         }
       >
         {groupLabel(group)}
       </span>
-      <WindowGauge w={five} span="five-hour" now={now} />
+      {!onlyWeek && <WindowGauge w={five} span="five-hour" now={now} />}
       <WindowGauge w={week} span="weekly" now={now} />
     </div>
   );
@@ -251,7 +271,13 @@ export default function AntigravitySlotRow({
   onAttachStart,
   onAttachHere,
   credential,
+  cliSummary,
+  cliLoading,
+  onRefreshCli,
 }: SlotRowProps) {
+  const [detail, setDetail] = useState(false);
+  // 免费档只有周额度（Google 不给免费档 5 小时那一格）。
+  const freeTier = !!online?.tier_id && /free/i.test(online.tier_id);
   // `lowestQuota` 自己会先分族，别在外面再分一次（分两遍的结果是 `label`/`model_id`
   // 在第二遍里已经没了）。
   const low = lowestQuota(s.quota);
@@ -263,8 +289,21 @@ export default function AntigravitySlotRow({
   const bars =
     online && online.windows.length > 0 ? (
       <>
-        <GroupRow group="claude" windows={online.windows} now={now} />
-        <GroupRow group="gemini" windows={online.windows} now={now} />
+        <GroupRow
+          group="claude"
+          windows={online.windows}
+          now={now}
+          weeklyOnly={freeTier}
+        />
+        <GroupRow
+          group="gemini"
+          windows={online.windows}
+          now={now}
+          weeklyOnly={freeTier}
+        />
+        {online.windows.some((w) => w.group === "argon") && (
+          <GroupRow group="argon" windows={online.windows} now={now} />
+        )}
       </>
     ) : online && online.models.length > 0 ? (
       modelGroups(online.models).map(({ group, model }) => (
@@ -348,14 +387,16 @@ export default function AntigravitySlotRow({
         : online
           ? {
               text: [
-                `在线 · ${shortStamp(online.fetched_at)}`,
+                online.last_success
+                  ? `上次成功：${new Date(online.last_success).toLocaleString()}`
+                  : `在线 · ${shortStamp(online.fetched_at)}`,
                 tier,
+                online.gcp_tos ? "GCP 条款" : "",
                 online.windows.length === 0 && online.models.length > 0
                   ? "按模型"
                   : "",
-                online.credits != null
-                  ? `AI 积分 ${online.credits.toLocaleString("zh-CN")}`
-                  : "",
+                // 「可用 AI 积分」常驻；读不到写「—」，不补 0。
+                `AI 积分 ${online.credits != null ? online.credits.toLocaleString("zh-CN") : "—"}`,
               ]
                 .filter(Boolean)
                 .join(" · "),
@@ -484,6 +525,37 @@ export default function AntigravitySlotRow({
           disabled={!s.ide_logged_in && !s.ide_unreadable}
           onClick={onRefresh}
         />
+        {onRefreshCli && s.cli_dir && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="slotusage-refresh"
+            aria-label={`联网刷新 ${slotName(s.email, s.label)} 的 Gemini CLI 额度`}
+            title={
+              cliSummary
+                ? `Gemini CLI：${cliSummary} · 点一下再问一次`
+                : s.cli_logged_in
+                  ? "联网问一次这一条 Gemini CLI 那一半的额度"
+                  : "Gemini CLI 那一半还没登录"
+            }
+            loading={cliLoading}
+            disabled={!s.cli_logged_in}
+            onClick={onRefreshCli}
+          >
+            CLI
+          </Button>
+        )}
+        {online && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="slotusage-refresh"
+            icon={<Info size={12} />}
+            aria-label={`${slotName(s.email, s.label)} 的配额详情`}
+            title="配额详情"
+            onClick={() => setDetail(true)}
+          />
+        )}
         {source && (
           <span
             className={`gauge-src${source.warn ? " qb-tone-warn" : ""}`}
@@ -493,6 +565,48 @@ export default function AntigravitySlotRow({
           </span>
         )}
       </div>
+      {online && (
+        <Modal
+          open={detail}
+          onClose={() => setDetail(false)}
+          title={`配额详情 · ${slotName(s.email, s.label)}`}
+        >
+          <p className="notice">
+            {[
+              online.tier_name ?? online.tier_id ?? "档位读不出来",
+              online.gcp_tos ? "GCP 条款" : "",
+              `AI 积分 ${online.credits ?? "—"}`,
+              online.last_success
+                ? `上次成功：${new Date(online.last_success).toLocaleString()}`
+                : `联网问于 ${online.fetched_at}`,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+          <ul className="mt-2 grid gap-1">
+            {online.windows.map((w) => (
+              <li key={`${w.group}-${w.span}`}>
+                {groupLabel(w.group)} · {spanLabel(w.span)}：剩{" "}
+                {percent(w.remaining)}
+                {w.reset_at ? ` · 重置于 ${w.reset_at}` : ""}
+                {w.remaining_implied ? " · 按用光推算" : ""}
+              </li>
+            ))}
+            {online.models.map((m) => (
+              <li key={m.label}>
+                {m.label}：
+                {m.remaining == null
+                  ? "没读到"
+                  : `剩 ${Math.round(m.remaining * 100)}%`}
+                {m.reset_at ? ` · 重置于 ${m.reset_at}` : ""}
+              </li>
+            ))}
+          </ul>
+          {online.windows_note && (
+            <p className="notice mt-2">{online.windows_note}</p>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }
