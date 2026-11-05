@@ -40,7 +40,7 @@ use chrono::{DateTime, Local, TimeZone, Utc};
 use qb_extensions::plugins::sillytavern::TavernBackend;
 use qb_platform::credentials::Secret;
 use reqwest::StatusCode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -92,6 +92,7 @@ const GEMINI_SELF_REFRESH: &str =
 /// 槽位移除之后调：别让一个不存在的槽位的额度一直躺在内存里。
 pub fn forget_gpt(slot_id: &str) {
     LAST_GPT.forget(slot_id);
+    super::quota_disk::forget(&format!("gpt:{slot_id}"));
     login_health::forget(&login_health::codex_key(slot_id));
 }
 
@@ -108,7 +109,7 @@ const GPT_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const GPT_RESETS_URL: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 const GEMINI_ENDPOINT: &str = "https://cloudcode-pa.googleapis.com/v1internal:";
 
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct TavernQuotaWindow {
     pub label: String,
@@ -121,7 +122,7 @@ pub struct TavernQuotaWindow {
     pub present: bool,
 }
 
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct TavernGptQuota {
     pub provider: String,
@@ -135,6 +136,45 @@ pub struct TavernGptQuota {
     /// 存下的限额重置（Codex「存下重置、需要时再用」）：每一次的到期时刻（RFC3339，不过期是 `None`），
     /// 先到期的在前，长度就是可用次数。没问到是 `None`（阶段 6 · U2）。
     pub banked_resets: Option<Vec<Option<String>>>,
+    /// 套餐外的那几类限额：代码审查（`code_review_rate_limit`）、模型专属（`additional_rate_limits[]`，含 Spark）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub extra_limits: Option<Vec<GptNamedLimit>>,
+    /// 个人花费上限（`spend_control.individual_limit`；旧响应只有 `credits`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub spend: Option<GptSpend>,
+    /// 可用的限额重置次数（`rate_limit_reset_credits.available_count`）。只显示，面板从不消耗它。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub reset_credits_available: Option<i64>,
+    /// 读数来自落盘的「上次成功」（面板重启后）：那一次成功的时刻（RFC3339）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_success: Option<String>,
+}
+
+/// 一类套餐外限额（代码审查 / 某个模型专属）。读不到的字段就是 `None`，不补 0。
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GptNamedLimit {
+    /// `code_review` 或 `model`。
+    pub kind: String,
+    pub label: String,
+    pub allowed: Option<bool>,
+    pub limit_reached: Option<bool>,
+    pub windows: Vec<TavernQuotaWindow>,
+}
+
+/// 个人花费上限。`unlimited` 为真时界面画 ∞。
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GptSpend {
+    pub unlimited: bool,
+    pub limit: Option<f64>,
+    pub used: Option<f64>,
+    pub remaining: Option<f64>,
+    pub reset_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -477,7 +517,142 @@ pub fn parse_gpt(body: &str, account: Option<String>) -> Result<TavernGptQuota> 
         source: GPT_USAGE_URL.into(),
         credits_balance: v.get("credits").and_then(credits_balance),
         banked_resets: None,
+        extra_limits: Some(gpt_extra_limits(&v)).filter(|l| !l.is_empty()),
+        spend: gpt_spend(&v),
+        reset_credits_available: v
+            .pointer("/rate_limit_reset_credits/available_count")
+            .and_then(Value::as_i64),
+        last_success: None,
     })
+}
+
+/// 窗口名按时长推（300 分钟 = 5 小时，10080 = 7 天）。推不出来就用原来的名字。
+fn label_by_minutes(minutes: Option<i64>, fallback: &str) -> String {
+    match minutes {
+        Some(m) if m > 0 && m % 1440 == 0 => format!("{} 天", m / 1440),
+        Some(m) if m > 0 && m % 60 == 0 => format!("{} 小时", m / 60),
+        _ => fallback.to_string(),
+    }
+}
+
+/// 一个限额对象（`{allowed, limit_reached, primary_window, secondary_window}`）里的两个窗口。
+fn named_windows(rate: &Value) -> Vec<TavernQuotaWindow> {
+    ["primary_window", "secondary_window"]
+        .iter()
+        .filter_map(|k| rate.get(*k).filter(|w| w.is_object()))
+        .map(|w| {
+            let mut win = gpt_window(Some(w), "窗口");
+            win.label = label_by_minutes(win.window_minutes, &win.label);
+            win
+        })
+        .filter(|w| w.present)
+        .collect()
+}
+
+/// `limit_name`（`codex_spark_xxx`、`GPT-5.3-Codex-Spark`……）整理成界面上的名字。
+fn tidy_limit_name(raw: &str) -> String {
+    let t = raw.trim().replace(['_', '-'], " ");
+    let t = t.trim_start_matches("codex ").trim();
+    let mut out = String::new();
+    for w in t.split_whitespace() {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        let mut c = w.chars();
+        if let Some(f) = c.next() {
+            out.extend(f.to_uppercase());
+            out.push_str(c.as_str());
+        }
+    }
+    if out.is_empty() {
+        raw.to_string()
+    } else {
+        out
+    }
+}
+
+fn gpt_extra_limits(v: &Value) -> Vec<GptNamedLimit> {
+    let mut out = Vec::new();
+    if let Some(cr) = v.get("code_review_rate_limit").filter(|x| x.is_object()) {
+        let windows = named_windows(cr);
+        if !windows.is_empty() {
+            out.push(GptNamedLimit {
+                kind: "code_review".into(),
+                label: "代码审查".into(),
+                allowed: cr.get("allowed").and_then(Value::as_bool),
+                limit_reached: cr.get("limit_reached").and_then(Value::as_bool),
+                windows,
+            });
+        }
+    }
+    for item in v
+        .get("additional_rate_limits")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let rate = item.get("rate_limit").unwrap_or(item);
+        let windows = named_windows(rate);
+        if windows.is_empty() {
+            continue;
+        }
+        let name = item
+            .get("limit_name")
+            .or_else(|| item.get("metered_feature"))
+            .and_then(Value::as_str)
+            .unwrap_or("模型专属");
+        out.push(GptNamedLimit {
+            kind: "model".into(),
+            label: tidy_limit_name(name),
+            allowed: rate.get("allowed").and_then(Value::as_bool),
+            limit_reached: rate.get("limit_reached").and_then(Value::as_bool),
+            windows,
+        });
+    }
+    out
+}
+
+fn gpt_spend(v: &Value) -> Option<GptSpend> {
+    let num = |x: Option<&Value>| match x? {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    };
+    if let Some(l) = v.pointer("/spend_control/individual_limit").filter(|x| x.is_object()) {
+        return Some(GptSpend {
+            unlimited: l.get("unlimited").and_then(Value::as_bool) == Some(true),
+            limit: num(l.get("limit")),
+            used: num(l.get("used")),
+            remaining: num(l.get("remaining")),
+            reset_at: l
+                .get("reset_at")
+                .or_else(|| l.get("resets_at"))
+                .and_then(|r| match r {
+                    Value::String(s) => Some(s.clone()),
+                    Value::Number(n) => n.as_i64().and_then(epoch_to_local),
+                    _ => None,
+                }),
+        });
+    }
+    let c = v.get("credits").filter(|x| x.is_object())?;
+    if c.get("unlimited").and_then(Value::as_bool) == Some(true) {
+        return Some(GptSpend {
+            unlimited: true,
+            limit: None,
+            used: None,
+            remaining: None,
+            reset_at: None,
+        });
+    }
+    None
+}
+
+fn epoch_to_local(secs: i64) -> Option<String> {
+    use chrono::TimeZone as _;
+    chrono::Local
+        .timestamp_opt(secs, 0)
+        .single()
+        .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
 }
 
 /// `wham/usage` 的 `credits`：`{has_credits, unlimited, balance}`，`balance` 实测是字符串（`"62500"`），也收数字
@@ -538,11 +713,31 @@ pub async fn gpt_quota(slot_id: Option<&str>, refresh: bool) -> Result<Option<Ta
             None => return Ok(None),
         },
     };
+    let home = qb_accounts::codex::root().join(&id).join("home");
+    let ident = qb_accounts::codex::chatgpt_account_id_from_home(&home)
+        .ok()
+        .flatten();
     if !refresh {
-        return Ok(LAST_GPT.get(&id));
+        if let Some(q) = LAST_GPT.get(&id) {
+            return Ok(Some(q));
+        }
+        // 面板重启后：先给落盘的「上次成功」，标上那一次的时刻；账户换了就作废。
+        return Ok(
+            super::quota_disk::get::<TavernGptQuota>(&format!("gpt:{id}"), ident.as_deref())
+                .map(|(mut q, at)| {
+                    q.last_success = Some(at);
+                    q
+                }),
+        );
     }
     let q = fetch_gpt(&id).await?;
     LAST_GPT.put(&id, q.clone());
+    super::quota_disk::put(
+        &format!("gpt:{id}"),
+        ident.as_deref(),
+        login_health::fingerprint(&home.join("auth.json")),
+        &q,
+    );
     crate::audit::write(&format!(
         "问了一次 GPT 槽位「{}」的额度（只读，不记内容）",
         q.account.as_deref().unwrap_or(&id)
@@ -556,6 +751,7 @@ async fn fetch_gpt(slot_id: &str) -> Result<TavernGptQuota> {
         return Err(GateError::Other("GPT 槽位不存在".into()));
     };
     // 额度只认访问令牌（cockpit-tools 同一个口径）：刷新令牌在不在、id_token 过没过期都不挡。
+    let before = login_health::fingerprint(&home.join("auth.json"));
     let token = qb_accounts::codex::read_access_token(&home)?
         .ok_or_else(|| GateError::Other(format!("GPT 槽位「{label}」还没有登录")))?;
     // 到点了就别发 —— 发出去只会换来一个 401，而那不是「登录失效」。
@@ -584,23 +780,55 @@ async fn fetch_gpt(slot_id: &str) -> Result<TavernGptQuota> {
     let response = response.map_err(|e| GateError::Other(format!("GPT 额度接口连接失败：{e}")))?;
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
-    if status == StatusCode::UNAUTHORIZED {
+    let auth = home.join("auth.json");
+    let key = login_health::codex_key(slot_id);
+    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
         let code = error_code(&body);
-        if code.as_deref() == Some("token_expired") {
-            // 本机时钟没看出来、服务端说到点了：还是「到点了」，不是登录失效。
-            return Err(gpt_token_expired(&label, None));
+        match gpt_layer(status, code.as_deref()) {
+            GptLayer::Expired => return Err(gpt_token_expired(&label, None)),
+            GptLayer::Relogin => {
+                let reason = gpt_rejected(code.as_deref());
+                login_health::record(&key, &auth, &reason);
+                return Err(GateError::Other(format!("GPT 槽位「{label}」{reason}")));
+            }
+            GptLayer::AccessRejected => {
+                let reason = format!(
+                    "访问令牌被拒（{}）· 刷新令牌可能还有效：点「让官方换新」，不行再打开这个槽位的桌面端",
+                    code.as_deref().unwrap_or(status.as_str())
+                );
+                login_health::record_kind(&key, &auth, "access_rejected", &reason);
+                return Err(GateError::Other(format!("GPT 槽位「{label}」{reason}")));
+            }
+            GptLayer::Concurrent => {
+                return Err(GateError::Other(format!(
+                    "GPT 槽位「{label}」的令牌正被官方客户端同时换新（refresh_token_reused），稍后再刷新"
+                )))
+            }
+            GptLayer::Other => return Err(status_error(status, &body, "GPT")),
         }
-        // 访问令牌没到点，服务端却不认 —— 这才是登录出了事（被撤销、在别处登出、刷新令牌被轮换掉）。
-        let reason = gpt_rejected(code.as_deref());
-        login_health::record(
-            &login_health::codex_key(slot_id),
-            &home.join("auth.json"),
-            &reason,
-        );
-        return Err(GateError::Other(format!("GPT 槽位「{label}」{reason}")));
     }
     if !status.is_success() {
         return Err(status_error(status, &body, "GPT"));
+    }
+    // 发起时的凭据指纹：这次问的路上官方客户端换新 / 重新登录了，结果就不算数。
+    if login_health::fingerprint(&auth) != before {
+        return Err(GateError::Other(format!(
+            "GPT 槽位「{label}」的登录在这次刷新途中变了，这次结果丢掉了，再点一次"
+        )));
+    }
+    login_health::forget(&key);
+    // 身份核对：回复里的 account_id / user_id 跟这个槽位对不上就不收。
+    if let Some(mine) = account_id.as_deref() {
+        let theirs = serde_json::from_str::<Value>(&body).ok().and_then(|v| {
+            ["account_id", "accountId", "chatgpt_account_id"]
+                .iter()
+                .find_map(|k| v.get(*k).and_then(Value::as_str).map(str::to_owned))
+        });
+        if theirs.as_deref().is_some_and(|t| !t.eq_ignore_ascii_case(mine)) {
+            return Err(GateError::Other(format!(
+                "GPT 槽位「{label}」：额度接口回的是另一个账户的数据，没收下"
+            )));
+        }
     }
     let mut q = parse_gpt(&body, Some(label))?;
     q.banked_resets = banked_resets(resets).await;
@@ -619,6 +847,35 @@ fn gpt_token_expired(label: &str, exp: Option<i64>) -> GateError {
 }
 
 /// 服务端不认这份登录了：给账户行和报错用的那句话（纯文本，能照着做）。
+/// GPT 401 / 403 分哪一层（照 Cockpit Tools 的分法，只学行为）。
+#[derive(Debug, PartialEq, Eq)]
+enum GptLayer {
+    /// 访问令牌到点了（不是登录失效）。
+    Expired,
+    /// 刷新令牌过期 / 被撤销 / `invalid_grant`：要重新登录。
+    Relogin,
+    /// 只是访问令牌被拒：API 401，或带 `token_invalidated` / `token_revoked` / `invalid_token` 的 403。
+    AccessRejected,
+    /// `refresh_token_reused`：并发换新撞上了，不当重新登录。
+    Concurrent,
+    /// 别的 403：不改状态。
+    Other,
+}
+
+fn gpt_layer(status: StatusCode, code: Option<&str>) -> GptLayer {
+    match code {
+        Some("token_expired") if status == StatusCode::UNAUTHORIZED => GptLayer::Expired,
+        Some("refresh_token_reused") => GptLayer::Concurrent,
+        Some(
+            "refresh_token_expired" | "refresh_token_invalidated" | "refresh_token_revoked"
+            | "invalid_grant",
+        ) => GptLayer::Relogin,
+        Some("token_invalidated" | "token_revoked" | "invalid_token") => GptLayer::AccessRejected,
+        _ if status == StatusCode::UNAUTHORIZED => GptLayer::AccessRejected,
+        _ => GptLayer::Other,
+    }
+}
+
 fn gpt_rejected(code: Option<&str>) -> String {
     format!(
         "登录已失效：服务端拒绝了这份登录（{}）· 点「登录」打开这个槽位的桌面端，刷新令牌还有效它会自己接上，失效了它会要你重新登录",
@@ -796,7 +1053,7 @@ pub async fn gemini_quota(refresh: bool) -> Result<Option<TavernGeminiQuota>> {
     if !refresh {
         return Ok(LAST_GEMINI.get(&id));
     }
-    let q = fetch_gemini().await?;
+    let q = fetch_gemini_for(&id).await?;
     LAST_GEMINI.put(&id, q.clone());
     crate::audit::write(&format!(
         "问了一次 Gemini CLI「{}」的额度（只读，不记内容）",
@@ -805,14 +1062,26 @@ pub async fn gemini_quota(refresh: bool) -> Result<Option<TavernGeminiQuota>> {
     Ok(Some(q))
 }
 
-async fn fetch_gemini() -> Result<TavernGeminiQuota> {
+/// 指定账户 Gemini CLI 那一半的额度（账户行上的刷新，不切换激活账户）。`refresh = false` 只读最近一次。
+pub async fn gemini_quota_for(id: &str, refresh: bool) -> Result<Option<TavernGeminiQuota>> {
+    if !refresh {
+        return Ok(LAST_GEMINI.get(id));
+    }
+    let q = fetch_gemini_for(id).await?;
+    LAST_GEMINI.put(id, q.clone());
+    crate::audit::write(&format!(
+        "问了一次 Gemini CLI「{}」的额度（只读，不记内容）",
+        q.account.as_deref().unwrap_or(id)
+    ));
+    Ok(Some(q))
+}
+
+async fn fetch_gemini_for(id: &str) -> Result<TavernGeminiQuota> {
+    let id = id.to_string();
     let root = qb_accounts::antigravity::account::root();
-    let Some(id) = qb_accounts::antigravity::account::active_id(&root)? else {
-        return Err(GateError::Other("没有激活的 Gemini CLI 槽位".into()));
-    };
-    let Some((label, home, logged_in)) = qb_accounts::antigravity::account::active_cli(&root)?
+    let Some((label, home, logged_in)) = qb_accounts::antigravity::account::cli_of(&root, &id)?
     else {
-        return Err(GateError::Other("没有激活的 Gemini CLI 槽位".into()));
+        return Err(GateError::Other("这个账户还没有 Gemini CLI 那一半".into()));
     };
     if !logged_in {
         return Err(GateError::Other(format!(
@@ -1033,6 +1302,43 @@ pub async fn roleplay_test(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gpt_extra_limits_spend_and_resets_are_read_leniently() {
+        let body = r#"{"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":10,"limit_window_seconds":18000}},
+          "code_review_rate_limit":{"allowed":true,"limit_reached":false,"primary_window":{"used_percent":5,"limit_window_seconds":604800}},
+          "additional_rate_limits":[{"limit_name":"codex_gpt_5_3_spark","metered_feature":"x","rate_limit":{"allowed":true,"limit_reached":true,"primary_window":{"used_percent":100,"limit_window_seconds":18000}}}],
+          "spend_control":{"individual_limit":{"limit":"50","used":12.5,"remaining":37.5}},
+          "rate_limit_reset_credits":{"available_count":2}}"#;
+        let q = parse_gpt(body, None).unwrap();
+        let ex = q.extra_limits.unwrap();
+        assert_eq!(ex[0].kind, "code_review");
+        assert_eq!(ex[0].windows[0].label, "7 天");
+        assert_eq!(ex[1].kind, "model");
+        assert_eq!(ex[1].label, "Gpt 5 3 Spark");
+        assert_eq!(ex[1].limit_reached, Some(true));
+        let sp = q.spend.unwrap();
+        assert_eq!(sp.limit, Some(50.0));
+        assert!(!sp.unlimited);
+        assert_eq!(q.reset_credits_available, Some(2));
+        let bare = parse_gpt(r#"{"rate_limit":{"primary_window":{"used_percent":1}}}"#, None).unwrap();
+        assert!(bare.extra_limits.is_none() && bare.spend.is_none());
+        let unl = parse_gpt(r#"{"rate_limit":{"primary_window":{"used_percent":1}},"credits":{"unlimited":true}}"#, None).unwrap();
+        assert!(unl.spend.unwrap().unlimited);
+    }
+
+    #[test]
+    fn gpt_401_403_land_on_the_right_layer() {
+        let u = StatusCode::UNAUTHORIZED;
+        let f = StatusCode::FORBIDDEN;
+        assert_eq!(super::gpt_layer(u, Some("token_expired")), super::GptLayer::Expired);
+        assert_eq!(super::gpt_layer(u, None), super::GptLayer::AccessRejected);
+        assert_eq!(super::gpt_layer(f, Some("token_invalidated")), super::GptLayer::AccessRejected);
+        assert_eq!(super::gpt_layer(f, Some("invalid_token")), super::GptLayer::AccessRejected);
+        assert_eq!(super::gpt_layer(f, None), super::GptLayer::Other);
+        assert_eq!(super::gpt_layer(u, Some("invalid_grant")), super::GptLayer::Relogin);
+        assert_eq!(super::gpt_layer(u, Some("refresh_token_reused")), super::GptLayer::Concurrent);
+    }
+
     use super::*;
 
     #[test]

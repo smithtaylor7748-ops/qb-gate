@@ -188,6 +188,13 @@ pub struct Settings {
     ///
     /// 只经软件迁移命令改：`settings_save` 原样保留旧值（同 `managed_apps_dir`）。
     pub app_dirs: std::collections::BTreeMap<String, std::path::PathBuf>,
+    /// GPT 子页联网额度自动刷新的间隔（分钟，0 = 关；没有 = 默认 10）。只在窗口可见时跑，
+    /// 跳过停用和无权限的账户。旧配置文件没有这个键，落到默认 10。
+    #[ts(optional)]
+    pub gpt_quota_auto_minutes: Option<u32>,
+    /// 同上，反重力子页。Claude 子页没有自动刷新。
+    #[ts(optional)]
+    pub antigravity_quota_auto_minutes: Option<u32>,
 }
 
 /// `#[serde(default)]` 对 `bool` 给的是 `false`。要默认开的字段用这个 ——
@@ -217,6 +224,8 @@ impl Default for Settings {
             lightweight_on_close: false,
             start_router_on_launch: false,
             app_dirs: Default::default(),
+            gpt_quota_auto_minutes: None,
+            antigravity_quota_auto_minutes: None,
         }
     }
 }

@@ -62,7 +62,7 @@ pub fn state_db(user_data: &Path) -> PathBuf {
 }
 
 /// 一个模型此刻（IDE 上次同步时）的额度。
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize, TS)]
 #[ts(export)]
 pub struct AntigravityModelQuota {
     /// IDE 里显示的名字，原样。

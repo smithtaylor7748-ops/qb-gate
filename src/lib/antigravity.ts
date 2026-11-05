@@ -59,7 +59,22 @@ export const antigravityApi = {
    * ⚙ 酒馆的 Gemini 桥接在跑时后端会拒绝（切一次连 CLI 那一半一起换）。
    */
   ideSelect: (id: string) => call<void>("antigravity_ide_select", { id }),
-  ideArchive: (id: string) => call<void>("antigravity_ide_archive", { id }),
+  /** `defer`：目录被占着时先从列表移除、目录稍后归档。 */
+  ideArchive: (id: string, defer = false) =>
+    call<void>("antigravity_ide_archive", { id, defer }),
+  /** 已归档 + 待归档的账户。只读本机。 */
+  archived: () =>
+    call<import("./generated/ArchivedSlot").ArchivedSlot[]>(
+      "antigravity_archived",
+    ),
+  /** 放回列表：目录改名挪回，绝不复制。 */
+  restore: (key: string) => call<void>("antigravity_restore", { key }),
+  /** 这一条 Gemini CLI 那一半的联网额度（不切换激活账户）。`refresh: false` 只读最近一次。 */
+  cliQuota: (id: string, refresh: boolean) =>
+    call<import("./generated/TavernGeminiQuota").TavernGeminiQuota | null>(
+      "antigravity_cli_quota",
+      { id, refresh },
+    ),
   /** 把 `from` 那条并进 `into`。**只改索引，不搬目录**。 */
   accountAttach: (into: string, from: string) =>
     call<void>("antigravity_account_attach", { into, from }),

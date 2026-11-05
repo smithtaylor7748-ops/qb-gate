@@ -44,6 +44,42 @@ describe("GPT 额度附带的两样", () => {
     expect(gptExtras(q, now).join("")).not.toMatch(/\$/);
   });
 
+  it("lists spend (∞ when unlimited), reset count and extra limits without inventing zeros", () => {
+    const q: TavernGptQuota = {
+      ...base,
+      spend: {
+        unlimited: true,
+        limit: null,
+        used: null,
+        remaining: null,
+        reset_at: null,
+      },
+      reset_credits_available: 2,
+      extra_limits: [
+        {
+          kind: "model",
+          label: "Spark",
+          allowed: true,
+          limit_reached: true,
+          windows: [
+            {
+              label: "5 小时",
+              remaining_percent: null,
+              reset_at: null,
+              reset_epoch: null,
+              window_minutes: 300,
+              present: true,
+            },
+          ],
+        },
+      ],
+    };
+    const lines = gptExtras(q, now);
+    expect(lines).toContain("个人花费上限 ∞");
+    expect(lines.some((l) => l.startsWith("可用的限额重置 2 次"))).toBe(true);
+    expect(lines).toContain("Spark：5 小时 — · 已用完");
+  });
+
   it("shows nothing when the answer had neither", () => {
     expect(gptExtras(base, now)).toEqual([]);
     expect(gptExtras({ ...base, banked_resets: [] }, now)).toEqual([]);

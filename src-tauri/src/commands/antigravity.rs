@@ -208,11 +208,38 @@ pub async fn antigravity_ide_select(id: String) -> Result<()> {
 }
 
 #[tauri::command]
-pub async fn antigravity_ide_archive(id: String) -> Result<()> {
+pub async fn antigravity_ide_archive(id: String, defer: Option<bool>) -> Result<()> {
     let _guard = operations::exclusive().await?;
-    tokio::task::spawn_blocking(move || antigravity_ops::ide_archive(&id))
+    let defer = defer.unwrap_or(false);
+    tokio::task::spawn_blocking(move || antigravity_ops::ide_archive(&id, defer))
         .await
         .map_err(|e| GateError::Other(e.to_string()))?
+}
+
+/// 「已归档的账户」折叠区：已归档 + 待归档（目录当时被占着）的。只读本机。
+#[tauri::command]
+pub async fn antigravity_archived() -> Result<Vec<qb_accounts::archive_dir::ArchivedSlot>> {
+    tokio::task::spawn_blocking(|| {
+        qb_accounts::antigravity::account::list_archived(
+            &qb_accounts::antigravity::account::root(),
+        )
+    })
+    .await
+    .map_err(|e| GateError::Other(e.to_string()))?
+}
+
+/// 把一条归档放回列表（目录改名挪回，绝不复制）。
+#[tauri::command]
+pub async fn antigravity_restore(key: String) -> Result<()> {
+    let _guard = operations::exclusive().await?;
+    tokio::task::spawn_blocking(move || {
+        qb_accounts::antigravity::account::restore(
+            &qb_accounts::antigravity::account::root(),
+            &key,
+        )
+    })
+    .await
+    .map_err(|e| GateError::Other(e.to_string()))?
 }
 
 /// 把 `from` 那条账户并进 `into`。升级上来的老槽位是「只填了一半」的行，
@@ -318,4 +345,13 @@ pub async fn gemini_cli_install(app: tauri::AppHandle) -> Result<String> {
             Err(GateError::Other(msg))
         }
     }
+}
+
+/// 账户行上 Gemini CLI 那一半的联网额度（不切换激活账户）。`refresh = false` 只读最近一次，绝不联网。
+#[tauri::command]
+pub async fn antigravity_cli_quota(
+    id: String,
+    refresh: bool,
+) -> Result<Option<qb_app::usecase::tavern_quota::TavernGeminiQuota>> {
+    qb_app::usecase::tavern_quota::gemini_quota_for(&id, refresh).await
 }

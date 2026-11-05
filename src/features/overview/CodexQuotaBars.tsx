@@ -76,8 +76,14 @@ export default function CodexQuotaBars({
   state,
   canRefresh = true,
   onRefresh,
+  showCodeReview = false,
+  showModel = false,
 }: {
   state?: CodexQuotaState;
+  /** 页面上的开关：多画「代码审查」那一类限额。 */
+  showCodeReview?: boolean;
+  /** 页面上的开关：多画「模型专属」那一类限额（含 Spark）。 */
+  showModel?: boolean;
   /** 没登录的槽位没有令牌可问，图标灰掉。 */
   canRefresh?: boolean;
   onRefresh?: () => void;
@@ -87,7 +93,15 @@ export default function CodexQuotaBars({
   const scan = state?.local ?? null;
   const local = localWindows(scan);
   const online = liveWindows.length > 0;
-  const windows = online ? liveWindows : local;
+  // 套餐外的两类限额：开关打开才画，名字前缀标出是哪一类。读不到就不画，不补 0。
+  const extraWindows: TavernQuotaWindow[] = online
+    ? (state?.live?.extra_limits ?? [])
+        .filter((l) => (l.kind === "code_review" ? showCodeReview : showModel))
+        .flatMap((l) =>
+          l.windows.map((w) => ({ ...w, label: `${l.label} · ${w.label}` })),
+        )
+    : [];
+  const windows = online ? [...liveWindows, ...extraWindows] : local;
   /** 本机那份没找到额度、而且有读不出来的文件 —— 说不清是「没有」还是「读不到」。 */
   const localUnreadable = !!scan && !scan.found && scan.files_failed > 0;
   const localReason = state?.localError
@@ -157,7 +171,12 @@ export default function CodexQuotaBars({
         {windows.map((window, index) => {
           const isLive = "remaining_percent" in window;
           const name = isLive ? window.label : window.name;
-          if (!isLive && window.window.reset_passed) {
+          // 过了重置时刻就不画旧百分比（联网那份按 `reset_epoch` 判，本机快照按 `reset_passed`）。
+          const passed = isLive
+            ? window.reset_epoch != null &&
+              window.reset_epoch * 1000 <= Date.now()
+            : window.window.reset_passed;
+          if (passed) {
             return (
               <Gauge
                 key={`${name}-${index}`}
@@ -216,9 +235,11 @@ export default function CodexQuotaBars({
       >
         {state?.liveError
           ? "刷新没成 · 悬停看原因"
-          : online
-            ? `在线 · ${stamp(state?.live?.fetched_at)}`
-            : `本地快照 · ${scan?.found ? age(scan.found.age_minutes) : "—"}`}
+          : online && state?.live?.last_success
+            ? `上次成功：${stamp(state.live.last_success)}`
+            : online
+              ? `在线 · ${stamp(state?.live?.fetched_at)}`
+              : `本地快照 · ${scan?.found ? age(scan.found.age_minutes) : "—"}`}
       </span>
     </div>
   );

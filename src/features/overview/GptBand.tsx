@@ -31,6 +31,10 @@ import BridgeModal, {
 } from "../tavern/bridge/BridgeModal";
 import { tavernBodyMissing } from "../../lib/tavernReady";
 import CodexQuotaBars, { type CodexQuotaState } from "./CodexQuotaBars";
+import ArchivedSlots, { ARCHIVE_BUSY_PREFIX } from "./ArchivedSlots";
+import CredentialBadge, { useCredentials } from "./CredentialBadge";
+import { credentialApi } from "../../lib/credentials";
+import QuotaRefreshAll from "./QuotaRefreshAll";
 import { gptExtras, usableResets } from "../../lib/gptExtras";
 import Tile from "./Tile";
 import { Button, Card, ConfirmDialog, Modal, Pill, useToast } from "../../ui";
@@ -144,6 +148,11 @@ export default function GptBand() {
       p.pid === accounts.data?.launched_pid &&
       p.started === accounts.data?.launched_at,
   );
+  /** 右侧用量卡跟着刚刷新的那一行走（没刷新过就是运行中 / 当前槽位）。 */
+  const [lastRefreshed, setLastRefreshed] = useState<string | null>(null);
+  const followed = lastRefreshed
+    ? slots.find((s) => s.id === lastRefreshed)
+    : undefined;
   const runningSlot = ownedProcess
     ? slots.find((s) => s.id === accounts.data?.launched_id)
     : undefined;
@@ -213,7 +222,8 @@ export default function GptBand() {
   }, [loadSlotQuotas]);
   /** 点某一行的刷新图标：**只联网问这一个槽位**，顺带重读它的本机快照。 */
   const refreshSlotQuota = useCallback(
-    async (id: string) => {
+    async (id: string, quiet = false) => {
+      setLastRefreshed(id);
       setSlotQuotas((prev) => ({
         ...prev,
         [id]: {
@@ -228,7 +238,8 @@ export default function GptBand() {
         codexApi.rateLimits(id),
         codexApi.quota(id, true),
       ]);
-      if (live.status === "rejected") toast.error(errorText(live.reason));
+      if (live.status === "rejected" && !quiet)
+        toast.error(errorText(live.reason));
       setSlotQuotas((prev) => ({
         ...prev,
         [id]: {
@@ -274,6 +285,88 @@ export default function GptBand() {
     finished: false,
   };
 
+  const creds = useCredentials("gpt", accounts.data);
+  const [officialBusy, setOfficialBusy] = useState("");
+  /** 官方换不成的槽位：行上的按钮改成「打开这个槽位的桌面端」。 */
+  const [officialFailed, setOfficialFailed] = useState<Record<string, boolean>>(
+    {},
+  );
+  /** 「让官方换新」：后台起官方 codex app-server，让它自己换这个槽位到点的令牌。 */
+  async function officialRefresh(id: string) {
+    setOfficialBusy(id);
+    try {
+      const r = await credentialApi.codexOfficialRefresh(id);
+      if (r.refreshed) {
+        toast.ok(r.detail);
+        setOfficialFailed((m) => ({ ...m, [id]: false }));
+        creds.reload();
+        void refreshSlotQuota(id);
+      } else {
+        toast.info(`${r.detail}。可以打开这个槽位的桌面端，让它自己换。`);
+        setOfficialFailed((m) => ({ ...m, [id]: true }));
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+      setOfficialFailed((m) => ({ ...m, [id]: true }));
+    } finally {
+      setOfficialBusy("");
+    }
+  }
+  /** 页面上的两个开关：代码审查 / 模型专属那两类限额画不画（只记在这台机器的界面偏好里）。 */
+  const [showCodeReview, setShowCodeReview] = useState(() => pref("gpt.cr"));
+  const [showModel, setShowModel] = useState(() => pref("gpt.model"));
+
+  /**
+   * 「全部刷新」：按顺序问每个账户，同一个账户（account id / 邮箱）只问一次；
+   * 停用 / 无权限 / 没登录的跳过；令牌到点的先让官方换新，换不了就跳过（行上照实写）。
+   * 自动刷新（`auto`）走同一条，不弹提示。
+   */
+  async function refreshAllGpt(auto: boolean): Promise<string> {
+    const seen = new Set<string>();
+    let ok = 0;
+    const skipped: string[] = [];
+    for (const s of slots) {
+      const c = creds.map[s.id];
+      const who = (s.email ?? s.id).toLowerCase();
+      if (seen.has(who)) continue;
+      seen.add(who);
+      if (
+        c &&
+        [
+          "disabled",
+          "forbidden",
+          "logged_out",
+          "relogin",
+          "unreadable",
+        ].includes(c.kind)
+      ) {
+        skipped.push(`${slotName(s.email, s.label)}（${c.label}）`);
+        continue;
+      }
+      if (c?.kind === "access_expired") {
+        if (auto) {
+          skipped.push(`${slotName(s.email, s.label)}（令牌到点）`);
+          continue;
+        }
+        try {
+          const r = await credentialApi.codexOfficialRefresh(s.id);
+          if (!r.refreshed) {
+            setOfficialFailed((m) => ({ ...m, [s.id]: true }));
+            skipped.push(`${slotName(s.email, s.label)}（${r.detail}）`);
+            continue;
+          }
+        } catch (e) {
+          setOfficialFailed((m) => ({ ...m, [s.id]: true }));
+          skipped.push(`${slotName(s.email, s.label)}（${errorText(e)}）`);
+          continue;
+        }
+      }
+      await refreshSlotQuota(s.id, true);
+      ok += 1;
+    }
+    creds.reload();
+    return `问了 ${ok} 个账户${skipped.length ? `；跳过 ${skipped.join("、")}` : ""}`;
+  }
   async function reload() {
     await accounts.refresh();
     await desktop.refresh();
@@ -296,6 +389,24 @@ export default function GptBand() {
       setBusy(false);
     }
   }
+  const [archivedVersion, setArchivedVersion] = useState(0);
+  /** 目录被占着时的另一条路：先从列表移除，目录稍后归档（后端启动和列槽位时再挪）。 */
+  async function archiveLater() {
+    if (!ask || ask.action !== "archive") return;
+    setBusy(true);
+    try {
+      await codexApi.archive(ask.id, true);
+      await reload();
+      setArchivedVersion((v) => v + 1);
+      toast.ok("已从列表移除，目录放开后自动挪进归档");
+      setAsk(null);
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function confirm() {
     if (!ask) return;
     if (ask.action === "close") {
@@ -313,6 +424,7 @@ export default function GptBand() {
         return;
       } else await codexApi[ask.action](ask.id);
       await reload();
+      if (ask.action === "archive") setArchivedVersion((v) => v + 1);
       toast.ok(
         ask.action === "close"
           ? "Codex 桌面端已关闭，账户与登录资料已保留"
@@ -466,6 +578,34 @@ export default function GptBand() {
           actions={
             <div className="flex gap-1.5">
               <SessionsEntry kind="codex" current={active?.id} />
+              <QuotaRefreshAll
+                run={refreshAllGpt}
+                autoKey="gpt_quota_auto_minutes"
+              />
+              <Button
+                size="sm"
+                variant={showCodeReview ? "primary" : "ghost"}
+                title="额度条里多画「代码审查」那一类限额"
+                aria-pressed={showCodeReview}
+                onClick={() => {
+                  setPref("gpt.cr", !showCodeReview);
+                  setShowCodeReview(!showCodeReview);
+                }}
+              >
+                审查
+              </Button>
+              <Button
+                size="sm"
+                variant={showModel ? "primary" : "ghost"}
+                title="额度条里多画「模型专属」那一类限额（含 Spark）"
+                aria-pressed={showModel}
+                onClick={() => {
+                  setPref("gpt.model", !showModel);
+                  setShowModel(!showModel);
+                }}
+              >
+                模型
+              </Button>
               <Button
                 size="sm"
                 icon={<RefreshCw size={12} />}
@@ -558,7 +698,25 @@ export default function GptBand() {
                   title={`${s.email ?? "尚未读取到账户邮箱"}${s.plan ? ` · ${s.plan}` : ""}`}
                 >
                   {s.email ?? "尚未读取到账户邮箱"}
-                  {s.plan ? ` · ${s.plan}` : ""}
+                  {s.plan ? ` · ${s.plan}` : ""}{" "}
+                  <CredentialBadge
+                    status={
+                      creds.map[s.id] && officialFailed[s.id]
+                        ? { ...creds.map[s.id], action: "open_desktop" }
+                        : creds.map[s.id]
+                    }
+                    busy={officialBusy === s.id}
+                    onAction={(a) =>
+                      a === "official_refresh"
+                        ? void officialRefresh(s.id)
+                        : void requestLaunch(s)
+                    }
+                    onEmailAccept={() =>
+                      void credentialApi
+                        .emailAccept("gpt", s.id)
+                        .then(creds.reload)
+                    }
+                  />
                 </p>
                 {/* 登录正常时不画那句「已登录 · 本地凭据」（2026-09-23 使用者删的）；
                     没登录 / 登录文件损坏 / API 模式这几种要照旧说出来，那是下一步该做什么。 */}
@@ -584,12 +742,20 @@ export default function GptBand() {
                     s.logged_in || s.auth_state.startsWith("登录已失效")
                   }
                   onRefresh={() => void refreshSlotQuota(s.id)}
+                  showCodeReview={showCodeReview}
+                  showModel={showModel}
                 />
               </div>
             ))}
           </div>
           <div className="account-pagination">
             <span className="notice">{slots.length} 个槽位 · 每页 4 个</span>
+            <ArchivedSlots
+              load={codexApi.archived}
+              restore={codexApi.restore}
+              onRestored={() => void reload()}
+              version={archivedVersion}
+            />
             {pages > 1 && (
               <span className="pager ml-auto">
                 {Array.from({ length: pages }, (_, i) => (
@@ -752,8 +918,8 @@ export default function GptBand() {
             </div>
           </Card>
           <CodexUsageCard
-            slot={runningSlot ?? active}
-            quota={slotQuotas[(runningSlot ?? active)?.id ?? ""]}
+            slot={followed ?? runningSlot ?? active}
+            quota={slotQuotas[(followed ?? runningSlot ?? active)?.id ?? ""]}
             onReloadQuota={() => void loadSlotQuotas()}
           />
         </div>
@@ -870,6 +1036,15 @@ export default function GptBand() {
           <p role="alert" className="notice notice--danger mt-2">
             {error}
           </p>
+        )}
+        {ask?.action === "archive" && error.startsWith(ARCHIVE_BUSY_PREFIX) && (
+          <Button
+            className="mt-2"
+            loading={busy}
+            onClick={() => void archiveLater()}
+          >
+            先从列表移除，目录稍后归档
+          </Button>
         )}
         {needsReg && (
           <Button
@@ -1092,4 +1267,20 @@ function CodexUsageCard({
       </div>
     </Card>
   );
+}
+
+/** 界面偏好（只在这台机器上记；读写不了就当没开）。 */
+function pref(key: string): boolean {
+  try {
+    return localStorage.getItem(`qb.${key}`) === "1";
+  } catch {
+    return false;
+  }
+}
+function setPref(key: string, on: boolean) {
+  try {
+    localStorage.setItem(`qb.${key}`, on ? "1" : "0");
+  } catch {
+    /* 存不了就算了 */
+  }
 }

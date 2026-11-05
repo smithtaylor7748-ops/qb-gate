@@ -185,7 +185,11 @@ pub fn status() -> Result<AntigravityStatus> {
         gemini_cli_installed: qb_install::install::detect::gemini_cli_candidates()
             .into_iter()
             .any(|p| p.is_file()),
-        accounts: with_login_health(account::list(&account::root())?),
+        accounts: with_login_health({
+            // 上次「稍后归档」的那些顺手再挪一次（挪不动就留着）。
+            let _ = account::retry_pending(&account::root());
+            account::list(&account::root())?
+        }),
         identity_source,
         identity,
         identity_error,
@@ -210,11 +214,14 @@ fn with_login_health(mut accounts: account::AntigravityAccounts) -> account::Ant
         }
         if let Some(dir) = a.ide_dir.as_deref() {
             let db = ag_status::state_db(std::path::Path::new(dir));
-            if let Some(reason) =
-                login_health::check(&login_health::antigravity_ide_key(&a.id), &db)
+            // 只有失效 / 停用才改登录态；要网页验证、要订阅、无权限走账户行的凭证徽标。
+            if let Some((kind, reason)) =
+                login_health::check_kind(&login_health::antigravity_ide_key(&a.id), &db)
             {
-                a.ide_logged_in = false;
-                a.ide_auth_state = reason;
+                if kind == "relogin" || kind == "disabled" {
+                    a.ide_logged_in = false;
+                    a.ide_auth_state = reason;
+                }
             }
         }
     }
@@ -278,8 +285,8 @@ pub fn ide_attach(into: &str, from: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn ide_archive(id: &str) -> Result<()> {
-    account::archive(&account::root(), id)?;
+pub fn ide_archive(id: &str, defer: bool) -> Result<()> {
+    account::archive(&account::root(), id, defer)?;
     // 这条槽位联网问到的额度、换新来的令牌，一起从内存里忘掉。
     super::antigravity_quota::forget(&super::antigravity_quota::Source::Account(id.to_string()));
     super::tavern_quota::forget_gemini(id);

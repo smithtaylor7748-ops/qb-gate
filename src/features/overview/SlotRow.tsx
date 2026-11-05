@@ -58,6 +58,8 @@ export function switchLabel(s: Slot): string {
  * 跟「从没登过」分开说 —— 前者是「登录已失效」，后者才是「未登录」。
  */
 export function expiryText(s: Slot): string {
+  // 访问令牌被拒只是那一张令牌不认了（Claude Code 跑起来会自己换），不等于要重新登录。
+  if (s.login_problem?.startsWith("访问令牌被拒")) return "令牌被拒";
   if (s.login_problem) return "登录已失效";
   return s.logged_in ? fmtDaysLeft(s.cli_days_left) : "未登录";
 }

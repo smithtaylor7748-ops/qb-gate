@@ -3,4 +3,8 @@
 /**
  * 超额用量（用完订阅额度之后按量付费那一块）。
  */
-export type ClaudeExtraUsage = { enabled: boolean, monthly_limit: number | null, used_credits: number | null, utilization: number | null, currency: string | null, };
+export type ClaudeExtraUsage = { enabled: boolean, monthly_limit: number | null, used_credits: number | null, utilization: number | null, currency: string | null, 
+/**
+ * 超额那一块什么时候重置（RFC3339）。读不到就是 `None`。
+ */
+resets_at?: string, };

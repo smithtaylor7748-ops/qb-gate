@@ -81,6 +81,11 @@ import {
   useToast,
 } from "../../ui";
 import Tile from "./Tile";
+import ArchivedSlots, { ARCHIVE_BUSY_PREFIX } from "./ArchivedSlots";
+import CredentialBadge, { useCredentials } from "./CredentialBadge";
+import { credentialApi } from "../../lib/credentials";
+import QuotaRefreshAll from "./QuotaRefreshAll";
+import type { TavernGeminiQuota as CliQuota } from "../../lib/generated/TavernGeminiQuota";
 
 const PER_PAGE = 4;
 const NUM = new Intl.NumberFormat("zh-CN");
@@ -237,8 +242,31 @@ export default function AntigravityBand() {
     };
   }, [slotIds]);
   /** 点某一行的刷新图标：**只联网问这一个账户**。没问到就留着上一次的，原因写在那一行。 */
+  /** 右侧用量卡跟着刚刷新的那一行走。 */
+  const [lastRefreshed, setLastRefreshed] = useState<string | null>(null);
+  /** 每条 Gemini CLI 那一半最近一次问到的额度。 */
+  const [cliQuota, setCliQuota] = useState<
+    Record<string, { q: CliQuota | null; loading: boolean }>
+  >({});
+  async function refreshCli(id: string) {
+    setCliQuota((m) => ({
+      ...m,
+      [id]: { q: m[id]?.q ?? null, loading: true },
+    }));
+    try {
+      const q = await antigravityApi.cliQuota(id, true);
+      setCliQuota((m) => ({ ...m, [id]: { q, loading: false } }));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+      setCliQuota((m) => ({
+        ...m,
+        [id]: { q: m[id]?.q ?? null, loading: false },
+      }));
+    }
+  }
   const refreshOnline = useCallback(
-    async (id: string) => {
+    async (id: string, quiet = false) => {
+      setLastRefreshed(id);
       setOnline((prev) => ({
         ...prev,
         [id]: { quota: prev[id]?.quota ?? null, error: "", loading: true },
@@ -251,7 +279,7 @@ export default function AntigravityBand() {
         }));
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        toast.error(msg);
+        if (!quiet) toast.error(msg);
         setOnline((prev) => ({
           ...prev,
           [id]: { quota: prev[id]?.quota ?? null, error: msg, loading: false },
@@ -383,6 +411,56 @@ export default function AntigravityBand() {
     toast.info("没有在跑的反重力，什么都不用关");
   }
 
+  /**
+   * 「全部刷新」：按顺序问每个账户（同一个邮箱只问一次），跳过停用 / 无权限 / 没登录的，
+   * 行上照实写原因。自动刷新走同一条、不弹错。
+   */
+  async function refreshAllAg(auto: boolean): Promise<string> {
+    const seen = new Set<string>();
+    let ok = 0;
+    const skipped: string[] = [];
+    for (const s of slots) {
+      const c = creds.map[s.id];
+      const who = (s.email ?? s.id).toLowerCase();
+      if (seen.has(who)) continue;
+      seen.add(who);
+      if (
+        !s.ide_logged_in ||
+        (c &&
+          ["disabled", "forbidden", "logged_out", "relogin"].includes(c.kind))
+      ) {
+        skipped.push(`${s.label}（${c?.label ?? "没登录"}）`);
+        continue;
+      }
+      await refreshOnline(s.id, auto);
+      ok += 1;
+    }
+    creds.reload();
+    return `问了 ${ok} 个账户${skipped.length ? `；跳过 ${skipped.join("、")}` : ""}`;
+  }
+  const [archivedVersion, setArchivedVersion] = useState(0);
+  const credsVersion = useMemo(
+    () => [status.data, online],
+    [status.data, online],
+  );
+  const creds = useCredentials("antigravity", credsVersion);
+  /** 目录被占着时的另一条路：先从列表移除，目录稍后归档。 */
+  async function archiveLater() {
+    if (!ask || ask.action !== "ide-archive") return;
+    setBusy(true);
+    try {
+      await antigravityApi.ideArchive(ask.id, true);
+      setArchivedVersion((v) => v + 1);
+      await status.refresh();
+      toast.ok("已从列表移除，目录放开后自动挪进归档");
+      setAsk(null);
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function confirm() {
     if (!ask) return;
     setBusy(true);
@@ -415,6 +493,7 @@ export default function AntigravityBand() {
         );
       } else if (ask.action === "ide-archive") {
         await antigravityApi.ideArchive(ask.id);
+        setArchivedVersion((v) => v + 1);
         toast.ok("账户已移除，资料目录保留在本机归档中");
       } else if (ask.action === "attach") {
         await antigravityApi.accountAttach(ask.into, ask.id);
@@ -670,6 +749,19 @@ export default function AntigravityBand() {
           setAsk({ action: "ide-archive", id: s.id, label: s.label });
         }}
         onAttachStart={setAttachFrom}
+        cliSummary={cliText(cliQuota[s.id]?.q ?? null)}
+        cliLoading={cliQuota[s.id]?.loading ?? false}
+        onRefreshCli={() => void refreshCli(s.id)}
+        credential={
+          <CredentialBadge
+            status={creds.map[s.id]}
+            onEmailAccept={() =>
+              void credentialApi
+                .emailAccept("antigravity", s.id)
+                .then(creds.reload)
+            }
+          />
+        }
         onAttachHere={() => {
           if (!attachSource) return;
           setError("");
@@ -699,6 +791,10 @@ export default function AntigravityBand() {
           actions={
             <div className="flex gap-1.5">
               <SessionsEntry kind="antigravity" />
+              <QuotaRefreshAll
+                run={refreshAllAg}
+                autoKey="antigravity_quota_auto_minutes"
+              />
               <Button
                 size="sm"
                 icon={<RefreshCw size={12} />}
@@ -767,6 +863,12 @@ export default function AntigravityBand() {
                     : "读取中…"}
               </span>
             )}
+            <ArchivedSlots
+              load={antigravityApi.archived}
+              restore={antigravityApi.restore}
+              onRestored={() => void status.refresh()}
+              version={archivedVersion}
+            />
             {pages > 1 && (
               <span className="pager ml-auto">
                 {Array.from({ length: pages }, (_, i) => (
@@ -873,9 +975,13 @@ export default function AntigravityBand() {
             identity={status.data?.identity ?? null}
             source={status.data?.identity_source ?? ""}
             identityError={status.data?.identity_error ?? null}
-            quotaKey={activeIde?.id ?? null}
+            quotaKey={lastRefreshed ?? activeIde?.id ?? null}
             activeOnline={
-              activeIde ? (online[activeIde.id]?.quota ?? null) : null
+              lastRefreshed
+                ? (online[lastRefreshed]?.quota ?? null)
+                : activeIde
+                  ? (online[activeIde.id]?.quota ?? null)
+                  : null
             }
             hubLoggedIn={status.data?.hub_logged_in ?? false}
             hubIdentity={status.data?.hub_identity ?? null}
@@ -1070,6 +1176,16 @@ export default function AntigravityBand() {
             {error}
           </p>
         )}
+        {ask?.action === "ide-archive" &&
+          error.startsWith(ARCHIVE_BUSY_PREFIX) && (
+            <Button
+              className="mt-2"
+              loading={busy}
+              onClick={() => void archiveLater()}
+            >
+              先从列表移除，目录稍后归档
+            </Button>
+          )}
       </ConfirmDialog>
     </>
   );
@@ -1520,4 +1636,15 @@ function AntigravityUsageCard({
       </div>
     </Card>
   );
+}
+
+/** Gemini CLI 额度的一句话摘要（剩得最少的那个模型）。 */
+function cliText(q: CliQuota | null): string | undefined {
+  if (!q) return undefined;
+  const known = q.models.filter((m) => m.remaining_percent != null);
+  if (!known.length) return `问于 ${q.fetched_at}，没有额度数据`;
+  const low = known.reduce((a, b) =>
+    (a.remaining_percent ?? 0) <= (b.remaining_percent ?? 0) ? a : b,
+  );
+  return `${low.label} 剩 ${low.remaining_percent}% · 问于 ${q.fetched_at}`;
 }

@@ -96,7 +96,11 @@ export function percent(remaining: number | null): string {
 // 悬停里说清楚。
 
 export function groupLabel(group: AntigravityQuotaGroup): string {
-  return group === "claude" ? "Claude" : "Gemini";
+  return group === "claude"
+    ? "Claude"
+    : group === "argon"
+      ? "Gemini 4 Argon（周）"
+      : "Gemini";
 }
 
 export function spanLabel(span: AntigravityQuotaSpan): string {

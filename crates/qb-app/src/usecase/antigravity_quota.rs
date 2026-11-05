@@ -99,16 +99,18 @@ impl Source {
 // ------------------------------------------------------------------ 给界面的形状
 
 /// 哪一组额度。Google 的分组叫「Claude and GPT models」—— Claude 与 GPT-OSS 共用一份。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, serde::Deserialize, TS)]
 #[ts(export, rename = "AntigravityQuotaGroup")]
 #[serde(rename_all = "kebab-case")]
 pub enum QuotaGroup {
     Claude,
     Gemini,
+    /// 「Gemini 4 Argon（周）」：`gemini-argon-wtu-weekly` / `argon:weekly`，只有周额度。
+    Argon,
 }
 
 /// 哪个窗口。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, serde::Deserialize, TS)]
 #[ts(export, rename = "AntigravityQuotaSpan")]
 #[serde(rename_all = "kebab-case")]
 pub enum QuotaSpan {
@@ -117,7 +119,7 @@ pub enum QuotaSpan {
 }
 
 /// 一格额度。
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize, TS)]
 #[ts(export)]
 pub struct AntigravityQuotaWindow {
     pub group: QuotaGroup,
@@ -136,7 +138,7 @@ pub struct AntigravityQuotaWindow {
 }
 
 /// 一个账户联网问到的额度。
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize, TS)]
 #[ts(export)]
 pub struct AntigravityOnlineQuota {
     /// 档位 id（`g1-pro-tier` / `free-tier`）与名字，原样。
@@ -155,6 +157,10 @@ pub struct AntigravityOnlineQuota {
     pub models: Vec<AntigravityModelQuota>,
     /// 这次是什么时候问的，本地 `YYYY-MM-DD HH:MM`。
     pub fetched_at: String,
+    /// 读数来自落盘的「上次成功」（面板重启后）：那一次成功的时刻（RFC3339）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_success: Option<String>,
 }
 
 // ------------------------------------------------------------------ 内存里的东西
@@ -177,8 +183,23 @@ static WORKING_CLIENT: Mutex<Option<(PathBuf, usize)>> = Mutex::new(None);
 /// 那份档位、AI 积分、四格都是 A 的，不许挂在 B 的邮箱底下显示（2026-09-25 查出）。
 /// 两边都读得出邮箱、又对不上时就当没问过；读不出来时说不清，照旧给。
 pub fn last(source: &Source) -> Option<AntigravityOnlineQuota> {
-    let (asked, q) = LAST.lock().ok()?.as_ref()?.get(&source.key()).cloned()?;
-    same_account(asked.as_deref(), who(source).as_deref()).then_some(q)
+    let now = who(source);
+    let mem = LAST
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref()?.get(&source.key()).cloned());
+    if let Some((asked, q)) = mem {
+        return same_account(asked.as_deref(), now.as_deref()).then_some(q);
+    }
+    // 面板重启后：落盘的「上次成功」，登的人换了就作废。
+    super::quota_disk::get::<AntigravityOnlineQuota>(
+        &format!("antigravity:{}", source.key()),
+        now.as_deref(),
+    )
+    .map(|(mut q, at)| {
+        q.last_success = Some(at);
+        q
+    })
 }
 
 /// 问的时候登的是谁 vs 现在登的是谁。两边都读得出、又对不上 → 不是同一个人。**纯函数。**
@@ -191,6 +212,12 @@ fn same_account(asked: Option<&str>, now: Option<&str>) -> bool {
 
 fn remember(source: &Source, q: &AntigravityOnlineQuota) {
     let asked = who(source);
+    super::quota_disk::put(
+        &format!("antigravity:{}", source.key()),
+        asked.as_deref(),
+        None,
+        q,
+    );
     if let Ok(mut g) = LAST.lock() {
         g.get_or_insert_with(HashMap::new)
             .insert(source.key(), (asked, q.clone()));
@@ -220,6 +247,7 @@ pub fn forget(source: &Source) {
         }
     }
     TOKENS.forget(&key);
+    super::quota_disk::forget(&format!("antigravity:{key}"));
     if let Source::Account(id) = source {
         login_health::forget(&login_health::antigravity_ide_key(id));
     }
@@ -332,6 +360,7 @@ pub async fn fetch(source: &Source) -> Result<AntigravityOnlineQuota> {
         windows_note,
         models,
         fetched_at: local_minute(now()).unwrap_or_default(),
+        last_success: None,
     })
 }
 
@@ -384,6 +413,7 @@ pub async fn exchange(source: &Source) -> Result<(String, Replies)> {
         .await?;
     }
     if !(200..300).contains(&status) {
+        mark(source, status, &load, true);
         return Err(http_error("loadCodeAssist", status, &load));
     }
     let info = parse_load(&load)?;
@@ -406,10 +436,17 @@ pub async fn exchange(source: &Source) -> Result<(String, Replies)> {
     )
     .await?;
     let summary_ok = (200..300).contains(&summary_status) && parse_summary(&summary).is_ok();
+    if summary_status == 403 && validation_url(&summary).is_some() {
+        mark(source, 403, &summary, false);
+    }
     let models = if summary_ok {
         None
     } else {
-        Some(post(&client, host, "fetchAvailableModels", &token, &ua, &payload).await?)
+        let m = post(&client, host, "fetchAvailableModels", &token, &ua, &payload).await?;
+        if m.0 == 403 {
+            mark(source, 403, &m.1, true);
+        }
+        Some(m)
     };
     Ok((
         label,
@@ -420,6 +457,74 @@ pub async fn exchange(source: &Source) -> Result<(String, Replies)> {
             models,
         },
     ))
+}
+
+/// 回复里带的网页验证地址。只认 https 的 google.com 地址，别的一律不要。
+fn validation_url(body: &str) -> Option<String> {
+    fn find(v: &Value) -> Option<String> {
+        match v {
+            Value::Object(m) => {
+                for (k, x) in m {
+                    if k == "validation_url" || k == "validationUrl" {
+                        if let Some(u) = x.as_str() {
+                            return Some(u.to_string());
+                        }
+                    }
+                    if let Some(u) = find(x) {
+                        return Some(u);
+                    }
+                }
+                None
+            }
+            Value::Array(a) => a.iter().find_map(find),
+            _ => None,
+        }
+    }
+    let u = find(&serde_json::from_str::<Value>(body).ok()?)?;
+    let rest = u.strip_prefix("https://")?;
+    let host = rest.split(['/', '?', '#']).next()?;
+    (host == "google.com" || host.ends_with(".google.com")).then_some(u)
+}
+
+/// 账户行上的分层（照 Cockpit 的行为）：换新后仍 401 = 失效；403 带 validation_url = 要网页验证；
+/// 「Subscription required」= 要订阅；模型接口 / 汇总 403 = 无权限。Hub 没有槽位行，不记。
+fn mark(source: &Source, status: u16, body: &str, forbidden_counts: bool) {
+    let Source::Account(id) = source else { return };
+    let Ok((_, dir)) = ide_dir_of(id) else { return };
+    let key = login_health::antigravity_ide_key(id);
+    let file = qb_accounts::antigravity::status::state_db(&dir);
+    if status == 401 {
+        login_health::record(
+            &key,
+            &file,
+            "登录已失效：换了新令牌 Google 还是不认（HTTP 401）· 点 IDE 旁边的「登录」重新登录",
+        );
+    } else if status == 403 {
+        if let Some(url) = validation_url(body) {
+            login_health::record_link(
+                &key,
+                &file,
+                "要网页验证：Google 要你在网页上确认一次这个账户（HTTP 403）",
+                &url,
+            );
+        } else if body.contains("SUBSCRIPTION_REQUIRED")
+            || body.to_ascii_lowercase().contains("subscription required")
+        {
+            login_health::record_kind(
+                &key,
+                &file,
+                "needs_subscription",
+                "要订阅：Google 说这个账户需要订阅才能用（Subscription required）",
+            );
+        } else if forbidden_counts {
+            login_health::record_kind(
+                &key,
+                &file,
+                "forbidden",
+                "无权限：Google 拒绝了这个账户的模型 / 配额接口（HTTP 403）",
+            );
+        }
+    }
 }
 
 async fn post(
@@ -569,10 +674,12 @@ async fn access_token(
             // 直到 IDE 自己重新写它的状态库（重新登录之后一定会写）。Hub 没有槽位行，不记。
             if let Source::Account(id) = source {
                 if let Ok((_, dir)) = ide_dir_of(id) {
-                    login_health::record(
+                    // invalid_grant 记「停用」：批量 / 自动刷新跳过它，下一次成功自动解除。
+                    login_health::record_kind(
                         &login_health::antigravity_ide_key(id),
                         &qb_accounts::antigravity::status::state_db(&dir),
-                        "登录已失效：Google 说这个账户的刷新令牌作废了（invalid_grant）· 点 IDE 旁边的「登录」重新登录",
+                        "disabled",
+                        "已停用：Google 说这个账户的刷新令牌作废了（invalid_grant）· 点 IDE 旁边的「登录」重新登录",
                     );
                 }
             }
@@ -708,7 +815,9 @@ fn bucket_kind(b: &Value) -> Option<(QuotaGroup, QuotaSpan)> {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_ascii_lowercase();
-    let group = if id.starts_with("gemini") {
+    let group = if id.contains("argon") {
+        QuotaGroup::Argon
+    } else if id.starts_with("gemini") {
         QuotaGroup::Gemini
     } else if id.starts_with("3p") || id.starts_with("claude") {
         QuotaGroup::Claude
@@ -717,7 +826,7 @@ fn bucket_kind(b: &Value) -> Option<(QuotaGroup, QuotaSpan)> {
     };
     let span = if id.ends_with("5h") || window == "5h" {
         QuotaSpan::FiveHour
-    } else if id.ends_with("weekly") || window == "weekly" {
+    } else if id.ends_with("weekly") || window == "weekly" || id.ends_with(":weekly") {
         QuotaSpan::Weekly
     } else {
         return None;
@@ -1007,6 +1116,7 @@ mod tests {
             windows_note: Some("x".into()),
             models: Vec::new(),
             fetched_at: "2026-09-23 07:00".into(),
+            last_success: None,
         };
         remember(&s, &q);
         assert_eq!(last(&s), Some(q));

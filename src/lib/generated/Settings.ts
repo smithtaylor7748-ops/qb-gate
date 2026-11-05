@@ -180,4 +180,13 @@ start_router_on_launch: boolean,
  *
  * 只经软件迁移命令改：`settings_save` 原样保留旧值（同 `managed_apps_dir`）。
  */
-app_dirs: { [key in string]?: string }, };
+app_dirs: { [key in string]?: string }, 
+/**
+ * GPT 子页联网额度自动刷新的间隔（分钟，0 = 关；没有 = 默认 10）。只在窗口可见时跑，
+ * 跳过停用和无权限的账户。旧配置文件没有这个键，落到默认 10。
+ */
+gpt_quota_auto_minutes?: number, 
+/**
+ * 同上，反重力子页。Claude 子页没有自动刷新。
+ */
+antigravity_quota_auto_minutes?: number, };

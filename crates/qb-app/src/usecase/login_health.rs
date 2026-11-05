@@ -27,7 +27,31 @@ use std::time::SystemTime;
 /// 凭据文件的版本：`(修改时刻, 长度)`。读不到元数据就是 `None`。
 type Stamp = Option<(SystemTime, u64)>;
 
-static REJECTED: Mutex<Option<HashMap<String, (Stamp, String)>>> = Mutex::new(None);
+/// `(凭据版本, 分层, 原因)`。分层见 [`super::credential_status`]（relogin / access_rejected / disabled …）。
+static REJECTED: Mutex<Option<HashMap<String, (Stamp, String, String)>>> = Mutex::new(None);
+/// 「要网页验证」那一层附带的链接（只收 https 的 google.com 地址）。键同上。
+static LINKS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+
+/// 记一笔「要网页验证」，连链接一起。
+pub fn record_link(key: &str, file: &Path, reason: &str, url: &str) {
+    record_kind(key, file, "needs_web_verify", reason);
+    if let Ok(mut g) = LINKS.lock() {
+        g.get_or_insert_with(HashMap::new)
+            .insert(key.to_string(), url.to_string());
+    }
+}
+
+pub fn link(key: &str) -> Option<String> {
+    LINKS.lock().ok()?.as_ref()?.get(key).cloned()
+}
+
+/// 凭据文件指纹：`(修改时刻毫秒, 长度)`。只看元数据，不读内容。
+/// 联网刷新前记一份、写回结果前再比一次：变了（官方客户端换新 / 重新登录了）就丢掉这次结果。
+pub fn fingerprint(file: &Path) -> Option<(i64, u64)> {
+    let m = std::fs::metadata(file).ok()?;
+    let t = m.modified().ok()?.duration_since(SystemTime::UNIX_EPOCH).ok()?;
+    Some((t.as_millis() as i64, m.len()))
+}
 
 /// 一个 GPT（Codex）槽位的键。
 pub fn codex_key(slot_id: &str) -> String {
@@ -57,7 +81,25 @@ fn stamp(file: &Path) -> Stamp {
 /// 记一笔：`key` 这份登录（凭据文件是 `file`）服务端不认了。`reason` 是给界面的那句话，
 /// **纯文本**（界面不渲染 Markdown），而且要能照着做。
 pub fn record(key: &str, file: &Path, reason: &str) {
-    record_stamp(key, stamp(file), reason);
+    record_stamp(key, stamp(file), "relogin", reason);
+}
+
+/// 同 [`record`]，带分层（`access_rejected`、`disabled`、`needs_web_verify` …）。
+pub fn record_kind(key: &str, file: &Path, kind: &str, reason: &str) {
+    record_stamp(key, stamp(file), kind, reason);
+}
+
+/// 同 [`check`]，连分层一起：`(分层, 原因)`。
+pub fn check_kind(key: &str, file: &Path) -> Option<(String, String)> {
+    let now = stamp(file);
+    let mut g = REJECTED.lock().ok()?;
+    let m = g.as_mut()?;
+    let (then, kind, reason) = m.get(key)?;
+    if *then == now {
+        return Some((kind.clone(), reason.clone()));
+    }
+    m.remove(key);
+    None
 }
 
 /// 这份登录还记着「不认了」吗 —— 凭据文件从那以后没变过才算；变了就把这一笔删掉。
@@ -74,17 +116,17 @@ pub fn forget(key: &str) {
     }
 }
 
-fn record_stamp(key: &str, stamp: Stamp, reason: &str) {
+fn record_stamp(key: &str, stamp: Stamp, kind: &str, reason: &str) {
     if let Ok(mut g) = REJECTED.lock() {
         g.get_or_insert_with(HashMap::new)
-            .insert(key.to_string(), (stamp, reason.to_string()));
+            .insert(key.to_string(), (stamp, kind.to_string(), reason.to_string()));
     }
 }
 
 fn check_stamp(key: &str, now: Stamp) -> Option<String> {
     let mut g = REJECTED.lock().ok()?;
     let m = g.as_mut()?;
-    let (then, reason) = m.get(key)?;
+    let (then, _, reason) = m.get(key)?;
     if *then == now {
         return Some(reason.clone());
     }
@@ -104,7 +146,7 @@ mod tests {
     #[test]
     fn a_rejection_holds_until_the_credential_file_changes() {
         let key = "codex:test-holds-7a1c";
-        record_stamp(key, at(100, 50), "登录已失效");
+        record_stamp(key, at(100, 50), "relogin", "登录已失效");
         assert_eq!(check_stamp(key, at(100, 50)).as_deref(), Some("登录已失效"));
         // 官方客户端重新登录 / 自己换新了令牌：文件变了，这一笔就作废，而且删掉。
         assert_eq!(check_stamp(key, at(200, 50)), None);
@@ -114,9 +156,9 @@ mod tests {
     #[test]
     fn a_length_change_alone_also_clears_it_and_forget_clears_it_outright() {
         let key = "gemini-cli:test-len-2b9d";
-        record_stamp(key, at(100, 50), "x");
+        record_stamp(key, at(100, 50), "relogin", "x");
         assert_eq!(check_stamp(key, at(100, 51)), None);
-        record_stamp(key, at(100, 50), "x");
+        record_stamp(key, at(100, 50), "relogin", "x");
         forget(key);
         assert_eq!(check_stamp(key, at(100, 50)), None);
     }

@@ -723,10 +723,15 @@ pub fn delete_slot(r: &AccountRoots, label: &str, drop_desktop: bool) -> Result<
     let staged = r
         .panel
         .join(format!(".deleting-{label}-{}", crate::config_io::id()));
-    std::fs::rename(&dir, &staged).map_err(|e| {
-        GateError::Other(format!(
-            "槽位 {label} 的目录改不了名（{e}），一个文件都没动。多半是里面有文件正被占用（编辑器、索引、杀毒软件），关掉再删。"
-        ))
+    // 被占着时退避重试约 3 秒，还不行就报出是谁占着（`archive_dir`，三家共用）。
+    crate::archive_dir::move_dir(&dir, &staged).map_err(|e| {
+        if crate::archive_dir::is_busy(&e) {
+            e
+        } else {
+            GateError::Other(format!(
+                "槽位 {label} 的目录改不了名（{e}），一个文件都没动。"
+            ))
+        }
     })?;
     removed.push(dir.display().to_string());
     if let Err(e) = std::fs::remove_dir_all(&staged) {

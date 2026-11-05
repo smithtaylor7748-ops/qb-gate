@@ -46,6 +46,37 @@ export function gptExtras(
         : `存下的限额重置 ${resets.length} 次 · 不会过期`,
     );
   }
+  if (q.spend) {
+    const s = q.spend;
+    if (s.unlimited) out.push("个人花费上限 ∞");
+    else if (s.limit != null || s.used != null || s.remaining != null)
+      out.push(
+        [
+          "个人花费",
+          s.used != null ? `已用 ${COUNT.format(s.used)}` : "",
+          s.limit != null ? `上限 ${COUNT.format(s.limit)}` : "",
+          s.remaining != null ? `剩 ${COUNT.format(s.remaining)}` : "",
+          s.reset_at ? `${md(s.reset_at)} 重置` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      );
+  }
+  if (q.reset_credits_available != null)
+    out.push(
+      `可用的限额重置 ${q.reset_credits_available} 次（只显示，面板不会用掉它）`,
+    );
+  for (const l of q.extra_limits ?? [])
+    out.push(
+      `${l.label}：${l.windows
+        .map(
+          (w) =>
+            `${w.label} ${w.remaining_percent != null ? `剩 ${w.remaining_percent}%` : "—"}`,
+        )
+        .join(
+          " / ",
+        )}${l.limit_reached ? " · 已用完" : ""}${l.allowed === false ? " · 不可用" : ""}`,
+    );
   if (q.credits_balance != null && q.credits_balance > 0)
     out.push(
       `Codex Credits 余额 ${COUNT.format(q.credits_balance)} · 额度用完后才扣`,

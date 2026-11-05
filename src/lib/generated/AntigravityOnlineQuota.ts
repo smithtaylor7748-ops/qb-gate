@@ -34,4 +34,8 @@ models: Array<AntigravityModelQuota>,
 /**
  * 这次是什么时候问的，本地 `YYYY-MM-DD HH:MM`。
  */
-fetched_at: string, };
+fetched_at: string, 
+/**
+ * 读数来自落盘的「上次成功」（面板重启后）：那一次成功的时刻（RFC3339）。
+ */
+last_success?: string, };

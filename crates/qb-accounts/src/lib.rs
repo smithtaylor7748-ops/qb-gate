@@ -30,6 +30,7 @@ pub use qb_install::install;
 pub use qb_platform::{config_io, process};
 
 pub mod accounts;
+pub mod archive_dir;
 pub mod residue;
 
 pub mod antigravity;

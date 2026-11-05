@@ -10,4 +10,8 @@ label: string, windows: Array<ClaudeQuotaWindow>, extra: ClaudeExtraUsage | null
 /**
  * 问的时刻（RFC3339）。
  */
-fetched_at: string, source: string, };
+fetched_at: string, source: string, 
+/**
+ * 读数来自落盘的「上次成功」（面板重启后）：那一次成功的时刻（RFC3339）。
+ */
+last_success?: string, };
