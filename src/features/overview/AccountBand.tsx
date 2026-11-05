@@ -14,8 +14,10 @@ import {
   Wine,
 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import TavernPanel, { TavernPanelCorner } from "../tavern/TavernPanel";
-import { bridgeHref } from "../tavern/bridge/where";
+import BridgeModal, {
+  BridgeCorner,
+  useBridgeLink,
+} from "../tavern/bridge/BridgeModal";
 import { useNavigate } from "react-router-dom";
 import { tavernBodyMissing } from "../../lib/tavernReady";
 
@@ -60,6 +62,7 @@ export default function AccountBand() {
   const toast = useToast();
   const navigate = useNavigate();
   const [panelOpen, setPanelOpen] = useState(false);
+  useBridgeLink("claude", setPanelOpen);
 
   const accounts = useResource("accounts", R.accounts);
   const plugins = useResource("plugins", R.plugins);
@@ -116,9 +119,8 @@ export default function AccountBand() {
    * 这时候这块贴**点了只会失败** —— 而且失败信息里那句
    * 「路径不存在: bridge.py」曾经是使用者看到的全部内容。
    * 一个只能失败的按钮不该照常长着「起桥接与酒馆」的样子：
-   * 改成在点之前就说明白，点下去带他到能补齐的那一处（2026-09-29 第三轮起都在软件页：
-   * 酒馆本体缺东西去 SillyTavern 卡，缺的是 bridge.py / Python / Claude Code 就去 Claude Code 卡
-   * 最下面的「酒馆 · Claude 桥接设置」，那里列着缺什么、能「自动定位」）。
+   * 改成在点之前就说明白，点下去带他到能补齐的那一处（酒馆本体缺东西去软件页 SillyTavern 卡，
+   * 缺的是 bridge.py / Python / Claude Code 就开右上角那个「Claude 桥接设置」，那里列着缺什么、能「自动定位」）。
    */
   const tavernUnready = tavern?.state === "missing";
   const tavernBodyGone = tavernBodyMissing(tavern?.checks);
@@ -403,11 +405,14 @@ export default function AccountBand() {
                     tavernUnready
                       ? tavernBodyGone
                         ? () => navigate("/software?focus=sillytavern")
-                        : () => navigate(bridgeHref("claude"))
+                        : () => setPanelOpen(true)
                       : launchTavern
                   }
                   corner={
-                    <TavernPanelCorner onClick={() => setPanelOpen(true)} />
+                    <BridgeCorner
+                      provider="claude"
+                      onClick={() => setPanelOpen(true)}
+                    />
                   }
                 />
                 <KillBar variant="tile" />
@@ -448,9 +453,8 @@ export default function AccountBand() {
           <strong>没保存的对话会丢</strong>。
         </p>
       </ConfirmDialog>
-      {/* 酒馆本身的控制面板（2026-09-29 第三轮；三个账户页开的是同一个）。
-          Claude 那条桥的设置在软件页 Claude Code 卡的最下面。 */}
-      <TavernPanel
+      {/* 酒馆磁贴右上角：只装 Claude 这一条桥的设置（2026-09-29 第二轮）。 */}
+      <BridgeModal
         open={panelOpen}
         provider="claude"
         onClose={() => setPanelOpen(false)}

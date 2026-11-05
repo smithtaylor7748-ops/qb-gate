@@ -1,6 +1,6 @@
-/* 酒馆（2026-09-29 第三轮对调之后）：
-   - 账户页「酒馆」磁贴右上角的弹窗（`TavernPanel.tsx`，几乎占满窗口）：概览 · 控制台 · 角色卡 · 世界书 · 扩展 · 备份与回收站；
-   - 软件页的 SillyTavern 卡：摘要、版本、位置与端口、卸载；
+/* 酒馆（2026-09-29 第二轮）：
+   - 软件页的 SillyTavern 卡：摘要 + 七个分页（概览 · 版本 · 控制台 · 角色卡 · 世界书 · 扩展 · 备份与回收站）；
+   - 账户页「酒馆」磁贴右上角：只装这一家的桥接设置弹窗（`bridge/BridgeModal.tsx`）；
    - 软件页 Claude Code / Codex CLI / Gemini CLI 三张卡最下面的「酒馆 · X 桥接设置」（`bridge-dock`）。
    原来还有扩展中心酒馆详情页的状态条、端口行、候选分组 —— 那一页 2026-09-29 删了，那几段样式跟着删了。
    ⛔ 颜色一律引用 tokens.css 的变量，这里不出现任何 hex（引用之前先去 tokens.css 看这个名字**真的存在** ——
@@ -98,18 +98,7 @@
   min-width: 0;
 }
 
-/* 「酒馆」弹窗：分页条钉在正文顶上（控制台、角色卡一长，往下滚时它不走），底部那一行钉在弹窗底上。 */
-.tv-panel-tabs {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  margin: 0 0 12px;
-  background: var(--surface);
-}
-/* 弹窗高度是固定的：控制台的日志区跟着撑高，别在一个大窗口里只露 460px。 */
-.modal--full .tv-console {
-  max-height: max(320px, calc(100vh - 340px));
-}
+/* 桥接设置弹窗底部那一行：停止酒馆 · 看酒馆控制台 · 到软件页。 */
 .tv-panel-foot {
   display: flex;
   flex: 1;
@@ -125,14 +114,6 @@
   align-items: center;
   gap: 6px 8px;
   min-width: 0;
-}
-
-/* 软件页 SillyTavern 卡：一句「用酒馆去哪」，然后版本 → 位置与端口 → 卸载。 */
-.tv-card-where {
-  margin: 10px 0 0;
-}
-.tv-card-body {
-  margin-top: 12px;
 }
 
 /* 分页里的一块：小标题 + 内容。两列的分页（概览、版本）在窄屏上堆成一列。 */

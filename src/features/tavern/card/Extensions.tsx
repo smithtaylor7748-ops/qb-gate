@@ -1,5 +1,5 @@
 /**
- * 「酒馆」弹窗的「扩展」分页（2026-09-29；第三轮从软件页的卡搬进弹窗）。
+ * 软件页 SillyTavern 卡的「扩展」分页（2026-09-29 第二轮）。
  *
  * 列出酒馆的第三方扩展（`data\default-user\extensions\` 与全局的 `public\scripts\extensions\third-party\`），
  * 每个的 manifest（名字、版本、作者、主页）与 git 事实（分支、提交、远端 —— 远端里的账号密码抹掉再显示）。

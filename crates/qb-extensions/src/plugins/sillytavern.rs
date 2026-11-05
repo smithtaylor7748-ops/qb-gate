@@ -179,12 +179,12 @@ pub fn unset_paths(cfg: &TavernConfig, backend: TavernBackend) -> Vec<&'static s
 ///
 /// * 缺酒馆本体（目录 / 启动脚本）→ 软件页的 SillyTavern 卡：下载安装一份（面板从官方 GitHub 取），
 ///   或者「自动定位」/ 自己填你那份；
-/// * 只缺 Claude 桥的项目目录 → 软件页 Claude Code 卡最下面的「酒馆 · Claude 桥接设置」
-///   （2026-09-29 第三轮从账户页的弹窗搬过去的）。`bridge.py` 是使用者自己的，面板**不分发**它，只能指路。
+/// * 只缺 Claude 桥的项目目录 → 「官方账户 · Claude」酒馆磁贴右上角的「Claude 桥接设置」
+///   （2026-09-29 第二轮）。`bridge.py` 是使用者自己的，面板**不分发**它，只能指路。
 fn setup_hint(missing: &[&str]) -> String {
     if missing.iter().all(|m| *m == "桥接项目目录") {
         return "还没填 Claude 桥接的项目目录（你自己那份 bridge.py 所在的目录）：\
-                到「软件」页 Claude Code 卡最下面的「酒馆 · Claude 桥接设置」里填，或点那里的「自动定位」。"
+                到「官方账户 · Claude」页「酒馆」磁贴右上角的「Claude 桥接设置」里填，或点那里的「自动定位」。"
             .into();
     }
     format!(
@@ -1430,12 +1430,13 @@ mod tests {
         // 2026-09-29：酒馆不在扩展中心了，下一步是软件页（能直接下载安装一份）。
         assert!(msg.contains("软件") && msg.contains("下载安装"), "{msg}");
         assert!(!msg.contains("扩展"), "扩展中心里已经没有酒馆了：{msg}");
-        // 只缺 Claude 桥的目录：指到软件页 Claude Code 卡最下面那一段（2026-09-29 第三轮起桥的设置在那里），
-        // 不是 SillyTavern 卡、也不是账户页的弹窗（那里现在是酒馆本身的控制面板，没有桥的字段）。
+        // 只缺 Claude 桥的目录：指到 Claude 账户页酒馆磁贴右上角的桥接设置（2026-09-29 第二轮），
+        // 不是 SillyTavern 卡（那里没有桥的字段）。
         let bridge_only = setup_hint(&["桥接项目目录"]);
-        assert!(bridge_only.contains("Claude Code"), "{bridge_only}");
+        assert!(bridge_only.contains("官方账户 · Claude"), "{bridge_only}");
+        assert!(bridge_only.contains("Claude 桥接设置"), "{bridge_only}");
         assert!(bridge_only.contains("自动定位"), "{bridge_only}");
-        assert!(!bridge_only.contains("官方账户"), "{bridge_only}");
+        assert!(!bridge_only.contains("SillyTavern"), "{bridge_only}");
         // GPT 后端用不着 bridge.py：缺的只有酒馆那两项。
         let gpt = unset_paths(&TavernConfig::default(), TavernBackend::Gpt);
         assert_eq!(gpt, ["SillyTavern 目录", "酒馆启动脚本"]);

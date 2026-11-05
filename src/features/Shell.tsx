@@ -50,7 +50,8 @@ import SecuritySheet from "./security/SecuritySheet";
 import UpdateDialog from "./UpdateDialog";
 import DeepLinkHost from "./DeepLinkImport";
 import {
-  BRIDGE_CARD,
+  BRIDGE_PAGE,
+  BRIDGE_SIDE,
   bridgeHref,
   type BridgeProvider,
 } from "./tavern/bridge/where";
@@ -307,20 +308,20 @@ function Layout() {
       path: n.path,
     })),
     // 酒馆 2026-09-29 起是面板的内置功能、不在扩展目录里了 —— 不补这几条，搜「酒馆」什么都搜不到。
-    // 第三轮对调之后：酒馆本体（下载与版本）在软件页的 SillyTavern 卡；三条桥的设置在软件页各自那张
-    // CLI 卡的最下面；用酒馆（控制台、角色卡……）在账户页「酒馆」磁贴右上角的弹窗里（弹窗没有地址，只写在说明里）。
+    // 酒馆本体（版本、控制台、角色卡、世界书、扩展、备份与回收站）在软件页的 SillyTavern 卡；
+    // 三条桥的设置在三个账户页「酒馆」磁贴右上角（带 `?bridge=<家>` 进去自动打开那一家的弹窗）。
     {
       key: "feature:sillytavern",
       label: "酒馆 SillyTavern",
-      detail:
-        "软件 · 下载安装、版本、位置与端口（控制台、角色卡、世界书、扩展在账户页「酒馆」磁贴右上角）",
+      detail: "软件 · 概览、版本、控制台、角色卡、世界书、扩展、备份与回收站",
       path: "/software?focus=sillytavern",
     },
     ...(["claude", "gpt", "gemini"] as const).map((p) => ({
       key: "feature:bridge-" + p,
       label: `酒馆桥接 · ${BRIDGE_SEARCH[p]}`,
-      detail: `软件 · ${BRIDGE_CARD[p]} 卡最下面`,
+      detail: `${BRIDGE_PAGE[p]} · 酒馆磁贴右上角`,
       path: bridgeHref(p),
+      side: BRIDGE_SIDE[p],
     })),
     ...(accounts.data?.slots ?? []).map((a) => ({
       key: "claude:" + a.label,
