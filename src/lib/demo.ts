@@ -5235,6 +5235,8 @@ export async function demoCall<T>(
   args?: Record<string, unknown>,
 ): Promise<T> {
   await new Promise((r) => setTimeout(r, 120));
+  if (Object.prototype.hasOwnProperty.call(ROUND_C_DEMO, cmd))
+    return ROUND_C_DEMO[cmd](args ?? {}) as T;
   if (cmd.startsWith("codex_")) return codexDemo(cmd, args ?? {}) as T;
   const make = FIXTURES[cmd];
   if (!make)
@@ -5509,3 +5511,12 @@ function codexDemo(cmd: string, args: Record<string, unknown>) {
   }
   throw new MissingDemoCommand(`Unknown Codex fixture: ${cmd}`);
 }
+
+// ---- 官方账户页：归档恢复 / 凭证状态 / 联网额度（round-1105-c）的演示 ----
+const ROUND_C_DEMO: Record<string, (args: Record<string, unknown>) => unknown> =
+  {
+    codex_archived: () => [],
+    codex_restore: () => null,
+    antigravity_archived: () => [],
+    antigravity_restore: () => null,
+  };

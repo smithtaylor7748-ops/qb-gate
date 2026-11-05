@@ -41,11 +41,24 @@ struct Index {
     launched_pid: Option<u32>,
     #[serde(default)]
     launched_at: Option<String>,
+    /// 已从列表移除、目录还没挪进 `archived\` 的槽位（当时被占着）。启动和列槽位时再试。
+    #[serde(default)]
+    pending_archive: Vec<Entry>,
+    /// 已归档的槽位：`archived\<dir>` ↔ 原来的 id / 名字，「恢复」靠它放回原位。
+    #[serde(default)]
+    archived: Vec<ArchivedEntry>,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Entry {
     id: String,
     label: String,
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct ArchivedEntry {
+    dir: String,
+    id: String,
+    label: String,
+    at: String,
 }
 
 pub fn root() -> PathBuf {
@@ -196,6 +209,12 @@ fn save(root: &Path, index: &Index) -> Result<()> {
     )
 }
 
+/// 归档目录名（`<id>-<id>`）：同样只许字母数字和 `-`，长一些。
+fn valid_dir(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 200
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
 fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 80 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
@@ -367,7 +386,10 @@ pub fn mark_launched(root: &Path, id: &str, pid: u32, started: &str) -> Result<(
 }
 
 /// Remove the slot from the list, keeping its files in a recoverable archive.
-pub fn archive(root: &Path, id: &str) -> Result<()> {
+///
+/// 目录挪不动（被占着）时：`defer` 为假就原样报错、什么都不动；为真就先从列表移除，
+/// 记进 `pending_archive`，等 [`retry_pending`] 再挪。
+pub fn archive(root: &Path, id: &str, defer: bool) -> Result<()> {
     let dir = directory(root, id)?;
     let mut index = load(root)?;
     if index.active.as_deref() == Some(id) || index.launched.as_deref() == Some(id) {
@@ -375,14 +397,154 @@ pub fn archive(root: &Path, id: &str) -> Result<()> {
             "请先切换到其他槽位，再移除这个账户".into(),
         ));
     }
+    let entry = index
+        .slots
+        .iter()
+        .find(|s| s.id == id)
+        .cloned()
+        .ok_or_else(|| GateError::Other("Codex 账户槽位不存在".into()))?;
     let archive = root.join("archived");
     config_io::ensure_plain_path(&archive)?;
     std::fs::create_dir_all(&archive)?;
-    let dest = archive.join(format!("{}-{}", id, config_io::id()));
-    std::fs::rename(&dir, &dest)?;
+    let name = format!("{}-{}", id, config_io::id());
+    let dest = archive.join(&name);
     index.slots.retain(|s| s.id != id);
+    match crate::archive_dir::move_dir(&dir, &dest) {
+        Ok(()) => {
+            index.archived.push(ArchivedEntry {
+                dir: name,
+                id: entry.id,
+                label: entry.label,
+                at: chrono::Utc::now().to_rfc3339(),
+            });
+            if let Err(e) = save(root, &index) {
+                std::fs::rename(dest, dir)?;
+                return Err(e);
+            }
+            Ok(())
+        }
+        Err(e) if defer && crate::archive_dir::is_busy(&e) => {
+            index.pending_archive.push(entry);
+            save(root, &index)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// 把「先从列表移除、目录稍后归档」的那些再挪一次。挪不动的留着下次。只试一次、不等。
+pub fn retry_pending(root: &Path) -> Result<()> {
+    let mut index = load(root)?;
+    if index.pending_archive.is_empty() {
+        return Ok(());
+    }
+    let archive = root.join("archived");
+    config_io::ensure_plain_path(&archive)?;
+    std::fs::create_dir_all(&archive)?;
+    let mut left = Vec::new();
+    for e in std::mem::take(&mut index.pending_archive) {
+        if !valid_id(&e.id) {
+            continue;
+        }
+        let src = root.join(&e.id);
+        if !src.is_dir() {
+            continue;
+        }
+        let name = format!("{}-{}", e.id, config_io::id());
+        match crate::archive_dir::move_dir_within(
+            &src,
+            &archive.join(&name),
+            std::time::Duration::ZERO,
+        ) {
+            Ok(()) => index.archived.push(ArchivedEntry {
+                dir: name,
+                id: e.id,
+                label: e.label,
+                at: chrono::Utc::now().to_rfc3339(),
+            }),
+            Err(_) => left.push(e),
+        }
+    }
+    index.pending_archive = left;
+    save(root, &index)
+}
+
+/// 已归档 + 待归档的槽位。旧版本归档、没有记录的目录也列出来（名字用目录名）。
+pub fn list_archived(root: &Path) -> Result<Vec<crate::archive_dir::ArchivedSlot>> {
+    let index = load(root)?;
+    let mut out: Vec<_> = index
+        .pending_archive
+        .iter()
+        .map(|e| crate::archive_dir::ArchivedSlot {
+            key: format!("pending:{}", e.id),
+            label: e.label.clone(),
+            archived_at: None,
+            pending: true,
+        })
+        .collect();
+    for a in &index.archived {
+        out.push(crate::archive_dir::ArchivedSlot {
+            key: a.dir.clone(),
+            label: a.label.clone(),
+            archived_at: Some(a.at.clone()),
+            pending: false,
+        });
+    }
+    if let Ok(rd) = std::fs::read_dir(root.join("archived")) {
+        for d in rd.flatten() {
+            let name = d.file_name().to_string_lossy().into_owned();
+            if d.path().is_dir() && valid_dir(&name) && !index.archived.iter().any(|a| a.dir == name)
+            {
+                out.push(crate::archive_dir::ArchivedSlot {
+                    key: name.clone(),
+                    label: format!("旧归档 {name}"),
+                    archived_at: None,
+                    pending: false,
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 放回列表。改名挪回（绝不复制）；原 id 被占了就换一个新 id。
+pub fn restore(root: &Path, key: &str) -> Result<()> {
+    let mut index = load(root)?;
+    if let Some(id) = key.strip_prefix("pending:") {
+        let Some(pos) = index.pending_archive.iter().position(|e| e.id == id) else {
+            return Err(GateError::Other("这条归档不存在".into()));
+        };
+        let e = index.pending_archive.remove(pos);
+        index.slots.push(e);
+        return save(root, &index);
+    }
+    if !valid_dir(key) {
+        return Err(GateError::Other("无效的归档".into()));
+    }
+    let src = root.join("archived").join(key);
+    config_io::ensure_plain_path(&src)?;
+    if !src.is_dir() {
+        return Err(GateError::Other("这条归档的目录不在了".into()));
+    }
+    let record = index.archived.iter().find(|a| a.dir == key).cloned();
+    let (id, label) = match &record {
+        Some(a) => (a.id.clone(), a.label.clone()),
+        None => (config_io::id(), format!("恢复的 {}", &key[..key.len().min(15)])),
+    };
+    let id = if root.join(&id).exists() || index.slots.iter().any(|s| s.id == id) {
+        config_io::id()
+    } else {
+        id
+    };
+    let mut label = label;
+    while index.slots.iter().any(|s| s.label == label) {
+        label.push_str("（恢复）");
+    }
+    let dest = root.join(&id);
+    crate::archive_dir::move_dir(&src, &dest)?;
+    index.archived.retain(|a| a.dir != key);
+    index.slots.push(Entry { id, label });
     if let Err(e) = save(root, &index) {
-        std::fs::rename(dest, dir)?;
+        std::fs::rename(dest, src)?;
         return Err(e);
     }
     Ok(())
@@ -403,7 +565,7 @@ mod tests {
         let initial = std::fs::read(root.join("index.json")).unwrap();
         assert!(select(&root, "../outside").is_err());
         assert_eq!(initial, std::fs::read(root.join("index.json")).unwrap());
-        assert!(archive(&root, &a).is_err());
+        assert!(archive(&root, &a, false).is_err());
         select(&root, &b).unwrap();
         assert_eq!(
             list(&root)
@@ -415,9 +577,16 @@ mod tests {
                 .id,
             b
         );
-        archive(&root, &a).unwrap();
+        archive(&root, &a, false).unwrap();
         assert_eq!(list(&root).unwrap().slots.len(), 1);
         assert_eq!(std::fs::read_dir(root.join("archived")).unwrap().count(), 1);
+        let archived = list_archived(&root).unwrap();
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].label, "个人");
+        restore(&root, &archived[0].key).unwrap();
+        assert!(list(&root).unwrap().slots.iter().any(|s| s.id == a));
+        assert!(directory(&root, &a).unwrap().join("home/config.toml").is_file());
+        assert!(list_archived(&root).unwrap().is_empty());
         assert!(root.starts_with(std::env::temp_dir()));
         std::fs::remove_dir_all(root).unwrap();
     }

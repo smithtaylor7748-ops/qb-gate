@@ -134,16 +134,63 @@ pub async fn codex_launch(
     operations::changed(&events::ui(&app), "session", "codex");
     result
 }
+/// 移除槽位（目录进归档）。`defer` = 目录被占着时先从列表移除、稍后再归档。
+///
+/// 动手前先看这个槽位的桌面端是不是正开着（按 `--user-data-dir` 认）：开着就先说，什么都不动。
 #[tauri::command]
-pub async fn codex_archive(id: String) -> Result<()> {
+pub async fn codex_archive(id: String, defer: Option<bool>) -> Result<()> {
     let _guard = operations::exclusive().await?;
     let slot = id.clone();
-    tokio::task::spawn_blocking(move || codex::archive(&codex::root(), &id))
-        .await
-        .map_err(|e| GateError::Other(e.to_string()))??;
+    let defer = defer.unwrap_or(false);
+    tokio::task::spawn_blocking(move || {
+        let root = codex::root();
+        let profile = codex::directory(&root, &id)?.join("desktop");
+        if let Ok(d) = codex_desktop::detect() {
+            let norm = |p: &str| {
+                p.trim()
+                    .trim_matches('"')
+                    .replace('/', "\\")
+                    .trim_end_matches('\\')
+                    .to_lowercase()
+            };
+            let want = norm(&profile.display().to_string());
+            let open: Vec<u32> = d
+                .processes
+                .iter()
+                .filter(|p| p.profile.as_deref().is_some_and(|x| norm(x) == want))
+                .map(|p| p.pid)
+                .collect();
+            if !open.is_empty() {
+                return Err(GateError::Other(format!(
+                    "这个槽位的 GPT 桌面端还开着（pid {}），没动任何文件。先关掉它再移除。",
+                    open.iter().map(u32::to_string).collect::<Vec<_>>().join("、")
+                )));
+            }
+        }
+        codex::archive(&root, &id, defer)
+    })
+    .await
+    .map_err(|e| GateError::Other(e.to_string()))??;
     // 这个槽位联网问到的「最近一次」也一起忘掉。
     qb_app::usecase::tavern_quota::forget_gpt(&slot);
     Ok(())
+}
+
+/// 「已归档的账户」折叠区：已归档 + 待归档（目录当时被占着）的。只读本机。
+#[tauri::command]
+pub async fn codex_archived() -> Result<Vec<qb_accounts::archive_dir::ArchivedSlot>> {
+    tokio::task::spawn_blocking(|| codex::list_archived(&codex::root()))
+        .await
+        .map_err(|e| GateError::Other(e.to_string()))?
+}
+
+/// 把一条归档放回列表（目录改名挪回，绝不复制）。
+#[tauri::command]
+pub async fn codex_restore(key: String) -> Result<()> {
+    let _guard = operations::exclusive().await?;
+    tokio::task::spawn_blocking(move || codex::restore(&codex::root(), &key))
+        .await
+        .map_err(|e| GateError::Other(e.to_string()))?
 }
 /// 装（或更新）Codex 桌面端：winget 的 Store 源优先，没成就 FE3 直连下载 + `Add-AppxPackage`
 /// （`qb_install::install::codex_store`，0.28.0）。`local` 给了就只装那一份 `.msix`。

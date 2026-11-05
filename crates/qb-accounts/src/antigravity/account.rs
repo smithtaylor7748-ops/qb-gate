@@ -98,6 +98,20 @@ struct Index {
     /// 把老索引里「新清单里没有」的目录再加回来 —— 于是移除掉的账户重启就又回来了。记在这里，迁移跳过。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     retired: Vec<PathBuf>,
+    /// 已从列表移除、自己那个目录还没挪进 `archived` 的（当时被占着）。列槽位时再试。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pending_archive: Vec<Entry>,
+    /// 已归档的：整条索引项原样留着，「恢复」原样放回（目录名 = id，路径不变）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    archived: Vec<ArchivedEntry>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct ArchivedEntry {
+    /// `archived\<dir>`；`None` = 这条没有自己的目录（指向老位置），只动了索引。
+    dir: Option<String>,
+    entry: Entry,
+    at: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -414,28 +428,165 @@ pub fn attach(root: &Path, into: &str, from: &str) -> Result<()> {
 /// 从清单里移除。激活中的不许移。
 ///
 /// **只移除新布局自己建的目录**（搬进 `archived\`）。指向老位置的那些**原样留着** ——
-/// 那些目录是 0.30.0 的槽位，面板没搬过它们，也就没有资格替使用者动它们。
-pub fn archive(root: &Path, id: &str) -> Result<()> {
+/// 那些目录是 0.30.0 的槽位，面板没资格替使用者动它们。
+/// 目录挪不动（被占着）：`defer` 为假就原样报错、什么都没动；为真就先从列表移除，稍后再挪。
+pub fn archive(root: &Path, id: &str, defer: bool) -> Result<()> {
     let mut index = load(root)?;
     let entry = entry_of(&index, id)?;
     if index.active.as_deref() == Some(id) {
         return Err(GateError::Other("请先切换到其他账户，再移除这一条".into()));
     }
     let own = root.join(id);
+    let mut moved: Option<(PathBuf, String)> = None;
+    let mut pending = false;
     if own.is_dir() {
         let archive = root.join("archived");
         config_io::ensure_plain_path(&archive)?;
         std::fs::create_dir_all(&archive)?;
-        std::fs::rename(&own, archive.join(format!("{}-{}", id, config_io::id())))?;
+        let name = format!("{}-{}", id, config_io::id());
+        let dest = archive.join(&name);
+        match crate::archive_dir::move_dir(&own, &dest) {
+            Ok(()) => moved = Some((dest, name)),
+            Err(e) if defer && crate::archive_dir::is_busy(&e) => pending = true,
+            Err(e) => return Err(e),
+        }
     }
     // 指向老位置的那两半记进 `retired`：不然下次启动 `migrate` 又把它们当成「新清单里没有」加回来。
-    for dir in [entry.ide_dir, entry.cli_dir].into_iter().flatten() {
+    for dir in [entry.ide_dir.clone(), entry.cli_dir.clone()]
+        .into_iter()
+        .flatten()
+    {
         if !dir.starts_with(&own) && !index.retired.contains(&dir) {
             index.retired.push(dir);
         }
     }
     index.slots.retain(|s| s.id != id);
+    if pending {
+        index.pending_archive.push(entry);
+    } else {
+        index.archived.push(ArchivedEntry {
+            dir: moved.as_ref().map(|(_, n)| n.clone()),
+            entry,
+            at: chrono::Utc::now().to_rfc3339(),
+        });
+    }
+    if let Err(e) = save(root, &index) {
+        // 回滚：目录挪回原位，索引没写成就当这次没发生。
+        if let Some((dest, _)) = moved {
+            std::fs::rename(dest, &own)?;
+        }
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// 把「稍后归档」的那些再挪一次。只试一次、不等；挪不动的留着。
+pub fn retry_pending(root: &Path) -> Result<()> {
+    let mut index = load(root)?;
+    if index.pending_archive.is_empty() {
+        return Ok(());
+    }
+    let archive = root.join("archived");
+    config_io::ensure_plain_path(&archive)?;
+    std::fs::create_dir_all(&archive)?;
+    let mut left = Vec::new();
+    for e in std::mem::take(&mut index.pending_archive) {
+        let src = root.join(&e.id);
+        if !valid_id(&e.id) {
+            continue;
+        }
+        if !src.is_dir() {
+            index.archived.push(ArchivedEntry {
+                dir: None,
+                entry: e,
+                at: chrono::Utc::now().to_rfc3339(),
+            });
+            continue;
+        }
+        let name = format!("{}-{}", e.id, config_io::id());
+        match crate::archive_dir::move_dir_within(
+            &src,
+            &archive.join(&name),
+            std::time::Duration::ZERO,
+        ) {
+            Ok(()) => index.archived.push(ArchivedEntry {
+                dir: Some(name),
+                entry: e,
+                at: chrono::Utc::now().to_rfc3339(),
+            }),
+            Err(_) => left.push(e),
+        }
+    }
+    index.pending_archive = left;
     save(root, &index)
+}
+
+pub fn list_archived(root: &Path) -> Result<Vec<crate::archive_dir::ArchivedSlot>> {
+    let index = load(root)?;
+    let mut out: Vec<_> = index
+        .pending_archive
+        .iter()
+        .map(|e| crate::archive_dir::ArchivedSlot {
+            key: format!("pending:{}", e.id),
+            label: e.label.clone(),
+            archived_at: None,
+            pending: true,
+        })
+        .collect();
+    out.extend(
+        index
+            .archived
+            .iter()
+            .map(|a| crate::archive_dir::ArchivedSlot {
+                key: a.entry.id.clone(),
+                label: a.entry.label.clone(),
+                archived_at: Some(a.at.clone()),
+                pending: false,
+            }),
+    );
+    Ok(out)
+}
+
+/// 放回列表：目录改名挪回原来的 `<root>\<id>`（绝不复制），索引项原样放回。
+pub fn restore(root: &Path, key: &str) -> Result<()> {
+    let mut index = load(root)?;
+    if let Some(id) = key.strip_prefix("pending:") {
+        let Some(pos) = index.pending_archive.iter().position(|e| e.id == id) else {
+            return Err(GateError::Other("这条归档不存在".into()));
+        };
+        let e = index.pending_archive.remove(pos);
+        index.retired.retain(|d| Some(d) != e.ide_dir.as_ref() && Some(d) != e.cli_dir.as_ref());
+        index.slots.push(e);
+        return save(root, &index);
+    }
+    let Some(pos) = index.archived.iter().position(|a| a.entry.id == key) else {
+        return Err(GateError::Other("这条归档不存在".into()));
+    };
+    let a = index.archived.remove(pos);
+    if !valid_id(&a.entry.id) || index.slots.iter().any(|s| s.id == a.entry.id) {
+        return Err(GateError::Other("列表里已经有同一条账户".into()));
+    }
+    let own = root.join(&a.entry.id);
+    let mut moved = None;
+    if let Some(dir) = &a.dir {
+        let src = root.join("archived").join(dir);
+        config_io::ensure_plain_path(&src)?;
+        if own.exists() {
+            return Err(GateError::Other("原来的目录位置已经被占了，没恢复".into()));
+        }
+        crate::archive_dir::move_dir(&src, &own)?;
+        moved = Some(src);
+    }
+    let e = a.entry;
+    index.retired.retain(|d| Some(d) != e.ide_dir.as_ref() && Some(d) != e.cli_dir.as_ref());
+    index.slots.push(e);
+    if let Err(err) = save(root, &index) {
+        if let Some(src) = moved {
+            std::fs::rename(&own, src)?;
+        }
+        return Err(err);
+    }
+    Ok(())
 }
 
 // ------------------------------------------------------------------ 迁移
@@ -551,6 +702,8 @@ mod tests {
                 .collect(),
             active: None,
             retired: Vec::new(),
+            pending_archive: Vec::new(),
+            archived: Vec::new(),
         }
     }
 
@@ -621,7 +774,7 @@ mod tests {
             .unwrap()
             .id
             .clone();
-        archive(&r.0.join("new"), &gone).unwrap();
+        archive(&r.0.join("new"), &gone, false).unwrap();
         assert_eq!(r.migrate(), 0, "再跑一次迁移（= 重启）不许把它加回来");
         assert!(r.load().slots.iter().all(|e| e.label != "丙"));
         assert_eq!(r.load().slots.len(), 2);
@@ -700,5 +853,49 @@ mod tests {
         assert_ne!(ide_dir_of(&slot), cli_dir_of(&slot));
         assert!(ide_dir_of(&slot).starts_with(&slot));
         assert!(cli_dir_of(&slot).starts_with(&slot));
+    }
+
+    /// 移除：目录挪进归档后索引写不进去 → 目录挪回原位（回滚）；能写时可以恢复回来；
+    /// 目录被占着时 `defer` 先从列表移除，放开后补挪。
+    #[cfg(windows)]
+    #[test]
+    fn archive_rolls_back_defers_and_restores() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let r = Roots::new("archive");
+        let root = r.0.join("new");
+        let a = create(&root, "甲", None).unwrap();
+        let b = create(&root, "乙", None).unwrap();
+        select(&root, &b).unwrap();
+        // 索引被别人开着（不许删 / 替换）：读得到，写不进去。
+        let hold = |p: &Path| {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0x1 | 0x2)
+                .open(p)
+                .unwrap()
+        };
+        let lock = hold(&root.join("index.json"));
+        assert!(archive(&root, &a, false).is_err());
+        drop(lock);
+        assert!(root.join(&a).is_dir(), "回滚：目录要挪回原位");
+        assert!(r.load().slots.iter().any(|s| s.id == a));
+        // 目录里有文件被占着：不 defer 就什么都不动，defer 就先从列表移除。
+        let f = root.join(&a).join("cli-home/.gemini/x");
+        std::fs::write(&f, b"1").unwrap();
+        let busy = hold(&f);
+        let e = archive(&root, &a, false).unwrap_err();
+        assert!(crate::archive_dir::is_busy(&e), "{e}");
+        assert!(r.load().slots.iter().any(|s| s.id == a));
+        archive(&root, &a, true).unwrap();
+        assert!(!r.load().slots.iter().any(|s| s.id == a));
+        assert!(list_archived(&root).unwrap()[0].pending);
+        drop(busy);
+        retry_pending(&root).unwrap();
+        assert!(!root.join(&a).exists());
+        let listed = list_archived(&root).unwrap();
+        assert!(!listed[0].pending);
+        restore(&root, &listed[0].key).unwrap();
+        assert!(root.join(&a).join("cli-home").is_dir());
+        assert!(r.load().slots.iter().any(|s| s.id == a));
     }
 }

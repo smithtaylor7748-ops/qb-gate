@@ -32,6 +32,7 @@ fn main() {
     let out = || -> std::result::Result<(), ts_rs::ExportError> {
         qb_gate_lib::domain::export_types(&root)?;
         qb_accounts::codex::CodexAccounts::export_all_to(&root)?;
+        qb_accounts::archive_dir::ArchivedSlot::export_all_to(&root)?;
         qb_accounts::codex::usage::CodexUsage::export_all_to(&root)?;
         qb_install::install::codex_desktop::CodexDesktop::export_all_to(&root)?;
         // 错误分类。前端用它做条件处理 —— 不导出的话那边只能手抄一份，

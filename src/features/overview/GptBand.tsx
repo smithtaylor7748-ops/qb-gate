@@ -28,6 +28,7 @@ import TavernPanel, { TavernPanelCorner } from "../tavern/TavernPanel";
 import { bridgeHref } from "../tavern/bridge/where";
 import { tavernBodyMissing } from "../../lib/tavernReady";
 import CodexQuotaBars, { type CodexQuotaState } from "./CodexQuotaBars";
+import ArchivedSlots, { ARCHIVE_BUSY_PREFIX } from "./ArchivedSlots";
 import { gptExtras, usableResets } from "../../lib/gptExtras";
 import Tile from "./Tile";
 import { Button, Card, ConfirmDialog, Modal, Pill, useToast } from "../../ui";
@@ -293,6 +294,24 @@ export default function GptBand() {
       setBusy(false);
     }
   }
+  const [archivedVersion, setArchivedVersion] = useState(0);
+  /** 目录被占着时的另一条路：先从列表移除，目录稍后归档（后端启动和列槽位时再挪）。 */
+  async function archiveLater() {
+    if (!ask || ask.action !== "archive") return;
+    setBusy(true);
+    try {
+      await codexApi.archive(ask.id, true);
+      await reload();
+      setArchivedVersion((v) => v + 1);
+      toast.ok("已从列表移除，目录放开后自动挪进归档");
+      setAsk(null);
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function confirm() {
     if (!ask) return;
     if (ask.action === "close") {
@@ -310,6 +329,7 @@ export default function GptBand() {
         return;
       } else await codexApi[ask.action](ask.id);
       await reload();
+      if (ask.action === "archive") setArchivedVersion((v) => v + 1);
       toast.ok(
         ask.action === "close"
           ? "Codex 桌面端已关闭，账户与登录资料已保留"
@@ -586,6 +606,12 @@ export default function GptBand() {
           </div>
           <div className="account-pagination">
             <span className="notice">{slots.length} 个槽位 · 每页 4 个</span>
+            <ArchivedSlots
+              load={codexApi.archived}
+              restore={codexApi.restore}
+              onRestored={() => void reload()}
+              version={archivedVersion}
+            />
             {pages > 1 && (
               <span className="pager ml-auto">
                 {Array.from({ length: pages }, (_, i) => (
@@ -863,6 +889,15 @@ export default function GptBand() {
           <p role="alert" className="notice notice--danger mt-2">
             {error}
           </p>
+        )}
+        {ask?.action === "archive" && error.startsWith(ARCHIVE_BUSY_PREFIX) && (
+          <Button
+            className="mt-2"
+            loading={busy}
+            onClick={() => void archiveLater()}
+          >
+            先从列表移除，目录稍后归档
+          </Button>
         )}
         {needsReg && (
           <Button

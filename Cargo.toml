@@ -176,6 +176,8 @@ windows = { version = "0.58", features = [
   "Win32_System_Registry",
   # 改完用户环境变量广播一次 WM_SETTINGCHANGE（同上，只用 SendMessageTimeoutW）。
   "Win32_UI_WindowsAndMessaging",
+  # 移除槽位时目录被占着：问 Restart Manager 是谁占着（只读，只拿进程名和 pid），见 qb-accounts 的 archive_dir.rs。
+  "Win32_System_RestartManager",
 ] }
 
 # profile 只认 workspace 根。留在成员 crate 里会被静默忽略 ——

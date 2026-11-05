@@ -185,7 +185,11 @@ pub fn status() -> Result<AntigravityStatus> {
         gemini_cli_installed: qb_install::install::detect::gemini_cli_candidates()
             .into_iter()
             .any(|p| p.is_file()),
-        accounts: with_login_health(account::list(&account::root())?),
+        accounts: with_login_health({
+            // 上次「稍后归档」的那些顺手再挪一次（挪不动就留着）。
+            let _ = account::retry_pending(&account::root());
+            account::list(&account::root())?
+        }),
         identity_source,
         identity,
         identity_error,
@@ -278,8 +282,8 @@ pub fn ide_attach(into: &str, from: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn ide_archive(id: &str) -> Result<()> {
-    account::archive(&account::root(), id)?;
+pub fn ide_archive(id: &str, defer: bool) -> Result<()> {
+    account::archive(&account::root(), id, defer)?;
     // 这条槽位联网问到的额度、换新来的令牌，一起从内存里忘掉。
     super::antigravity_quota::forget(&super::antigravity_quota::Source::Account(id.to_string()));
     super::tavern_quota::forget_gemini(id);

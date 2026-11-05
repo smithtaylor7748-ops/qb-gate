@@ -15,7 +15,14 @@ export const codexApi = {
   close: () => call<void>("codex_close"),
   // 更新后打包服务需管理员注册，否则启动一律「拒绝访问 (os error 5)」。会弹 UAC。
   repairRegistration: () => call<void>("codex_repair_registration"),
-  archive: (id: string) => call<void>("codex_archive", { id }),
+  /** `defer`：目录被占着时先从列表移除、目录稍后归档（后端启动和列槽位时再挪）。 */
+  archive: (id: string, defer = false) =>
+    call<void>("codex_archive", { id, defer }),
+  /** 已归档 + 待归档的槽位。只读本机。 */
+  archived: () =>
+    call<import("./generated/ArchivedSlot").ArchivedSlot[]>("codex_archived"),
+  /** 放回列表：目录改名挪回，绝不复制。 */
+  restore: (key: string) => call<void>("codex_restore", { key }),
   /**
    * 装（或更新）Codex 桌面端（0.28.0）：winget 的 Store 源优先，没成走 FE3 直连下载 +
    * Add-AppxPackage。**会先关掉正在跑的桌面端**，界面上事前说明。

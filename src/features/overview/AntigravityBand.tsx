@@ -78,6 +78,7 @@ import {
   useToast,
 } from "../../ui";
 import Tile from "./Tile";
+import ArchivedSlots, { ARCHIVE_BUSY_PREFIX } from "./ArchivedSlots";
 
 const PER_PAGE = 4;
 const NUM = new Intl.NumberFormat("zh-CN");
@@ -381,6 +382,24 @@ export default function AntigravityBand() {
     toast.info("没有在跑的反重力，什么都不用关");
   }
 
+  const [archivedVersion, setArchivedVersion] = useState(0);
+  /** 目录被占着时的另一条路：先从列表移除，目录稍后归档。 */
+  async function archiveLater() {
+    if (!ask || ask.action !== "ide-archive") return;
+    setBusy(true);
+    try {
+      await antigravityApi.ideArchive(ask.id, true);
+      setArchivedVersion((v) => v + 1);
+      await status.refresh();
+      toast.ok("已从列表移除，目录放开后自动挪进归档");
+      setAsk(null);
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function confirm() {
     if (!ask) return;
     setBusy(true);
@@ -413,6 +432,7 @@ export default function AntigravityBand() {
         );
       } else if (ask.action === "ide-archive") {
         await antigravityApi.ideArchive(ask.id);
+        setArchivedVersion((v) => v + 1);
         toast.ok("账户已移除，资料目录保留在本机归档中");
       } else if (ask.action === "attach") {
         await antigravityApi.accountAttach(ask.into, ask.id);
@@ -764,6 +784,12 @@ export default function AntigravityBand() {
                     : "读取中…"}
               </span>
             )}
+            <ArchivedSlots
+              load={antigravityApi.archived}
+              restore={antigravityApi.restore}
+              onRestored={() => void status.refresh()}
+              version={archivedVersion}
+            />
             {pages > 1 && (
               <span className="pager ml-auto">
                 {Array.from({ length: pages }, (_, i) => (
@@ -1064,6 +1090,16 @@ export default function AntigravityBand() {
             {error}
           </p>
         )}
+        {ask?.action === "ide-archive" &&
+          error.startsWith(ARCHIVE_BUSY_PREFIX) && (
+            <Button
+              className="mt-2"
+              loading={busy}
+              onClick={() => void archiveLater()}
+            >
+              先从列表移除，目录稍后归档
+            </Button>
+          )}
       </ConfirmDialog>
     </>
   );

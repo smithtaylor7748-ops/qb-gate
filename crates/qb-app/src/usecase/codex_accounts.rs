@@ -31,6 +31,8 @@ use qb_install::install::codex_desktop;
 /// 401，`auth.json` 一变（官方 Codex 重新登录或自己换新了令牌）就作废。
 pub fn list() -> Result<codex::CodexAccounts> {
     let root = codex::root();
+    // 上次「先从列表移除、目录稍后归档」的那些，顺手再挪一次（挪不动就留着）。
+    let _ = codex::retry_pending(&root);
     let mut accounts = codex::list(&root)?;
     for s in &mut accounts.slots {
         // id 已经在 `codex::list` 里核过（只有字母数字和 `-`），拼路径是安全的。

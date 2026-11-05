@@ -456,6 +456,11 @@ pub fn run() {
             commands::plugins::tavern_trash,
             commands::plugins::tavern_trash_restore,
             commands::plugins::tavern_trash_purge,
+            // 官方账户页 · 归档与恢复（round-1105-c）
+            commands::codex_commands::codex_archived,
+            commands::codex_commands::codex_restore,
+            commands::antigravity::antigravity_archived,
+            commands::antigravity::antigravity_restore,
         ]))
         .setup(|app| {
             use tauri::Manager;
@@ -492,6 +497,13 @@ pub fn run() {
             // 上一次一键更新留下的安装包（0.25.3）。面板刚被安装包重新打开时它可能还在收尾、
             // 删不掉，那就等下一次启动。
             tauri::async_runtime::spawn_blocking(update::clean_leftovers);
+            // 上次「先从列表移除、目录稍后归档」的槽位，启动时再挪一次。
+            tauri::async_runtime::spawn_blocking(|| {
+                let _ = qb_accounts::codex::retry_pending(&qb_accounts::codex::root());
+                let _ = qb_accounts::antigravity::account::retry_pending(
+                    &qb_accounts::antigravity::account::root(),
+                );
+            });
             if !startup::initialize(app.handle()).ready {
                 if let Err(e) = tray::init(app.handle()) {
                     audit::write(&format!("托盘建立失败：{e}"));
