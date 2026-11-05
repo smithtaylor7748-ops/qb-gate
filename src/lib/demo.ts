@@ -5519,4 +5519,38 @@ const ROUND_C_DEMO: Record<string, (args: Record<string, unknown>) => unknown> =
     codex_restore: () => null,
     antigravity_archived: () => [],
     antigravity_restore: () => null,
+    account_credentials: (args) =>
+      args.provider === "gpt"
+        ? [
+            {
+              id: "codex-demo-0",
+              status: {
+                kind: "ok",
+                label: "正常",
+                reason: "本机凭据完整，访问令牌没到点",
+                action: null,
+                url: null,
+                email_mismatch: null,
+              },
+            },
+            {
+              id: "codex-demo-1",
+              status: {
+                kind: "access_expired",
+                label: "令牌到点",
+                reason:
+                  "访问令牌到点了（刷新令牌可能还有效）· 点「让官方换新」由官方 Codex CLI 自己换",
+                action: "official_refresh",
+                url: null,
+                email_mismatch: null,
+              },
+            },
+          ]
+        : [],
+    account_email_accept: () => null,
+    codex_official_refresh: () => ({
+      refreshed: true,
+      detail: "官方 Codex CLI 已自己换新",
+      rate_limits: null,
+    }),
   };

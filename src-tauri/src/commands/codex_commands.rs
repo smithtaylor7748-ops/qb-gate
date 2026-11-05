@@ -330,3 +330,12 @@ pub async fn codex_rate_limits(id: String) -> Result<codex::ratelimit::CodexRate
     .await
     .map_err(|e| GateError::Other(e.to_string()))?
 }
+
+/// 「让官方换新」：后台起官方 `codex app-server`，让它自己换这个槽位到点的访问令牌。
+/// 面板不读不存令牌，只比 `auth.json` 的修改时刻和长度。见 `usecase::codex_official`。
+#[tauri::command]
+pub async fn codex_official_refresh(
+    id: String,
+) -> Result<qb_app::usecase::codex_official::OfficialRefreshOutcome> {
+    qb_app::usecase::codex_official::refresh(&id).await
+}

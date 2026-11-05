@@ -295,7 +295,7 @@ fn token_expired(label: &str, exp_ms: i64) -> GateError {
 /// 服务端不认这份登录了：账户行和报错用的那句话。前缀「登录已失效」界面拿去分辨，别改措辞。
 fn rejected(status: u16) -> String {
     format!(
-        "登录已失效：服务端拒绝了这份登录（HTTP {status}）· 用这个账户跑一次 Claude Code，刷新令牌还有效它会自己接上，失效了它会要你重新登录"
+        "访问令牌被拒（HTTP {status}）· 用这个账户跑一次 Claude Code（切换并打开），刷新令牌还有效它会自己换新，失效了它会要你重新登录"
     )
 }
 
@@ -305,6 +305,7 @@ async fn fetch_at(
     http: &reqwest::Client,
     url: &str,
 ) -> Result<ClaudeQuota> {
+    let before = login_health::fingerprint(&slot_dir.join(".credentials.json"));
     let Some((token, expires)) = credential(slot_dir) else {
         return Err(GateError::Other(format!(
             "Claude 槽位「{label}」还没登录过（读不到 .credentials.json 里的 OAuth 凭证）"
@@ -327,19 +328,32 @@ async fn fetch_at(
         .await
         .map_err(|e| GateError::Other(format!("Claude 额度接口连接失败：{e}")))?;
     let status = response.status();
-    if status.as_u16() == 401 || status.as_u16() == 403 {
-        let reason = rejected(status.as_u16());
-        login_health::record(
-            &login_health::claude_key(label),
-            &slot_dir.join(".credentials.json"),
-            &reason,
-        );
-        return Err(GateError::Other(format!("Claude 槽位「{label}」{reason}")));
-    }
     let body = response
         .text()
         .await
         .map_err(|e| GateError::Other(format!("Claude 额度接口的回复没读完：{e}")))?;
+    let cred = slot_dir.join(".credentials.json");
+    // 分层（照 Cockpit 的行为）：401、或带 token_invalidated / token_revoked / invalid_token 的 403
+    // 只是访问令牌被拒；别的 403 不改状态。面板不替 Claude 换新，只说怎么让 Claude Code 自己换。
+    let revoked_403 = status.as_u16() == 403
+        && ["token_invalidated", "token_revoked", "invalid_token"]
+            .iter()
+            .any(|c| body.contains(c));
+    if status.as_u16() == 401 || revoked_403 {
+        let reason = rejected(status.as_u16());
+        login_health::record_kind(
+            &login_health::claude_key(label),
+            &cred,
+            "access_rejected",
+            &reason,
+        );
+        return Err(GateError::Other(format!("Claude 槽位「{label}」{reason}")));
+    }
+    if login_health::fingerprint(&cred) != before {
+        return Err(GateError::Other(format!(
+            "Claude 槽位「{label}」的登录在这次刷新途中变了，这次结果丢掉了，再点一次"
+        )));
+    }
     if !status.is_success() {
         let short: String = body.chars().take(120).collect();
         return Err(GateError::Other(format!(
@@ -391,8 +405,12 @@ fn overlay_slots(slots: &mut [crate::accounts::Slot]) {
     let now = chrono::Utc::now().timestamp_millis();
     for s in slots {
         let cred = std::path::Path::new(&s.dir).join(".credentials.json");
-        if let Some(reason) = login_health::check(&login_health::claude_key(&s.label), &cred) {
-            s.logged_in = false;
+        if let Some((kind, reason)) =
+            login_health::check_kind(&login_health::claude_key(&s.label), &cred)
+        {
+            if kind == "relogin" {
+                s.logged_in = false;
+            }
             s.login_problem = Some(reason);
         }
         if let Some(official) = LAST.get(&s.label).and_then(|q| as_slot_usage(&q, now)) {
@@ -542,7 +560,8 @@ mod tests {
         std::fs::remove_dir_all(d).unwrap();
     }
 
-    /// 令牌没到点、服务端却拒绝：记一笔「登录已失效」，列账户时那一行改成没登录。
+    /// 令牌没到点、服务端却回 401：只是访问令牌被拒（不是要重新登录）—— 记一笔、行上说出来，
+    /// 登录态不改（Cockpit 的分层）。
     #[tokio::test]
     async fn a_live_token_rejected_by_the_server_marks_the_slot_logged_out() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -564,7 +583,7 @@ mod tests {
             .await
             .unwrap_err()
             .to_string();
-        assert!(e.contains("登录已失效"), "{e}");
+        assert!(e.contains("访问令牌被拒"), "{e}");
         let mut slots = vec![crate::accounts::Slot {
             label: label.clone(),
             active: true,
@@ -584,12 +603,12 @@ mod tests {
             login_problem: None,
         }];
         overlay_slots(&mut slots);
-        assert!(!slots[0].logged_in);
+        assert!(slots[0].logged_in, "访问令牌被拒不等于要重新登录");
         assert!(slots[0]
             .login_problem
             .as_deref()
             .unwrap()
-            .starts_with("登录已失效"));
+            .starts_with("访问令牌被拒"));
         // Claude Code 重新登录、换了令牌（凭据文件一变）：那一笔自动作废。
         std::thread::sleep(Duration::from_millis(20));
         write_cred(
@@ -600,7 +619,7 @@ mod tests {
         slots[0].logged_in = true;
         slots[0].login_problem = None;
         overlay_slots(&mut slots);
-        assert!(slots[0].logged_in, "凭据文件变了就不该再说登录已失效");
+        assert!(slots[0].logged_in && slots[0].login_problem.is_none(), "凭据文件变了就不该再说令牌被拒");
         forget(&label);
         std::fs::remove_dir_all(d).unwrap();
     }

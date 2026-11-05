@@ -224,3 +224,32 @@ pub async fn accounts_switch(
         notes: out.notes,
     })
 }
+
+/// 每个槽位的凭证状态（账户行上的常驻徽标）。`provider`：claude / gpt / antigravity。
+/// **只读本机、不联网**，见 `usecase::credential_status`。
+#[tauri::command]
+pub async fn account_credentials(
+    provider: String,
+) -> Result<Vec<qb_app::usecase::credential_status::SlotCredential>> {
+    use qb_app::usecase::credential_status as cs;
+    tokio::task::spawn_blocking(move || match provider.as_str() {
+        "claude" => Ok(cs::claude()),
+        "gpt" => cs::gpt(),
+        "antigravity" => cs::antigravity(),
+        _ => Err(crate::error::GateError::Other("不认识的账户类型".into())),
+    })
+    .await
+    .map_err(|e| crate::error::GateError::Other(e.to_string()))?
+}
+
+/// 「邮箱对不上」那条提醒，使用者确认过就以现在的邮箱为准。
+#[tauri::command]
+pub fn account_email_accept(provider: String, id: String) {
+    use qb_app::usecase::login_health as lh;
+    let key = match provider.as_str() {
+        "claude" => lh::claude_key(&id),
+        "gpt" => lh::codex_key(&id),
+        _ => lh::antigravity_ide_key(&id),
+    };
+    qb_app::usecase::credential_status::email_accept(&key);
+}

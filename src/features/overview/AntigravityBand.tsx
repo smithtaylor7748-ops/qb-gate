@@ -79,6 +79,8 @@ import {
 } from "../../ui";
 import Tile from "./Tile";
 import ArchivedSlots, { ARCHIVE_BUSY_PREFIX } from "./ArchivedSlots";
+import CredentialBadge, { useCredentials } from "./CredentialBadge";
+import { credentialApi } from "../../lib/credentials";
 
 const PER_PAGE = 4;
 const NUM = new Intl.NumberFormat("zh-CN");
@@ -383,6 +385,11 @@ export default function AntigravityBand() {
   }
 
   const [archivedVersion, setArchivedVersion] = useState(0);
+  const credsVersion = useMemo(
+    () => [status.data, online],
+    [status.data, online],
+  );
+  const creds = useCredentials("antigravity", credsVersion);
   /** 目录被占着时的另一条路：先从列表移除，目录稍后归档。 */
   async function archiveLater() {
     if (!ask || ask.action !== "ide-archive") return;
@@ -688,6 +695,16 @@ export default function AntigravityBand() {
           setAsk({ action: "ide-archive", id: s.id, label: s.label });
         }}
         onAttachStart={setAttachFrom}
+        credential={
+          <CredentialBadge
+            status={creds.map[s.id]}
+            onEmailAccept={() =>
+              void credentialApi
+                .emailAccept("antigravity", s.id)
+                .then(creds.reload)
+            }
+          />
+        }
         onAttachHere={() => {
           if (!attachSource) return;
           setError("");

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 /**
  * 反重力账户列表里的一行（0.32.0）。
  *
@@ -81,6 +82,8 @@ export interface SlotRowProps {
   onAttachStart: (id: string | null) => void;
   /** 把 `attachFrom` 那条并到这一行。 */
   onAttachHere: () => void;
+  /** 凭证徽标（`CredentialBadge`），由父组件给。 */
+  credential?: ReactNode;
 }
 
 /** 这一行缺的那一半，正好是 `from` 那一行有的吗。 */
@@ -126,7 +129,10 @@ function Half({
   // 可登录已经没了。后端给的原因一律以「登录已失效」开头（`usecase::login_health`）。
   // 第五种（2026-09-25）：读不出来。原来跟「未登录」一个样子 —— IDE 写库时占着锁，
   // 15 秒一轮的读就把一个登着的账户画成「未登录」、摆一颗「登录」。
-  const rejected = !loggedIn && !!dir && state.startsWith("登录已失效");
+  const rejected =
+    !loggedIn &&
+    !!dir &&
+    (state.startsWith("登录已失效") || state.startsWith("已停用"));
   const cantRead = !loggedIn && !!dir && unreadable;
   const tone = loggedIn
     ? "ok"
@@ -244,6 +250,7 @@ export default function AntigravitySlotRow({
   onArchive,
   onAttachStart,
   onAttachHere,
+  credential,
 }: SlotRowProps) {
   // `lowestQuota` 自己会先分族，别在外面再分一次（分两遍的结果是 `label`/`model_id`
   // 在第二遍里已经没了）。
@@ -381,6 +388,7 @@ export default function AntigravitySlotRow({
           {slotName(s.email, s.label)}
         </strong>
         <span className="slotrow-side">
+          {credential}
           {attachFrom && attachFrom !== s.id ? (
             <Button
               size="sm"

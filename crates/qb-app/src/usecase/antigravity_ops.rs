@@ -214,11 +214,14 @@ fn with_login_health(mut accounts: account::AntigravityAccounts) -> account::Ant
         }
         if let Some(dir) = a.ide_dir.as_deref() {
             let db = ag_status::state_db(std::path::Path::new(dir));
-            if let Some(reason) =
-                login_health::check(&login_health::antigravity_ide_key(&a.id), &db)
+            // 只有失效 / 停用才改登录态；要网页验证、要订阅、无权限走账户行的凭证徽标。
+            if let Some((kind, reason)) =
+                login_health::check_kind(&login_health::antigravity_ide_key(&a.id), &db)
             {
-                a.ide_logged_in = false;
-                a.ide_auth_state = reason;
+                if kind == "relogin" || kind == "disabled" {
+                    a.ide_logged_in = false;
+                    a.ide_auth_state = reason;
+                }
             }
         }
     }

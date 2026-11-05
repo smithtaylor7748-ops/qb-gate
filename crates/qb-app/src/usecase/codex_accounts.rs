@@ -38,9 +38,12 @@ pub fn list() -> Result<codex::CodexAccounts> {
         // id 已经在 `codex::list` 里核过（只有字母数字和 `-`），拼路径是安全的。
         let auth = root.join(&s.id).join("home").join("auth.json");
         let key = super::login_health::codex_key(&s.id);
-        if let Some(reason) = super::login_health::check(&key, &auth) {
-            s.logged_in = false;
-            s.auth_state = reason;
+        // 只有「要重新登录」那一层才改登录态；访问令牌被拒 / 到点走账户行的凭证徽标（`credential_status`）。
+        if let Some((kind, reason)) = super::login_health::check_kind(&key, &auth) {
+            if kind == "relogin" {
+                s.logged_in = false;
+                s.auth_state = reason;
+            }
         }
     }
     Ok(accounts)

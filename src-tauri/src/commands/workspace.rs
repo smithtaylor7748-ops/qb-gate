@@ -45,6 +45,12 @@ pub async fn session_launch(
     task.phase("检查身份、配置与门禁", 20)?;
     let result = workspace::launch(client, kind, &id, working_dir, &state.gate).await;
     let session = task.finish(result)?;
+    // Claude 行上的「重新登录」走的就是这里：起来了就把上一次问出来的「令牌被拒 / 失效」那一笔清掉
+    // （原来只有 `launch_claude` 清）。
+    if kind == IdentityKind::Official && matches!(client, Client::ClaudeCode | Client::ClaudeDesktop)
+    {
+        qb_app::usecase::login_health::forget(&qb_app::usecase::login_health::claude_key(&id));
+    }
     // 只要这个可执行文件归门禁管（= 起的时候拿了租约），就得有看门狗盯着 ——
     // 中转会话不收，但它持着的租约同样要在 IP 变了之后被收回并重新上锁。
     // 只走中转的两档（阶段 4）没有启动目标，`workspace::launch` 已经拒绝了，走不到这里。

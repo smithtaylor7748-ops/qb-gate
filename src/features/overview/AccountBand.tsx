@@ -40,6 +40,8 @@ import AccountUsageCard from "./AccountUsageCard";
 import OfficialConfigResidue from "./OfficialConfigResidue";
 import KillBar from "./KillBar";
 import SlotRow, { switchLabel } from "./SlotRow";
+import CredentialBadge, { useCredentials } from "./CredentialBadge";
+import { credentialApi } from "../../lib/credentials";
 
 /** Numbered pages keep launch controls beside the account list. */
 const PER_PAGE = 4;
@@ -62,6 +64,7 @@ export default function AccountBand() {
   const [panelOpen, setPanelOpen] = useState(false);
 
   const accounts = useResource("accounts", R.accounts);
+  const creds = useCredentials("claude", accounts.data);
   const plugins = useResource("plugins", R.plugins);
   // Claude 汉化撤掉了（2026-09-27：官方账户下必然被改回英文）。只在检测到 0.25.4–0.25.5
   // 留下的东西时，标题栏出现一颗「清理汉化残留」；清完就不再出现。
@@ -251,6 +254,21 @@ export default function AccountBand() {
                       refreshing={quotaFor === s.label}
                       actions={
                         <>
+                          {/* 凭证徽标：Claude 的令牌面板不碰，到点只给「切换并打开」。 */}
+                          <CredentialBadge
+                            status={creds.map[s.label]}
+                            busy={!!busy}
+                            onAction={() =>
+                              s.active
+                                ? void launch("claude-code")
+                                : requestSwitch(s.label)
+                            }
+                            onEmailAccept={() =>
+                              void credentialApi
+                                .emailAccept("claude", s.label)
+                                .then(creds.reload)
+                            }
+                          />
                           {s.active ? (
                             // 激活槽位过期时原来什么按钮都没有 —— 用户看到
                             // 「凭证已过期」却无处下手。这里补一个只启动、

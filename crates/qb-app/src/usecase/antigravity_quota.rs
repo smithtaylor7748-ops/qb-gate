@@ -384,6 +384,7 @@ pub async fn exchange(source: &Source) -> Result<(String, Replies)> {
         .await?;
     }
     if !(200..300).contains(&status) {
+        mark(source, status, &load, true);
         return Err(http_error("loadCodeAssist", status, &load));
     }
     let info = parse_load(&load)?;
@@ -406,10 +407,17 @@ pub async fn exchange(source: &Source) -> Result<(String, Replies)> {
     )
     .await?;
     let summary_ok = (200..300).contains(&summary_status) && parse_summary(&summary).is_ok();
+    if summary_status == 403 && validation_url(&summary).is_some() {
+        mark(source, 403, &summary, false);
+    }
     let models = if summary_ok {
         None
     } else {
-        Some(post(&client, host, "fetchAvailableModels", &token, &ua, &payload).await?)
+        let m = post(&client, host, "fetchAvailableModels", &token, &ua, &payload).await?;
+        if m.0 == 403 {
+            mark(source, 403, &m.1, true);
+        }
+        Some(m)
     };
     Ok((
         label,
@@ -420,6 +428,74 @@ pub async fn exchange(source: &Source) -> Result<(String, Replies)> {
             models,
         },
     ))
+}
+
+/// 回复里带的网页验证地址。只认 https 的 google.com 地址，别的一律不要。
+fn validation_url(body: &str) -> Option<String> {
+    fn find(v: &Value) -> Option<String> {
+        match v {
+            Value::Object(m) => {
+                for (k, x) in m {
+                    if k == "validation_url" || k == "validationUrl" {
+                        if let Some(u) = x.as_str() {
+                            return Some(u.to_string());
+                        }
+                    }
+                    if let Some(u) = find(x) {
+                        return Some(u);
+                    }
+                }
+                None
+            }
+            Value::Array(a) => a.iter().find_map(find),
+            _ => None,
+        }
+    }
+    let u = find(&serde_json::from_str::<Value>(body).ok()?)?;
+    let rest = u.strip_prefix("https://")?;
+    let host = rest.split(['/', '?', '#']).next()?;
+    (host == "google.com" || host.ends_with(".google.com")).then_some(u)
+}
+
+/// 账户行上的分层（照 Cockpit 的行为）：换新后仍 401 = 失效；403 带 validation_url = 要网页验证；
+/// 「Subscription required」= 要订阅；模型接口 / 汇总 403 = 无权限。Hub 没有槽位行，不记。
+fn mark(source: &Source, status: u16, body: &str, forbidden_counts: bool) {
+    let Source::Account(id) = source else { return };
+    let Ok((_, dir)) = ide_dir_of(id) else { return };
+    let key = login_health::antigravity_ide_key(id);
+    let file = qb_accounts::antigravity::status::state_db(&dir);
+    if status == 401 {
+        login_health::record(
+            &key,
+            &file,
+            "登录已失效：换了新令牌 Google 还是不认（HTTP 401）· 点 IDE 旁边的「登录」重新登录",
+        );
+    } else if status == 403 {
+        if let Some(url) = validation_url(body) {
+            login_health::record_link(
+                &key,
+                &file,
+                "要网页验证：Google 要你在网页上确认一次这个账户（HTTP 403）",
+                &url,
+            );
+        } else if body.contains("SUBSCRIPTION_REQUIRED")
+            || body.to_ascii_lowercase().contains("subscription required")
+        {
+            login_health::record_kind(
+                &key,
+                &file,
+                "needs_subscription",
+                "要订阅：Google 说这个账户需要订阅才能用（Subscription required）",
+            );
+        } else if forbidden_counts {
+            login_health::record_kind(
+                &key,
+                &file,
+                "forbidden",
+                "无权限：Google 拒绝了这个账户的模型 / 配额接口（HTTP 403）",
+            );
+        }
+    }
 }
 
 async fn post(
@@ -569,10 +645,12 @@ async fn access_token(
             // 直到 IDE 自己重新写它的状态库（重新登录之后一定会写）。Hub 没有槽位行，不记。
             if let Source::Account(id) = source {
                 if let Ok((_, dir)) = ide_dir_of(id) {
-                    login_health::record(
+                    // invalid_grant 记「停用」：批量 / 自动刷新跳过它，下一次成功自动解除。
+                    login_health::record_kind(
                         &login_health::antigravity_ide_key(id),
                         &qb_accounts::antigravity::status::state_db(&dir),
-                        "登录已失效：Google 说这个账户的刷新令牌作废了（invalid_grant）· 点 IDE 旁边的「登录」重新登录",
+                        "disabled",
+                        "已停用：Google 说这个账户的刷新令牌作废了（invalid_grant）· 点 IDE 旁边的「登录」重新登录",
                     );
                 }
             }

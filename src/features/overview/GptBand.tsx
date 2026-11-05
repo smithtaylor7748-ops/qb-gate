@@ -29,6 +29,8 @@ import { bridgeHref } from "../tavern/bridge/where";
 import { tavernBodyMissing } from "../../lib/tavernReady";
 import CodexQuotaBars, { type CodexQuotaState } from "./CodexQuotaBars";
 import ArchivedSlots, { ARCHIVE_BUSY_PREFIX } from "./ArchivedSlots";
+import CredentialBadge, { useCredentials } from "./CredentialBadge";
+import { credentialApi } from "../../lib/credentials";
 import { gptExtras, usableResets } from "../../lib/gptExtras";
 import Tile from "./Tile";
 import { Button, Card, ConfirmDialog, Modal, Pill, useToast } from "../../ui";
@@ -272,6 +274,33 @@ export default function GptBand() {
     finished: false,
   };
 
+  const creds = useCredentials("gpt", accounts.data);
+  const [officialBusy, setOfficialBusy] = useState("");
+  /** 官方换不成的槽位：行上的按钮改成「打开这个槽位的桌面端」。 */
+  const [officialFailed, setOfficialFailed] = useState<Record<string, boolean>>(
+    {},
+  );
+  /** 「让官方换新」：后台起官方 codex app-server，让它自己换这个槽位到点的令牌。 */
+  async function officialRefresh(id: string) {
+    setOfficialBusy(id);
+    try {
+      const r = await credentialApi.codexOfficialRefresh(id);
+      if (r.refreshed) {
+        toast.ok(r.detail);
+        setOfficialFailed((m) => ({ ...m, [id]: false }));
+        creds.reload();
+        void refreshSlotQuota(id);
+      } else {
+        toast.info(`${r.detail}。可以打开这个槽位的桌面端，让它自己换。`);
+        setOfficialFailed((m) => ({ ...m, [id]: true }));
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+      setOfficialFailed((m) => ({ ...m, [id]: true }));
+    } finally {
+      setOfficialBusy("");
+    }
+  }
   async function reload() {
     await accounts.refresh();
     await desktop.refresh();
@@ -574,7 +603,25 @@ export default function GptBand() {
                   title={`${s.email ?? "尚未读取到账户邮箱"}${s.plan ? ` · ${s.plan}` : ""}`}
                 >
                   {s.email ?? "尚未读取到账户邮箱"}
-                  {s.plan ? ` · ${s.plan}` : ""}
+                  {s.plan ? ` · ${s.plan}` : ""}{" "}
+                  <CredentialBadge
+                    status={
+                      creds.map[s.id] && officialFailed[s.id]
+                        ? { ...creds.map[s.id], action: "open_desktop" }
+                        : creds.map[s.id]
+                    }
+                    busy={officialBusy === s.id}
+                    onAction={(a) =>
+                      a === "official_refresh"
+                        ? void officialRefresh(s.id)
+                        : void requestLaunch(s)
+                    }
+                    onEmailAccept={() =>
+                      void credentialApi
+                        .emailAccept("gpt", s.id)
+                        .then(creds.reload)
+                    }
+                  />
                 </p>
                 {/* 登录正常时不画那句「已登录 · 本地凭据」（2026-09-23 使用者删的）；
                     没登录 / 登录文件损坏 / API 模式这几种要照旧说出来，那是下一步该做什么。 */}

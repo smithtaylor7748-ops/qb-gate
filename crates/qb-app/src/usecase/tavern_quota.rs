@@ -556,6 +556,7 @@ async fn fetch_gpt(slot_id: &str) -> Result<TavernGptQuota> {
         return Err(GateError::Other("GPT 槽位不存在".into()));
     };
     // 额度只认访问令牌（cockpit-tools 同一个口径）：刷新令牌在不在、id_token 过没过期都不挡。
+    let before = login_health::fingerprint(&home.join("auth.json"));
     let token = qb_accounts::codex::read_access_token(&home)?
         .ok_or_else(|| GateError::Other(format!("GPT 槽位「{label}」还没有登录")))?;
     // 到点了就别发 —— 发出去只会换来一个 401，而那不是「登录失效」。
@@ -584,24 +585,43 @@ async fn fetch_gpt(slot_id: &str) -> Result<TavernGptQuota> {
     let response = response.map_err(|e| GateError::Other(format!("GPT 额度接口连接失败：{e}")))?;
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
-    if status == StatusCode::UNAUTHORIZED {
+    let auth = home.join("auth.json");
+    let key = login_health::codex_key(slot_id);
+    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
         let code = error_code(&body);
-        if code.as_deref() == Some("token_expired") {
-            // 本机时钟没看出来、服务端说到点了：还是「到点了」，不是登录失效。
-            return Err(gpt_token_expired(&label, None));
+        match gpt_layer(status, code.as_deref()) {
+            GptLayer::Expired => return Err(gpt_token_expired(&label, None)),
+            GptLayer::Relogin => {
+                let reason = gpt_rejected(code.as_deref());
+                login_health::record(&key, &auth, &reason);
+                return Err(GateError::Other(format!("GPT 槽位「{label}」{reason}")));
+            }
+            GptLayer::AccessRejected => {
+                let reason = format!(
+                    "访问令牌被拒（{}）· 刷新令牌可能还有效：点「让官方换新」，不行再打开这个槽位的桌面端",
+                    code.as_deref().unwrap_or(status.as_str())
+                );
+                login_health::record_kind(&key, &auth, "access_rejected", &reason);
+                return Err(GateError::Other(format!("GPT 槽位「{label}」{reason}")));
+            }
+            GptLayer::Concurrent => {
+                return Err(GateError::Other(format!(
+                    "GPT 槽位「{label}」的令牌正被官方客户端同时换新（refresh_token_reused），稍后再刷新"
+                )))
+            }
+            GptLayer::Other => return Err(status_error(status, &body, "GPT")),
         }
-        // 访问令牌没到点，服务端却不认 —— 这才是登录出了事（被撤销、在别处登出、刷新令牌被轮换掉）。
-        let reason = gpt_rejected(code.as_deref());
-        login_health::record(
-            &login_health::codex_key(slot_id),
-            &home.join("auth.json"),
-            &reason,
-        );
-        return Err(GateError::Other(format!("GPT 槽位「{label}」{reason}")));
     }
     if !status.is_success() {
         return Err(status_error(status, &body, "GPT"));
     }
+    // 发起时的凭据指纹：这次问的路上官方客户端换新 / 重新登录了，结果就不算数。
+    if login_health::fingerprint(&auth) != before {
+        return Err(GateError::Other(format!(
+            "GPT 槽位「{label}」的登录在这次刷新途中变了，这次结果丢掉了，再点一次"
+        )));
+    }
+    login_health::forget(&key);
     let mut q = parse_gpt(&body, Some(label))?;
     q.banked_resets = banked_resets(resets).await;
     Ok(q)
@@ -619,6 +639,35 @@ fn gpt_token_expired(label: &str, exp: Option<i64>) -> GateError {
 }
 
 /// 服务端不认这份登录了：给账户行和报错用的那句话（纯文本，能照着做）。
+/// GPT 401 / 403 分哪一层（照 Cockpit Tools 的分法，只学行为）。
+#[derive(Debug, PartialEq, Eq)]
+enum GptLayer {
+    /// 访问令牌到点了（不是登录失效）。
+    Expired,
+    /// 刷新令牌过期 / 被撤销 / `invalid_grant`：要重新登录。
+    Relogin,
+    /// 只是访问令牌被拒：API 401，或带 `token_invalidated` / `token_revoked` / `invalid_token` 的 403。
+    AccessRejected,
+    /// `refresh_token_reused`：并发换新撞上了，不当重新登录。
+    Concurrent,
+    /// 别的 403：不改状态。
+    Other,
+}
+
+fn gpt_layer(status: StatusCode, code: Option<&str>) -> GptLayer {
+    match code {
+        Some("token_expired") if status == StatusCode::UNAUTHORIZED => GptLayer::Expired,
+        Some("refresh_token_reused") => GptLayer::Concurrent,
+        Some(
+            "refresh_token_expired" | "refresh_token_invalidated" | "refresh_token_revoked"
+            | "invalid_grant",
+        ) => GptLayer::Relogin,
+        Some("token_invalidated" | "token_revoked" | "invalid_token") => GptLayer::AccessRejected,
+        _ if status == StatusCode::UNAUTHORIZED => GptLayer::AccessRejected,
+        _ => GptLayer::Other,
+    }
+}
+
 fn gpt_rejected(code: Option<&str>) -> String {
     format!(
         "登录已失效：服务端拒绝了这份登录（{}）· 点「登录」打开这个槽位的桌面端，刷新令牌还有效它会自己接上，失效了它会要你重新登录",
@@ -1033,6 +1082,19 @@ pub async fn roleplay_test(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gpt_401_403_land_on_the_right_layer() {
+        let u = StatusCode::UNAUTHORIZED;
+        let f = StatusCode::FORBIDDEN;
+        assert_eq!(super::gpt_layer(u, Some("token_expired")), super::GptLayer::Expired);
+        assert_eq!(super::gpt_layer(u, None), super::GptLayer::AccessRejected);
+        assert_eq!(super::gpt_layer(f, Some("token_invalidated")), super::GptLayer::AccessRejected);
+        assert_eq!(super::gpt_layer(f, Some("invalid_token")), super::GptLayer::AccessRejected);
+        assert_eq!(super::gpt_layer(f, None), super::GptLayer::Other);
+        assert_eq!(super::gpt_layer(u, Some("invalid_grant")), super::GptLayer::Relogin);
+        assert_eq!(super::gpt_layer(u, Some("refresh_token_reused")), super::GptLayer::Concurrent);
+    }
+
     use super::*;
 
     #[test]
