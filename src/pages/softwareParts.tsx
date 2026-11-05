@@ -194,7 +194,7 @@ export function SwPill({
   product?: string;
 }) {
   return (
-    <span className="contents" data-sw-pill={product}>
+    <span className="inline-flex" data-sw-pill={product}>
       <Pill tone={pillTone(sw)}>
         {prefix ? `${prefix} ` : ""}
         {pillLabel(sw)}
