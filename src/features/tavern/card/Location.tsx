@@ -1,9 +1,8 @@
 /**
  * 「位置与端口」：酒馆目录、启动脚本、酒馆端口（三家共用）+ 改用别处的酒馆（定位 / 手填）。
  *
- * 原来是 `SillyTavernCard.tsx` 里的一个内部组件，2026-09-29 分页重构时搬出来（第二轮在「酒馆」弹窗的概览里，
- * 第三轮回到软件页的 SillyTavern 卡 —— 装在哪、用哪一份是「软件」的事），行为没变：
- * ⛔ 只存这一处的几个字段（`saveTavernFields`）—— 同一份酒馆配置三条桥的设置（软件页三张 CLI 卡最下面）也在改。
+ * 原来是 `SillyTavernCard.tsx` 里的一个内部组件，2026-09-29 第二轮分页重构时搬进了「概览」分页，行为没变：
+ * ⛔ 只存这一处的几个字段（`saveTavernFields`）—— 同一份酒馆配置三条桥的设置（账户页磁贴右上角）也在改。
  */
 import { useState } from "react";
 import { Radar } from "lucide-react";

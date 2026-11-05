@@ -1,16 +1,15 @@
 /**
  * 软件页 SillyTavern 卡的「版本」（2026-09-29，使用者选的「版本回退与指定版本」）。
- * 第二轮时是卡上的一个分页；第三轮别的分页搬进了账户页的「酒馆」弹窗，这一块留在卡上、不再分页。
+ * 第二轮起是卡上的「版本」分页。
  *
  * - **现在**：装着哪一版、是不是面板装的、留着的那一版（能「换回」）。
  * - **GitHub 上**：最新的正式版（点了才问）；最近的正式版清单（点了才读发布页的 Atom），每一版能展开看更新说明，
  *   能「换到这一版」（面板装的那份）或「装这一版」（还没有面板装的那份时）；清单里没有的标签可以手填。
- * - `children`：卡上排在「卸载」前面的那一块（「位置与端口」）。
  * - **卸载**：只对面板装的那份，排最后。
  *
  * ⛔ 两条：联网只在点了之后（没有定时器）；你自己的那份（git 克隆的）面板不替它换版本 —— 按钮不给，写明去哪做。
  */
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { History, ListTree } from "lucide-react";
 
 import {
@@ -34,13 +33,10 @@ export default function Versions({
   s,
   setup,
   taskRunning,
-  children,
 }: {
   s: TavernSetupStatus | undefined;
   setup: SetupController;
   taskRunning: boolean;
-  /** 排在「卸载」前面、占满一行的那一块。 */
-  children?: ReactNode;
 }) {
   const [latest, setLatest] = useState<TavernRelease | null>(null);
   const [latestErr, setLatestErr] = useState("");
@@ -342,8 +338,6 @@ export default function Versions({
           </div>
         )}
       </section>
-
-      {children && <div className="tv-wide">{children}</div>}
 
       {managed && (
         <section

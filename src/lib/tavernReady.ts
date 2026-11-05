@@ -33,8 +33,7 @@ export interface BridgeReadiness {
 /**
  * 酒馆**本体**的那几项依赖（`PluginStatus.checks` 的标签，照 `plugins::sillytavern::status_with`）。
  * 缺的是它们，就该去软件页的 SillyTavern 卡（下载安装、指到自己那份、装 Node.js）；
- * 缺的是别的（bridge.py、CLI、槽位），就去软件页这一家那张 CLI 卡最下面的「酒馆 · X 桥接设置」
- * （2026-09-29 第三轮起桥的设置在那里，那里列着缺什么）。
+ * 缺的是别的（bridge.py、CLI、槽位），就开这一家账户页酒馆磁贴右上角的「X 桥接设置」（那里列着缺什么）。
  */
 export const TAVERN_BODY_CHECKS = ["SillyTavern", "酒馆启动脚本", "Node.js"];
 
@@ -54,7 +53,7 @@ export function tavernBodyMissing(
 export function bridgeBlockers(o: BridgeReadiness): string[] {
   const out: string[] = [];
   if (o.tavernPathsUnset) {
-    // 这句话出现在软件页 Codex CLI / Gemini CLI 卡最下面的桥接设置里 —— 别写「在上面」「在下面」
+    // 这句话出现在 GPT / Gemini 的桥接设置弹窗里 —— 别写「在上面」「在下面」
     // （卡片的先后顺序会变）。2026-09-29 起酒馆本体在软件页（扩展中心的酒馆页删了）。
     out.push(
       "酒馆还没装好 —— 到「软件」页的 SillyTavern 卡下载安装一份，或指到你自己那份。",

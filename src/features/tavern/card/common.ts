@@ -1,8 +1,5 @@
 /**
- * 酒馆那几个分页共用的小东西（2026-09-29 重构时抽出来的）。
- *
- * 分页原来在软件页的 SillyTavern 卡上；同一天第三轮使用者说「软件页面的应该在这个官方账户弹窗页面」，
- * 搬进了账户页「酒馆」磁贴右上角那个弹窗（`TavernPanel.tsx`）。「版本」留在软件页，不是分页了。
+ * 软件页 SillyTavern 卡那几个分页共用的小东西（2026-09-29 第二轮重构时抽出来的）。
  */
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
@@ -12,13 +9,12 @@ export function errorText(e: unknown): string {
 }
 
 /**
- * 「酒馆」弹窗的分页。顺序 = 使用者最常来的在前。
- *
- * 没有「版本」：下载安装 / 更新 / 指定版本 / 卸载是「软件」的事，留在软件页的 SillyTavern 卡（使用者选的）。
- * 以前记住的若是 `versions`，`isTavernTab` 不认，自然回到「概览」。
+ * 软件页 SillyTavern 卡的七个分页。顺序 = 使用者最常来的在前。
+ * 记住的值不在这张表里（改过名的、删掉的），`isTavernTab` 不认，自然回到「概览」。
  */
 export const TAVERN_TABS = [
   { id: "overview", label: "概览" },
+  { id: "versions", label: "版本" },
   { id: "console", label: "控制台" },
   { id: "characters", label: "角色卡" },
   { id: "worlds", label: "世界书" },

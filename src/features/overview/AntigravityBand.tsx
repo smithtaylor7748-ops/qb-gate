@@ -62,8 +62,10 @@ import type { TavernGeminiQuota } from "../../lib/generated/TavernGeminiQuota";
 import type { UiStatus } from "../../lib/generated/UiStatus";
 import { AFTER, R } from "../../lib/resources";
 import AntigravitySlotRow, { canAttach } from "./AntigravitySlotRow";
-import TavernPanel, { TavernPanelCorner } from "../tavern/TavernPanel";
-import { bridgeHref } from "../tavern/bridge/where";
+import BridgeModal, {
+  BridgeCorner,
+  useBridgeLink,
+} from "../tavern/bridge/BridgeModal";
 import { tavernBodyMissing } from "../../lib/tavernReady";
 import { invalidate, useResource, useSession } from "../../lib/store";
 import { endTask, resetTask, useTask, type TaskState } from "../../lib/tasks";
@@ -107,8 +109,7 @@ export default function AntigravityBand() {
   const navigate = useNavigate();
   const tavern = plugins.data?.find((p) => p.id === "sillytavern");
   const tavernUnready = tavern?.state === "missing";
-  // 都去软件页：酒馆本体缺东西去 SillyTavern 卡；缺 Gemini CLI / 槽位就去 Gemini CLI 卡最下面的
-  // 「酒馆 · Gemini 桥接设置」（那里列着缺什么）。
+  // 酒馆本体缺东西去软件页 SillyTavern 卡；缺 Gemini CLI / 槽位就开右上角那个「Gemini 桥接设置」（那里列着缺什么）。
   const tavernBodyGone = tavernBodyMissing(tavern?.checks);
   const tavernTask = useTask("tavern-start");
 
@@ -556,9 +557,9 @@ export default function AntigravityBand() {
   // ---------------------------------------------------- 酒馆弹窗（0.31.0 起的那个角标）
   //
   // 0.31.0–0.32.0 这里开的是桥接设置（一个内联 `<Modal>`，只有反重力页开得了，于是抽成了组件）。
-  // 2026-09-29 第三轮起，三个账户页的角标开的是同一个「酒馆」弹窗（`features/tavern/TavernPanel.tsx`，
-  // 酒馆本身的控制面板）；Gemini 那条桥的设置在软件页 Gemini CLI 卡的最下面。
+  // 2026-09-29 起三个账户页各开各的：这里只装 Gemini 那一条桥（`features/tavern/bridge/BridgeModal.tsx`）。
   const [panelOpen, setPanelOpen] = useState(false);
+  useBridgeLink("gemini", setPanelOpen);
 
   // 「一键关闭」那格没有后端进度事件，用本地状态凑一个 TaskState：
   // 失败原文要留在贴上（toast 会自己消失）。
@@ -836,11 +837,14 @@ export default function AntigravityBand() {
                     tavernUnready
                       ? tavernBodyGone
                         ? () => navigate("/software?focus=sillytavern")
-                        : () => navigate(bridgeHref("gemini"))
+                        : () => setPanelOpen(true)
                       : () => void launchTavern()
                   }
                   corner={
-                    <TavernPanelCorner onClick={() => setPanelOpen(true)} />
+                    <BridgeCorner
+                      provider="gemini"
+                      onClick={() => setPanelOpen(true)}
+                    />
                   }
                 />
                 <Tile
@@ -877,8 +881,8 @@ export default function AntigravityBand() {
           />
         </div>
       </div>
-      {/* 酒馆本身的控制面板（2026-09-29 第三轮；三个账户页开的是同一个）。 */}
-      <TavernPanel
+      {/* 酒馆磁贴右上角：只装 Gemini 这一条桥的设置（2026-09-29 第二轮）。 */}
+      <BridgeModal
         open={panelOpen}
         provider="gemini"
         onClose={() => setPanelOpen(false)}

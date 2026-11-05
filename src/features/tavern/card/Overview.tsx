@@ -1,9 +1,7 @@
 /**
- * 「酒馆」弹窗的「概览」分页：酒馆在不在跑、三条桥的设置在哪、依赖齐不齐。
+ * 软件页 SillyTavern 卡的「概览」分页：运行、三家去哪起、依赖、位置与端口（2026-09-29 第二轮）。
  *
- * ⛔ 起酒馆不在这里：起 = 账户页的「酒馆」磁贴（按厂商起那条桥）；停 = 这个弹窗底部那一行。
- * 「位置与端口」2026-09-29 第三轮搬回了软件页的 SillyTavern 卡 —— 酒馆本体装在哪、用哪一份是「软件」的事，
- * 「酒馆还没装好 → 去软件页」的指路才落得到能改的地方。
+ * ⛔ 起酒馆不在这里：起 = 账户页的「酒馆」磁贴（按厂商起那条桥）；停 = 磁贴右上角那一家桥接设置的底部。
  */
 import { ExternalLink as LinkIcon, TerminalSquare } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -11,28 +9,29 @@ import { useNavigate } from "react-router-dom";
 
 import type { TavernSetupStatus } from "../../../lib/api";
 import { R } from "../../../lib/resources";
-import { useResource } from "../../../lib/store";
+import type { Side } from "../../../lib/side";
+import { SIDE_KEY } from "../../../lib/side";
+import { setSession, useResource } from "../../../lib/store";
 import { tavernBodyMissing } from "../../../lib/tavernReady";
 import { Button, Collapsible, Pill, Row } from "../../../ui";
 import {
-  BRIDGE_CARD,
+  BRIDGE_PAGE,
+  BRIDGE_SIDE,
   BRIDGE_TITLE,
   bridgeHref,
   type BridgeProvider,
 } from "../bridge/where";
 import type { TavernTab } from "./common";
+import Location from "./Location";
 
 const BRIDGES: BridgeProvider[] = ["claude", "gpt", "gemini"];
 
 export default function Overview({
   s,
   onTab,
-  onLeave,
 }: {
   s: TavernSetupStatus | undefined;
   onTab: (t: TavernTab) => void;
-  /** 要离开这个弹窗去别的页面之前调（先关弹窗再跳）。 */
-  onLeave: () => void;
 }) {
   const navigate = useNavigate();
   const plugins = useResource("plugins", R.plugins);
@@ -54,7 +53,7 @@ export default function Overview({
               <span className="mono text-xs">127.0.0.1:{s.st_port}</span>
             </p>
             <p className="notice mt-1">
-              面板起的这一份。要停它：这个窗口最下面「停止酒馆」（三条桥一起停）。
+              面板起的这一份。要停它：账户页「酒馆」磁贴右上角的桥接设置最下面「停止酒馆」（三条桥一起停）。
             </p>
           </>
         ) : s.foreign_running ? (
@@ -79,8 +78,7 @@ export default function Overview({
             </p>
             {tavernBodyMissing(tavern?.checks) && (
               <p className="notice notice--warn mt-1">
-                酒馆还没装好：到「软件」页的 SillyTavern
-                卡下载安装一份，或在那里指到你自己那份（最下面「下载与版本」）。
+                酒馆还没装好：到「版本」分页下载安装一份，或在下面「位置与端口」指到你自己那份。
               </p>
             )}
           </>
@@ -111,9 +109,9 @@ export default function Overview({
         </h3>
         <p className="notice">
           Claude 走你自己的 bridge.py，GPT / Gemini
-          是面板内置的。每条桥的设置在「软件」页它驱动的那个命令行的卡片最下面：
-          Claude → {BRIDGE_CARD.claude}，GPT → {BRIDGE_CARD.gpt}，Gemini →{" "}
-          {BRIDGE_CARD.gemini}。
+          是面板内置的。每条桥的设置在它那个账户页「酒馆」磁贴右上角： Claude →{" "}
+          {BRIDGE_PAGE.claude}，GPT → {BRIDGE_PAGE.gpt}，Gemini →{" "}
+          {BRIDGE_PAGE.gemini}。
         </p>
         {tavern && <p className="notice mt-1 break-words">{tavern.detail}</p>}
         <div className="mt-2 flex flex-wrap gap-2">
@@ -122,7 +120,7 @@ export default function Overview({
               key={p}
               size="sm"
               onClick={() => {
-                onLeave();
+                setSession<Side>(SIDE_KEY, BRIDGE_SIDE[p]);
                 navigate(bridgeHref(p));
               }}
             >
@@ -163,6 +161,14 @@ export default function Overview({
           ))}
         </Collapsible>
       )}
+
+      <div className="tv-wide">
+        <Location
+          root={s?.root ?? ""}
+          launcher={s?.launcher ?? ""}
+          configPort={s?.config_port ?? null}
+        />
+      </div>
     </div>
   );
 }

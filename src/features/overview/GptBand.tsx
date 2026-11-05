@@ -24,8 +24,10 @@ import { slotName } from "../../lib/slotName";
 import { endTask, resetTask, useTask, type TaskState } from "../../lib/tasks";
 import StationTurnState from "../station/StationTurnState";
 import GptZh, { gptZhOn } from "../zh/GptZh";
-import TavernPanel, { TavernPanelCorner } from "../tavern/TavernPanel";
-import { bridgeHref } from "../tavern/bridge/where";
+import BridgeModal, {
+  BridgeCorner,
+  useBridgeLink,
+} from "../tavern/bridge/BridgeModal";
 import { tavernBodyMissing } from "../../lib/tavernReady";
 import CodexQuotaBars, { type CodexQuotaState } from "./CodexQuotaBars";
 import { gptExtras, usableResets } from "../../lib/gptExtras";
@@ -58,8 +60,7 @@ export default function GptBand() {
   const plugins = useResource("plugins", R.plugins);
   const tavern = plugins.data?.find((p) => p.id === "sillytavern");
   const tavernUnready = tavern?.state === "missing";
-  // 都去软件页：酒馆本体缺东西去 SillyTavern 卡；缺 Codex CLI / 槽位就去 Codex CLI 卡最下面的
-  // 「酒馆 · GPT 桥接设置」（那里列着缺什么）。
+  // 酒馆本体缺东西去软件页 SillyTavern 卡；缺 Codex CLI / 槽位就开右上角那个「GPT 桥接设置」（那里列着缺什么）。
   const tavernBodyGone = tavernBodyMissing(tavern?.checks);
   const tavernTask = useTask("tavern-start");
   const [gptBridge, setGptBridge] = useState<{
@@ -81,6 +82,7 @@ export default function GptBand() {
   }, [refreshGptBridge]);
   const [tavernBusy, setTavernBusy] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
+  useBridgeLink("gpt", setPanelOpen);
   async function launchTavern() {
     setTavernBusy(true);
     resetTask("tavern-start");
@@ -697,11 +699,14 @@ export default function GptBand() {
                     tavernUnready
                       ? tavernBodyGone
                         ? () => navigate("/software?focus=sillytavern")
-                        : () => navigate(bridgeHref("gpt"))
+                        : () => setPanelOpen(true)
                       : () => void launchTavern()
                   }
                   corner={
-                    <TavernPanelCorner onClick={() => setPanelOpen(true)} />
+                    <BridgeCorner
+                      provider="gpt"
+                      onClick={() => setPanelOpen(true)}
+                    />
                   }
                 />
                 <Tile
@@ -875,9 +880,8 @@ export default function GptBand() {
           </Button>
         )}
       </ConfirmDialog>
-      {/* 酒馆本身的控制面板（2026-09-29 第三轮；三个账户页开的是同一个）。
-          GPT 那条内置桥的设置在软件页 Codex CLI 卡的最下面。 */}
-      <TavernPanel
+      {/* 酒馆磁贴右上角：只装 GPT 这一条内置桥的设置（2026-09-29 第二轮）。 */}
+      <BridgeModal
         open={panelOpen}
         provider="gpt"
         onClose={() => setPanelOpen(false)}
