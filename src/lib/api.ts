@@ -503,6 +503,8 @@ export const api = {
   /** 版本库里有哪几版可以退回去。最新的在前。 */
   managedHistory: (which: ManagedApp) =>
     call<VersionEntry[]>("managed_history", { which }),
+  /** Codex 官方最新版本号（GitHub releases/latest）。只读，不下载。 */
+  managedCodexLatest: () => call<string>("managed_codex_latest"),
   /**
    * 回滚到某一版。会**先把当前这份收进版本库再换**，换完重新上锁。
    * 正在跑的 Claude Code 不受影响（Windows 不卸已加载的映像），下次启动才生效。

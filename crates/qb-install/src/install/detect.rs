@@ -72,6 +72,34 @@ pub async fn claude_code() -> Software {
     }
 }
 
+/// 本机的一份 Codex CLI 副本（软件页「本机共 N 份副本」折叠用）。
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export)]
+pub struct CodexInstall {
+    pub path: PathBuf,
+    /// 能不能加 Deny ExecuteFile：`codex.cmd` 是批处理、`WindowsApps` 下的 MSIX 别名加不了。
+    pub lockable: bool,
+}
+
+/// 本机全部 Codex CLI 副本：`codex_candidates()` 里存在的那些，加托管版本库里的旧版本。
+pub fn codex_installs() -> Vec<CodexInstall> {
+    let mut paths: Vec<PathBuf> = codex_candidates()
+        .into_iter()
+        .filter(|p| p.is_file())
+        .collect();
+    paths.extend(super::inventory::managed_codex_copies(
+        &super::inventory::Roots::current(),
+    ));
+    paths
+        .into_iter()
+        .map(|path| {
+            let lower = path.to_string_lossy().to_lowercase();
+            let lockable = !lower.ends_with(".cmd") && !lower.contains("\\windowsapps\\");
+            CodexInstall { path, lockable }
+        })
+        .collect()
+}
+
 /// 本机全部 Claude Code 副本（不含桌面端存根），给环境页列清单。
 pub fn claude_code_installs() -> Vec<super::inventory::Install> {
     use super::inventory::{self, Kind};
@@ -836,6 +864,8 @@ pub struct SoftwareReport {
     pub claude_code_installs: Vec<super::inventory::Install>,
     pub claude_desktop: Software,
     pub codex: Software,
+    /// 本机全部 Codex CLI 副本（含托管版本库里的旧版本）。
+    pub codex_installs: Vec<CodexInstall>,
     /// Codex 桌面端（Microsoft Store 包，0.28.0）。跟 `codex` 那个 CLI 是两个东西：
     /// 账户页起的是它，直装（`codex_store`）装的也是它。
     pub codex_desktop: Software,
@@ -856,6 +886,7 @@ pub async fn report() -> SoftwareReport {
         claude_code_installs: claude_code_installs(),
         claude_desktop: claude_desktop().await,
         codex: codex().await,
+        codex_installs: codex_installs(),
         codex_desktop: codex_desktop().await,
         antigravity,
         antigravity_ide,

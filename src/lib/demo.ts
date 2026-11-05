@@ -263,6 +263,13 @@ const software: SoftwareReport = {
     path: `${APPS}\\codex\\codex.exe`,
     advisory: "默认不在 IP 门禁范围内，可在「设置 → 门禁范围」里打开。",
   },
+  codexInstalls: [
+    { path: `${APPS}\\codex\\codex.exe`, lockable: true },
+    {
+      path: `${HOME}\\AppData\\Roaming\\npm\\codex.cmd`,
+      lockable: false,
+    },
+  ],
   codexDesktop: {
     id: "codex-desktop",
     name: "Codex 桌面端",
@@ -4511,7 +4518,8 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   },
   managed_status: () => managed,
   managed_externals: () => externals,
-  managed_history: () => versionHistory,
+  managed_history: (args) => (args?.which === "codex" ? [] : versionHistory),
+  managed_codex_latest: () => "0.29.0",
   managed_rollback: () => "已回滚到 2.0.11，已重新上锁 5 个副本",
   managed_cleanup: () => cleanup,
   // ⛔ 按 target 过滤。不过滤的话 Codex 的预设会出现在 Claude Code 的弹窗里，

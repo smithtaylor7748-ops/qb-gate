@@ -564,6 +564,11 @@ async fn claude_release(channel: &str) -> Result<Release> {
     parse_claude_manifest(&manifest, &version, claude_platform(is_arm64()))
 }
 
+/// GitHub 上 Codex 最新发布的版本号（软件页「检查」用）。只读发布信息，不下载。
+pub async fn codex_latest_version() -> Result<String> {
+    Ok(codex_release().await?.version)
+}
+
 async fn codex_release() -> Result<Release> {
     let c = http()?;
     let json = get_text(&c, CODEX_LATEST_API).await?;

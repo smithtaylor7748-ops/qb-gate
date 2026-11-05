@@ -182,6 +182,7 @@ pub fn run() {
             commands::probe::browser_probe_wait,
             commands::probe::browser_probe_last,
             commands::install::managed_history,
+            commands::install::managed_codex_latest,
             commands::install::managed_rollback,
             commands::gate::hook_status,
             commands::gate::hook_install,

@@ -1059,6 +1059,35 @@ input[type="checkbox"].ipv6-switch:disabled {
 .qb-software .input {
   min-height: 36px;
 }
+/* 软件卡模板（`softwareParts.tsx` 的 `SoftwareCard`）：三栏都 `min-width: 0`，
+   路径靠 `break-all` 折行，不许把栏撑出卡外。 */
+.qb-sw-cols > * {
+  min-width: 0;
+}
+.qb-sw-relocate {
+  margin-top: 12px;
+}
+/* 底部折叠行（账户与汉化、登录、隐私审计）：跟三栏隔一条线。 */
+.qb-sw-footer {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  min-width: 0;
+}
+/* 「其他命令行工具」每个工具一块：收起是一行，展开是同样的三栏。 */
+.qb-sw-tool {
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.qb-sw-tool:last-of-type {
+  border-bottom: none;
+}
+.qb-sw-tool > .row {
+  border-bottom: none;
+}
+.qb-sw-chevron--open {
+  transform: rotate(90deg);
+}
 
 /* 侧栏里账户那一项下面的两个子项（Claude / GPT）。
    它们不是路由，只是切「看哪一边」，所以是 `button` 不是 `a`。

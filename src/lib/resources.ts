@@ -136,6 +136,8 @@ export const R = {
    * 为了让 `AFTER.install` 管得到它。
    */
   versions: res(() => api.managedHistory("claude-code")),
+  /** Codex 的版本库（同一个后端，按软件分）。 */
+  codexVersions: res(() => api.managedHistory("codex")),
 
   /**
    * Claude 痕迹与 Chrome 状态。
@@ -199,6 +201,7 @@ export const AFTER = {
     "managed",
     "externals",
     "versions",
+    "codexVersions",
   ] as const,
   /**
    * 重装或清空浏览器：软件清单变了，痕迹也该重扫。

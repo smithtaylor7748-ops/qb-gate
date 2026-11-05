@@ -124,10 +124,15 @@ pub fn lockable() -> Vec<PathBuf> {
 /// 有人直接去调它内部那个 node 脚本 —— 那不是这一层能解决的问题，
 /// 跟 `app-*` 那个已知缺口是同一类。界面上要如实说明。
 pub fn codex_lockable() -> Vec<PathBuf> {
-    crate::install::detect::codex_candidates()
+    let mut out: Vec<PathBuf> = crate::install::detect::codex_candidates()
         .into_iter()
         .filter(|p| p.is_file())
-        .collect()
+        .collect();
+    // 托管目录版本库里的旧版本：每一份都是完整可执行的 codex.exe（硬约束 1）。
+    out.extend(crate::install::inventory::managed_codex_copies(
+        &crate::install::inventory::Roots::current(),
+    ));
+    out
 }
 
 /// 反重力侧可锁的副本：两个产品下此刻存在的每一份 exe（卸载器除外）。
@@ -167,7 +172,10 @@ pub fn kind_of(p: &Path) -> TargetKind {
         return TargetKind::StaleCopy;
     }
     // 按文件名认，不按路径 —— Codex 的落点有五种，路径匹配迟早漏一个。
-    if name.eq_ignore_ascii_case("codex.exe") || name.eq_ignore_ascii_case("codex.cmd") {
+    if name.eq_ignore_ascii_case("codex.exe")
+        || name.eq_ignore_ascii_case("codex.cmd")
+        || name.eq_ignore_ascii_case("codex.exe.before")
+    {
         return TargetKind::CodexCli;
     }
     let lower = p.to_string_lossy().to_lowercase().replace('/', "\\");

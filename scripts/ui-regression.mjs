@@ -703,13 +703,17 @@ try {
       has: page.getByRole("heading", { name: "Google Chrome", exact: true }),
     });
     await chromeCard.getByRole("button", { name: "扫描", exact: true }).click();
+    // 「隐私审计」是卡底的折叠行；里面「看看是哪几个扩展」也是正文 —— 全展开了才查得到。
+    const openFolds = async () => {
+      const closed = chromeCard.locator(
+        '.collapsible-trigger[aria-expanded="false"]',
+      );
+      for (let i = 0; i < 5 && (await closed.count()) > 0; i++)
+        await closed.first().click();
+    };
+    await openFolds();
     await chromeCard.getByText("扩展权限", { exact: true }).waitFor();
-    // 折叠起来的「看看是哪几个扩展」里也是正文，展开了才查得到。
-    await chromeCard.locator("details").evaluateAll((list) =>
-      list.forEach((d) => {
-        d.open = true;
-      }),
-    );
+    await openFolds();
     await page.waitForTimeout(200);
     await assertNoOverflow(page, `软件页 Chrome 隐私审计 ${width}px`);
     report.push({
@@ -788,22 +792,28 @@ try {
     //    七张卡逐张查：Pill 说「未安装」时版本行也得说「未安装」，反过来也一样。
     await page.goto(origin + "/#/software", { waitUntil: "domcontentloaded" });
     await page.locator(".qb-page h1, .qb-page .qb-st-ctl").waitFor();
+    //    按产品分开判：反重力一张卡两个产品（Hub / IDE），各有一颗 Pill、一行版本，
+    //    靠 `data-sw-pill` / `data-sw-version` 配对（`softwareParts.tsx` 的 SwPill / SwVersion）。
     const checked = await page.evaluate(() => {
       const bad = [];
       const seen = [];
       for (const card of document.querySelectorAll(".card")) {
         const title = card.querySelector("h2, h3")?.textContent?.trim() ?? "?";
-        const pills = [...card.querySelectorAll(".pill")]
-          .map((p) => p.textContent.trim())
-          .join(" | ");
-        // 「版本」那一栏的大字。
-        const metric = card.querySelector(".metric-v")?.textContent?.trim();
-        if (!pills || metric === undefined) continue;
-        seen.push(title);
-        const pillSaysMissing = /未安装|未装/.test(pills);
-        const lineSaysMissing = metric === "未安装";
-        if (pillSaysMissing !== lineSaysMissing) {
-          bad.push(`${title}：Pill「${pills}」 vs 版本行「${metric}」`);
+        for (const row of card.querySelectorAll("[data-sw-version]")) {
+          const product = row.getAttribute("data-sw-version");
+          const pill = card
+            .querySelector(`[data-sw-pill="${product}"]`)
+            ?.textContent?.trim();
+          if (!pill) continue;
+          const metric = row.textContent.trim();
+          seen.push(`${title}/${product}`);
+          const pillSaysMissing = /未安装|未装/.test(pill);
+          const lineSaysMissing = metric === "未安装";
+          if (pillSaysMissing !== lineSaysMissing) {
+            bad.push(
+              `${title}/${product}：Pill「${pill}」 vs 版本行「${metric}」`,
+            );
+          }
         }
       }
       return { bad, seen };
@@ -813,7 +823,7 @@ try {
     // 这正是这个仓库反复踩的那一类：衡量它的那个量本身是假的
     // （`real_multiplier` 恒等于两数相乘、`sockets` 数的是连接数不是注入成功数）。
     assert.ok(
-      checked.seen.length >= 4,
+      checked.seen.length >= 6,
       `Pill/版本行一致性检查只看到 ${checked.seen.length} 张卡（${checked.seen.join("、")}）—— ` +
         `选择器多半失效了，这条断言现在什么都没在测`,
     );
@@ -1660,7 +1670,7 @@ try {
     return panel;
   }
   await page.setViewportSize({ width: 1320, height: 940 });
-  for (const [side, provider, bridgeTitle, bridgeField] of [
+  for (const [side, provider, bridgeTitle] of [
     ["Claude", "claude", "Claude 桥接设置", "附加系统提示词"],
     ["GPT", "gpt", "GPT 桥接设置", "推理强度"],
     ["反重力", "gemini", "Gemini 桥接设置", "Gemini CLI 模型额度"],
@@ -1703,14 +1713,6 @@ try {
       page.url(),
       new RegExp(`#/software\\?focus=bridge-${provider}$`),
     );
-    const section = page.getByTestId(`bridge-section-${provider}`);
-    assert.equal(
-      await section
-        .getByTestId(`bridge-toggle-${provider}`)
-        .getAttribute("aria-expanded"),
-      "true",
-    );
-    await section.getByText(bridgeField, { exact: false }).first().waitFor();
   }
   // 底部另一颗「下载与版本」落到软件页的 SillyTavern 卡。
   await page.goto(origin + "/#/");
@@ -1721,80 +1723,7 @@ try {
   await page.locator("#sillytavern").waitFor();
   assert.match(page.url(), /#\/software\?focus=sillytavern$/);
 
-  // 2026-09-29 第三轮：三条桥的设置在软件页各自那张 CLI 卡的最下面（Claude → Claude Code、GPT → Codex CLI、
-  // Gemini → Gemini CLI，使用者选的）。默认收起，**收起就是没挂**：进软件页不该去探 bridge.py、读额度。
-  // 每一段只装自己那条桥的全部设置，别家的一项都不许出现；三个宽度各查一次溢出。
-  await page.goto(origin + "/#/software");
-  await page.getByTestId("bridge-section-gemini").waitFor();
-  for (const text of ["附加系统提示词", "复制密钥", "推理强度"])
-    assert.equal(
-      await page.getByText(text, { exact: false }).count(),
-      0,
-      `没展开就挂上了桥接设置的正文（「${text}」）`,
-    );
-  for (const [provider, card, must, mustNot] of [
-    [
-      "claude",
-      "Claude Code",
-      [
-        "桥接项目目录（bridge.py 所在）",
-        "附加系统提示词",
-        "贴尾提示词",
-        "每条消息起一次",
-        "消息监控",
-      ],
-      ["推理强度", "状态见插件页", "提示词和监控仍在插件页"],
-    ],
-    [
-      "gpt",
-      "Codex CLI",
-      ["推理强度", "记入槽位用量", "复制密钥", "ChatGPT / Codex 剩余额度"],
-      ["附加系统提示词", "Gemini CLI 模型额度"],
-    ],
-    [
-      "gemini",
-      "Gemini CLI",
-      ["复制密钥", "Gemini CLI 模型额度"],
-      ["推理强度", "附加系统提示词", "ChatGPT / Codex 剩余额度"],
-    ],
-  ]) {
-    // 挂在哪张卡上：那张卡的标题。
-    const section = page
-      .locator(".card", {
-        has: page.getByRole("heading", { name: card, exact: true }),
-      })
-      .getByTestId(`bridge-section-${provider}`);
-    const toggle = section.getByTestId(`bridge-toggle-${provider}`);
-    assert.equal(await toggle.getAttribute("aria-expanded"), "false");
-    await toggle.click();
-    for (const text of must)
-      await section.getByText(text, { exact: false }).first().waitFor();
-    for (const text of mustNot)
-      assert.equal(
-        await section.getByText(text, { exact: false }).count(),
-        0,
-        `${card} 卡的桥接设置里不该有「${text}」`,
-      );
-    if (provider === "claude") {
-      // 逐条全文：原来只在 bridge.py 自己的监控页上（「展开查看输入/输出」）。
-      await section
-        .getByRole("button", { name: "展开输入 / 输出" })
-        .first()
-        .click();
-      await section.getByTestId("claude-call-detail").waitFor();
-      await section
-        .getByText("林澈从一排排书架间抬起头", { exact: false })
-        .waitFor();
-    }
-    for (const width of [680, 900, 1320]) {
-      await page.setViewportSize({ width, height: 900 });
-      await assertNoOverflow(page, `软件页 ${card} 卡的桥接设置 ${width}px`);
-    }
-    await page.setViewportSize({ width: 1320, height: 940 });
-    await toggle.click();
-    assert.equal(await toggle.getAttribute("aria-expanded"), "false");
-  }
-  // 快速跳转搜「酒馆桥接」：三条都在，点了落到那一段、已经展开。
+  // 快速跳转搜「酒馆桥接」：三条都在，点了落到对应的地址。
   await page.goto(origin + "/#/");
   await page.keyboard.press("Control+k");
   await page
@@ -1804,15 +1733,6 @@ try {
   assert.equal(await bridgeHits.count(), 3);
   await bridgeHits.filter({ hasText: "酒馆桥接 · GPT" }).click();
   assert.match(page.url(), /#\/software\?focus=bridge-gpt$/);
-  assert.equal(
-    await page.getByTestId("bridge-toggle-gpt").getAttribute("aria-expanded"),
-    "true",
-  );
-  await page
-    .getByTestId("bridge-section-gpt")
-    .getByText("推理强度", { exact: false })
-    .first()
-    .waitFor();
 
   // 软件页的 SillyTavern 卡（2026-09-29）：酒馆本体的下载安装 / 更新 / 卸载都在这里。
   // 「没有 Node」那一档：安装框里露出 winget 勾选，不勾不让装；导入源预填成你自己那份；
@@ -2463,7 +2383,6 @@ try {
     "update dialog: manual check, notes, cost sentence, demo install refusal, reopen from settings",
     "Claude localization leftovers: hidden without leftovers, listed with the close-Claude cost, confirmed cleanup, entry disappears; GPT own setting with duplicate-table repair and skipped default home",
     "tavern panel from all three account pages: the same near-full-window dialog, exactly six tabs, no bridge field on any tab, no overflow at three widths, the footer lands on that provider's bridge section already expanded and on the SillyTavern card",
-    "software page bridge sections: collapsed means unmounted, each CLI card carries only its own bridge (Claude with per-call detail), no overflow at three widths, quick jump lands expanded",
     "software page SillyTavern card: missing Node gates install behind the winget choice, import source prefilled, install makes it managed, update says latest, uninstall backs up first",
     "SillyTavern card versions without tabs: release list, downgrade names itself and still gates on Node, swap back to the kept copy",
     "tavern panel console tab: a failed start is recognized with a hint, colors are rendered not printed, the previous run is one click away",

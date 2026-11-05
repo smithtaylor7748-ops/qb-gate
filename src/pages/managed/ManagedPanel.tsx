@@ -375,12 +375,13 @@ export function ExternalsBlock({ disabled = false }: { disabled?: boolean }) {
  * 已加载的映像，下次启动才生效），以及版本库里的每一份**照样是锁着的**。
  */
 export function VersionHistoryBlock({
+  app = "claude-code",
   disabled = false,
 }: {
+  app?: ManagedApp;
   disabled?: boolean;
 }) {
   const toast = useToast();
-  const app: ManagedApp = "claude-code";
   // ⛔ 走资源层，不要在这里 `useState` + `useEffect` 自己取。
   //
   // 自己取的那一版有两个毛病：升级是在同一页的另一张卡上按的，
@@ -388,7 +389,12 @@ export function VersionHistoryBlock({
   // 刚被归档的那一份要切走再切回来才出现；而且 `catch { setRows([]) }`
   // 把「读不出」显示成了「版本库是空的」，正是 §7.20「读不出版本 ≠ 没装」
   // 那条教训的同一个形状。
-  const history = useResource("versions", R.versions);
+  const history =
+    // ⚠ 两份资源键：`AFTER.install` 两个都作废，回滚完两张卡都对得上。
+    useResource(
+      app === "codex" ? "codexVersions" : "versions",
+      app === "codex" ? R.codexVersions : R.versions,
+    );
   const rows = history.data ?? null;
   const [busy, setBusy] = useState("");
   const [ask, setAsk] = useState<VersionEntry | null>(null);
@@ -466,7 +472,7 @@ export function VersionHistoryBlock({
           所以随时可以再换回去。
         </p>
         <p className="notice notice--warn mt-2">
-          正在跑的 Claude Code 会话<strong>不受影响</strong>，
+          正在跑的 {MANAGED_APP_LABEL[app]} 会话<strong>不受影响</strong>，
           换的是下一次启动用的那个文件。换完面板会重新上锁。
         </p>
       </ConfirmDialog>

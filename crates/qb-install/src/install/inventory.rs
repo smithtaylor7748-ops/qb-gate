@@ -539,6 +539,37 @@ fn scoop_global_roots(r: &Roots) -> Vec<PathBuf> {
 
 // ---------------------------------------------------------------- 扫描
 
+/// 托管目录里 Codex 的旧版本与中断的暂存：`<托管根>\codex\versions\<版本>\codex.exe`、
+/// `<托管根>\codex\.rollback-*\codex.exe(.before)`。每一份都是完整可执行的 codex.exe，
+/// 跟 `claude-code\versions` 一样必须进上锁清单（硬约束 1）；软件页露出了 Codex 的版本库之后，
+/// 漏掉它们就是现成的绕过入口。只读文件系统。
+pub fn managed_codex_copies(r: &Roots) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Some(m) = &r.managed else {
+        return out;
+    };
+    let dir = m.join("codex");
+    for e in entries(&dir.join("versions")) {
+        let p = e.path().join("codex.exe");
+        if p.is_file() {
+            out.push(p);
+        }
+    }
+    for e in entries(&dir) {
+        let stage = e.path();
+        if name_lower(&stage).starts_with(".rollback-") && stage.is_dir() {
+            for name in ["codex.exe", "codex.exe.before"] {
+                let p = stage.join(name);
+                if p.is_file() {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 /// 把这台机器上所有 Claude Code 可执行副本找出来。**只读文件系统。**
 ///
 /// 同一个文件经不同路径（`%APPDATA%\Claude` 联结点与它指向的 `Claude-<标签>`）
@@ -1132,6 +1163,28 @@ mod tests {
             .iter()
             .any(|(q, k)| same_path(q, &managed) && *k == Kind::Managed));
         assert_eq!(lockable_paths(&r).len(), 3, "另外两份照样锁");
+    }
+
+    #[test]
+    fn managed_codex_versions_are_in_the_lock_list() {
+        // 软件页露出 Codex 版本库之后，`codex\versions\<v>\codex.exe` 每一份都要锁。
+        let t = Tree::new("codexver");
+        let a = t.file(r"managed\codex\versions\0.150.0\codex.exe");
+        let b = t.file(r"managed\codex\versions\0.151.0\codex.exe");
+        let s = t.file(r"managed\codex\.rollback-1\codex.exe.before");
+        t.file(r"managed\codex\versions\0.151.0\codex-command-runner.exe");
+        t.file(r"managed\codex\versions\0.152.0\notes.txt");
+        t.file(r"managed\claude-code\versions\2.1.0\claude.exe");
+        let got = managed_codex_copies(&t.roots());
+        assert_eq!(got.len(), 3, "{got:?}");
+        for p in [&a, &b, &s] {
+            assert!(got.iter().any(|q| same_path(q, p)), "漏了 {}", p.display());
+        }
+        let none = Roots {
+            managed: None,
+            ..t.roots()
+        };
+        assert!(managed_codex_copies(&none).is_empty());
     }
 
     #[test]

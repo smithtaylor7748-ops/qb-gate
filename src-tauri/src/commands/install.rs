@@ -19,6 +19,12 @@ pub fn managed_history(which: install::managed::App) -> Vec<install::versions::V
     install::versions::history(&dir, which, current.as_deref())
 }
 
+/// Codex 官方最新版本号（GitHub releases/latest）。只读，不下载。
+#[tauri::command]
+pub async fn managed_codex_latest() -> Result<String> {
+    install::managed::codex_latest_version().await
+}
+
 /// 回滚到版本库里的某一版。
 ///
 /// **会先把当前这份收进版本库再换** —— 反过来的话中间那一刻当前版本已经没了，

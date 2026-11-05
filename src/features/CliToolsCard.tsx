@@ -10,7 +10,13 @@
  * 这几个不归 IP 门禁管，也不进托管目录（Claude Code / Codex / Gemini CLI 在上面各自的卡里）。
  */
 import { useState } from "react";
-import { Download, FileCode, RefreshCw, Trash2 } from "lucide-react";
+import {
+  ChevronRight,
+  Download,
+  FileCode,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import {
   api,
   type CliInstall,
@@ -24,13 +30,12 @@ import {
 import { R } from "../lib/resources";
 import { invalidate, useResource } from "../lib/store";
 import { endTask, resetTask, useTask } from "../lib/tasks";
-import { TaskBlock } from "../pages/softwareParts";
+import { LockRow, SwCols, TaskBlock } from "../pages/softwareParts";
 import {
   Button,
   Card,
   Checkbox,
   CodeBlock,
-  Collapsible,
   ConfirmDialog,
   Modal,
   Pill,
@@ -296,6 +301,7 @@ function ToolRow({
   const def = t.installs[0];
   const installed = t.installs.length > 0;
   const nodeBlocked = latest?.node_ok === false;
+  const [open, setOpen] = useState(false);
   const actions = (
     <span className="flex flex-wrap justify-end gap-1">
       {!installed && (
@@ -354,75 +360,122 @@ function ToolRow({
       )}
     </span>
   );
+  const removable = t.installs.filter((i) => REMOVABLE.includes(i.source));
   return (
-    <Row side={actions}>
-      <span className="flex flex-wrap items-baseline gap-2">
-        <strong>{t.label}</strong>
-        <code className="notice">{t.command}</code>
-        {def ? (
-          <Pill tone="ok">{def.version ?? "版本读不出"}</Pill>
-        ) : (
-          <Pill>未安装</Pill>
+    <div className="qb-sw-tool">
+      <Row
+        side={
+          <>
+            {actions}
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-expanded={open}
+              aria-label={`${open ? "收起" : "展开"} ${t.label}`}
+              icon={
+                <ChevronRight
+                  size={13}
+                  className={open ? "qb-sw-chevron--open" : ""}
+                />
+              }
+              onClick={() => setOpen((v) => !v)}
+            />
+          </>
+        }
+      >
+        <span className="flex flex-wrap items-baseline gap-2">
+          <strong>{t.label}</strong>
+          <code className="notice">{t.command}</code>
+          {def ? (
+            <Pill tone="ok">{def.version ?? "版本读不出"}</Pill>
+          ) : (
+            <Pill>未安装</Pill>
+          )}
+          {latest?.latest && (
+            <Pill tone={latest.outdated ? "accent" : "default"}>
+              {latest.outdated
+                ? `可升级 → ${latest.latest}`
+                : `最新 ${latest.latest}（${latest.from ?? ""}）`}
+            </Pill>
+          )}
+        </span>
+        {nodeBlocked && (
+          <span className="notice notice--warn block">
+            新版要求 Node {latest?.node_required}，本机是 {latest?.node_current}
+            ：先升级 Node.js，否则装上也跑不起来。
+          </span>
         )}
-        {def && <Pill>{SOURCE_LABEL[def.source]}</Pill>}
-        {latest?.latest && (
-          <Pill tone={latest.outdated ? "accent" : "default"}>
-            {latest.outdated
-              ? `可升级 → ${latest.latest}`
-              : `最新 ${latest.latest}（${latest.from ?? ""}）`}
-          </Pill>
+        {!!latest?.problems.length && !latest.latest && (
+          <span className="notice notice--warn block break-words">
+            没问到最新版本：{latest.problems.join("；")}
+          </span>
         )}
-      </span>
-      {!installed && t.install.kind === "manual" && !t.script_url && (
-        <span className="notice block">{t.install.shown}</span>
-      )}
-      {nodeBlocked && (
-        <span className="notice notice--warn block">
-          新版要求 Node {latest?.node_required}，本机是 {latest?.node_current}
-          ：先升级 Node.js，否则装上也跑不起来。
-        </span>
-      )}
-      {!!latest?.problems.length && !latest.latest && (
-        <span className="notice notice--warn block break-words">
-          没问到最新版本：{latest.problems.join("；")}
-        </span>
-      )}
-      {t.conflict && (
-        <span className="notice notice--warn block">
-          装了 {t.installs.length}{" "}
-          份，版本对不上或者读不出。升级只动命令行用的那一份（排在最前面的），别的留着。
-        </span>
-      )}
-      {installed && t.update?.kind === "manual" && (
-        <span className="notice block break-words">{t.update.shown}</span>
-      )}
-      {installed && (
-        <Collapsible className="mt-1" summary={`本机 ${t.installs.length} 份`}>
-          {t.installs.map((i) => (
-            <Row
-              key={i.path}
-              side={
-                REMOVABLE.includes(i.source) ? (
+        {t.conflict && (
+          <span className="notice notice--warn block">
+            装了 {t.installs.length}{" "}
+            份，版本对不上或者读不出。升级只动命令行用的那一份（排在最前面的），别的留着。
+          </span>
+        )}
+      </Row>
+      {open && (
+        <SwCols
+          version={
+            <>
+              {!installed && t.install.kind === "manual" && !t.script_url && (
+                <p className="notice">{t.install.shown}</p>
+              )}
+              {installed && t.update?.kind === "manual" && (
+                <p className="notice break-words">{t.update.shown}</p>
+              )}
+              {installed ? (
+                t.installs.map((i) => (
+                  <p key={i.path} className="notice mt-1">
+                    <span className="block break-all font-mono">{i.path}</span>
+                    {SOURCE_LABEL[i.source]} · {i.version ?? "版本读不出"}
+                    {i.default ? " · 命令行用的是这一份" : ""}
+                  </p>
+                ))
+              ) : (
+                <p className="notice">本机没找到。</p>
+              )}
+            </>
+          }
+          gate={
+            <LockRow
+              kind="na"
+              reason="不归 IP 门禁管：这几个工具不进托管目录、不上执行锁，走的是你自己配的中转或官方登录。"
+            />
+          }
+          uninstall={
+            <>
+              {removable.map((i) => (
+                <div key={i.path} className="mb-2">
                   <Button
                     size="sm"
-                    variant="ghost"
-                    aria-label={`卸掉 ${i.path}`}
+                    variant="danger"
                     icon={<Trash2 size={12} />}
+                    aria-label={`卸掉 ${i.path}`}
                     disabled={!!busy}
                     onClick={() => onRemove(i)}
-                  />
-                ) : undefined
-              }
-            >
-              <span className="notice block break-all font-mono">{i.path}</span>
-              <span className="notice block">
-                {SOURCE_LABEL[i.source]} · {i.version ?? "版本读不出"}
-                {i.default ? " · 命令行用的是这一份" : ""}
-              </span>
-            </Row>
-          ))}
-        </Collapsible>
+                  >
+                    卸掉这一份
+                  </Button>
+                  <span className="notice block break-all font-mono">
+                    {i.path}
+                  </span>
+                </div>
+              ))}
+              <p className="notice">
+                {removable.length
+                  ? "用装它的那个包管理器卸，它自己的配置和数据不动。"
+                  : installed
+                    ? "不是包管理器装的，面板不替你卸：按它官方的说明自己删。"
+                    : "没装，没有可卸的。"}
+              </p>
+            </>
+          }
+        />
       )}
-    </Row>
+    </div>
   );
 }
