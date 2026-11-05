@@ -275,6 +275,8 @@ pub fn run() {
             commands::session_manager::sessions_trash,
             commands::session_manager::sessions_trash_restore,
             commands::session_manager::sessions_trash_purge,
+            commands::session_manager::sessions_reveal,
+            commands::session_manager::antigravity_conversations,
             commands::station::station_usage_requests,
             commands::station::station_refresh_health,
             commands::station::station_decide,

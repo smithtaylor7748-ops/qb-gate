@@ -21,6 +21,7 @@
 //!   `sessions/`、`archived_sessions/` 下面、没有 `..`、扩展名是 `.jsonl` —— 编一个 id 读不到别处的文件。
 
 use super::ext_place::{Place, Slot};
+use crate::accounts::tokens;
 use crate::error::{GateError, Result};
 use qb_extensions::plugins::tavern_library::{Trash, TrashEntry};
 use serde::Serialize;
@@ -36,8 +37,11 @@ use ts_rs::TS;
 const HEAD_MAX: u64 = 256 << 10;
 /// 界面上一段最多显示多少字（多的截断）。导出 Markdown 时只截工具调用、工具输出和思考，使用者和助手说的话整段导出。
 const TEXT_MAX: usize = 6_000;
-/// 「在内容里搜」最多读多少（全部会话加起来）。
-const SEARCH_MAX: u64 = 1 << 30;
+/// 「在内容里搜」一次最多现读多少个文件、多少字节（缓存命中的不算）。
+const CONTENT_LIMITS: Limits = Limits {
+    files: 2_000,
+    bytes: 512 << 20,
+};
 /// 这么久之内还在写的会话不让删。
 const BUSY: Duration = Duration::from_secs(120);
 
@@ -67,6 +71,28 @@ pub struct SessionSummary {
     pub size: u64,
     /// 文件的完整路径。
     pub path: String,
+    /// `chat`（对话）/ `subagent`（子代理）。
+    pub kind: String,
+    /// 分组用的项目名：项目目录的最后一段；读不出目录时用 Claude Code 的项目文件夹名。
+    pub project: String,
+    /// 这个会话用掉的 token（从转写里的用量记录数；没有用量记录就是空）。
+    pub tokens: Option<SessionTokens>,
+    /// 两分钟内还在写（多半正开着）。
+    pub running: bool,
+    /// 官方默认目录里的、找不到归属依据的会话（只在按槽位列时出现）。
+    pub unowned: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, TS)]
+#[ts(export)]
+pub struct SessionTokens {
+    /// 输入（Claude Code 含缓存读写；Codex 含缓存命中）。
+    #[ts(type = "number")]
+    pub input: u64,
+    #[ts(type = "number")]
+    pub output: u64,
+    #[ts(type = "number")]
+    pub total: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
@@ -165,10 +191,27 @@ fn subdirs(dir: &Path) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+/// 一个会话文件，外加 Claude Code 从路径上就能看出来的那几样。
+#[derive(Debug, Clone, Default)]
+struct SessionFile {
+    path: PathBuf,
+    /// Claude Code：会话 id（子代理转写 = 父会话 id）。
+    session: Option<String>,
+    /// Claude Code：项目文件夹名（官方按 cwd 编码出来的那一段）。
+    project: Option<String>,
+    /// Claude Code：`<会话>\subagents\` 下面的子代理转写。
+    subagent: bool,
+}
+
+fn under_subagents(path: &Path) -> bool {
+    path.components().any(|c| c.as_os_str() == "subagents")
+}
+
 /// 一个目标里的全部会话文件。不跟联结点 / 符号链接走（`file_type` 不追链接）。
-fn session_files(source: &Slot) -> Vec<PathBuf> {
-    let mut out = Vec::new();
+/// Claude Code 连子代理转写（`<会话>\subagents\*.jsonl`、`workflows\<wf>\*.jsonl`）一起列。
+fn session_files(source: &Slot) -> Vec<SessionFile> {
     if client_of(&source.id) == "codex" {
+        let mut out = Vec::new();
         for y in subdirs(&source.root.join("sessions")) {
             for m in subdirs(&y) {
                 for d in subdirs(&m) {
@@ -177,12 +220,23 @@ fn session_files(source: &Slot) -> Vec<PathBuf> {
             }
         }
         jsonl_in(&source.root.join("archived_sessions"), &mut out);
-    } else {
-        for project in subdirs(&source.root.join("projects")) {
-            jsonl_in(&project, &mut out);
-        }
+        return out
+            .into_iter()
+            .map(|path| SessionFile {
+                path,
+                ..Default::default()
+            })
+            .collect();
     }
-    out
+    tokens::transcripts(&source.root.join("projects"))
+        .into_iter()
+        .map(|t| SessionFile {
+            subagent: under_subagents(&t.path),
+            session: Some(t.session_id),
+            project: Some(t.project),
+            path: t.path,
+        })
+        .collect()
 }
 
 fn rel_of(root: &Path, file: &Path) -> Option<String> {
@@ -236,6 +290,11 @@ struct Head {
     cwd: Option<String>,
     started_at: Option<String>,
     title: Option<String>,
+    /// Codex：`session_meta.source` 说这是子代理开的线程。
+    subagent: bool,
+    tokens: Option<SessionTokens>,
+    /// 旧格式转写里 `bridge-session` 行上的 `ownerAccountUuid`（归属判定第 ③ 级）。
+    legacy_owner: Option<String>,
 }
 
 /// 一段话压成一行、截短，当标题。
@@ -306,6 +365,10 @@ fn read_head(path: &Path, codex: bool) -> Head {
                     let p = v.get("payload").unwrap_or(&Value::Null);
                     head.session_id = p.get("id").and_then(Value::as_str).map(str::to_string);
                     head.cwd = p.get("cwd").and_then(Value::as_str).map(str::to_string);
+                    head.subagent = p
+                        .get("source")
+                        .and_then(Value::as_object)
+                        .is_some_and(|o| o.contains_key("subagent"));
                     head.started_at = p
                         .get("timestamp")
                         .or_else(|| v.get("timestamp"))
@@ -344,7 +407,77 @@ fn read_head(path: &Path, codex: bool) -> Head {
             break;
         }
     }
+    let (tokens, owner) = read_usage(path, codex);
+    head.tokens = tokens;
+    head.legacy_owner = owner;
     head
+}
+
+/// 整份扫一遍：token 用量，外加 Claude Code 旧格式的归属标记。只解析带关键字的行。
+fn read_usage(path: &Path, codex: bool) -> (Option<SessionTokens>, Option<String>) {
+    let Ok(file) = std::fs::File::open(path) else {
+        return (None, None);
+    };
+    let mut entries: Vec<tokens::Entry> = Vec::new();
+    let mut last: Option<SessionTokens> = None;
+    let mut owner: Option<String> = None;
+    for line in BufReader::new(file).lines() {
+        // 编码坏的那一行跳过；别的读错误停读（同 `tokens::read_entries` 的理由）。
+        let line = match line {
+            Ok(l) => l,
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => continue,
+            Err(_) => break,
+        };
+        if codex {
+            if !line.contains("\"token_count\"") {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            // 每条都是累计值：留最后一条。
+            if let Some(u) = v.pointer("/payload/info/total_token_usage") {
+                let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+                let (input, output) = (n("input_tokens"), n("output_tokens"));
+                let total = match n("total_tokens") {
+                    0 => input + output,
+                    t => t,
+                };
+                last = Some(SessionTokens {
+                    input,
+                    output,
+                    total,
+                });
+            }
+        } else {
+            if line.contains("\"usage\"") {
+                if let Some(e) = tokens::parse_line(&line) {
+                    entries.push(e);
+                }
+            }
+            if owner.is_none() && line.contains("ownerAccountUuid") {
+                owner = serde_json::from_str::<Value>(&line).ok().and_then(|v| {
+                    v.get("ownerAccountUuid")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                });
+            }
+        }
+    }
+    if codex {
+        return (last, None);
+    }
+    let (kept, _) = tokens::dedupe(entries);
+    if kept.is_empty() {
+        return (None, owner);
+    }
+    let mut t = SessionTokens::default();
+    for e in kept {
+        t.input += (e.input + e.cache_write + e.cache_read).max(0) as u64;
+        t.output += e.output.max(0) as u64;
+    }
+    t.total = t.input + t.output;
+    (Some(t), owner)
 }
 
 /// 文件 → (修改时刻, 大小, 开头那几样)。
@@ -374,26 +507,88 @@ fn rfc3339(t: SystemTime) -> String {
     chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339()
 }
 
+/// 项目目录的最后一段（`D:\work\demo` → `demo`）。
+fn project_name(cwd: &str) -> Option<String> {
+    cwd.trim_end_matches(['\\', '/'])
+        .rsplit(['\\', '/'])
+        .next()
+        .filter(|s| !s.is_empty() && !s.ends_with(':'))
+        .map(str::to_string)
+}
+
+/// 单个文件（阅读、导出、删除用）。Claude Code 子代理转写的会话 id 取父会话目录名。
 fn summarize(source: &Slot, path: &Path) -> Option<SessionSummary> {
+    let subagent = under_subagents(path);
+    let file = SessionFile {
+        path: path.to_path_buf(),
+        session: (subagent && client_of(&source.id) == "claude-code")
+            .then(|| {
+                let parent = path.parent()?.parent()?;
+                // `<会话>\subagents\x.jsonl` 或 `<会话>\subagents\workflows\<wf>\x.jsonl`
+                let parent = if parent.file_name()? == "subagents" {
+                    parent.parent()?
+                } else if parent.file_name()? == "workflows" {
+                    parent.parent()?.parent()?
+                } else {
+                    parent
+                };
+                Some(parent.file_name()?.to_string_lossy().to_string())
+            })
+            .flatten(),
+        project: None,
+        subagent,
+    };
+    summarize_file(source, &file).map(|(s, _)| s)
+}
+
+fn summarize_file(source: &Slot, file: &SessionFile) -> Option<(SessionSummary, Head)> {
+    let path = file.path.as_path();
     let meta = std::fs::metadata(path).ok()?;
     let modified = meta.modified().ok()?;
     let codex = client_of(&source.id) == "codex";
     let head = head_of(path, codex, modified, meta.len());
     let rel = rel_of(&source.root, path)?;
-    Some(SessionSummary {
+    let project = head
+        .cwd
+        .as_deref()
+        .and_then(project_name)
+        .or_else(|| file.project.clone())
+        .unwrap_or_default();
+    let running = SystemTime::now()
+        .duration_since(modified)
+        .is_ok_and(|age| age < BUSY);
+    let summary = SessionSummary {
         id: format!("{}|{rel}", source.id),
         client: client_of(&source.id).into(),
         source: source.id.clone(),
         source_label: source.label.clone(),
         official: source.official,
-        session_id: head.session_id.unwrap_or_default(),
-        title: head.title.unwrap_or_else(|| "（开头没有文字提问）".into()),
-        cwd: head.cwd,
-        started_at: head.started_at,
+        session_id: file
+            .session
+            .clone()
+            .or_else(|| head.session_id.clone())
+            .unwrap_or_default(),
+        title: head
+            .title
+            .clone()
+            .unwrap_or_else(|| "（开头没有文字提问）".into()),
+        cwd: head.cwd.clone(),
+        started_at: head.started_at.clone(),
         updated_at: rfc3339(modified),
         size: meta.len(),
         path: path.display().to_string(),
-    })
+        kind: if file.subagent || head.subagent {
+            "subagent"
+        } else {
+            "chat"
+        }
+        .into(),
+        project,
+        tokens: head.tokens,
+        running,
+        unowned: false,
+    };
+    Some((summary, head))
 }
 
 // ------------------------------------------------------------------ 列表与搜索
@@ -401,34 +596,116 @@ fn summarize(source: &Slot, path: &Path) -> Option<SessionSummary> {
 /// 列表的筛选条件。
 #[derive(Debug, Clone, Default)]
 pub struct SessionQuery {
-    /// 搜什么（标题、项目目录、会话 id、来源名；`deep` 时也搜内容）。不分大小写。
+    /// 标题关键词（也搜项目目录、会话 id、来源名）。不分大小写。
     pub text: String,
+    /// 内容关键词：读会话文件找（有上限，见 [`CONTENT_LIMITS`]）。不分大小写。
+    pub content: String,
+    /// `chat` / `subagent`；`None` = 全部。
+    pub kind: Option<String>,
     /// 只看这个目标（`claude-code:relay` 之类）。
     pub source: Option<String>,
-    /// 连内容一起搜（慢，读到 [`SEARCH_MAX`] 就停）。
-    pub deep: bool,
     pub offset: u32,
     pub limit: u32,
 }
 
-/// 文件里有没有这段字（不分大小写）。读不动当没有。
-fn file_contains(path: &Path, needle_lower: &str, budget: &mut u64) -> Option<bool> {
-    let size = std::fs::metadata(path).ok()?.len();
-    if size > *budget {
-        return None;
-    }
-    *budget -= size;
-    let text = std::fs::read_to_string(path).ok()?;
-    Some(text.to_lowercase().contains(needle_lower))
+/// 内容搜索一次最多现读多少。
+#[derive(Debug, Clone, Copy)]
+struct Limits {
+    files: usize,
+    bytes: u64,
+}
+
+/// (文件, 关键词) → (修改时刻, 大小, 有没有)。文件一改就作废。
+type HitCache = HashMap<(PathBuf, String), (SystemTime, u64, bool)>;
+static HITS: Mutex<Option<HitCache>> = Mutex::new(None);
+
+/// 只留内容里有 `needle`（已转小写）的。缓存里有的不读；现读的超过 `lim` 就不再读，那些当没搜到。
+/// 回 `true` = 有会话因为上限没搜。
+fn content_filter(items: &mut Vec<SessionSummary>, needle: &str, lim: Limits) -> bool {
+    let (mut files, mut bytes, mut truncated) = (0usize, 0u64, false);
+    items.retain(|s| {
+        let path = Path::new(&s.path);
+        let Some((modified, size)) = std::fs::metadata(path)
+            .ok()
+            .and_then(|m| Some((m.modified().ok()?, m.len())))
+        else {
+            return false;
+        };
+        let key = (path.to_path_buf(), needle.to_string());
+        let cached = HITS.lock().ok().and_then(|c| {
+            c.as_ref()?
+                .get(&key)
+                .filter(|(m, z, _)| *m == modified && *z == size)
+                .map(|x| x.2)
+        });
+        if let Some(hit) = cached {
+            return hit;
+        }
+        if files >= lim.files || bytes + size > lim.bytes {
+            truncated = true;
+            return false;
+        }
+        files += 1;
+        bytes += size;
+        let hit = std::fs::read(path)
+            .map(|b| String::from_utf8_lossy(&b).to_lowercase().contains(needle))
+            .unwrap_or(false);
+        if let Ok(mut c) = HITS.lock() {
+            let c = c.get_or_insert_with(HashMap::new);
+            if c.len() > 20_000 {
+                c.clear();
+            }
+            c.insert(key, (modified, size, hit));
+        }
+        hit
+    });
+    truncated
+}
+
+/// 按槽位列 Claude Code 时，官方默认目录里归这个账户的会话（归属判定同 `tokens::owner_of` 那三级）。
+/// 有依据归到别的账户的不要；一点依据都没有的标 `unowned`，单列一组，不猜。
+fn default_dir_for_slot(place: &Place, label: &str) -> Vec<SessionSummary> {
+    let Some(default) = sources(place)
+        .into_iter()
+        .find(|s| s.id == "claude-code:default")
+    else {
+        return Vec::new();
+    };
+    let me = place.claude_accounts.get(label);
+    let index = tokens::OwnerIndex::scan(&place.desktop_profiles);
+    session_files(&default)
+        .iter()
+        .filter_map(|f| {
+            let (mut s, head) = summarize_file(&default, f)?;
+            let owner = f
+                .session
+                .as_deref()
+                .and_then(|id| index.owner_of_session(id).map(str::to_string))
+                .or_else(|| f.project.as_deref().and_then(tokens::owner_from_project_name))
+                .or(head.legacy_owner);
+            match owner {
+                None => {
+                    s.unowned = true;
+                    Some(s)
+                }
+                Some(o) if me.is_some_and(|m| m.eq_ignore_ascii_case(&o)) => Some(s),
+                Some(_) => None,
+            }
+        })
+        .collect()
 }
 
 fn list_at(place: &Place, q: &SessionQuery) -> SessionList {
+    list_with(place, q, CONTENT_LIMITS)
+}
+
+fn list_with(place: &Place, q: &SessionQuery, lim: Limits) -> SessionList {
     let mut all: Vec<SessionSummary> = Vec::new();
     let mut counts: Vec<SessionSourceCount> = Vec::new();
     for source in sources(place) {
         let items: Vec<SessionSummary> = session_files(&source)
             .iter()
-            .filter_map(|p| summarize(&source, p))
+            .filter_map(|f| summarize_file(&source, f).map(|(s, _)| s))
             .collect();
         counts.push(SessionSourceCount {
             id: source.id.clone(),
@@ -440,33 +717,34 @@ fn list_at(place: &Place, q: &SessionQuery) -> SessionList {
             all.extend(items);
         }
     }
+    if let Some(label) = q
+        .source
+        .as_deref()
+        .and_then(|s| s.strip_prefix("claude-code:slot:"))
+    {
+        all.extend(default_dir_for_slot(place, label));
+    }
+    if let Some(kind) = q.kind.as_deref().filter(|k| !k.is_empty()) {
+        all.retain(|s| s.kind == kind);
+    }
     all.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     let needle = q.text.trim().to_lowercase();
-    let mut truncated = false;
     if !needle.is_empty() {
-        let mut budget = SEARCH_MAX;
         all.retain(|s| {
-            let hit = [
+            [
                 Some(s.title.as_str()),
                 s.cwd.as_deref(),
                 Some(s.session_id.as_str()),
                 Some(s.source_label.as_str()),
+                Some(s.project.as_str()),
             ]
             .into_iter()
             .flatten()
-            .any(|f| f.to_lowercase().contains(&needle));
-            if hit || !q.deep {
-                return hit;
-            }
-            match file_contains(Path::new(&s.path), &needle, &mut budget) {
-                Some(found) => found,
-                None => {
-                    truncated = true;
-                    false
-                }
-            }
+            .any(|f| f.to_lowercase().contains(&needle))
         });
     }
+    let content = q.content.trim().to_lowercase();
+    let truncated = !content.is_empty() && content_filter(&mut all, &content, lim);
     let total = all.len() as u32;
     let items = all
         .into_iter()
@@ -902,6 +1180,24 @@ pub fn export(id: &str, target: &Path) -> Result<()> {
     export_at(&real()?, id, target)
 }
 
+/// 在资源管理器里选中这个会话文件（id 照样核对，编不出别处的路径）。
+pub fn reveal(id: &str) -> Result<()> {
+    let (_, path) = resolve(&real()?, id)?;
+    #[cfg(windows)]
+    {
+        // explorer 的退出码不可靠（选中了也回 1），起来就算。
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path.display()))
+            .spawn()?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err(GateError::Other("只在 Windows 上能打开所在位置".into()))
+    }
+}
+
 pub fn delete(id: &str) -> Result<TrashEntry> {
     delete_at(&real()?, id)
 }
@@ -1139,17 +1435,23 @@ mod tests {
         let path = claude_sample(&root);
         age(&path, 600);
         let q = |text: &str, deep: bool| {
+            let (text, content) = if deep {
+                (String::new(), text.to_string())
+            } else {
+                (text.to_string(), String::new())
+            };
             list_at(
                 &p,
                 &SessionQuery {
-                    text: text.into(),
-                    deep,
+                    text,
+                    content,
                     limit: 10,
                     ..Default::default()
                 },
             )
             .total
         };
+
         assert_eq!(q("深色", false), 1);
         assert_eq!(q("login.css", false), 0, "标题、目录里没有");
         assert_eq!(q("LOGIN.CSS", true), 1, "内容里搜，不分大小写");
@@ -1201,6 +1503,11 @@ mod tests {
             updated_at: String::new(),
             size: 0,
             path: String::new(),
+            kind: "chat".into(),
+            project: String::new(),
+            tokens: None,
+            running: false,
+            unowned: false,
         };
         let (cmd, _) = resume(&s, Path::new("C:\\Users\\demo\\.claude"));
         assert_eq!(
@@ -1208,4 +1515,148 @@ mod tests {
             "默认目录不设变量"
         );
     }
+
+    fn q(source: Option<&str>, kind: Option<&str>) -> SessionQuery {
+        SessionQuery {
+            source: source.map(str::to_string),
+            kind: kind.map(str::to_string),
+            limit: 100,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn subagent_transcripts_are_listed_as_their_own_kind_with_token_totals() {
+        let (root, p) = place();
+        let main = claude_sample(&root);
+        let sub = main.with_file_name("0b1c-uuid").join("subagents/agent-1.jsonl");
+        write(
+            &sub,
+            &[
+                serde_json::json!({"type": "user", "cwd": "D:\\work\\demo", "message": {"role": "user", "content": "查一下样式"}}),
+                serde_json::json!({"type": "assistant", "requestId": "r1", "timestamp": "2026-10-20T01:00:05Z",
+                    "message": {"id": "m1", "model": "claude-opus-5", "stop_reason": "end_turn",
+                        "usage": {"input_tokens": 10, "output_tokens": 5, "cache_creation_input_tokens": 1, "cache_read_input_tokens": 4}}}),
+            ],
+        );
+        let chats = list_at(&p, &q(None, Some("chat")));
+        assert_eq!(chats.total, 1);
+        assert_eq!(chats.items[0].project, "demo", "项目名取 cwd 最后一段");
+        let subs = list_at(&p, &q(None, Some("subagent")));
+        assert_eq!(subs.total, 1);
+        let s = &subs.items[0];
+        assert_eq!(
+            (s.title.as_str(), s.session_id.as_str()),
+            ("查一下样式", "0b1c-uuid"),
+            "子代理归父会话"
+        );
+        assert_eq!(
+            s.tokens,
+            Some(SessionTokens {
+                input: 15,
+                output: 5,
+                total: 20
+            })
+        );
+        assert!(s.running, "刚写的");
+        assert_eq!(list_at(&p, &q(None, None)).total, 2);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn content_search_stops_at_the_cap_and_reuses_what_it_already_read() {
+        let (root, p) = place();
+        for i in 0..3 {
+            let path = root.join(format!("slot-a/projects/x/s{i}.jsonl"));
+            write(
+                &path,
+                &[serde_json::json!({"type": "user", "message": {"role": "user", "content": format!("第 {i} 个 NEEDLE")}})],
+            );
+        }
+        let lim = Limits {
+            files: 2,
+            bytes: 1 << 20,
+        };
+        let query = SessionQuery {
+            content: "needle".into(),
+            limit: 10,
+            ..Default::default()
+        };
+        let first = list_with(&p, &query, lim);
+        assert_eq!(first.total, 2, "只现读两个文件");
+        assert!(first.search_truncated);
+        let second = list_with(&p, &query, lim);
+        assert_eq!(second.total, 3, "读过的走缓存，不占上限");
+        assert!(!second.search_truncated);
+        let tiny = Limits { files: 10, bytes: 1 };
+        let none = list_with(
+            &p,
+            &SessionQuery {
+                content: "别的词".into(),
+                limit: 10,
+                ..Default::default()
+            },
+            tiny,
+        );
+        assert_eq!((none.total, none.search_truncated), (0, true), "字节上限");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_slot_list_takes_owned_default_dir_sessions_and_marks_the_unknown_ones() {
+        const ME: &str = "11111111-2222-3333-4444-555555555555";
+        const OTHER: &str = "99999999-2222-3333-4444-555555555555";
+        let (root, mut p) = place();
+        p.claude_accounts.insert("a".into(), ME.into());
+        claude_sample(&root);
+        let home = root.join("home/.claude/projects");
+        let line = serde_json::json!({"type": "user", "cwd": "D:\\x", "message": {"role": "user", "content": "你好"}});
+        write(
+            &home.join(format!("C--scratch-workspaces-{ME}-org-1/mine.jsonl")),
+            std::slice::from_ref(&line),
+        );
+        write(
+            &home.join(format!("C--scratch-workspaces-{OTHER}-org-1/theirs.jsonl")),
+            std::slice::from_ref(&line),
+        );
+        write(
+            &home.join("D--x/legacy.jsonl"),
+            &[
+                serde_json::json!({"type": "bridge-session", "ownerAccountUuid": ME}),
+                line.clone(),
+            ],
+        );
+        write(&home.join("D--x/stray.jsonl"), std::slice::from_ref(&line));
+        let list = list_at(&p, &q(Some("claude-code:slot:a"), None));
+        let mut got: Vec<(String, bool)> = list
+            .items
+            .iter()
+            .map(|s| (s.session_id.clone(), s.unowned))
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                ("0b1c-uuid".to_string(), false),
+                ("legacy".to_string(), false),
+                ("mine".to_string(), false),
+                ("stray".to_string(), true),
+            ],
+            "归到别的账户的不要，归不出的单列"
+        );
+        let default_ids: Vec<&str> = list
+            .items
+            .iter()
+            .filter(|s| s.session_id != "0b1c-uuid")
+            .map(|s| s.source.as_str())
+            .collect();
+        assert!(default_ids.iter().all(|s| *s == "claude-code:default"));
+        assert_eq!(
+            list_at(&p, &q(Some("claude-code:default"), None)).total,
+            4,
+            "直接看默认目录还是全有"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
+

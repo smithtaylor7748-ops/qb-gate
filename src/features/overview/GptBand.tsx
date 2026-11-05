@@ -10,6 +10,7 @@ import {
   Users,
   Wine,
 } from "lucide-react";
+import { SessionsEntry } from "../accounts/SessionsDialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../../lib/api";
@@ -464,6 +465,7 @@ export default function GptBand() {
           }
           actions={
             <div className="flex gap-1.5">
+              <SessionsEntry kind="codex" current={active?.id} />
               <Button
                 size="sm"
                 icon={<RefreshCw size={12} />}

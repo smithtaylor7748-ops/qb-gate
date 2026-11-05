@@ -15,6 +15,10 @@ pub(crate) struct Place {
     pub relay: BTreeMap<&'static str, PathBuf>,
     /// 官方 Claude Code 槽位：(标签, `CLAUDE_CONFIG_DIR`)。
     pub claude_slots: Vec<(String, PathBuf)>,
+    /// 官方 Claude Code 槽位的账户 uuid：标签 → `oauthAccount.accountUuid`（会话管理给默认目录判归属用）。
+    pub claude_accounts: BTreeMap<String, String>,
+    /// 桌面端资料目录（建 `tokens::OwnerIndex` 用）。
+    pub desktop_profiles: Vec<PathBuf>,
     /// 官方 Codex 槽位：(槽位 id, 标签, `CODEX_HOME`)。
     pub codex_slots: Vec<(String, String, PathBuf)>,
     /// 读环境变量（MiniMax Code 的数据目录）。
@@ -34,7 +38,12 @@ impl Place {
             crate::config_io::environment_dir(&db.root, &crate::workspace::router_environment_id(c))
         };
         let roots = crate::accounts::AccountRoots::current();
-        let claude_slots = crate::accounts::slots_in(&roots)
+        let all_claude = crate::accounts::slots_in(&roots);
+        let claude_accounts = all_claude
+            .iter()
+            .filter_map(|s| Some((s.label.clone(), s.account_uuid.clone()?)))
+            .collect();
+        let claude_slots = all_claude
             .into_iter()
             .map(|s| {
                 let dir = roots.slot_dir(&s.label);
@@ -59,6 +68,8 @@ impl Place {
                 ("gemini-cli", relay_dir(Client::GeminiCli)?),
             ]),
             claude_slots,
+            claude_accounts,
+            desktop_profiles: roots.desktop_profile_dirs(),
             codex_slots,
             env: |k| std::env::var(k).ok(),
             state: crate::paths::state_dir(),
@@ -79,6 +90,8 @@ impl Place {
                 ("gemini-cli", root.join("env-gemini")),
             ]),
             claude_slots: vec![("a".into(), root.join("slot-a"))],
+            claude_accounts: BTreeMap::new(),
+            desktop_profiles: Vec::new(),
             codex_slots: Vec::new(),
             env: |_| None,
             state: root.join("state"),

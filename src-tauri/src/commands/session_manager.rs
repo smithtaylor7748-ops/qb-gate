@@ -4,6 +4,7 @@
 //! （同 `accounts_tokens` 的理由）。
 
 use crate::error::{GateError, Result};
+use qb_app::usecase::antigravity_conversations::{self as ag_conv, AntigravityConversation};
 use qb_app::usecase::session_ops::{self, SessionDetail, SessionList, SessionQuery};
 use qb_extensions::plugins::tavern_library::TrashEntry;
 
@@ -15,26 +16,42 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| GateError::Other(format!("读会话的任务异常结束：{e}")))?
 }
 
-/// 会话列表：`text` 搜标题 / 项目目录 / 会话 id（`deep` 时连内容一起搜），`source` 只看某个目标。
+/// 会话列表：`text` 搜标题 / 项目目录 / 会话 id，`content` 读文件搜内容（有上限），
+/// `kind` 只看对话或子代理，`source` 只看某个目标。
 #[tauri::command]
 pub async fn sessions_list(
     text: String,
+    content: String,
+    kind: Option<String>,
     source: Option<String>,
-    deep: bool,
     offset: u32,
     limit: u32,
 ) -> Result<SessionList> {
     blocking(move || {
         session_ops::list(&SessionQuery {
             text,
+            content,
+            kind,
             source,
-            deep,
             offset,
             limit,
         })
     })
     .await
 }
+
+/// 在资源管理器里选中这个会话文件。
+#[tauri::command]
+pub async fn sessions_reveal(id: String) -> Result<()> {
+    blocking(move || session_ops::reveal(&id)).await
+}
+
+/// 反重力的对话（全机共用，不分账户）：只读列表。
+#[tauri::command]
+pub async fn antigravity_conversations() -> Result<Vec<AntigravityConversation>> {
+    blocking(ag_conv::list).await
+}
+
 
 /// 读一个会话（分页），带恢复命令。
 #[tauri::command]

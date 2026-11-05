@@ -57,6 +57,7 @@ pub mod turnstate_ops;
 /// 站点的用量脚本（中转站重构阶段 6 · U4）：沙箱在 `qb-script`；请求必须跟站点同源、https，没有例外。
 pub mod usage_script_ops;
 
+pub mod antigravity_conversations;
 pub mod antigravity_ops;
 pub mod antigravity_quota;
 pub mod claude_zh_ops;

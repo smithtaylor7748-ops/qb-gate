@@ -1947,6 +1947,35 @@ body:has(.official-page) {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
+/* 按项目分组（可折叠）、每条下面那一行小字（会话 id、token、打开所在位置）。 */
+.qb-session-group > summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+.qb-session-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+.qb-session-id {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.qb-session-id:hover {
+  color: var(--accent);
+}
+.qb-session-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
 .qb-session-trash-name {
   flex: 1;
   min-width: 0;
