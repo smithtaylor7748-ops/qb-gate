@@ -525,43 +525,45 @@ export default function AntigravitySlotRow({
           disabled={!s.ide_logged_in && !s.ide_unreadable}
           onClick={onRefresh}
         />
-        {onRefreshCli && s.cli_dir && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="slotusage-refresh"
-            aria-label={`联网刷新 ${slotName(s.email, s.label)} 的 Gemini CLI 额度`}
-            title={
-              cliSummary
-                ? `Gemini CLI：${cliSummary} · 点一下再问一次`
-                : s.cli_logged_in
-                  ? "联网问一次这一条 Gemini CLI 那一半的额度"
-                  : "Gemini CLI 那一半还没登录"
-            }
-            loading={cliLoading}
-            disabled={!s.cli_logged_in}
-            onClick={onRefreshCli}
-          >
-            CLI
-          </Button>
-        )}
-        {online && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="slotusage-refresh"
-            icon={<Info size={12} />}
-            aria-label={`${slotName(s.email, s.label)} 的配额详情`}
-            title="配额详情"
-            onClick={() => setDetail(true)}
-          />
-        )}
-        {source && (
+        {/* 「CLI」「详情」放在来源那一行末尾、跟文字一样高：放进刷新图标那一格会盖住它，
+            跟它横排又会把额度条挤窄（test:ui 抓到过两回）。 */}
+        {(source || (onRefreshCli && s.cli_dir) || online) && (
           <span
-            className={`gauge-src${source.warn ? " qb-tone-warn" : ""}`}
-            title={source.title}
+            className={`gauge-src${source?.warn ? " qb-tone-warn" : ""}`}
+            title={source?.title}
           >
-            {source.text}
+            {source?.text}
+            {onRefreshCli && s.cli_dir && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="credential-inline-btn"
+                aria-label={`联网刷新 ${slotName(s.email, s.label)} 的 Gemini CLI 额度`}
+                title={
+                  cliSummary
+                    ? `Gemini CLI：${cliSummary} · 点一下再问一次`
+                    : s.cli_logged_in
+                      ? "联网问一次这一条 Gemini CLI 那一半的额度"
+                      : "Gemini CLI 那一半还没登录"
+                }
+                loading={cliLoading}
+                disabled={!s.cli_logged_in}
+                onClick={onRefreshCli}
+              >
+                CLI
+              </Button>
+            )}
+            {online && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="credential-inline-btn"
+                icon={<Info size={12} />}
+                aria-label={`${slotName(s.email, s.label)} 的配额详情`}
+                title="配额详情"
+                onClick={() => setDetail(true)}
+              />
+            )}
           </span>
         )}
       </div>

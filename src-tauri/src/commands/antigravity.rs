@@ -220,9 +220,7 @@ pub async fn antigravity_ide_archive(id: String, defer: Option<bool>) -> Result<
 #[tauri::command]
 pub async fn antigravity_archived() -> Result<Vec<qb_accounts::archive_dir::ArchivedSlot>> {
     tokio::task::spawn_blocking(|| {
-        qb_accounts::antigravity::account::list_archived(
-            &qb_accounts::antigravity::account::root(),
-        )
+        qb_accounts::antigravity::account::list_archived(&qb_accounts::antigravity::account::root())
     })
     .await
     .map_err(|e| GateError::Other(e.to_string()))?
@@ -233,10 +231,7 @@ pub async fn antigravity_archived() -> Result<Vec<qb_accounts::archive_dir::Arch
 pub async fn antigravity_restore(key: String) -> Result<()> {
     let _guard = operations::exclusive().await?;
     tokio::task::spawn_blocking(move || {
-        qb_accounts::antigravity::account::restore(
-            &qb_accounts::antigravity::account::root(),
-            &key,
-        )
+        qb_accounts::antigravity::account::restore(&qb_accounts::antigravity::account::root(), &key)
     })
     .await
     .map_err(|e| GateError::Other(e.to_string()))?

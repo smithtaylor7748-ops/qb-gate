@@ -492,7 +492,9 @@ pub fn list_archived(root: &Path) -> Result<Vec<crate::archive_dir::ArchivedSlot
     if let Ok(rd) = std::fs::read_dir(root.join("archived")) {
         for d in rd.flatten() {
             let name = d.file_name().to_string_lossy().into_owned();
-            if d.path().is_dir() && valid_dir(&name) && !index.archived.iter().any(|a| a.dir == name)
+            if d.path().is_dir()
+                && valid_dir(&name)
+                && !index.archived.iter().any(|a| a.dir == name)
             {
                 out.push(crate::archive_dir::ArchivedSlot {
                     key: name.clone(),
@@ -528,7 +530,10 @@ pub fn restore(root: &Path, key: &str) -> Result<()> {
     let record = index.archived.iter().find(|a| a.dir == key).cloned();
     let (id, label) = match &record {
         Some(a) => (a.id.clone(), a.label.clone()),
-        None => (config_io::id(), format!("恢复的 {}", &key[..key.len().min(15)])),
+        None => (
+            config_io::id(),
+            format!("恢复的 {}", &key[..key.len().min(15)]),
+        ),
     };
     let id = if root.join(&id).exists() || index.slots.iter().any(|s| s.id == id) {
         config_io::id()
@@ -585,7 +590,10 @@ mod tests {
         assert_eq!(archived[0].label, "个人");
         restore(&root, &archived[0].key).unwrap();
         assert!(list(&root).unwrap().slots.iter().any(|s| s.id == a));
-        assert!(directory(&root, &a).unwrap().join("home/config.toml").is_file());
+        assert!(directory(&root, &a)
+            .unwrap()
+            .join("home/config.toml")
+            .is_file());
         assert!(list_archived(&root).unwrap().is_empty());
         assert!(root.starts_with(std::env::temp_dir()));
         std::fs::remove_dir_all(root).unwrap();

@@ -188,8 +188,12 @@ mod tests {
     fn held_file_is_reported_busy_and_nothing_moves() {
         let d = tmp();
         let f = hold(&d.join("slot/home/auth.json"));
-        let err = move_dir_within(&d.join("slot"), &d.join("moved"), Duration::from_millis(300))
-            .unwrap_err();
+        let err = move_dir_within(
+            &d.join("slot"),
+            &d.join("moved"),
+            Duration::from_millis(300),
+        )
+        .unwrap_err();
         assert!(is_busy(&err), "{err}");
         assert!(d.join("slot/home/auth.json").is_file());
         assert!(!d.join("moved").exists());

@@ -2084,3 +2084,23 @@ body:has(.official-page) {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* 账户页标题栏里的显示偏好（自动刷新档位、GPT 的「审查 / 模型」开关）：窗口窄时收起。
+   账户页是固定高度的，标题栏一换行就把槽位列表挤裁（test:ui 的 680x640）。 */
+.qb-wide-only {
+  display: none;
+}
+@media (min-width: 768px) {
+  .qb-wide-only {
+    display: inline-flex;
+  }
+}
+
+/* 账户行上凭证徽标里的按钮（「让官方换新」「是我」……）：跟文字一样高，
+   不把固定高度的槽位行撑高（test:ui 的 680x640）。 */
+.btn.credential-inline-btn {
+  height: auto;
+  min-height: 0;
+  padding-block: 0;
+  line-height: 1.25;
+}

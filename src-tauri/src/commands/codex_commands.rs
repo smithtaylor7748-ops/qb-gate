@@ -163,7 +163,10 @@ pub async fn codex_archive(id: String, defer: Option<bool>) -> Result<()> {
             if !open.is_empty() {
                 return Err(GateError::Other(format!(
                     "这个槽位的 GPT 桌面端还开着（pid {}），没动任何文件。先关掉它再移除。",
-                    open.iter().map(u32::to_string).collect::<Vec<_>>().join("、")
+                    open.iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join("、")
                 )));
             }
         }

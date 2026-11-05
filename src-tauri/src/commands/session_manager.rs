@@ -52,7 +52,6 @@ pub async fn antigravity_conversations() -> Result<Vec<AntigravityConversation>>
     blocking(ag_conv::list).await
 }
 
-
 /// 读一个会话（分页），带恢复命令。
 #[tauri::command]
 pub async fn sessions_read(id: String, offset: u32, limit: u32) -> Result<SessionDetail> {

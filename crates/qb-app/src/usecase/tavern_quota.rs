@@ -618,7 +618,10 @@ fn gpt_spend(v: &Value) -> Option<GptSpend> {
         Value::String(s) => s.trim().parse::<f64>().ok(),
         _ => None,
     };
-    if let Some(l) = v.pointer("/spend_control/individual_limit").filter(|x| x.is_object()) {
+    if let Some(l) = v
+        .pointer("/spend_control/individual_limit")
+        .filter(|x| x.is_object())
+    {
         return Some(GptSpend {
             unlimited: l.get("unlimited").and_then(Value::as_bool) == Some(true),
             limit: num(l.get("limit")),
@@ -722,13 +725,14 @@ pub async fn gpt_quota(slot_id: Option<&str>, refresh: bool) -> Result<Option<Ta
             return Ok(Some(q));
         }
         // 面板重启后：先给落盘的「上次成功」，标上那一次的时刻；账户换了就作废。
-        return Ok(
-            super::quota_disk::get::<TavernGptQuota>(&format!("gpt:{id}"), ident.as_deref())
-                .map(|(mut q, at)| {
-                    q.last_success = Some(at);
-                    q
-                }),
-        );
+        return Ok(super::quota_disk::get::<TavernGptQuota>(
+            &format!("gpt:{id}"),
+            ident.as_deref(),
+        )
+        .map(|(mut q, at)| {
+            q.last_success = Some(at);
+            q
+        }));
     }
     let q = fetch_gpt(&id).await?;
     LAST_GPT.put(&id, q.clone());
@@ -824,7 +828,10 @@ async fn fetch_gpt(slot_id: &str) -> Result<TavernGptQuota> {
                 .iter()
                 .find_map(|k| v.get(*k).and_then(Value::as_str).map(str::to_owned))
         });
-        if theirs.as_deref().is_some_and(|t| !t.eq_ignore_ascii_case(mine)) {
+        if theirs
+            .as_deref()
+            .is_some_and(|t| !t.eq_ignore_ascii_case(mine))
+        {
             return Err(GateError::Other(format!(
                 "GPT 槽位「{label}」：额度接口回的是另一个账户的数据，没收下"
             )));
@@ -867,7 +874,9 @@ fn gpt_layer(status: StatusCode, code: Option<&str>) -> GptLayer {
         Some("token_expired") if status == StatusCode::UNAUTHORIZED => GptLayer::Expired,
         Some("refresh_token_reused") => GptLayer::Concurrent,
         Some(
-            "refresh_token_expired" | "refresh_token_invalidated" | "refresh_token_revoked"
+            "refresh_token_expired"
+            | "refresh_token_invalidated"
+            | "refresh_token_revoked"
             | "invalid_grant",
         ) => GptLayer::Relogin,
         Some("token_invalidated" | "token_revoked" | "invalid_token") => GptLayer::AccessRejected,
@@ -1320,9 +1329,17 @@ mod tests {
         assert_eq!(sp.limit, Some(50.0));
         assert!(!sp.unlimited);
         assert_eq!(q.reset_credits_available, Some(2));
-        let bare = parse_gpt(r#"{"rate_limit":{"primary_window":{"used_percent":1}}}"#, None).unwrap();
+        let bare = parse_gpt(
+            r#"{"rate_limit":{"primary_window":{"used_percent":1}}}"#,
+            None,
+        )
+        .unwrap();
         assert!(bare.extra_limits.is_none() && bare.spend.is_none());
-        let unl = parse_gpt(r#"{"rate_limit":{"primary_window":{"used_percent":1}},"credits":{"unlimited":true}}"#, None).unwrap();
+        let unl = parse_gpt(
+            r#"{"rate_limit":{"primary_window":{"used_percent":1}},"credits":{"unlimited":true}}"#,
+            None,
+        )
+        .unwrap();
         assert!(unl.spend.unwrap().unlimited);
     }
 
@@ -1330,13 +1347,28 @@ mod tests {
     fn gpt_401_403_land_on_the_right_layer() {
         let u = StatusCode::UNAUTHORIZED;
         let f = StatusCode::FORBIDDEN;
-        assert_eq!(super::gpt_layer(u, Some("token_expired")), super::GptLayer::Expired);
+        assert_eq!(
+            super::gpt_layer(u, Some("token_expired")),
+            super::GptLayer::Expired
+        );
         assert_eq!(super::gpt_layer(u, None), super::GptLayer::AccessRejected);
-        assert_eq!(super::gpt_layer(f, Some("token_invalidated")), super::GptLayer::AccessRejected);
-        assert_eq!(super::gpt_layer(f, Some("invalid_token")), super::GptLayer::AccessRejected);
+        assert_eq!(
+            super::gpt_layer(f, Some("token_invalidated")),
+            super::GptLayer::AccessRejected
+        );
+        assert_eq!(
+            super::gpt_layer(f, Some("invalid_token")),
+            super::GptLayer::AccessRejected
+        );
         assert_eq!(super::gpt_layer(f, None), super::GptLayer::Other);
-        assert_eq!(super::gpt_layer(u, Some("invalid_grant")), super::GptLayer::Relogin);
-        assert_eq!(super::gpt_layer(u, Some("refresh_token_reused")), super::GptLayer::Concurrent);
+        assert_eq!(
+            super::gpt_layer(u, Some("invalid_grant")),
+            super::GptLayer::Relogin
+        );
+        assert_eq!(
+            super::gpt_layer(u, Some("refresh_token_reused")),
+            super::GptLayer::Concurrent
+        );
     }
 
     use super::*;

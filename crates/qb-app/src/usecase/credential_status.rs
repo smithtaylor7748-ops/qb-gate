@@ -85,9 +85,8 @@ pub fn email_check(key: &str, email: Option<&str>) -> Option<String> {
     let mut g = FIRST_EMAIL.lock().ok()?;
     let m = g.get_or_insert_with(HashMap::new);
     let first = m.entry(key.to_string()).or_insert_with(|| email.clone());
-    (*first != email).then(|| {
-        format!("这个槽位原来登的是 {first}，现在登的是 {email} —— 确认是不是登错了账户")
-    })
+    (*first != email)
+        .then(|| format!("这个槽位原来登的是 {first}，现在登的是 {email} —— 确认是不是登错了账户"))
 }
 
 /// 使用者确认过、或者槽位删了：以现在的邮箱为准。
@@ -101,7 +100,12 @@ pub fn email_accept(key: &str) {
 
 // ------------------------------------------------------------------ 叠上 login_health
 
-fn overlay(key: &str, file: &Path, base: CredentialStatus, refresh_action: &str) -> CredentialStatus {
+fn overlay(
+    key: &str,
+    file: &Path,
+    base: CredentialStatus,
+    refresh_action: &str,
+) -> CredentialStatus {
     let Some((kind, reason)) = login_health::check_kind(key, file) else {
         return base;
     };
@@ -129,7 +133,11 @@ pub fn gpt_from_file(bytes: Option<&[u8]>, now_secs: i64) -> CredentialStatus {
         return status("unreadable", "auth.json 读不出来（不是 JSON）", None);
     };
     if v["auth_mode"].as_str() == Some("apikey") {
-        return status("logged_out", "API Key 模式，没有账户登录", Some("open_desktop"));
+        return status(
+            "logged_out",
+            "API Key 模式，没有账户登录",
+            Some("open_desktop"),
+        );
     }
     let access = v.pointer("/tokens/access_token").and_then(|t| t.as_str());
     let refresh = v.pointer("/tokens/refresh_token").and_then(|t| t.as_str());
@@ -137,7 +145,11 @@ pub fn gpt_from_file(bytes: Option<&[u8]>, now_secs: i64) -> CredentialStatus {
         access.filter(|t| !t.is_empty()),
         refresh.filter(|t| !t.is_empty()),
     ) else {
-        return status("logged_out", "auth.json 里没有完整的登录", Some("open_desktop"));
+        return status(
+            "logged_out",
+            "auth.json 里没有完整的登录",
+            Some("open_desktop"),
+        );
     };
     match qb_accounts::codex::access_token_expiry(access) {
         Some(exp) if exp <= now_secs + 60 => status(
@@ -169,9 +181,17 @@ pub fn gpt() -> Result<Vec<SlotCredential>> {
                 }
             };
             let key = login_health::codex_key(&s.id);
-            let mut st = overlay(&key, &auth, gpt_from_file(bytes.as_deref(), now), "official_refresh");
+            let mut st = overlay(
+                &key,
+                &auth,
+                gpt_from_file(bytes.as_deref(), now),
+                "official_refresh",
+            );
             st.email_mismatch = email_check(&key, s.email.as_deref());
-            SlotCredential { id: s.id, status: st }
+            SlotCredential {
+                id: s.id,
+                status: st,
+            }
         })
         .collect())
 }
@@ -219,7 +239,12 @@ pub fn claude() -> Vec<SlotCredential> {
             let cred = Path::new(&s.dir).join(".credentials.json");
             let bytes = std::fs::read(&cred).ok();
             let key = login_health::claude_key(&s.label);
-            let mut st = overlay(&key, &cred, claude_from_file(bytes.as_deref(), now), "switch_open");
+            let mut st = overlay(
+                &key,
+                &cred,
+                claude_from_file(bytes.as_deref(), now),
+                "switch_open",
+            );
             st.email_mismatch = email_check(&key, s.email.as_deref());
             SlotCredential {
                 id: s.label,
@@ -254,7 +279,10 @@ pub fn antigravity() -> Result<Vec<SlotCredential>> {
             };
             let mut st = st;
             st.email_mismatch = email_check(&key, a.email.as_deref());
-            SlotCredential { id: a.id, status: st }
+            SlotCredential {
+                id: a.id,
+                status: st,
+            }
         })
         .collect())
 }

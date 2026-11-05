@@ -81,17 +81,18 @@ export default function QuotaRefreshAll({
 
   return (
     <span className="inline-flex items-center gap-1">
+      {/* 只画图标：同 SessionsEntry，标题栏窄时放不下带字的按钮。 */}
       <Button
         size="sm"
         icon={<RefreshCw size={12} />}
+        aria-label="全部刷新"
+        title="全部刷新：按顺序向官方问一遍每个账户的额度"
         loading={busy}
         onClick={() => void go(false)}
-      >
-        全部刷新
-      </Button>
+      />
       {autoKey && (
         <select
-          className="input input--sm"
+          className="input input--sm qb-wide-only"
           aria-label="自动刷新额度"
           title="自动刷新额度（只在窗口可见时；跳过停用和无权限的）"
           value={minutes}

@@ -28,7 +28,8 @@ use std::time::SystemTime;
 type Stamp = Option<(SystemTime, u64)>;
 
 /// `(凭据版本, 分层, 原因)`。分层见 [`super::credential_status`]（relogin / access_rejected / disabled …）。
-static REJECTED: Mutex<Option<HashMap<String, (Stamp, String, String)>>> = Mutex::new(None);
+type RejectedMap = HashMap<String, (Stamp, String, String)>;
+static REJECTED: Mutex<Option<RejectedMap>> = Mutex::new(None);
 /// 「要网页验证」那一层附带的链接（只收 https 的 google.com 地址）。键同上。
 static LINKS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
@@ -49,7 +50,11 @@ pub fn link(key: &str) -> Option<String> {
 /// 联网刷新前记一份、写回结果前再比一次：变了（官方客户端换新 / 重新登录了）就丢掉这次结果。
 pub fn fingerprint(file: &Path) -> Option<(i64, u64)> {
     let m = std::fs::metadata(file).ok()?;
-    let t = m.modified().ok()?.duration_since(SystemTime::UNIX_EPOCH).ok()?;
+    let t = m
+        .modified()
+        .ok()?
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()?;
     Some((t.as_millis() as i64, m.len()))
 }
 
@@ -118,8 +123,10 @@ pub fn forget(key: &str) {
 
 fn record_stamp(key: &str, stamp: Stamp, kind: &str, reason: &str) {
     if let Ok(mut g) = REJECTED.lock() {
-        g.get_or_insert_with(HashMap::new)
-            .insert(key.to_string(), (stamp, kind.to_string(), reason.to_string()));
+        g.get_or_insert_with(HashMap::new).insert(
+            key.to_string(),
+            (stamp, kind.to_string(), reason.to_string()),
+        );
     }
 }
 

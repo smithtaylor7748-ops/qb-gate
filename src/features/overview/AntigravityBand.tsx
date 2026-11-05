@@ -789,7 +789,7 @@ export default function AntigravityBand() {
             </>
           }
           actions={
-            <div className="flex gap-1.5">
+            <div className="flex flex-wrap justify-end gap-1.5">
               <SessionsEntry kind="antigravity" />
               <QuotaRefreshAll
                 run={refreshAllAg}
@@ -807,12 +807,13 @@ export default function AntigravityBand() {
               <Button
                 size="sm"
                 icon={<Plus size={12} />}
+                aria-label="新建"
                 onClick={() => {
                   setError("");
                   setAdding(true);
                 }}
               >
-                新建
+                <span className="qb-wide-only">新建</span>
               </Button>
             </div>
           }

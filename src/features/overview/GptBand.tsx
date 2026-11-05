@@ -576,36 +576,39 @@ export default function GptBand() {
             </>
           }
           actions={
-            <div className="flex gap-1.5">
+            <div className="flex flex-wrap justify-end gap-1.5">
               <SessionsEntry kind="codex" current={active?.id} />
               <QuotaRefreshAll
                 run={refreshAllGpt}
                 autoKey="gpt_quota_auto_minutes"
               />
-              <Button
-                size="sm"
-                variant={showCodeReview ? "primary" : "ghost"}
-                title="额度条里多画「代码审查」那一类限额"
-                aria-pressed={showCodeReview}
-                onClick={() => {
-                  setPref("gpt.cr", !showCodeReview);
-                  setShowCodeReview(!showCodeReview);
-                }}
-              >
-                审查
-              </Button>
-              <Button
-                size="sm"
-                variant={showModel ? "primary" : "ghost"}
-                title="额度条里多画「模型专属」那一类限额（含 Spark）"
-                aria-pressed={showModel}
-                onClick={() => {
-                  setPref("gpt.model", !showModel);
-                  setShowModel(!showModel);
-                }}
-              >
-                模型
-              </Button>
+              {/* 两个显示偏好：窗口窄时收起（固定高度的账户页，标题栏换行会把槽位列表挤裁）。 */}
+              <span className="qb-wide-only gap-1.5">
+                <Button
+                  size="sm"
+                  variant={showCodeReview ? "primary" : "ghost"}
+                  title="额度条里多画「代码审查」那一类限额"
+                  aria-pressed={showCodeReview}
+                  onClick={() => {
+                    setPref("gpt.cr", !showCodeReview);
+                    setShowCodeReview(!showCodeReview);
+                  }}
+                >
+                  审查
+                </Button>
+                <Button
+                  size="sm"
+                  variant={showModel ? "primary" : "ghost"}
+                  title="额度条里多画「模型专属」那一类限额（含 Spark）"
+                  aria-pressed={showModel}
+                  onClick={() => {
+                    setPref("gpt.model", !showModel);
+                    setShowModel(!showModel);
+                  }}
+                >
+                  模型
+                </Button>
+              </span>
               <Button
                 size="sm"
                 icon={<RefreshCw size={12} />}
@@ -618,12 +621,13 @@ export default function GptBand() {
               <Button
                 size="sm"
                 icon={<Plus size={12} />}
+                aria-label="新建"
                 onClick={() => {
                   setError("");
                   setAdding(true);
                 }}
               >
-                新建
+                <span className="qb-wide-only">新建</span>
               </Button>
             </div>
           }

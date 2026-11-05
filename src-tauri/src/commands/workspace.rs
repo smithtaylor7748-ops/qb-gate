@@ -47,7 +47,8 @@ pub async fn session_launch(
     let session = task.finish(result)?;
     // Claude 行上的「重新登录」走的就是这里：起来了就把上一次问出来的「令牌被拒 / 失效」那一笔清掉
     // （原来只有 `launch_claude` 清）。
-    if kind == IdentityKind::Official && matches!(client, Client::ClaudeCode | Client::ClaudeDesktop)
+    if kind == IdentityKind::Official
+        && matches!(client, Client::ClaudeCode | Client::ClaudeDesktop)
     {
         qb_app::usecase::login_health::forget(&qb_app::usecase::login_health::claude_key(&id));
     }

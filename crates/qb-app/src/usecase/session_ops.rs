@@ -681,7 +681,11 @@ fn default_dir_for_slot(place: &Place, label: &str) -> Vec<SessionSummary> {
                 .session
                 .as_deref()
                 .and_then(|id| index.owner_of_session(id).map(str::to_string))
-                .or_else(|| f.project.as_deref().and_then(tokens::owner_from_project_name))
+                .or_else(|| {
+                    f.project
+                        .as_deref()
+                        .and_then(tokens::owner_from_project_name)
+                })
                 .or(head.legacy_owner);
             match owner {
                 None => {
@@ -1529,7 +1533,9 @@ mod tests {
     fn subagent_transcripts_are_listed_as_their_own_kind_with_token_totals() {
         let (root, p) = place();
         let main = claude_sample(&root);
-        let sub = main.with_file_name("0b1c-uuid").join("subagents/agent-1.jsonl");
+        let sub = main
+            .with_file_name("0b1c-uuid")
+            .join("subagents/agent-1.jsonl");
         write(
             &sub,
             &[
@@ -1570,7 +1576,9 @@ mod tests {
             let path = root.join(format!("slot-a/projects/x/s{i}.jsonl"));
             write(
                 &path,
-                &[serde_json::json!({"type": "user", "message": {"role": "user", "content": format!("第 {i} 个 NEEDLE")}})],
+                &[
+                    serde_json::json!({"type": "user", "message": {"role": "user", "content": format!("第 {i} 个 NEEDLE")}}),
+                ],
             );
         }
         let lim = Limits {
@@ -1588,7 +1596,10 @@ mod tests {
         let second = list_with(&p, &query, lim);
         assert_eq!(second.total, 3, "读过的走缓存，不占上限");
         assert!(!second.search_truncated);
-        let tiny = Limits { files: 10, bytes: 1 };
+        let tiny = Limits {
+            files: 10,
+            bytes: 1,
+        };
         let none = list_with(
             &p,
             &SessionQuery {
@@ -1659,4 +1670,3 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
-

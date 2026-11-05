@@ -566,7 +566,9 @@ pub fn restore(root: &Path, key: &str) -> Result<()> {
             return Err(GateError::Other("这条归档不存在".into()));
         };
         let e = index.pending_archive.remove(pos);
-        index.retired.retain(|d| Some(d) != e.ide_dir.as_ref() && Some(d) != e.cli_dir.as_ref());
+        index
+            .retired
+            .retain(|d| Some(d) != e.ide_dir.as_ref() && Some(d) != e.cli_dir.as_ref());
         index.slots.push(e);
         return save(root, &index);
     }
@@ -589,7 +591,9 @@ pub fn restore(root: &Path, key: &str) -> Result<()> {
         moved = Some(src);
     }
     let e = a.entry;
-    index.retired.retain(|d| Some(d) != e.ide_dir.as_ref() && Some(d) != e.cli_dir.as_ref());
+    index
+        .retired
+        .retain(|d| Some(d) != e.ide_dir.as_ref() && Some(d) != e.cli_dir.as_ref());
     index.slots.push(e);
     if let Err(err) = save(root, &index) {
         if let Some(src) = moved {

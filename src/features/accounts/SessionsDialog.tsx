@@ -171,14 +171,15 @@ export function SessionsEntry({
   const [open, setOpen] = useState(false);
   return (
     <>
+      {/* 只画图标：账户页标题栏 680px 宽时放不下第二个带字的按钮（固定高度的页面会被挤裁）。 */}
       <Button
         size="sm"
         icon={<MessagesSquare size={12} />}
+        aria-label="会话"
+        title="会话"
         data-testid={`sessions-entry-${kind}`}
         onClick={() => setOpen(true)}
-      >
-        会话
-      </Button>
+      />
       {open && (
         <SessionsDialog
           kind={kind}

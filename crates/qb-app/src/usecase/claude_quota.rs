@@ -149,7 +149,11 @@ pub fn parse(body: &Value, label: &str) -> Result<ClaudeQuota> {
         }
         // Sonnet 周额度的别名（`_4` / `_model`）：正名没有时才认。
         if !windows.iter().any(|w| w.key == "seven_day_sonnet") {
-            for alias in ["seven_day_sonnet_4", "seven_day_sonnet_model", "seven_day_model"] {
+            for alias in [
+                "seven_day_sonnet_4",
+                "seven_day_sonnet_model",
+                "seven_day_model",
+            ] {
                 if let Some(w) = obj
                     .get(alias)
                     .and_then(|v| legacy_window("seven_day_sonnet", v))
@@ -301,13 +305,14 @@ pub async fn quota(label: &str, refresh: bool) -> Result<Option<ClaudeQuota>> {
         if let Some(q) = LAST.get(label) {
             return Ok(Some(q));
         }
-        return Ok(
-            super::quota_disk::get::<ClaudeQuota>(&format!("claude:{label}"), ident.as_deref())
-                .map(|(mut q, at)| {
-                    q.last_success = Some(at);
-                    q
-                }),
-        );
+        return Ok(super::quota_disk::get::<ClaudeQuota>(
+            &format!("claude:{label}"),
+            ident.as_deref(),
+        )
+        .map(|(mut q, at)| {
+            q.last_success = Some(at);
+            q
+        }));
     }
     let q = fetch_at(&dir, label, &client()?, USAGE_URL).await?;
     LAST.put(label, q.clone());
@@ -676,7 +681,10 @@ mod tests {
         slots[0].logged_in = true;
         slots[0].login_problem = None;
         overlay_slots(&mut slots);
-        assert!(slots[0].logged_in && slots[0].login_problem.is_none(), "凭据文件变了就不该再说令牌被拒");
+        assert!(
+            slots[0].logged_in && slots[0].login_problem.is_none(),
+            "凭据文件变了就不该再说令牌被拒"
+        );
         forget(&label);
         std::fs::remove_dir_all(d).unwrap();
     }

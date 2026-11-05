@@ -34,7 +34,8 @@ pub struct AntigravityConversation {
 }
 
 /// 标题按（路径、修改时刻）记着：几百个库，每次开弹窗都打开一遍不划算。
-static TITLES: Mutex<Option<HashMap<PathBuf, (SystemTime, Option<String>)>>> = Mutex::new(None);
+type TitleCache = HashMap<PathBuf, (SystemTime, Option<String>)>;
+static TITLES: Mutex<Option<TitleCache>> = Mutex::new(None);
 
 fn read_title(db: &Path) -> Option<String> {
     let conn = Connection::open_with_flags(
@@ -173,8 +174,10 @@ mod tests {
             )
             .unwrap();
             if let Some(p) = payload {
-                c.execute("INSERT INTO steps VALUES (0, 15, x'00')", []).unwrap();
-                c.execute("INSERT INTO steps VALUES (1, 14, ?1)", [p]).unwrap();
+                c.execute("INSERT INTO steps VALUES (0, 15, x'00')", [])
+                    .unwrap();
+                c.execute("INSERT INTO steps VALUES (1, 14, ?1)", [p])
+                    .unwrap();
             }
         };
         let hi = field(19, &field(2, "  帮我\n看看日志 ".as_bytes()));

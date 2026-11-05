@@ -123,17 +123,26 @@ mod tests {
 
     #[test]
     fn last_success_survives_and_identity_change_voids_it() {
-        let dir = std::env::temp_dir().join(format!("qb-quota-disk-{}", qb_platform::config_io::id()));
+        let dir =
+            std::env::temp_dir().join(format!("qb-quota-disk-{}", qb_platform::config_io::id()));
         std::fs::create_dir_all(&dir).unwrap();
         set_root_for_test(&dir);
-        put("gpt:a", Some("Acct-1"), Some((1, 2)), &serde_json::json!({"used": 3}));
+        put(
+            "gpt:a",
+            Some("Acct-1"),
+            Some((1, 2)),
+            &serde_json::json!({"used": 3}),
+        );
         let (v, at) = get::<Value>("gpt:a", Some("acct-1")).unwrap();
         assert_eq!(v["used"], 3);
         assert!(!at.is_empty());
         let text = std::fs::read_to_string(dir.join("quota-last.json")).unwrap();
         assert!(!text.contains("token"));
         assert!(get::<Value>("gpt:a", Some("acct-2")).is_none());
-        assert!(get::<Value>("gpt:a", Some("acct-1")).is_none(), "作废之后就没了");
+        assert!(
+            get::<Value>("gpt:a", Some("acct-1")).is_none(),
+            "作废之后就没了"
+        );
         put("gpt:b", None, None, &1);
         forget("gpt:b");
         assert!(get::<Value>("gpt:b", None).is_none());

@@ -44,7 +44,7 @@ const ACTION_LABEL: Record<string, string> = {
 
 /**
  * 账户行上的常驻凭证徽标：悬停是原因，旁边最多一个动作按钮。
- * 「正常」只画徽标、不画按钮；邮箱对不上时多一个「是我」确认。
+ * 「正常」什么都不画（行上本来就挤，跟 Cockpit 一样只在有事时标）；邮箱对不上时多一个「是我」确认。
  */
 export default function CredentialBadge({
   status,
@@ -58,7 +58,7 @@ export default function CredentialBadge({
   onAction?: (action: string) => void;
   onEmailAccept?: () => void;
 }) {
-  if (!status) return null;
+  if (!status || (status.kind === "ok" && !status.email_mismatch)) return null;
   const action = status.action;
   return (
     <span className="inline-flex items-center gap-1">
@@ -74,6 +74,7 @@ export default function CredentialBadge({
         <Button
           size="sm"
           variant="ghost"
+          className="credential-inline-btn"
           title={status.email_mismatch}
           onClick={onEmailAccept}
         >
@@ -85,6 +86,7 @@ export default function CredentialBadge({
         (action === "web_verify" ? status.url : onAction) && (
           <Button
             size="sm"
+            className="credential-inline-btn"
             loading={busy}
             disabled={busy}
             title={status.reason}

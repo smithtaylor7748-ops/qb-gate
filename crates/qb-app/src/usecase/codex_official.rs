@@ -39,8 +39,7 @@ fn slot_in_use(slot_dir: &Path) -> Option<String> {
     };
     let want = norm(&slot_dir.join("desktop").display().to_string());
     if let Ok(d) = qb_install::install::codex_desktop::detect() {
-        if d
-            .processes
+        if d.processes
             .iter()
             .any(|p| p.profile.as_deref().is_some_and(|x| norm(x) == want))
         {
@@ -49,7 +48,8 @@ fn slot_in_use(slot_dir: &Path) -> Option<String> {
     }
     if crate::gpt_bridge::running() {
         if let Ok(Some((_, home, _))) = qb_accounts::codex::active(&qb_accounts::codex::root()) {
-            if norm(&home.display().to_string()) == norm(&slot_dir.join("home").display().to_string())
+            if norm(&home.display().to_string())
+                == norm(&slot_dir.join("home").display().to_string())
             {
                 return Some("酒馆的 GPT 桥接正用着这个槽位".into());
             }
@@ -82,7 +82,8 @@ pub async fn refresh(slot_id: &str) -> Result<OfficialRefreshOutcome> {
         .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
     {
         return Err(GateError::Other(
-            "只找到 codex.cmd，没找到原生的 codex.exe —— 到「软件」页装托管的 Codex CLI 再试。".into(),
+            "只找到 codex.cmd，没找到原生的 codex.exe —— 到「软件」页装托管的 Codex CLI 再试。"
+                .into(),
         ));
     }
     let before = login_health::fingerprint(&auth);
@@ -170,8 +171,7 @@ async fn talk(child: &mut tokio::process::Child) -> Result<Option<Value>> {
         .await?;
     stdin
         .write_all(
-            send(json!({"method":"account/read","id":2,"params":{"refreshToken":true}}))
-                .as_bytes(),
+            send(json!({"method":"account/read","id":2,"params":{"refreshToken":true}})).as_bytes(),
         )
         .await?;
     let account = wait_for(&mut lines, 2).await?;
