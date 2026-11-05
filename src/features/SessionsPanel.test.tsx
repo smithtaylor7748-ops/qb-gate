@@ -29,6 +29,11 @@ const summary = {
   updated_at: "2026-10-20T02:00:00Z",
   size: 2048,
   path: "C:/Users/demo/env/projects/x/s1.jsonl",
+  kind: "chat",
+  project: "demo",
+  tokens: { input: 1200, output: 300, total: 1500 },
+  running: false,
+  unowned: false,
 };
 const list = {
   items: [summary],
@@ -156,19 +161,55 @@ it("only deletes after confirming, and searches after typing stops", async () =>
       id: summary.id,
     }),
   );
-  fireEvent.change(screen.getByLabelText("搜会话"), {
+  fireEvent.change(screen.getByLabelText("搜标题"), {
     target: { value: "深色" },
   });
   await waitFor(
     () =>
       expect(mock.call).toHaveBeenCalledWith("sessions_list", {
         text: "深色",
+        content: "",
+        kind: "chat",
         source: null,
-        deep: false,
         offset: 0,
         limit: 50,
       }),
     { timeout: 2000 },
+  );
+});
+
+it("locks to one source, filters by kind, searches content and shows tokens", async () => {
+  render(
+    <ToastProvider>
+      <SessionsPanel lockedSource="claude-code:slot:a" />
+    </ToastProvider>,
+  );
+  expect(
+    await screen.findByText("1.2K 入 · 300 出 · 1.5K 合计", { exact: false }),
+  ).toBeTruthy();
+  expect(screen.queryByRole("group", { name: "哪一处的会话" })).toBeNull();
+  expect(screen.getByText("demo")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "子代理" }));
+  fireEvent.change(screen.getByLabelText("搜内容"), {
+    target: { value: "login.css" },
+  });
+  await waitFor(
+    () =>
+      expect(mock.call).toHaveBeenCalledWith("sessions_list", {
+        text: "",
+        content: "login.css",
+        kind: "subagent",
+        source: "claude-code:slot:a",
+        offset: 0,
+        limit: 50,
+      }),
+    { timeout: 2000 },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "打开所在位置" }));
+  await waitFor(() =>
+    expect(mock.call).toHaveBeenCalledWith("sessions_reveal", {
+      id: summary.id,
+    }),
   );
 });
 

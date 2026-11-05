@@ -13,6 +13,7 @@ import {
   Users,
   Wine,
 } from "lucide-react";
+import { SessionsEntry } from "../accounts/SessionsDialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import BridgeModal, {
   BridgeCorner,
@@ -196,6 +197,10 @@ export default function AccountBand() {
                 账户槽位
               </h2>
               <span className="ml-auto flex flex-shrink-0 gap-1.5">
+                <SessionsEntry
+                  kind="claude"
+                  current={slots.find((s) => s.active)?.label}
+                />
                 <Button
                   size="sm"
                   icon={<RefreshCw size={12} />}

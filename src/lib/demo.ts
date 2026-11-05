@@ -3024,6 +3024,11 @@ const demoSessions: SessionSummary[] = [
     started_at: new Date(Date.now() - 3 * 3_600_000).toISOString(),
     updated_at: new Date(Date.now() - 40 * 60_000).toISOString(),
     size: 482_311,
+    kind: "chat",
+    project: "shop",
+    tokens: { input: 1_284_000, output: 38_200, total: 1_322_200 },
+    running: false,
+    unowned: false,
     path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\environments\\qb-router-claude-code\\projects\\D--work-shop\\1f0c9a2e.jsonl`,
   },
   {
@@ -3038,6 +3043,11 @@ const demoSessions: SessionSummary[] = [
     started_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
     updated_at: new Date(Date.now() - 2 * 86_400_000 + 1_800_000).toISOString(),
     size: 96_402,
+    kind: "chat",
+    project: "notes",
+    tokens: { input: 214_500, output: 9_100, total: 223_600 },
+    running: false,
+    unowned: false,
     path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\claude-profile-demo-main\\projects\\D--notes\\7a1b2c3d.jsonl`,
   },
   {
@@ -3052,6 +3062,11 @@ const demoSessions: SessionSummary[] = [
     started_at: new Date(Date.now() - 2.5 * 86_400_000).toISOString(),
     updated_at: new Date(Date.now() - 2.4 * 86_400_000).toISOString(),
     size: 210_877,
+    kind: "chat",
+    project: "api",
+    tokens: null,
+    running: false,
+    unowned: false,
     path: `${HOME}\\.codex\\sessions\\2026\\10\\24\\rollout-2026-10-24T09-12-00-abc.jsonl`,
   },
 ];
@@ -3063,9 +3078,11 @@ function demoSessionList(args: Record<string, unknown> | undefined) {
     .trim()
     .toLowerCase();
   const source = (args?.source as string | null | undefined) ?? null;
+  const kind = (args?.kind as string | null | undefined) ?? null;
   const items = demoSessions.filter(
     (x) =>
       (!source || x.source === source) &&
+      (!kind || x.kind === kind) &&
       (!text ||
         `${x.title} ${x.cwd ?? ""} ${x.session_id}`
           .toLowerCase()
@@ -4267,6 +4284,25 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   sessions_list: (args) => demoSessionList(args),
   sessions_read: (args) => demoSessionRead(String(args?.id)),
   sessions_export: () => null,
+  sessions_reveal: () => null,
+  antigravity_conversations: () => [
+    {
+      id: "5d0c1f7e-0000-4000-8000-000000000001",
+      dir: "antigravity",
+      title: "把落地页的首屏改成深色",
+      updated_at: new Date(Date.now() - 5 * 3_600_000).toISOString(),
+      size: 1_204_224,
+      legacy: false,
+    },
+    {
+      id: "0f2ab895-0000-4000-8000-000000000002",
+      dir: "antigravity",
+      title: null,
+      updated_at: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+      size: 88_064,
+      legacy: true,
+    },
+  ],
   sessions_delete: (args) => {
     const at = demoSessions.findIndex((x) => x.id === args?.id);
     if (at < 0) throw new Error("这个会话 id 不对（可能已经删了或挪走了）");

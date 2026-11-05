@@ -17,7 +17,9 @@ import {
   type SessionMessage,
   type TrashEntry,
 } from "../lib/sessions";
-import { Button, ConfirmDialog, Modal, useToast } from "../ui";
+import type { SessionSourceCount } from "../lib/generated/SessionSourceCount";
+import { Button, ConfirmDialog, Modal, Pill, useToast } from "../ui";
+import { ago, compact, groupSessions, shortId } from "./accounts/sessionGroups";
 
 const PAGE = 50;
 const MSG_PAGE = 200;
@@ -252,12 +254,29 @@ function Reader({
   );
 }
 
-export default function SessionsPanel() {
+const KINDS: [string | null, string][] = [
+  ["chat", "对话"],
+  ["subagent", "子代理"],
+  [null, "全部"],
+];
+
+export default function SessionsPanel({
+  lockedSource,
+  onSources,
+}: {
+  /** 给了就只看这一处，不显示来源筛选（账户页的会话弹窗用）。 */
+  lockedSource?: string;
+  /** 每次读完列表把各处的数量报给外面（弹窗拿它做槽位选择）。 */
+  onSources?: (sources: SessionSourceCount[]) => void;
+} = {}) {
   const toast = useToast();
   const [text, setText] = useState("");
   const [query, setQuery] = useState("");
-  const [deep, setDeep] = useState(false);
-  const [source, setSource] = useState<string | null>(null);
+  const [contentText, setContentText] = useState("");
+  const [content, setContent] = useState("");
+  const [kind, setKind] = useState<string | null>("chat");
+  const [picked, setSource] = useState<string | null>(null);
+  const source = lockedSource ?? picked;
   const [page, setPage] = useState(0);
   const [list, setList] = useState<SessionList | null>(null);
   const [busy, setBusy] = useState(false);
@@ -271,27 +290,32 @@ export default function SessionsPanel() {
     const t = window.setTimeout(() => setQuery(text), 300);
     return () => window.clearTimeout(t);
   }, [text]);
-  useEffect(() => setPage(0), [query, deep, source]);
+  useEffect(() => {
+    const t = window.setTimeout(() => setContent(contentText), 500);
+    return () => window.clearTimeout(t);
+  }, [contentText]);
+  useEffect(() => setPage(0), [query, content, kind, source]);
 
   const load = useCallback(async () => {
     setBusy(true);
     setError("");
     try {
-      setList(
-        await sessionsApi.list({
-          text: query,
-          source,
-          deep: deep && query.trim() !== "",
-          offset: page * PAGE,
-          limit: PAGE,
-        }),
-      );
+      const got = await sessionsApi.list({
+        text: query,
+        content,
+        kind,
+        source,
+        offset: page * PAGE,
+        limit: PAGE,
+      });
+      setList(got);
+      onSources?.(got.sources);
     } catch (e) {
       setError(errText(e));
     } finally {
       setBusy(false);
     }
-  }, [query, source, deep, page]);
+  }, [query, content, kind, source, page, onSources]);
   const loadTrash = useCallback(async () => {
     try {
       setTrash(await sessionsApi.trash());
@@ -306,6 +330,22 @@ export default function SessionsPanel() {
   useEffect(() => {
     void loadTrash();
   }, [loadTrash]);
+
+  const copyId = async (id: string) => {
+    try {
+      await navigator.clipboard.writeText(id);
+      toast.ok("会话 id 已复制");
+    } catch (e) {
+      toast.error(`复制没成：${errText(e)}`);
+    }
+  };
+  const reveal = async (id: string) => {
+    try {
+      await sessionsApi.reveal(id);
+    } catch (e) {
+      toast.error(errText(e));
+    }
+  };
 
   const restore = async (id: string) => {
     try {
@@ -332,83 +372,149 @@ export default function SessionsPanel() {
   const codex = list?.sources.filter((x) => x.client === "codex") ?? [];
   return (
     <section className="qb-mcp" data-testid="sessions-panel">
-      <p className="qb-muted">
-        Claude Code 和 Codex
-        留在本机的会话记录（中转环境、官方默认目录、每个官方槽位）。只读本机文件；
-        删除先挪进面板的回收站。Gemini CLI、OpenCode 等的会话这里还看不到。
-      </p>
+      {lockedSource === undefined && (
+        <p className="qb-muted">
+          Claude Code 和 Codex
+          留在本机的会话记录（中转环境、官方默认目录、每个官方槽位）。只读本机文件；
+          删除先挪进面板的回收站。Gemini CLI、OpenCode 等的会话这里还看不到。
+        </p>
+      )}
       <div className="qb-catalog-toolbar">
         <label className="qb-search-box">
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="搜标题、项目目录、会话 id"
-            aria-label="搜会话"
+            placeholder="标题关键词（也搜项目目录、会话 id）"
+            aria-label="搜标题"
           />
         </label>
-        <label className="qb-check-row">
+        <label className="qb-search-box">
           <input
-            type="checkbox"
-            checked={deep}
-            onChange={(e) => setDeep(e.target.checked)}
+            value={contentText}
+            onChange={(e) => setContentText(e.target.value)}
+            placeholder="内容关键词（读文件，有上限）"
+            aria-label="搜内容"
           />
-          连内容一起搜（慢）
         </label>
         <Button size="sm" loading={busy} onClick={() => void load()}>
           刷新
         </Button>
       </div>
-      <div className="qb-filter-pills" role="group" aria-label="哪一处的会话">
-        <button aria-pressed={source == null} onClick={() => setSource(null)}>
-          全部
-        </button>
-        {[...claude, ...codex].map((x) => (
+      <div className="qb-filter-pills" role="group" aria-label="会话类型">
+        {KINDS.map(([k, label]) => (
           <button
-            key={x.id}
-            aria-pressed={source === x.id}
-            onClick={() => setSource(x.id)}
+            key={label}
+            aria-pressed={kind === k}
+            onClick={() => setKind(k)}
           >
-            {x.label} · {x.count}
+            {label}
           </button>
         ))}
       </div>
+      {lockedSource === undefined && (
+        <div className="qb-filter-pills" role="group" aria-label="哪一处的会话">
+          <button aria-pressed={source == null} onClick={() => setSource(null)}>
+            全部
+          </button>
+          {[...claude, ...codex].map((x) => (
+            <button
+              key={x.id}
+              aria-pressed={source === x.id}
+              onClick={() => setSource(x.id)}
+            >
+              {x.label} · {x.count}
+            </button>
+          ))}
+        </div>
+      )}
       {error && <p className="notice notice--danger">{error}</p>}
       {list?.search_truncated && (
         <p className="notice">
-          内容搜索读到上限停了，后面的会话没搜内容（标题和目录照样搜了）。
+          内容搜索读到上限停了（一次最多现读 2000 个文件、512
+          MB），没读到的会话当没搜到；再搜一次会接着读。
         </p>
       )}
       {!list ? (
         !error && <p className="qb-muted">正在读会话记录…</p>
       ) : list.items.length === 0 ? (
         <p className="qb-muted">
-          {query ? "没有符合的会话。" : "这里还没有会话记录。"}
+          {query || content ? "没有符合的会话。" : "这里还没有会话记录。"}
         </p>
       ) : (
         <>
-          <div className="qb-mcp-list">
-            {list.items.map((s) => (
-              <div key={s.id} className="qb-mcp-row qb-session-row">
-                <div className="qb-mcp-head">
-                  <button
-                    type="button"
-                    className="qb-session-open"
-                    title={s.title}
-                    onClick={() => setReading(s.id)}
-                  >
-                    {s.title}
-                  </button>
-                  <span className="qb-muted qb-session-when">
-                    {clock(s.updated_at)}
+          {groupSessions(list.items).map((g) => (
+            <details key={g.key} className="qb-session-group" open>
+              <summary>
+                <b title={g.items[0]?.cwd ?? undefined}>{g.label}</b>{" "}
+                <span className="qb-muted">{g.items.length} 个</span>
+                {g.unowned && (
+                  <span className="qb-muted">
+                    {" "}
+                    · 官方默认目录里找不到归属依据，不算给任何账户
                   </span>
-                </div>
-                <span className="qb-muted qb-mcp-summary">
-                  {s.source_label} · {s.cwd ?? "项目目录读不出来"} ·{" "}
-                  {bytes(s.size)}
-                </span>
+                )}
+              </summary>
+              <div className="qb-mcp-list">
+                {g.items.map((s) => (
+                  <div key={s.id} className="qb-mcp-row qb-session-row">
+                    <div className="qb-mcp-head">
+                      <button
+                        type="button"
+                        className="qb-session-open"
+                        title={s.title}
+                        onClick={() => setReading(s.id)}
+                      >
+                        {s.title}
+                      </button>
+                      {s.running && (
+                        <Pill tone="ok" title="两分钟内还在写，多半正开着">
+                          运行中
+                        </Pill>
+                      )}
+                      <span
+                        className="qb-muted qb-session-when"
+                        title={clock(s.updated_at)}
+                      >
+                        {ago(s.updated_at)}
+                      </span>
+                    </div>
+                    <span className="qb-muted qb-mcp-summary qb-session-meta">
+                      {s.kind === "subagent" && <span>子代理</span>}
+                      {s.session_id && (
+                        <button
+                          type="button"
+                          className="qb-session-id"
+                          title={`复制会话 id：${s.session_id}`}
+                          onClick={() => void copyId(s.session_id)}
+                        >
+                          <code>{shortId(s.session_id)}</code>
+                        </button>
+                      )}
+                      {s.tokens && (
+                        <span title="输入含缓存读写 / 输出 / 合计">
+                          {compact(s.tokens.input)} 入 ·{" "}
+                          {compact(s.tokens.output)} 出 ·{" "}
+                          {compact(s.tokens.total)} 合计
+                        </span>
+                      )}
+                      {lockedSource === undefined && (
+                        <span>{s.source_label}</span>
+                      )}
+                      <span>{bytes(s.size)}</span>
+                      <button
+                        type="button"
+                        className="qb-session-id"
+                        onClick={() => void reveal(s.id)}
+                      >
+                        打开所在位置
+                      </button>
+                    </span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </details>
+          ))}
+
           <div className="qb-usage-pager">
             <span className="notice">共 {list.total} 个</span>
             <Button
