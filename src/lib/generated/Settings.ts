@@ -173,4 +173,11 @@ lightweight_on_close: boolean,
  * 配好第三方网关的桌面端、终端里的中转环境不用先去点一次「启动」；代价是面板开着就一直占着 15721
  * （cc-switch 的本机代理默认也用这个端口，两个同时开会撞）。
  */
-start_router_on_launch: boolean, };
+start_router_on_launch: boolean, 
+/**
+ * 按软件的安装目录（2026-11-05）：键是软件的目录名（`claude-code`、`codex`、`sillytavern`、`gemini-cli`），
+ * 值是那个软件自己的目录。没写的软件仍在 `<managed_apps_dir>\<键>`。旧配置文件没有这个键 = 空表。
+ *
+ * 只经软件迁移命令改：`settings_save` 原样保留旧值（同 `managed_apps_dir`）。
+ */
+app_dirs: { [key in string]?: string }, };

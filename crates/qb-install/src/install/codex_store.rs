@@ -670,9 +670,7 @@ pub struct Outcome {
 
 /// `.msix` 落在托管目录下自己的子目录里，跟 Claude Code / Codex CLI 的 `.download` 一个形状。
 pub fn download_dir() -> PathBuf {
-    super::managed::root()
-        .join("codex-desktop")
-        .join(".download")
+    super::managed::slot_dir("codex-desktop").join(".download")
 }
 
 #[cfg(windows)]

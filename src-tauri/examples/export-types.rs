@@ -158,6 +158,11 @@ fn main() {
         qb_gate_lib::update::UpdateStatus::export_all_to(&root)?;
         qb_gate_lib::commands::accounts::SwitchReport::export_all_to(&root)?;
         qb_gate_lib::commands::install::MigrateReport::export_all_to(&root)?;
+        // 按软件迁移目录（2026-11-05）。
+        qb_gate_lib::commands::install::RelocateWhere::export_all_to(&root)?;
+        qb_gate_lib::commands::install::RelocateReport::export_all_to(&root)?;
+        qb_gate_lib::commands::install::CodexDesktopWhere::export_all_to(&root)?;
+        qb_install::install::relocate::DesktopPlace::export_all_to(&root)?;
         qb_gate_lib::plugins::sillytavern::TavernConfig::export_all_to(&root)?;
         qb_gate_lib::plugins::sillytavern::TavernBackend::export_all_to(&root)?;
         qb_app::gpt_bridge::GptBridgeStatus::export_all_to(&root)?;

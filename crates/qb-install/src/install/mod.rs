@@ -7,6 +7,7 @@ pub mod detect;
 pub mod inventory;
 pub mod managed;
 pub mod purge;
+pub mod relocate;
 pub mod self_update;
 pub mod upgrade;
 pub mod versions;

@@ -182,6 +182,12 @@ pub struct Settings {
     /// 配好第三方网关的桌面端、终端里的中转环境不用先去点一次「启动」；代价是面板开着就一直占着 15721
     /// （cc-switch 的本机代理默认也用这个端口，两个同时开会撞）。
     pub start_router_on_launch: bool,
+
+    /// 按软件的安装目录（2026-11-05）：键是软件的目录名（`claude-code`、`codex`、`sillytavern`、`gemini-cli`），
+    /// 值是那个软件自己的目录。没写的软件仍在 `<managed_apps_dir>\<键>`。旧配置文件没有这个键 = 空表。
+    ///
+    /// 只经软件迁移命令改：`settings_save` 原样保留旧值（同 `managed_apps_dir`）。
+    pub app_dirs: std::collections::BTreeMap<String, std::path::PathBuf>,
 }
 
 /// `#[serde(default)]` 对 `bool` 给的是 `false`。要默认开的字段用这个 ——
@@ -210,6 +216,7 @@ impl Default for Settings {
             gpt_ui_zh: false,
             lightweight_on_close: false,
             start_router_on_launch: false,
+            app_dirs: Default::default(),
         }
     }
 }
@@ -351,6 +358,21 @@ pub fn default_managed_dir() -> std::path::PathBuf {
 /// 当前生效的托管安装根目录。
 pub fn managed_apps_dir() -> std::path::PathBuf {
     load().managed_apps_dir.unwrap_or_else(default_managed_dir)
+}
+
+/// 某个软件在这份设置里的目录：有单独写的用它，没有就是 `<托管根>\<键>`。纯函数。
+pub fn app_dir_in(s: &Settings, key: &str) -> std::path::PathBuf {
+    s.app_dirs.get(key).cloned().unwrap_or_else(|| {
+        s.managed_apps_dir
+            .clone()
+            .unwrap_or_else(default_managed_dir)
+            .join(key)
+    })
+}
+
+/// 当前生效的、某个软件的目录。
+pub fn managed_app_dir(key: &str) -> std::path::PathBuf {
+    app_dir_in(&load(), key)
 }
 
 #[cfg(test)]
@@ -513,5 +535,29 @@ mod tests {
             "旧配置文件没有这个字段，要落到默认位置"
         );
         assert!(default_managed_dir().ends_with("apps"));
+    }
+
+    #[test]
+    fn per_app_dirs_default_to_root_and_old_files_still_read() {
+        let s: Settings =
+            serde_json::from_str(r#"{"managed_apps_dir":"D:\\apps","gpt_ui_zh":true}"#).unwrap();
+        assert!(s.app_dirs.is_empty() && s.gpt_ui_zh);
+        assert_eq!(
+            app_dir_in(&s, "codex"),
+            std::path::PathBuf::from("D:\\apps").join("codex")
+        );
+        let mut s = s;
+        s.app_dirs
+            .insert("codex".into(), std::path::PathBuf::from("E:\\cx"));
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(
+            app_dir_in(&back, "codex"),
+            std::path::PathBuf::from("E:\\cx")
+        );
+        assert_eq!(
+            app_dir_in(&back, "claude-code"),
+            std::path::PathBuf::from("D:\\apps").join("claude-code")
+        );
+        assert!(app_dir_in(&Settings::default(), "codex").ends_with("codex"));
     }
 }

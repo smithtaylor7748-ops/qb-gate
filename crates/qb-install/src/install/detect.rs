@@ -201,7 +201,7 @@ async fn msix_desktop() -> Option<MsixPackage> {
 /// npm 全局前缀不是只有一个地方：`NPM_CONFIG_PREFIX` 覆盖一切；默认是 `%APPDATA%\npm`；
 /// nvm-windows / MSI 装的 Node 把全局包放进 `%ProgramFiles%\nodejs`。**一个都不能假设**
 /// —— 这是「开源兼容性」那条规矩（别人的 npm 前缀跟你的不一样）。
-/// 顺序 = 优先级：显式前缀 → npm 默认 → Node 安装目录 → 面板托管目录。
+/// 顺序 = 优先级：面板托管目录（2026-11-05 起排最前）→ 显式前缀 → npm 默认 → Node 安装目录。
 pub fn gemini_cli_roots() -> Vec<PathBuf> {
     let pkg = |prefix: PathBuf| {
         prefix
@@ -214,11 +214,13 @@ pub fn gemini_cli_roots() -> Vec<PathBuf> {
         (!v.trim().is_empty()).then(|| PathBuf::from(v))
     };
     [
+        // 面板托管的那份（`npm install --prefix <目录>`）排最前：迁移过去之后先认它（2026-11-05）。
+        // 没装时它的入口文件不存在，检测会接着往后找 npm 全局那份。
+        Some(crate::install::managed::slot_dir("gemini-cli")),
         env_dir("NPM_CONFIG_PREFIX"),
         env_dir("APPDATA").map(|p| p.join("npm")),
         env_dir("ProgramFiles").map(|p| p.join("nodejs")),
         env_dir("LOCALAPPDATA").map(|p| p.join("npm")),
-        Some(crate::install::managed::root().join("gemini-cli")),
     ]
     .into_iter()
     .flatten()
@@ -533,9 +535,11 @@ pub async fn codex() -> Software {
     // 其余的：这里敢直接跑 exe，是因为那些**不是面板装的**，而且 Codex 默认不在门禁里。
     // 打开「Codex 也归门禁管」之后跑不起来就读不出版本 —— 如实显示「已安装、版本未知」。
     let version = match &found {
-        Some(_) if is_managed => {
-            managed::record_of(&managed::root(), managed::App::Codex).map(|r| r.version)
-        }
+        Some(_) if is_managed => managed::record_of(
+            &managed::app_dir_of(managed::App::Codex),
+            managed::App::Codex,
+        )
+        .map(|r| r.version),
         Some(p) => parse_codex_version(codex_raw_version(p).await.as_deref()),
         None => None,
     };

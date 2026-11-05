@@ -13,9 +13,8 @@ use crate::{
 /// 托管目录的版本库里有哪几版可以退回去。
 #[tauri::command]
 pub fn managed_history(which: install::managed::App) -> Vec<install::versions::VersionEntry> {
-    let root = settings::managed_apps_dir();
-    let dir = install::managed::app_dir(&root, which);
-    let current = install::managed::record_of(&root, which).map(|r| r.version);
+    let dir = install::managed::app_dir_of(which);
+    let current = install::managed::record_of(&dir, which).map(|r| r.version);
     install::versions::history(&dir, which, current.as_deref())
 }
 
@@ -36,9 +35,8 @@ pub async fn managed_rollback(which: install::managed::App, version: String) -> 
     if sessions::list().iter().any(|s| s.state == "running") {
         return Err(GateError::Other("请先停止受管会话，再回滚软件版本".into()));
     }
-    let root = settings::managed_apps_dir();
-    let dir = install::managed::app_dir(&root, which);
-    let current = install::managed::record_of(&root, which);
+    let dir = install::managed::app_dir_of(which);
+    let current = install::managed::record_of(&dir, which);
     let msg = install::versions::rollback(&dir, which, &version, current.as_ref())?;
     // 换上来的那份此刻是从版本库拷过来的，ACL 跟着源文件走 —— 必须重锁一遍，
     // 否则回滚等于顺手把门禁摘了。
@@ -196,6 +194,7 @@ pub async fn managed_set_dir(
     // 放在这里的话它跟下面那一百行 I/O 缠在一起，一条测试都写不了 ——
     // 而真正容易出错的恰恰是这几条前置条件，不是 I/O 本身。
     let probe = managed::probe_dir(&new);
+    // 单独迁走的软件不在旧根下，跟着根走的只有还在 `<旧根>\<键>` 的那几个。
     let has_files = managed::App::ALL
         .iter()
         .any(|a| managed::exe_in(&old, *a).is_file());
@@ -516,4 +515,391 @@ pub async fn update_install(app: tauri::AppHandle) -> Result<()> {
             Err(e)
         }
     }
+}
+
+// ------------------------------------------------- 按软件迁移目录（2026-11-05）
+
+/// 一个软件现在在哪、能不能迁。`app` 是界面上的软件键（见 [`relocate_where`]）。
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export)]
+pub struct RelocateWhere {
+    pub app: String,
+    /// 现在的目录（还没装就是将来会装到的地方；Codex 桌面端是 MSIX 里的主程序）。
+    pub path: Option<String>,
+    /// 解析联结点之后的真实目录（Claude 桌面端搬过之后跟 `path` 不同）。
+    pub real: Option<String>,
+    pub installed: bool,
+    /// 面板能直接迁它（Codex 桌面端是 false：只能去 Windows 设置里移动）。
+    pub can_move: bool,
+    /// Claude 桌面端：原位置现在是面板建的联结点（可以「迁回」）。
+    pub relocated: bool,
+    /// Claude 桌面端：联结点还在、指向的地方空了（卸载后留下的）。
+    pub dangling: bool,
+    /// 给人看的一句：迁移会做什么。
+    pub note: String,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export)]
+pub struct RelocateReport {
+    pub app: String,
+    pub to: String,
+    pub notes: Vec<String>,
+}
+
+fn product_of_key(app: &str) -> Option<install::antigravity::Product> {
+    match app {
+        "antigravity" => Some(install::antigravity::Product::Hub),
+        "antigravity-ide" => Some(install::antigravity::Product::Ide),
+        _ => None,
+    }
+}
+
+fn cli_of_key(app: &str) -> Option<install::managed::App> {
+    match app {
+        "claude-code" => Some(install::managed::App::ClaudeCode),
+        "codex" => Some(install::managed::App::Codex),
+        _ => None,
+    }
+}
+
+fn local_dir() -> std::path::PathBuf {
+    dirs::data_local_dir().unwrap_or_default()
+}
+
+fn where_now(app: &str) -> Result<RelocateWhere> {
+    use install::{managed, relocate, sillytavern};
+    let show = |p: &std::path::Path| Some(p.display().to_string());
+    let mut w = RelocateWhere {
+        app: app.to_string(),
+        path: None,
+        real: None,
+        installed: false,
+        can_move: true,
+        relocated: false,
+        dangling: false,
+        note: String::new(),
+    };
+    if let Some(which) = cli_of_key(app) {
+        let dir = managed::app_dir_of(which);
+        w.installed = managed::exe(which).is_file();
+        w.path = show(&dir);
+        w.note = if w.installed {
+            "整份搬到新目录（同盘改名，跨盘复制核对后删源），搬完按新位置重新上锁。".into()
+        } else {
+            "这台机器上还没有面板托管的那份：会从官方源下载（核对 SHA-256 与数字签名）装进新目录，之后启动优先用它。原来那份不动。".into()
+        };
+        return Ok(w);
+    }
+    if let Some(product) = product_of_key(app) {
+        let local = local_dir();
+        w.path = show(&product.dir(&local));
+        w.installed = product.launcher(&local).is_file();
+        w.can_move = w.installed;
+        w.note = "用官方安装器（核对 Google 签名）带目录参数重装到新目录；账户与登录不受影响。旧目录里剩下的程序会就地上锁。".into();
+        return Ok(w);
+    }
+    match app {
+        "sillytavern" => {
+            let dir = sillytavern::managed_dir();
+            w.installed = sillytavern::is_managed(&dir);
+            w.can_move = w.installed;
+            w.path = show(&dir);
+            w.note =
+                "整份搬到新目录，酒馆配置里的路径一起改；搬前先把 data\\default-user 备份一份。"
+                    .into();
+        }
+        "gemini-cli" => {
+            let found = install::detect::gemini_cli();
+            w.installed = found.installed;
+            w.path = found.path.as_deref().and_then(show);
+            w.note = "用 npm install --prefix 在新目录装一份，面板以后先用它。终端里敲 gemini 仍是旧的那份 —— 不要了自己去 npm 卸。".into();
+        }
+        "claude-desktop" => {
+            let p = relocate::desktop_place(&local_dir());
+            w.installed = p.installed;
+            w.can_move = p.installed && !p.relocated;
+            w.relocated = p.relocated;
+            w.dangling = p.dangling;
+            w.path = show(&p.link);
+            w.real = show(&p.real);
+            w.note = "整份复制到 <新目录>\\AnthropicClaude，核对后原位置换成指向它的目录联结点；只许本机固定 NTFS 盘。随时可以「迁回」。".into();
+        }
+        "codex-desktop" => {
+            let d = install::codex_desktop::detect().ok();
+            let exe = d.and_then(|d| d.executable);
+            w.installed = exe.is_some();
+            w.can_move = false;
+            w.path = exe;
+            w.note = "这是 Microsoft Store 的应用，面板不搬它：在 Windows 设置 → 应用 → 已安装的应用 → Codex → 移动 里换盘，然后回来点「重新核对位置」。".into();
+        }
+        _ => return Err(GateError::Other(format!("不认识的软件：{app}"))),
+    }
+    Ok(w)
+}
+
+/// 一个软件现在在哪、迁移会做什么。键：`claude-code` `codex` `sillytavern` `gemini-cli`
+/// `antigravity` `antigravity-ide` `claude-desktop` `codex-desktop`。
+#[tauri::command]
+pub async fn relocate_where(app: String) -> Result<RelocateWhere> {
+    tokio::task::spawn_blocking(move || where_now(&app))
+        .await
+        .map_err(|e| GateError::Other(e.to_string()))?
+}
+
+fn probe_for(app: &str, path: &std::path::Path) -> install::managed::Probe {
+    use install::managed;
+    if app == "claude-desktop" {
+        let mut p = managed::probe_dir(path);
+        let target = path.join(install::relocate::DESKTOP_DIR);
+        if p.ok && target.exists() {
+            p.ok = false;
+            p.reason = Some(format!("{} 已经存在，面板不覆盖它。", target.display()));
+        }
+        return p;
+    }
+    let mut p = usecase::relocate_ops::check_target(app, path);
+    if p.ok
+        && std::fs::read_dir(path)
+            .map(|mut r| r.next().is_some())
+            .unwrap_or(false)
+    {
+        p.ok = false;
+        p.reason = Some("这个目录里已经有东西了，换一个空目录（或者一个还不存在的目录）。".into());
+    }
+    p
+}
+
+/// 实时探测：这个目录能不能给这个软件用（本机固定 NTFS 盘、锁得上、空的、不跟别的软件目录嵌套）。
+#[tauri::command]
+pub async fn relocate_probe(app: String, path: String) -> Result<install::managed::Probe> {
+    let path = std::path::PathBuf::from(path.trim());
+    tokio::task::spawn_blocking(move || probe_for(&app, &path))
+        .await
+        .map_err(|e| GateError::Other(e.to_string()))
+}
+
+/// 正在从 `dir` 运行的程序 → 报错（迁移前拒绝正在跑的）。比较前规范化（联结点、短名、大小写）。
+async fn refuse_running(dir: &std::path::Path, what: &str) -> Result<()> {
+    let busy = install::managed::running_from(dir).await?;
+    if busy.is_empty() {
+        return Ok(());
+    }
+    Err(GateError::Other(format!(
+        "{what}还开着（{}），先把它完全退出再迁移。什么都没动。",
+        busy.iter()
+            .map(|(pid, p)| format!("PID {pid} {p}"))
+            .collect::<Vec<_>>()
+            .join("；")
+    )))
+}
+
+fn joined<T>(r: std::result::Result<T, tokio::task::JoinError>) -> Result<T> {
+    r.map_err(|e| GateError::Other(e.to_string()))
+}
+
+/// **迁移**一个软件到 `path`。每种软件的做法见 `install::relocate` 的文件头。
+///
+/// 拿 `operations::exclusive()`；里面不再调任何会拿这把锁的命令（坑 7.51）——
+/// 收编走的是不拿锁的 `managed_install`。
+#[tauri::command]
+pub async fn relocate_run(
+    app: tauri::AppHandle,
+    which: String,
+    path: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<RelocateReport> {
+    use install::managed;
+    let _guard = operations::exclusive().await?;
+    let new = std::path::PathBuf::from(path.trim());
+    {
+        let (a, n) = (which.clone(), new.clone());
+        let p = joined(tokio::task::spawn_blocking(move || probe_for(&a, &n)).await)?;
+        if !p.ok {
+            return Err(GateError::Other(p.reason.unwrap_or_default()));
+        }
+    }
+    let mut notes: Vec<String> = Vec::new();
+
+    if let Some(cli) = cli_of_key(&which) {
+        let key = cli.key();
+        let old = managed::app_dir_of(cli);
+        if !managed::exe(cli).is_file() {
+            // 收编：设置先指到新目录，再走托管安装（官方源、核 SHA-256 与签名）。装不成就把设置改回去。
+            let previous = settings::load().app_dirs.get(key).cloned();
+            usecase::relocate_ops::store_app_dir(key, &new)?;
+            match managed_install(app.clone(), cli, "latest", &state).await {
+                Ok(r) => notes.push(r.detail),
+                Err(e) => {
+                    let mut s = settings::load();
+                    match previous {
+                        Some(p) => s.app_dirs.insert(key.to_string(), p),
+                        None => s.app_dirs.remove(key),
+                    };
+                    let _ = usecase::settings_ops::save(&s);
+                    return Err(e);
+                }
+            }
+        } else {
+            refuse_running(&old, cli.label()).await?;
+            // 设置先写、再重锁：维护窗口收尾时 `lock_all` 按设置里的新目录锁。
+            let guard = gate::Maintenance::observing(&state.gate);
+            let moved = managed::move_app_dir(Some(cli), &old, &new).and_then(|()| {
+                usecase::relocate_ops::store_app_dir(key, &new).map_err(|e| {
+                    GateError::Other(format!(
+                        "设置没写进去（{e}），{}",
+                        match managed::move_app_dir(Some(cli), &new, &old) {
+                            Ok(()) => "已搬回原处".to_string(),
+                            Err(b) => format!("搬回也失败了：{b}"),
+                        }
+                    ))
+                })
+            });
+            if moved.is_err() && new.exists() {
+                managed::lock_strays(&new);
+            }
+            let done = guard.finish(&state.gate).await;
+            moved?;
+            notes.push(format!("{} 已搬到 {}", cli.label(), new.display()));
+            if old.exists() {
+                let n = managed::lock_strays(&old);
+                notes.push(format!("旧目录还剩东西，已就地上锁 {n} 个文件"));
+            }
+            notes.push(done.detail);
+        }
+    } else if let Some(product) = product_of_key(&which) {
+        let running = crate::killswitch::antigravity_processes(None).await?;
+        if !running.is_empty() {
+            return Err(GateError::Other(
+                "反重力 / 反重力 IDE 还开着，两个都完全退出之后再迁移。什么都没动。".into(),
+            ));
+        }
+        let guard = gate::Maintenance::observing(&state.gate);
+        let r = install::antigravity_setup::install_to(product, &new, &crate::sink::Silent).await;
+        let done = guard.finish(&state.gate).await;
+        notes.extend(r?);
+        notes.push(done.detail);
+        operations::changed(&events::ui(&app), "session", product.key());
+    } else {
+        match which.as_str() {
+            "sillytavern" => {
+                let n = new.clone();
+                notes = joined(
+                    tokio::task::spawn_blocking(move || {
+                        usecase::relocate_ops::relocate_sillytavern(&n)
+                    })
+                    .await,
+                )??;
+            }
+            "gemini-cli" => notes = usecase::relocate_ops::relocate_gemini_cli(&new).await?,
+            "claude-desktop" => {
+                let local = local_dir();
+                refuse_running(&local.join(install::relocate::DESKTOP_DIR), "Claude 桌面端")
+                    .await?;
+                // 复制出去的存根不带原来的执行锁 —— 收尾时按新位置（经联结点）重锁。
+                // `app-*\claude.exe` 从来不锁（加 Deny 桌面端开新窗口就崩）。
+                let guard = gate::Maintenance::observing(&state.gate);
+                let n = new.clone();
+                let r = joined(
+                    tokio::task::spawn_blocking(move || {
+                        install::relocate::relocate_desktop(&local, &n)
+                    })
+                    .await,
+                );
+                let done = guard.finish(&state.gate).await;
+                notes.extend(r??);
+                notes.push(done.detail);
+            }
+            other => return Err(GateError::Other(format!("{other} 不能由面板迁移"))),
+        }
+    }
+    audit::write(&format!(
+        "迁移 {which} 到 {}：{}",
+        new.display(),
+        notes.join("；")
+    ));
+    tray::refresh(&app);
+    Ok(RelocateReport {
+        app: which,
+        to: new.display().to_string(),
+        notes,
+    })
+}
+
+/// Claude 桌面端「迁回」：拆掉联结点、把文件搬回 `%LOCALAPPDATA%\AnthropicClaude`。
+/// 联结点指向的地方已经空了（卸载后留下的）就只是把它收掉。
+#[tauri::command]
+pub async fn relocate_desktop_restore(state: tauri::State<'_, AppState>) -> Result<RelocateReport> {
+    let _guard = operations::exclusive().await?;
+    let local = local_dir();
+    let link = local.join(install::relocate::DESKTOP_DIR);
+    refuse_running(&link, "Claude 桌面端").await?;
+    let guard = gate::Maintenance::observing(&state.gate);
+    let l = local.clone();
+    let r =
+        joined(tokio::task::spawn_blocking(move || install::relocate::restore_desktop(&l)).await);
+    let done = guard.finish(&state.gate).await;
+    let mut notes = r??;
+    notes.push(done.detail);
+    audit::write(&format!("Claude 桌面端迁回：{}", notes.join("；")));
+    Ok(RelocateReport {
+        app: "claude-desktop".into(),
+        to: link.display().to_string(),
+        notes,
+    })
+}
+
+/// Codex 桌面端是 MSIX：面板不搬，只打开 Windows 的「已安装的应用」页并给一句怎么做。
+#[tauri::command]
+pub fn codex_desktop_move_settings() -> Result<String> {
+    std::process::Command::new("explorer.exe")
+        .arg("ms-settings:appsfeatures")
+        .spawn()
+        .map_err(|e| GateError::Other(format!("打不开 Windows 设置：{e}")))?;
+    Ok("已打开 Windows 设置：在「已安装的应用」里找到 Codex → 右边「…」→ 移动 → 选目标盘。移完回来点「重新核对位置」。".into())
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export)]
+pub struct CodexDesktopWhere {
+    pub executable: Option<String>,
+    /// MSIX 包的安装目录（`Get-AppxPackage` 读的 `InstallLocation`）。
+    pub location: Option<String>,
+    /// 按 `\WindowsApps\` 认它的那几处判断在新位置上仍成立。
+    pub watchdog_ok: bool,
+    pub note: String,
+}
+
+/// 用 `Get-AppxPackage` 重新读 Codex 桌面端的位置，核对按 `\WindowsApps\` 认它的判断在新盘上仍成立
+/// （商店把应用移到别的盘是 `<盘>:\WindowsApps\<包全名>`；看门狗与收进程本来就按读到的路径认）。
+#[tauri::command]
+pub async fn codex_desktop_location() -> Result<CodexDesktopWhere> {
+    let d = joined(tokio::task::spawn_blocking(install::codex_desktop::detect).await)??;
+    let exe = d.executable.clone();
+    // `<安装目录>\app\ChatGPT.exe` → 安装目录。
+    let location = exe.as_deref().and_then(|e| {
+        std::path::Path::new(e)
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.display().to_string())
+    });
+    let watchdog_ok = exe.as_deref().is_some_and(|e| {
+        install::inventory::norm(std::path::Path::new(e)).contains("\\windowsapps\\")
+    });
+    let note = match (&exe, watchdog_ok) {
+        (None, _) => "没找到 Codex 桌面端（没装，或者 Windows 还没移完）。".into(),
+        (Some(_), true) => {
+            "位置已核对：看门狗按 Get-AppxPackage 读到的这个路径认它，换盘之后照样成立。".into()
+        }
+        (Some(_), false) => {
+            "读到的位置不在 WindowsApps 下 —— 不像商店装的那份；面板按读到的可执行文件路径认它。"
+                .into()
+        }
+    };
+    Ok(CodexDesktopWhere {
+        executable: exe,
+        location,
+        watchdog_ok,
+        note,
+    })
 }

@@ -115,6 +115,7 @@ import {
 } from "./softwareParts";
 import SillyTavernCard from "../features/tavern/SillyTavernCard";
 import CliToolsCard from "../features/CliToolsCard";
+import RelocateControl from "./managed/RelocateControl";
 
 const CHROME_PAGE = "https://www.google.com/chrome/";
 const CODEX_STORE_PAGE = "https://apps.microsoft.com/detail/9plm9xgg6vks";
@@ -270,6 +271,9 @@ export default function Environment() {
 
   /** 重新扫描。**顺带记录这一步的结果** —— 原来那个页底按钮去掉了，
       但新手引导的 `environment` 这一步仍然要有人记，不然引导永远卡着。 */
+  /** 迁移 / 迁回之后刷新检测与托管现状。 */
+  const moved = () => void Promise.all([sw.refresh(), managed.refresh()]);
+
   async function rescan() {
     await Promise.all([sw.refresh(), install.refresh(), managed.refresh()]);
     await recordRisk();
@@ -618,6 +622,7 @@ export default function Environment() {
       {/* ------------------------------------------------ Claude Code */}
       <SoftwareCard
         title="Claude Code"
+        relocate={<RelocateControl app="claude-code" onMoved={moved} />}
         actions={
           <>
             <SwPill sw={sw.data?.claudeCode} />
@@ -748,6 +753,7 @@ export default function Environment() {
       {/* ------------------------------------------------------ Codex */}
       <SoftwareCard
         title="Codex CLI"
+        relocate={<RelocateControl app="codex" onMoved={moved} />}
         actions={
           <>
             <SwPill sw={sw.data?.codex} />
@@ -865,6 +871,7 @@ export default function Environment() {
       {/* ------------------------------------------- Codex 桌面端（0.28.0） */}
       <SoftwareCard
         title="Codex 桌面端（Microsoft Store）"
+        relocate={<RelocateControl app="codex-desktop" onMoved={moved} />}
         actions={
           <>
             {/* 「查不到」是第五档：PowerShell 起不来时后端给 advisory 且 installed=false。
@@ -983,6 +990,7 @@ export default function Environment() {
       {/* ------------------------------------------------- 桌面端 */}
       <SoftwareCard
         title="Claude 桌面端"
+        relocate={<RelocateControl app="claude-desktop" onMoved={moved} />}
         actions={
           <>
             <SwPill sw={sw.data?.claudeDesktop} />
@@ -1048,6 +1056,16 @@ export default function Environment() {
       {/* ------------------------------------------------- 反重力（0.26.0） */}
       <SoftwareCard
         title="反重力（Google Antigravity）"
+        relocate={
+          <>
+            <RelocateControl app="antigravity" label="Hub" onMoved={moved} />
+            <RelocateControl
+              app="antigravity-ide"
+              label="IDE"
+              onMoved={moved}
+            />
+          </>
+        }
         actions={
           <>
             <SwPill sw={sw.data?.antigravity} prefix="Hub" product="hub" />
@@ -1192,6 +1210,7 @@ export default function Environment() {
       {/* ------------------------------------------------- Gemini CLI（0.26.0） */}
       <SoftwareCard
         title="Gemini CLI"
+        relocate={<RelocateControl app="gemini-cli" onMoved={moved} />}
         actions={
           <>
             <SwPill sw={sw.data?.geminiCli} />

@@ -306,7 +306,10 @@ pub async fn plan(ch: Channel) -> UpgradePlan {
     };
     let installed = match &path {
         Some(_) if is_managed => {
-            match managed::record_of(&managed::root(), managed::App::ClaudeCode) {
+            match managed::record_of(
+                &managed::app_dir_of(managed::App::ClaudeCode),
+                managed::App::ClaudeCode,
+            ) {
                 Some(r) => Some(r.version),
                 None => file_version(path.as_deref().unwrap_or(Path::new(""))).await,
             }

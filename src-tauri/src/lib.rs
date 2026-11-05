@@ -457,6 +457,12 @@ pub fn run() {
             commands::plugins::tavern_trash,
             commands::plugins::tavern_trash_restore,
             commands::plugins::tavern_trash_purge,
+            commands::install::relocate_where,
+            commands::install::relocate_probe,
+            commands::install::relocate_run,
+            commands::install::relocate_desktop_restore,
+            commands::install::codex_desktop_move_settings,
+            commands::install::codex_desktop_location,
         ]))
         .setup(|app| {
             use tauri::Manager;

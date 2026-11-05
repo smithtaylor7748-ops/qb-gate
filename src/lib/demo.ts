@@ -792,6 +792,7 @@ const settings: Settings = {
   // 2026-10-27（阶段 7 · X7）：两个后台开关照 Rust 的默认值关着。
   lightweight_on_close: false,
   start_router_on_launch: false,
+  app_dirs: {},
 };
 
 const managed: ManagedStatus = {

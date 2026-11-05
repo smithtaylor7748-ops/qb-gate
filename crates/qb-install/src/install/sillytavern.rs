@@ -47,7 +47,7 @@ pub fn managed_dir_in(root: &Path) -> PathBuf {
 
 /// 当前托管根下，面板装的那份酒馆该在哪（在不在都返回路径）。
 pub fn managed_dir() -> PathBuf {
-    managed_dir_in(&super::managed::root())
+    super::managed::slot_dir(DIR)
 }
 
 /// 跟 `dir` 同级的某个工作目录。`dir` 没有父目录（根目录）时退回 `dir` 自己下面 ——

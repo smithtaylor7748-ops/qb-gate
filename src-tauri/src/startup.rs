@@ -39,7 +39,13 @@ pub fn initialize(app: &tauri::AppHandle) -> crate::readiness::Status {
             )));
         }
         crate::settings::load_checked()?;
-        crate::install::versions::recover_installations(&crate::settings::managed_apps_dir())?;
+        crate::install::versions::recover_installations()?;
+        // 桌面端被搬走（原位置是联结点）之后又被卸载：留下的空联结点收掉。
+        if let Some(local) = dirs::data_local_dir() {
+            if let Some(note) = crate::install::relocate::sweep_dangling_desktop(&local) {
+                crate::audit::write(&note);
+            }
+        }
         let mut db = Repository::open()?;
         db.migrate()?;
         db.prune_history()?;

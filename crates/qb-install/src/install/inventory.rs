@@ -69,8 +69,10 @@ pub struct Roots {
     pub path_dirs: Vec<PathBuf>,
     /// Scoop 根目录：`$env:SCOOP`，没设就是 `~\scoop`。
     pub scoop: Option<PathBuf>,
-    /// 面板托管安装的根目录（v0.9.0，`settings::managed_apps_dir`）。
-    pub managed: Option<PathBuf>,
+    /// 面板托管的 Claude Code 目录（2026-11-05 起按软件：`managed::app_dir_of(ClaudeCode)`）。
+    pub managed_claude: Option<PathBuf>,
+    /// 面板托管的 Codex CLI 目录（同上，按软件）。
+    pub managed_codex: Option<PathBuf>,
     /// `%ProgramData%`：全局 Scoop 默认装在它下面的 `scoop`（2026-10-27）。
     pub program_data: Option<PathBuf>,
     /// 几家 Node 管理器认的目录变量（2026-10-27，阶段 7 · X3）：`PNPM_HOME`、`NVM_HOME`、`NVM_SYMLINK`、
@@ -118,7 +120,8 @@ impl Roots {
             program_files,
             path_dirs,
             scoop,
-            managed: Some(crate::settings::managed_apps_dir()),
+            managed_claude: Some(crate::settings::managed_app_dir("claude-code")),
+            managed_codex: Some(crate::settings::managed_app_dir("codex")),
             program_data: env_dir("ProgramData"),
             env: ENV_DIRS
                 .iter()
@@ -276,6 +279,43 @@ fn excluded(p: &Path) -> bool {
     is_desktop_runtime_copy(p) || is_vendored(p) || p.parent().is_some_and(is_electron_dir)
 }
 
+/// 已经算过的 `<local>\AnthropicClaude` → 真实目录（键是 `norm(local)`）。
+static DESKTOP_REAL: std::sync::Mutex<Vec<(String, Option<PathBuf>)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// `<local>\AnthropicClaude` 解析联结点之后的真实目录（2026-11-05：桌面端可以被搬到别的盘、
+/// 原位置留一个目录联结点）。跟原位置是同一个、或者解析不了，都是 `None`。
+///
+/// 第一次用到时规范化一次并缓存；迁移 / 迁回之后调 [`refresh_desktop_real_dir`]。
+pub fn desktop_real_dir(local: &Path) -> Option<PathBuf> {
+    let key = norm(local);
+    if let Ok(cache) = DESKTOP_REAL.lock() {
+        if let Some((_, v)) = cache.iter().find(|(k, _)| *k == key) {
+            return v.clone();
+        }
+    }
+    let link = local.join("AnthropicClaude");
+    let real = std::fs::canonicalize(&link).ok().map(|r| {
+        let s = r.to_string_lossy().to_string();
+        PathBuf::from(match s.strip_prefix(r"\\?\UNC\") {
+            Some(rest) => format!(r"\\{rest}"),
+            None => s.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(s),
+        })
+    });
+    let v = real.filter(|r| !same_path(r, &link));
+    if let Ok(mut cache) = DESKTOP_REAL.lock() {
+        cache.push((key, v.clone()));
+    }
+    v
+}
+
+/// 清掉 [`desktop_real_dir`] 的缓存（桌面端迁移 / 迁回之后）。
+pub fn refresh_desktop_real_dir() {
+    if let Ok(mut cache) = DESKTOP_REAL.lock() {
+        cache.clear();
+    }
+}
+
 /// 桌面端**进程**的可执行文件路径吗。
 ///
 /// 看门狗「查不到 IP 立即关闭桌面端」和切换账户前的「桌面端还开着吗」都靠它。
@@ -292,12 +332,14 @@ fn excluded(p: &Path) -> bool {
 pub fn is_desktop_process_path(path: &Path, local: Option<&Path>) -> bool {
     let p = norm(path);
     if let Some(l) = local {
-        let prefix = format!(
-            "{}\\",
-            norm(&l.join("AnthropicClaude")).trim_end_matches('\\')
-        );
-        if p.starts_with(&prefix) {
-            return true;
+        // 原位置，和它解析联结点之后的真实位置（桌面端被面板搬走之后，两条都算桌面端）。
+        let mut dirs = vec![l.join("AnthropicClaude")];
+        dirs.extend(desktop_real_dir(l));
+        for d in dirs {
+            let prefix = format!("{}\\", norm(&d).trim_end_matches('\\'));
+            if p.starts_with(&prefix) {
+                return true;
+            }
         }
     }
     const WA: &str = "\\windowsapps\\";
@@ -545,10 +587,9 @@ fn scoop_global_roots(r: &Roots) -> Vec<PathBuf> {
 /// 漏掉它们就是现成的绕过入口。只读文件系统。
 pub fn managed_codex_copies(r: &Roots) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let Some(m) = &r.managed else {
+    let Some(dir) = r.managed_codex.clone() else {
         return out;
     };
-    let dir = m.join("codex");
     for e in entries(&dir.join("versions")) {
         let p = e.path().join("codex.exe");
         if p.is_file() {
@@ -578,8 +619,8 @@ pub fn scan(r: &Roots) -> Vec<Install> {
     let mut found: Vec<(Kind, PathBuf)> = Vec::new();
 
     // 面板托管的那份放最前面：去重时先扫到的留下，它得保住 `Managed` 这个身份。
-    if let Some(m) = &r.managed {
-        let dir = m.join("claude-code");
+    if let Some(dir) = &r.managed_claude {
+        let dir = dir.clone();
         let exe = dir.join("claude.exe");
         if exe.is_file() {
             found.push((Kind::Managed, exe));
@@ -1007,7 +1048,8 @@ mod tests {
                 program_files: vec![self.base.join("pf")],
                 path_dirs: Vec::new(),
                 scoop: Some(self.base.join("home").join("scoop")),
-                managed: Some(self.base.join("managed")),
+                managed_claude: Some(self.base.join("managed").join("claude-code")),
+                managed_codex: Some(self.base.join("managed").join("codex")),
                 program_data: Some(self.base.join("pd")),
                 env: Vec::new(),
             }
@@ -1086,7 +1128,8 @@ mod tests {
         let path_copy = t.file(r"自选 PATH\claude.exe");
         let roots = Roots {
             home: Some(t.base.join("另一个用户")),
-            managed: Some(t.base.join("工具目录 [自选]")),
+            managed_claude: Some(t.base.join("工具目录 [自选]").join("claude-code")),
+            managed_codex: None,
             scoop: Some(t.base.join("外置 Scoop")),
             path_dirs: vec![t.base.join("自选 PATH")],
             ..Roots::default()
@@ -1181,7 +1224,7 @@ mod tests {
             assert!(got.iter().any(|q| same_path(q, p)), "漏了 {}", p.display());
         }
         let none = Roots {
-            managed: None,
+            managed_codex: None,
             ..t.roots()
         };
         assert!(managed_codex_copies(&none).is_empty());

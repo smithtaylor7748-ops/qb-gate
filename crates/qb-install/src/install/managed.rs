@@ -108,6 +108,44 @@ pub fn root() -> PathBuf {
     crate::settings::managed_apps_dir()
 }
 
+/// 面板放进自己目录里的四个软件的目录名（也是 `settings::app_dirs` 的键）。
+pub const SLOT_KEYS: [&str; 4] = ["claude-code", "codex", "sillytavern", "gemini-cli"];
+
+/// 某个软件此刻的目录：设置里单独写了就用它，否则 `<托管根>\<键>`。
+pub fn slot_dir(key: &str) -> PathBuf {
+    crate::settings::managed_app_dir(key)
+}
+
+/// Claude Code / Codex CLI 此刻的目录（按软件，2026-11-05）。
+pub fn app_dir_of(app: App) -> PathBuf {
+    slot_dir(app.key())
+}
+
+/// 全部软件目录（外部副本判断用：在任一个里面的都是面板自己的）。
+pub fn all_app_dirs() -> Vec<PathBuf> {
+    SLOT_KEYS.iter().map(|k| slot_dir(k)).collect()
+}
+
+/// `p` 在不在任一软件目录里。
+pub fn inside_any(p: &Path, dirs: &[PathBuf]) -> bool {
+    dirs.iter().any(|d| is_inside(p, d))
+}
+
+/// 把 `key` 这个软件挪到 `new` 之后，会不会跟别的软件目录互相套住。纯函数。
+/// `others` 是（键, 目录）表，含 `key` 自己的那条也没关系 —— 会跳过。
+pub fn nesting_conflict(key: &str, new: &Path, others: &[(String, PathBuf)]) -> Option<String> {
+    others
+        .iter()
+        .filter(|(k, _)| k != key)
+        .find(|(_, d)| is_inside(new, d) || is_inside(d, new))
+        .map(|(k, d)| {
+            format!(
+                "新目录跟「{k}」的目录 {} 互相套住了，各软件目录不能嵌套 —— 换一个目录。",
+                d.display()
+            )
+        })
+}
+
 pub fn app_dir(root: &Path, app: App) -> PathBuf {
     root.join(app.key())
 }
@@ -118,7 +156,7 @@ pub fn exe_in(root: &Path, app: App) -> PathBuf {
 
 /// 当前根目录下这个软件的 exe（在不在都返回路径）。
 pub fn exe(app: App) -> PathBuf {
-    exe_in(&root(), app)
+    app_dir_of(app).join(app.exe_name())
 }
 
 pub fn is_installed(app: App) -> bool {
@@ -145,34 +183,55 @@ struct Records {
     apps: std::collections::BTreeMap<String, Record>,
 }
 
-fn records_path(root: &Path) -> PathBuf {
-    root.join("installs.json")
+/// 安装记录在哪：每个软件目录里一份 `installs.json`（2026-11-05 起）。
+/// 之前是整个托管根下共用一份 —— [`record_of`] 读不到时回落到软件目录的上一级去找那份旧的。
+fn records_path(dir: &Path) -> PathBuf {
+    dir.join("installs.json")
 }
 
-fn read_records(root: &Path) -> Records {
-    std::fs::read_to_string(records_path(root))
+fn read_records(dir: &Path) -> Records {
+    std::fs::read_to_string(records_path(dir))
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
 }
 
-pub fn record_of(root: &Path, app: App) -> Option<Record> {
-    read_records(root).apps.get(app.key()).cloned()
+/// `app_dir` 是这个软件的目录。先读目录里那份，没有再读上一级的旧共用文件。
+pub fn record_of(app_dir: &Path, app: App) -> Option<Record> {
+    read_records(app_dir)
+        .apps
+        .get(app.key())
+        .cloned()
+        .or_else(|| {
+            app_dir
+                .parent()
+                .and_then(|root| read_records(root).apps.get(app.key()).cloned())
+        })
 }
 
-pub(crate) fn remove_record(root: &Path, app: App) -> Result<()> {
-    let p = records_path(root);
-    let text = crate::config_io::read_text(&p)?;
+pub(crate) fn remove_record(app_dir: &Path, app: App) -> Result<()> {
+    // 旧的共用文件里也删掉，不然它会在新文件没有这一条时被读回来。
+    if let Some(root) = app_dir.parent() {
+        let legacy = records_path(root);
+        if legacy.is_file() && read_records(root).apps.contains_key(app.key()) {
+            remove_record_in(&legacy, app)?;
+        }
+    }
+    remove_record_in(&records_path(app_dir), app)
+}
+fn remove_record_in(p: &Path, app: App) -> Result<()> {
+    let text = crate::config_io::read_text(p)?;
     let mut all: Records = if text.is_empty() {
         Default::default()
     } else {
         serde_json::from_str(&text)?
     };
     all.apps.remove(app.key());
-    crate::config_io::replace(&p, Some(&serde_json::to_vec_pretty(&all)?))
+    crate::config_io::replace(p, Some(&serde_json::to_vec_pretty(&all)?))
 }
-pub(crate) fn write_record(root: &Path, app: App, rec: Record) -> Result<()> {
-    let p = records_path(root);
+pub(crate) fn write_record(app_dir: &Path, app: App, rec: Record) -> Result<()> {
+    std::fs::create_dir_all(app_dir)?;
+    let p = records_path(app_dir);
     let text = crate::config_io::read_text(&p)?;
     let mut all: Records = if text.is_empty() {
         Records::default()
@@ -210,9 +269,9 @@ pub fn status() -> Status {
     let apps = App::ALL
         .into_iter()
         .map(|a| {
-            let path = exe_in(&root, a);
+            let path = exe(a);
             let installed = path.is_file();
-            let rec = installed.then(|| record_of(&root, a)).flatten();
+            let rec = installed.then(|| record_of(&app_dir_of(a), a)).flatten();
             AppStatus {
                 app: a,
                 installed,
@@ -326,6 +385,9 @@ pub fn probe_dir(dir: &Path) -> Probe {
 fn probe_lock(dir: &Path, fail: impl Fn(Option<String>, String) -> Probe) -> Probe {
     use crate::acl;
 
+    if let Some(why) = drive_type_reason(drive_type(dir)) {
+        return fail(None, why);
+    }
     let fs = acl::volume_filesystem(dir);
     if let Some((name, false)) = &fs {
         return fail(
@@ -831,18 +893,17 @@ pub const TOTAL: u32 = 7;
 /// 已经装了就是升级：同一条路，旧的改名留底。
 pub async fn install(app: App, channel: &str, rep: &dyn ProgressSink) -> Result<InstallOutcome> {
     let mut log = Vec::new();
-    let root = root();
+    let dir = app_dir_of(app);
 
     rep.phase(1, "实测托管目录能不能上锁");
-    let probe = probe_dir(&root);
+    let probe = probe_dir(&dir);
     if !probe.ok {
         return Err(GateError::Other(format!(
             "托管目录 {} 不能用：{}",
-            root.display(),
+            dir.display(),
             probe.reason.unwrap_or_default()
         )));
     }
-    let dir = app_dir(&root, app);
     std::fs::create_dir_all(&dir)?;
     log.extend(clean_old_backups(app, &dir));
     let dl = dir.join(".download");
@@ -943,8 +1004,8 @@ pub async fn install(app: App, channel: &str, rep: &dyn ProgressSink) -> Result<
         ));
     }
     rep.phase(6, "提交完整安装单元");
-    let target = exe_in(&root, app);
-    let previous = record_of(&root, app);
+    let target = dir.join(app.exe_name());
+    let previous = record_of(&dir, app);
     let backup = previous
         .as_ref()
         .map(|r| crate::install::versions::version_dir(&dir, &r.version).join(app.exe_name()));
@@ -1002,7 +1063,7 @@ pub fn is_inside(a: &Path, b: &Path) -> bool {
 /// 改名不成的最常见原因是目录里有文件开着 —— 实测 NTFS 上目录里任何一个文件有句柄，
 /// 连允许删除共享的句柄也算，改名目录就拒绝。正在运行的 exe 还删不掉，所以
 /// 「复制完删源」会删到一半停下：这时用目标里核对过的那份把源补齐，再撤掉目标。
-fn move_tree(src: &Path, dst: &Path) -> Result<()> {
+pub fn move_tree(src: &Path, dst: &Path) -> Result<()> {
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -1046,7 +1107,7 @@ fn restore_missing(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-fn copy_verified(src: &Path, dst: &Path) -> Result<()> {
+pub fn copy_verified(src: &Path, dst: &Path) -> Result<()> {
     std::fs::create_dir_all(dst)?;
     for e in std::fs::read_dir(src)? {
         let e = e?;
@@ -1093,6 +1154,15 @@ pub fn migrate_files(old: &Path, new: &Path) -> Result<Vec<String>> {
                 app.label(),
                 dst.display()
             )));
+        }
+    }
+    // 旧的共用记录先落进各自的软件目录（跟着目录走），再按老办法把共用那份复制过去。
+    for app in &apps {
+        let d = app_dir(old, *app);
+        if !records_path(&d).is_file() {
+            if let Some(r) = record_of(&d, *app) {
+                write_record(&d, *app, r)?;
+            }
         }
     }
     // 安装记录先复制过去：这一步失败时什么都还没动。
@@ -1168,6 +1238,10 @@ pub fn lock_strays(new: &Path) -> usize {
     for app in App::ALL {
         walk(&app_dir(new, app), &mut files);
     }
+    if files.is_empty() {
+        // 按软件迁移时传进来的就是那个软件自己的目录。
+        walk(new, &mut files);
+    }
     files
         .iter()
         .filter(|f| crate::acl::lock(f, &sid).is_ok())
@@ -1187,6 +1261,7 @@ pub fn lock_strays(_new: &Path) -> usize {
 /// 脚本是常量，不拼任何路径；过滤在 Rust 这边做。**枚举失败返回错误**，不当成「没有」。
 #[cfg(windows)]
 pub async fn running_from(dir: &Path) -> Result<Vec<(u32, String)>> {
+    let dir_key = canonical_key(dir);
     const SCRIPT: &str = "$ErrorActionPreference = 'Stop'; \
         $rows = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath } | \
           ForEach-Object { [pscustomobject]@{ Id = [int]$_.ProcessId; Path = [string]$_.ExecutablePath } }); \
@@ -1211,7 +1286,7 @@ pub async fn running_from(dir: &Path) -> Result<Vec<(u32, String)>> {
         .filter_map(|r| {
             let id = u32::try_from(r.get("Id")?.as_u64()?).ok()?;
             let path = r.get("Path")?.as_str()?.to_string();
-            is_inside(Path::new(&path), dir).then_some((id, path))
+            is_inside_canon(Path::new(&path), &dir_key).then_some((id, path))
         })
         .collect())
 }
@@ -1219,6 +1294,89 @@ pub async fn running_from(dir: &Path) -> Result<Vec<(u32, String)>> {
 #[cfg(not(windows))]
 pub async fn running_from(_dir: &Path) -> Result<Vec<(u32, String)>> {
     Ok(Vec::new())
+}
+
+/// 比较用的规范形（2026-11-05）：能解析就解析 —— 联结点、subst 盘、8.3 短名都变成真实长路径 ——
+/// 再去掉 `\\?\`（`\\?\UNC\` 还原成 `\\`）、统一小写反斜杠。解析不了（不存在）就按原样比。
+pub fn canonical_key(p: &Path) -> String {
+    let real = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let s = real.to_string_lossy().to_string();
+    let s = if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else {
+        s.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(s)
+    };
+    crate::install::inventory::norm(Path::new(&s))
+        .trim_end_matches('\\')
+        .to_string()
+}
+
+/// `a` 规范化之后在 `dir_key`（已经是 [`canonical_key`]）里面吗。
+pub fn is_inside_canon(a: &Path, dir_key: &str) -> bool {
+    let a = format!("{}\\", canonical_key(a));
+    a.starts_with(&format!("{dir_key}\\"))
+}
+
+/// 把一个软件的目录整份搬到 `new`（2026-11-05，按软件迁移）。纯文件操作，可单测。
+///
+/// 先把旧共用 `installs.json` 里这一条落进软件目录（记录跟着目录走），再 [`move_tree`]：
+/// 同盘一次改名，跨盘复制逐个核对再删源，失败恢复原样。`new` 必须不存在或是空目录。
+pub fn move_app_dir(app: Option<App>, old: &Path, new: &Path) -> Result<()> {
+    if new.exists()
+        && std::fs::read_dir(new)
+            .map(|mut r| r.next().is_some())
+            .unwrap_or(true)
+    {
+        return Err(GateError::Other(format!(
+            "{} 里已经有东西了，面板不覆盖它 —— 换一个空目录。",
+            new.display()
+        )));
+    }
+    if is_inside(new, old) || is_inside(old, new) {
+        return Err(GateError::Other(
+            "新目录不能在旧目录里面，旧目录也不能在新目录里面 —— 搬的时候会把自己套进去。".into(),
+        ));
+    }
+    if let Some(app) = app {
+        if !records_path(old).is_file() {
+            if let Some(r) = record_of(old, app) {
+                write_record(old, app, r)?;
+            }
+        }
+    }
+    let _ = std::fs::remove_dir(new);
+    move_tree(old, new)
+}
+
+/// 盘类型不合适的理由（`GetDriveTypeW` 的返回值）。纯函数。只收本机固定盘。
+pub fn drive_type_reason(t: u32) -> Option<String> {
+    match t {
+        3 => None,
+        2 => Some("这是可移动盘（U 盘 / 读卡器），拔掉之后软件就没了、执行锁也跟着丢，换一个本机固定盘上的目录。".into()),
+        4 => Some("这是网络盘，权限不归这台机器管、断网就找不到软件，换一个本机固定盘上的目录。".into()),
+        5 => Some("这是光驱，写不进去。".into()),
+        6 => Some("这是内存盘，重启就清空了。".into()),
+        _ => Some("认不出这个盘是什么类型（盘符不存在？），换一个本机固定盘上的目录。".into()),
+    }
+}
+
+/// 目录所在卷的盘类型（`GetDriveTypeW`）。
+#[cfg(windows)]
+pub fn drive_type(dir: &Path) -> u32 {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetVolumePathNameW};
+    let mut p: Vec<u16> = dir.as_os_str().to_string_lossy().encode_utf16().collect();
+    p.push(0);
+    let mut root = vec![0u16; 1024];
+    if unsafe { GetVolumePathNameW(PCWSTR(p.as_ptr()), &mut root) }.is_err() {
+        return 0;
+    }
+    unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) }
+}
+
+#[cfg(not(windows))]
+pub fn drive_type(_dir: &Path) -> u32 {
+    3
 }
 
 // ---------------------------------------------------------------- 外部副本
@@ -1293,7 +1451,7 @@ pub struct External {
 pub fn plan_claude_externals(
     installs: &[crate::install::inventory::Install],
     stale: &[PathBuf],
-    managed_root: &Path,
+    managed: &[PathBuf],
     roaming: Option<&Path>,
 ) -> Vec<External> {
     use crate::install::inventory::Kind;
@@ -1302,7 +1460,7 @@ pub fn plan_claude_externals(
     let mut winget = false;
     let mut scoop = false;
     for i in installs {
-        if is_inside(&i.path, managed_root) {
+        if inside_any(&i.path, managed) {
             continue;
         }
         match i.kind {
@@ -1349,7 +1507,7 @@ pub fn plan_claude_externals(
     }
     for s in stale {
         // 桌面端资料目录里的残留是桌面端自己的事，不替它清。
-        if !is_inside(s, managed_root)
+        if !inside_any(s, managed)
             && !crate::install::inventory::is_desktop_managed_path(s, roaming)
         {
             out.push(External {
@@ -1393,13 +1551,13 @@ pub fn plan_claude_externals(
 ///
 /// `%LOCALAPPDATA%\OpenAI\Codex\bin\<哈希>\` 是 Codex 桌面版自己带的，`WindowsApps` 是 MSIX ——
 /// 都属于别的程序，不在清理范围。
-pub fn plan_codex_externals(found: &[PathBuf], managed_root: &Path) -> Vec<External> {
+pub fn plan_codex_externals(found: &[PathBuf], managed: &[PathBuf]) -> Vec<External> {
     use crate::install::inventory::norm;
     let mut out = Vec::new();
     let mut npm = false;
     let mut winget = false;
     for p in found {
-        if is_inside(p, managed_root) {
+        if inside_any(p, managed) {
             continue;
         }
         let n = norm(p);
@@ -1495,7 +1653,7 @@ async fn stale_registrations(_app: App, _prefix: &str) -> Vec<External> {
 
 /// 本机全部外部副本（规划好的清理动作），给界面先过目。
 pub async fn externals() -> Vec<External> {
-    let root = root();
+    let root = all_app_dirs();
     let r = crate::install::inventory::Roots::current();
     let mut out = plan_claude_externals(
         &crate::install::inventory::scan(&r),
@@ -1951,7 +2109,9 @@ mod tests {
         assert_eq!(std::fs::read(exe_in(&new, App::ClaudeCode)).unwrap(), b"cc");
         assert_eq!(std::fs::read(exe_in(&new, App::Codex)).unwrap(), b"cx");
         assert_eq!(
-            record_of(&new, App::Codex).unwrap().version,
+            record_of(&app_dir(&new, App::Codex), App::Codex)
+                .unwrap()
+                .version,
             "0.154.0",
             "记录要跟着搬"
         );
@@ -2012,7 +2172,12 @@ mod tests {
             b"runner",
             "删到一半的要补回来"
         );
-        assert_eq!(record_of(&old, App::Codex).unwrap().version, "0.154.0");
+        assert_eq!(
+            record_of(&app_dir(&old, App::Codex), App::Codex)
+                .unwrap()
+                .version,
+            "0.154.0"
+        );
         assert!(
             !app_dir(&new, App::ClaudeCode).exists(),
             "新目录里不能留一份没人锁的 claude.exe"
@@ -2088,7 +2253,10 @@ mod tests {
             launchable: true,
             preferred: false,
         };
-        let managed = Path::new(r"C:\M");
+        let managed = &[
+            PathBuf::from(r"C:\M\claude-code"),
+            PathBuf::from(r"C:\M\codex"),
+        ][..];
         let installs = vec![
             mk(Kind::Managed, r"C:\M\claude-code\claude.exe"),
             mk(Kind::Native, r"C:\Users\me\.local\bin\claude.exe"),
@@ -2187,7 +2355,7 @@ mod tests {
                 r"C:\ProgramData\scoop\apps\claude-code\current\claude.exe",
             ),
         ];
-        let plan = plan_claude_externals(&installs, &[], Path::new(r"C:\M"), None);
+        let plan = plan_claude_externals(&installs, &[], &[PathBuf::from(r"C:\M")], None);
         assert!(plan.iter().all(|e| e.method == Method::Manual), "{plan:?}");
         let hints: Vec<&str> = plan.iter().map(|e| e.action.as_str()).collect();
         assert_eq!(hints.len(), 4, "{hints:?}");
@@ -2209,7 +2377,10 @@ mod tests {
 
     #[test]
     fn codex_externals_skip_the_desktop_app_and_msix_copies() {
-        let managed = Path::new(r"C:\M");
+        let managed = &[
+            PathBuf::from(r"C:\M\claude-code"),
+            PathBuf::from(r"C:\M\codex"),
+        ][..];
         let found = vec![
             PathBuf::from(r"C:\M\codex\codex.exe"),
             PathBuf::from(r"C:\Users\me\AppData\Roaming\npm\codex.cmd"),
@@ -2253,5 +2424,104 @@ mod tests {
         let found = npm_staging_dirs(&t.0, "codex");
         assert_eq!(found.len(), 1);
         assert!(found[0].ends_with(".codex-nITqmxYC"));
+    }
+
+    #[test]
+    fn per_app_dirs_cannot_nest_each_other() {
+        let others = vec![
+            ("claude-code".to_string(), PathBuf::from(r"D:\apps\cc")),
+            ("codex".to_string(), PathBuf::from(r"E:\cx")),
+        ];
+        assert!(nesting_conflict("codex", Path::new(r"D:\apps\cc\inner"), &others).is_some());
+        assert!(nesting_conflict("codex", Path::new(r"D:\apps"), &others).is_some());
+        // 自己那条不算；并排的不算嵌套。
+        assert!(nesting_conflict("codex", Path::new(r"E:\cx\new"), &others).is_none());
+        assert!(nesting_conflict("codex", Path::new(r"D:\apps\cx"), &others).is_none());
+    }
+
+    #[test]
+    fn a_legacy_shared_installs_json_is_still_read_and_moves_with_the_app() {
+        let t = Tmp::new("legacy-rec");
+        let root = t.0.join("root");
+        let dir = app_dir(&root, App::ClaudeCode);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("claude.exe"), b"cc").unwrap();
+        // 旧格式：整个根下一份共用的 installs.json。
+        std::fs::write(
+            root.join("installs.json"),
+            r#"{"apps":{"claude-code":{"version":"2.1.0","sha256":"","source":"","installed_at":""}}}"#,
+        )
+        .unwrap();
+        assert_eq!(record_of(&dir, App::ClaudeCode).unwrap().version, "2.1.0");
+
+        let new = t.0.join("单独 目录").join("cc");
+        move_app_dir(Some(App::ClaudeCode), &dir, &new).unwrap();
+        assert_eq!(std::fs::read(new.join("claude.exe")).unwrap(), b"cc");
+        assert_eq!(
+            record_of(&new, App::ClaudeCode).unwrap().version,
+            "2.1.0",
+            "记录要跟着软件目录走"
+        );
+        assert!(!dir.exists());
+
+        // 新的写进软件目录自己那份；删记录时旧共用那份里的也删掉，免得被读回来。
+        write_record(
+            &new,
+            App::ClaudeCode,
+            Record {
+                version: "2.2.0".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(record_of(&new, App::ClaudeCode).unwrap().version, "2.2.0");
+        let back = app_dir(&root, App::ClaudeCode);
+        std::fs::create_dir_all(&back).unwrap();
+        remove_record(&back, App::ClaudeCode).unwrap();
+        assert!(record_of(&back, App::ClaudeCode).is_none());
+
+        // 目标不空就不搬。
+        let busy = t.0.join("busy");
+        std::fs::create_dir_all(&busy).unwrap();
+        std::fs::write(busy.join("x"), b"x").unwrap();
+        assert!(move_app_dir(None, &new, &busy).is_err());
+        assert!(new.join("claude.exe").is_file());
+    }
+
+    #[test]
+    fn only_local_fixed_drives_are_accepted() {
+        assert!(drive_type_reason(3).is_none());
+        assert!(drive_type_reason(2).unwrap().contains("可移动"));
+        assert!(drive_type_reason(4).unwrap().contains("网络盘"));
+        assert!(drive_type_reason(0).is_some());
+        #[cfg(windows)]
+        assert_eq!(drive_type(&std::env::temp_dir()), 3);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn running_from_compares_canonical_paths() {
+        let t = Tmp::new("canon");
+        let real = t.0.join("Real Dir");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("a.exe"), b"x").unwrap();
+        let link = t.0.join("link");
+        crate::install::relocate::make_junction(&link, &real).unwrap();
+        // 经联结点、大小写不同、带 `\\?\` 前缀 —— 规范化之后都是同一个目录。
+        let key = canonical_key(&real);
+        assert!(is_inside_canon(&link.join("a.exe"), &key));
+        assert!(is_inside_canon(
+            Path::new(&real.join("a.exe").display().to_string().to_uppercase()),
+            &key
+        ));
+        let verbatim = PathBuf::from(format!(r"\\?\{}", real.join("a.exe").display()));
+        assert!(
+            is_inside_canon(&verbatim, &key),
+            "{} vs {key}",
+            canonical_key(&verbatim)
+        );
+        assert!(!key.starts_with(r"\\?\"));
+        assert!(!is_inside_canon(&t.0.join("other.exe"), &key));
+        let _ = crate::install::relocate::remove_link(&link);
     }
 }

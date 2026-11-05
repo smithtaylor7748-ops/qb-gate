@@ -284,7 +284,7 @@ pub async fn resolve(product: Product, arch: Arch) -> Result<Resolved> {
 
 /// 安装包落在托管目录下自己的子目录里，跟 Codex 桌面端一个形状。
 pub fn download_dir(product: Product) -> PathBuf {
-    super::managed::root().join(product.key()).join(".download")
+    super::managed::slot_dir(product.key()).join(".download")
 }
 
 /// 签名主体必须含 Google。三态：对 / 不对 / 读不出 —— 后两种都不装，但报的话不一样。
@@ -527,6 +527,133 @@ async fn try_winget(
 
 fn local_dir() -> PathBuf {
     dirs::data_local_dir().unwrap_or_default()
+}
+
+/// 迁移进度的段数。
+pub const RELOCATE_TOTAL: u32 = 7;
+
+/// 用官方安装器把这个产品**重装到 `dir`**（2026-11-05，按软件迁移）。
+///
+/// 只走官网直下（winget 不带目录参数）：下载 → 核 Google 签名 → 认安装器类型（NSIS / Inno，认不出不跑）→
+/// 带目录参数静默安装 → 重新读注册表位置 → 回读核对主程序在新目录。旧目录里还剩可执行文件就就地上锁
+/// （位置表已经不认它了，不锁就是一份没人管的副本）。账户槽位不受影响：IDE 的 `--user-data-dir` 在 state_dir。
+///
+/// **调用方先确认 Hub / IDE 都退出了、开好维护窗口。**
+pub async fn install_to(
+    product: Product,
+    dir: &Path,
+    rep: &dyn ProgressSink,
+) -> Result<Vec<String>> {
+    let mut log = Vec::new();
+    let old = product.dir(&local_dir());
+    rep.phase(1, "查官网上的最新版本");
+    let found = resolve(product, Arch::current()).await?;
+    log.push(format!("官网最新版 {}（{}）", found.version, found.url));
+    let dl = download_dir(product);
+    let _ = std::fs::remove_dir_all(&dl);
+    std::fs::create_dir_all(&dl)?;
+    let setup = dl.join(format!("{}-{}-setup.exe", product.key(), found.version));
+    rep.phase(2, &format!("下载 {} {}", product.label(), found.version));
+    super::managed::download(&found.url, &setup, None, rep, 2).await?;
+    rep.phase(3, "核对数字签名");
+    if let Err(e) = require_google_signature(&setup, &mut log).await {
+        let _ = std::fs::remove_dir_all(&dl);
+        return Err(e);
+    }
+    rep.phase(4, "核对安装器类型");
+    let kind = super::relocate::installer_kind_of(&setup);
+    let want = match product {
+        Product::Hub => super::relocate::InstallerKind::Nsis,
+        Product::Ide => super::relocate::InstallerKind::Inno,
+    };
+    if kind != Some(want) {
+        let _ = std::fs::remove_dir_all(&dl);
+        return Err(GateError::Other(format!(
+            "官方安装器的类型跟预期不一样（应为 {want:?}，认出来的是 {kind:?}），没敢带目录参数跑。"
+        )));
+    }
+    let dir_arg = super::relocate::installer_dir_arg(want, dir)?;
+    rep.phase(5, "跑官方安装器（静默，带目录）");
+    run_installer_to(product, &setup, &dir_arg, &mut log).await?;
+    let _ = std::fs::remove_dir_all(&dl);
+
+    rep.phase(6, "回读核对");
+    super::antigravity::refresh_locations();
+    let now = product.dir(&local_dir());
+    if !product.launcher(&local_dir()).is_file() || !super::inventory::same_path(&now, dir) {
+        return Err(GateError::Other(format!(
+            "安装器跑完了，但 {} 下没找到{}的主程序（位置表现在认的是 {}）。",
+            dir.display(),
+            product.label(),
+            now.display()
+        )));
+    }
+    log.push(format!("{} 现在在 {}", product.label(), now.display()));
+
+    rep.phase(7, "处理旧目录");
+    if !super::inventory::same_path(&old, dir) && old.is_dir() {
+        let left: Vec<PathBuf> = super::antigravity::exes_under(&old);
+        #[cfg(windows)]
+        let locked = crate::acl::current_user_sid()
+            .map(|sid| {
+                left.iter()
+                    .filter(|p| crate::acl::lock(p, &sid).is_ok())
+                    .count()
+            })
+            .unwrap_or(0);
+        #[cfg(not(windows))]
+        let locked = 0usize;
+        if left.is_empty() {
+            log.push(format!("旧目录 {} 里没有剩下程序", old.display()));
+        } else {
+            log.push(format!(
+                "旧目录 {} 还剩 {} 个程序，已就地上锁 {} 个（不再用的话可以自己删掉这个目录）",
+                old.display(),
+                left.len(),
+                locked
+            ));
+        }
+    }
+    Ok(log)
+}
+
+/// 带目录参数跑安装器。目录参数用 `raw_arg` 原样交过去 —— NSIS 的 `/D=` 被套上引号就认不出。
+#[cfg(windows)]
+async fn run_installer_to(
+    product: Product,
+    exe: &Path,
+    dir_arg: &str,
+    log: &mut Vec<String>,
+) -> Result<()> {
+    let mut cmd = crate::process::hidden_tokio(tokio::process::Command::new(exe));
+    cmd.args(silent_args(product));
+    cmd.raw_arg(dir_arg); // NSIS 要求 /D= 是最后一个参数
+    log.push(format!(
+        "跑官方安装器：{} {} {dir_arg}",
+        exe.display(),
+        silent_args(product).join(" ")
+    ));
+    let o = cmd
+        .output()
+        .await
+        .map_err(|e| GateError::Other(format!("起不了安装器：{e}")))?;
+    if !o.status.success() {
+        log.push(format!(
+            "安装器退出码 {:?}（装没装上看回读）",
+            o.status.code()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+async fn run_installer_to(
+    _product: Product,
+    _exe: &Path,
+    _dir_arg: &str,
+    _log: &mut Vec<String>,
+) -> Result<()> {
+    Err(GateError::Other("只在 Windows 上可用".into()))
 }
 
 /// 这个产品现在装的是哪一版（读主程序的 `VersionInfo.ProductVersion`）。

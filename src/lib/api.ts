@@ -816,4 +816,31 @@ export const api = {
   codexEgressStop: () => call<string[]>("codex_egress_stop"),
   /** 一键从它的 Releases 下载 Windows 包、按 SHA256SUMS 校验、解压到默认位置并登记。进度走 egress-install 任务。 */
   codexEgressInstall: () => call<EgressInstall>("codex_egress_install"),
+
+  // 按软件迁移目录（2026-11-05）。app 键见 `RelocateApp`。
+  relocateWhere: (app: RelocateApp) =>
+    call<RelocateWhere>("relocate_where", { app }),
+  relocateProbe: (app: RelocateApp, path: string) =>
+    call<ManagedProbe>("relocate_probe", { app, path }),
+  relocateRun: (which: RelocateApp, path: string) =>
+    call<RelocateReport>("relocate_run", { which, path }),
+  relocateDesktopRestore: () =>
+    call<RelocateReport>("relocate_desktop_restore"),
+  codexDesktopMoveSettings: () => call<string>("codex_desktop_move_settings"),
+  codexDesktopLocation: () => call<CodexDesktopWhere>("codex_desktop_location"),
 };
+
+import type { RelocateWhere } from "./generated/RelocateWhere";
+import type { RelocateReport } from "./generated/RelocateReport";
+import type { CodexDesktopWhere } from "./generated/CodexDesktopWhere";
+export type { RelocateWhere, RelocateReport, CodexDesktopWhere };
+/** 能在软件卡上迁移的软件。 */
+export type RelocateApp =
+  | "claude-code"
+  | "codex"
+  | "sillytavern"
+  | "gemini-cli"
+  | "antigravity"
+  | "antigravity-ide"
+  | "claude-desktop"
+  | "codex-desktop";

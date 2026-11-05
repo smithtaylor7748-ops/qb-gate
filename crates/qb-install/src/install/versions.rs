@@ -446,13 +446,7 @@ fn deploy_checked(
             after_member(index)?;
         }
         after_member(names.len())?;
-        crate::install::managed::write_record(
-            app_dir
-                .parent()
-                .ok_or_else(|| GateError::Other("安装根无效".into()))?,
-            app,
-            record,
-        )?;
+        crate::install::managed::write_record(app_dir, app, record)?;
         lock(&target)?;
         let mut committed = journal.clone();
         committed["status"] = serde_json::json!("committed");
@@ -549,9 +543,7 @@ fn recover_stage(app_dir: &Path, stage: &Path) -> Result<()> {
             std::fs::remove_file(dst)?;
         }
     }
-    let root = app_dir
-        .parent()
-        .ok_or_else(|| GateError::Other("安装目录无效".into()))?;
+    let root = app_dir;
     if j["record"].is_null() {
         crate::install::managed::remove_record(root, app)?;
     } else {
@@ -568,9 +560,10 @@ fn recover_stage(app_dir: &Path, stage: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn recover_installations(root: &Path) -> Result<()> {
+/// 每个软件目录里中断的部署收尾（按软件目录，2026-11-05）。
+pub fn recover_installations() -> Result<()> {
     for app in App::ALL {
-        let dir = crate::install::managed::app_dir(root, app);
+        let dir = crate::install::managed::app_dir_of(app);
         if !dir.exists() {
             continue;
         }
@@ -644,7 +637,7 @@ mod tests {
         deploy(&app_dir, App::Codex, v2, r2.clone(), Some(&r1)).unwrap();
         rollback(&app_dir, App::Codex, "1", Some(&r2)).unwrap();
         assert_eq!(
-            crate::install::managed::record_of(&root, App::Codex)
+            crate::install::managed::record_of(&app_dir, App::Codex)
                 .unwrap()
                 .version,
             "1"
@@ -655,7 +648,7 @@ mod tests {
         );
         rollback(&app_dir, App::Codex, "2", Some(&r1)).unwrap();
         assert_eq!(
-            crate::install::managed::record_of(&root, App::Codex)
+            crate::install::managed::record_of(&app_dir, App::Codex)
                 .unwrap()
                 .version,
             "2"
@@ -688,7 +681,7 @@ mod tests {
         assert!(!app_dir.join("codex-command-runner.exe").exists());
         assert!(!app_dir.join("codex-windows-sandbox-setup.exe").exists());
         assert_eq!(
-            crate::install::managed::record_of(&root, App::Codex)
+            crate::install::managed::record_of(&app_dir, App::Codex)
                 .unwrap()
                 .version,
             "1"

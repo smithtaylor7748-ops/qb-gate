@@ -200,7 +200,7 @@ pub async fn collect(target: Target) -> Result<Facts> {
     let roots = crate::install::inventory::Roots::current();
 
     let mut f = Facts {
-        managed_root: crate::install::managed::root(),
+        managed_root: crate::install::managed::app_dir_of(crate::install::managed::App::Codex),
         roaming: roaming.clone(),
         ..Facts::default()
     };
@@ -301,9 +301,11 @@ pub async fn collect(target: Target) -> Result<Facts> {
         }
         Target::GeminiCli => {
             let cands = crate::install::detect::gemini_cli_candidates();
-            // 候选表的顺序是 npm 全局在前、托管目录在后（`gemini_cli_candidates` 的说明）。
-            f.gemini_npm = cands.first().is_some_and(|p| p.is_file());
-            let managed = crate::install::managed::root().join("gemini-cli");
+            let managed = crate::install::managed::slot_dir("gemini-cli");
+            // 托管目录之外存在的那份就是 npm 全局装的（候选表 2026-11-05 起托管排最前）。
+            f.gemini_npm = cands
+                .iter()
+                .any(|p| p.is_file() && !crate::install::managed::is_inside(p, &managed));
             f.gemini_managed = managed.is_dir().then_some(managed);
             let root = qb_accounts::gemini::root();
             if let Ok(list) = qb_accounts::gemini::list(&root) {

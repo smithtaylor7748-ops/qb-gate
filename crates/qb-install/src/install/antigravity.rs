@@ -64,7 +64,21 @@ impl Product {
     }
 
     /// 安装目录。`local` = `%LOCALAPPDATA%`。
+    ///
+    /// 2026-11-05 起先看注册表卸载项里登记的 `InstallLocation`（面板带目录参数重装过、或者使用者
+    /// 自己装到别处），读不到再用默认的 `Programs\…`。注册表那条只对本机真实的 `%LOCALAPPDATA%`
+    /// 生效 —— 单测传进来的临时目录永远走默认，不受这台机器装没装反重力影响。
     pub fn dir(self, local: &Path) -> PathBuf {
+        let real_local = dirs::data_local_dir();
+        let registered = real_local
+            .as_deref()
+            .filter(|l| super::inventory::same_path(l, local))
+            .and_then(|_| registered_location(self));
+        dir_from(self, local, registered.as_deref())
+    }
+
+    /// 默认安装目录（官方安装器不带参数时装到这）。
+    pub fn default_dir(self, local: &Path) -> PathBuf {
         match self {
             Product::Hub => local.join("Programs").join("antigravity"),
             Product::Ide => local.join("Programs").join("Antigravity IDE"),
@@ -105,6 +119,94 @@ impl Product {
                 .join("bin"),
         }
     }
+}
+
+/// 注册表登记的位置有主程序就用它，否则默认位置。纯函数（只看主程序在不在）。
+pub fn dir_from(product: Product, local: &Path, registered: Option<&Path>) -> PathBuf {
+    registered
+        .filter(|d| d.join(launcher_name(product)).is_file())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| product.default_dir(local))
+}
+
+fn launcher_name(product: Product) -> &'static str {
+    match product {
+        Product::Hub => "Antigravity.exe",
+        Product::Ide => "Antigravity IDE.exe",
+    }
+}
+
+/// 从卸载项（显示名, InstallLocation）里挑这个产品的那条。纯函数。
+pub fn pick_location(rows: &[(String, String)], product: Product) -> Option<PathBuf> {
+    rows.iter().find_map(|(name, loc)| {
+        let n = name.to_lowercase();
+        let ide = n.contains(" ide") || n.ends_with("ide");
+        let hit = n.contains("antigravity")
+            && match product {
+                Product::Hub => !ide,
+                Product::Ide => ide,
+            };
+        let loc = loc.trim().trim_matches('"').trim_end_matches('\\');
+        (hit && !loc.is_empty()).then(|| PathBuf::from(loc))
+    })
+}
+
+/// 读过的注册表位置（[Hub, IDE]）。`None` = 还没读过。
+static REGISTERED: std::sync::Mutex<Option<[Option<PathBuf>; 2]>> = std::sync::Mutex::new(None);
+
+fn registered_location(product: Product) -> Option<PathBuf> {
+    let idx = product as usize;
+    if let Ok(g) = REGISTERED.lock() {
+        if let Some(v) = g.as_ref() {
+            return v[idx].clone();
+        }
+    }
+    let rows = read_uninstall_rows();
+    let v = [
+        pick_location(&rows, Product::Hub),
+        pick_location(&rows, Product::Ide),
+    ];
+    let out = v[idx].clone();
+    if let Ok(mut g) = REGISTERED.lock() {
+        *g = Some(v);
+    }
+    out
+}
+
+/// 重装到别的目录之后重新读一遍注册表。
+pub fn refresh_locations() {
+    if let Ok(mut g) = REGISTERED.lock() {
+        *g = None;
+    }
+}
+
+/// HKCU 卸载项里显示名带 Antigravity 的（显示名, InstallLocation）。脚本是常量，不拼任何输入。
+#[cfg(windows)]
+fn read_uninstall_rows() -> Vec<(String, String)> {
+    const SCRIPT: &str = "$ErrorActionPreference = 'SilentlyContinue'; \
+        $rows = @(Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' | \
+          ForEach-Object { Get-ItemProperty $_.PSPath } | \
+          Where-Object { [string]$_.DisplayName -like '*Antigravity*' } | \
+          ForEach-Object { [pscustomobject]@{ Name = [string]$_.DisplayName; Location = [string]$_.InstallLocation } }); \
+        ConvertTo-Json -InputObject $rows -Compress";
+    let Ok(o) = crate::process::powershell_std(SCRIPT).output() else {
+        return Vec::new();
+    };
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(String::from_utf8_lossy(&o.stdout).trim()).unwrap_or_default();
+    rows.into_iter()
+        .filter_map(|r| {
+            Some((
+                r.get("Name")?.as_str()?.to_string(),
+                r.get("Location")?.as_str().unwrap_or("").to_string(),
+            ))
+        })
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn read_uninstall_rows() -> Vec<(String, String)> {
+    Vec::new()
 }
 
 /// 一份要上锁的可执行文件，以及它属于哪个产品。
@@ -163,6 +265,22 @@ pub fn executables(local: &Path) -> Vec<Executable> {
         for p in exes_in(&product.language_server_dir(local)) {
             out.push(Executable { product, path: p });
         }
+    }
+    out
+}
+
+/// 一个目录底下（递归）的全部 `*.exe`，卸载器除外。迁走之后旧目录里剩下的就地上锁用。
+pub fn exes_under(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if e.file_type().is_ok_and(|t| t.is_dir()) {
+                stack.push(p);
+            }
+        }
+        out.extend(exes_in(&d).into_iter().filter(|p| !is_uninstaller(p)));
     }
     out
 }
@@ -294,6 +412,45 @@ pub fn login_seen_in_log(roaming: &Path) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registry_location_falls_back_to_the_default_when_missing() {
+        let local = Path::new(r"C:\Users\me\AppData\Local");
+        // 读不到注册表：默认位置。
+        assert_eq!(
+            dir_from(Product::Hub, local, None),
+            local.join("Programs").join("antigravity")
+        );
+        // 登记的位置里没有主程序（卸载残留的登记）：也回落默认。
+        assert_eq!(
+            dir_from(Product::Ide, local, Some(Path::new(r"Z:\nope"))),
+            local.join("Programs").join("Antigravity IDE")
+        );
+        // 挑卸载项：Hub 不能被 IDE 那条抢走，反过来也一样。
+        let rows = vec![
+            ("Antigravity IDE".to_string(), r#""D:\AG IDE\""#.to_string()),
+            ("Antigravity 2.15.0".to_string(), r"D:\AG".to_string()),
+            ("Other".to_string(), r"D:\x".to_string()),
+        ];
+        assert_eq!(
+            pick_location(&rows, Product::Hub),
+            Some(PathBuf::from(r"D:\AG"))
+        );
+        assert_eq!(
+            pick_location(&rows, Product::Ide),
+            Some(PathBuf::from(r"D:\AG IDE"))
+        );
+        assert_eq!(pick_location(&[], Product::Hub), None);
+    }
+
+    #[test]
+    fn a_registered_location_with_a_launcher_wins() {
+        let (_t, local) = tree();
+        let other = local.join("elsewhere");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("Antigravity.exe"), b"x").unwrap();
+        assert_eq!(dir_from(Product::Hub, &local, Some(&other)), other);
+    }
 
     fn tree() -> (tempdir::Dir, PathBuf) {
         let t = tempdir::Dir::new("qb-antigravity");

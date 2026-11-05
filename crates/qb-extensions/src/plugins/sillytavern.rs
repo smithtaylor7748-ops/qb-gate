@@ -401,6 +401,11 @@ pub fn foreign_tavern_running() -> bool {
     port_in_use(cfg.st_port) && !owned_running("sillytavern").unwrap_or(false)
 }
 
+/// 酒馆端口上有人在听（不管是不是面板起的）。迁移目录之前问这一句（2026-11-05）。
+pub fn tavern_port_busy() -> bool {
+    port_in_use(load_config().st_port)
+}
+
 /// 软件页「SillyTavern（酒馆）」卡要的全部事实。**不联网**（最新版要点「检查新版本」才问）。
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[ts(export)]
