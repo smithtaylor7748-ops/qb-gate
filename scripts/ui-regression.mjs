@@ -1232,7 +1232,8 @@ try {
     "打开页面不该联网",
   );
   // 2026-11-06（使用者点名的三处）：槽位里 Claude Code 那张访问令牌到点是常态，不标成问题；
-  // 不给「切换并打开」；读不到重置时刻时不写「↻ 未知」。表头是「账户 / 额度 / 操作」。
+  // 不给「切换并打开」；读不到重置时刻时不写「↻ 未知」。
+  // 账户页是这里自己重新设计的（不照 Cockpit 的账户页）：一行三块，没有表头。
   const claudeTable = await page.locator(".account-slots").innerText();
   assert.doesNotMatch(claudeTable, /令牌到点|切换并打开|↻\s*未知/);
   assert.equal(
@@ -1243,10 +1244,6 @@ try {
       })
       .count(),
     0,
-  );
-  assert.match(
-    await page.locator(".account-slots .acct-head").innerText(),
-    /账户[\s\S]*额度[\s\S]*操作/,
   );
   await claudeRows
     .nth(1)
@@ -1357,13 +1354,13 @@ try {
         ?.textContent?.includes("在线 ·") === true,
   );
   const agOnline = await page.getByTestId("ag-slot").first().innerText();
-  // 2026-11-06：Claude / Gemini 两行 × 5h / 周两格的小矩阵。「5h」「周」只在表头写一次，
+  // 2026-11-06：Claude / Gemini 两行 × 5h / 周两格的小矩阵。「5h」「周」只在列表上方那一行列名里写一次，
   // 行里不再每格重复（使用者：「5h」「7d」重复出现，太乱）；倒计时只在悬停里。
   assert.match(agOnline, /Claude[\s\S]*%[\s\S]*%[\s\S]*Gemini[\s\S]*%[\s\S]*%/);
   assert.doesNotMatch(agOnline, /5h|周/);
   assert.match(
     await page
-      .locator('[data-testid="antigravity-accounts"] .acct-head')
+      .locator('[data-testid="antigravity-accounts"] .acct-legend')
       .innerText(),
     /5h[\s\S]*周/,
   );

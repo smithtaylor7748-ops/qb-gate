@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 /**
- * 反重力账户列表里的一行（0.32.0；2026-11-06 照 Cockpit Tools 的账户页重排成表格行）。
+ * 反重力账户列表里的一行（0.32.0；2026-11-06 重新设计，不照 Cockpit Tools 的账户页做）。
  *
- * 三列跟 Claude / GPT 两页同一套：账户 | 额度 | 操作。
+ * 一行三块，跟 Claude / GPT 两页同一套：账户 · 额度 · 操作。没有表头，只在列表上方
+ * 留一行很轻的「5h / 周」列名（`AntigravityQuotaLegend`），对准每行那张小矩阵的两列。
  *
  * # 一行 = 一个 Google 账户，底下两半
  *
@@ -26,7 +27,7 @@ import type { ReactNode } from "react";
  * # 额度（2026-09-23 重做；2026-11-06 收成一张小矩阵）
  *
  * 使用者说原来那块「太乱」：Claude / Gemini 两行，每行都写一遍「5h」「周」，再加倒计时。
- * 现在「5h」「周」只在表头出现一次，一格只剩条子和百分比，倒计时放悬停：
+ * 现在「5h」「周」只在列表上方那一行列名里出现一次，一格只剩条子和百分比，倒计时放悬停：
  *
  * | 有什么 | 画什么 |
  * |---|---|
@@ -265,17 +266,23 @@ function GroupRow({
   );
 }
 
-/** 反重力那一页的表头：额度那一列分成「5h」「周」两小列，跟每行的小矩阵对齐。 */
-export function AntigravityTableHead() {
+/**
+ * 列表上方那一行列名：只有「5h」「周」两个字，对准每行小矩阵的两列（2026-11-06）。
+ * 原来每行每格都写一遍「5h」「周」，使用者说太乱。用的是跟账户行同一套网格，所以永远对得齐；
+ * 只是视觉上的提示，读屏器读每一格自己的名字（`Gauge` 的可访问名里有）。
+ */
+export function AntigravityQuotaLegend() {
   return (
-    <div className="acct-head" aria-hidden="true">
-      <span>账户</span>
-      <span className="ag-mrow ag-mrow--head">
-        <span>额度</span>
-        <span>5h</span>
-        <span>周</span>
+    <div className="acct-legend" aria-hidden="true">
+      <span className="acct-who" />
+      <span className="acct-quota">
+        <span className="ag-mrow">
+          <span />
+          <span>5h</span>
+          <span>周</span>
+        </span>
       </span>
-      <span>操作</span>
+      <span className="acct-ops" />
     </div>
   );
 }

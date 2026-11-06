@@ -1,10 +1,10 @@
 /** Claude official accounts: four slots per page; launch and current usage share the right column.
  * Switching stays manual and retains the existing account dialog and process checks.
  *
- * 2026-11-06 照 Cockpit Tools 的账户页重排（使用者：「重新设计整个页面吧，感觉现在的太臃肿了」）：
- * 左边是一张表（账户 / 额度 / 操作），标题栏只剩会话、刷新、新建三样；
+ * 2026-11-06 重新设计（使用者：「重新设计整个页面吧，感觉现在的太臃肿了」）：
+ * 左边一个账户一行（账户 · 额度 · 操作三块，没有表头），标题栏只剩会话、刷新、新建三样；
  * 槽位里 Claude Code 自己那张访问令牌到点不再标成问题（几小时就到点，平时用桌面端时它一直是到点的），
- * 「切换并打开」也去掉了。
+ * 「切换并打开」也去掉了。这一页不照 Cockpit Tools 的账户页做（照它的只有会话弹窗）。
  */
 
 import { useEffect, useState } from "react";
@@ -47,7 +47,7 @@ import Tile from "./Tile";
 import AccountUsageCard from "./AccountUsageCard";
 import OfficialConfigResidue from "./OfficialConfigResidue";
 import KillBar from "./KillBar";
-import SlotRow, { AccountTableHead, switchLabel } from "./SlotRow";
+import SlotRow, { switchLabel } from "./SlotRow";
 import CredentialBadge, { useCredentials } from "./CredentialBadge";
 import { credentialApi } from "../../lib/credentials";
 import QuotaRefreshAll from "./QuotaRefreshAll";
@@ -317,7 +317,6 @@ export default function AccountBand() {
               </p>
             ) : (
               <>
-                <AccountTableHead />
                 <div className="account-slot-list">
                   {pageSlots.map((s) => (
                     <SlotRow

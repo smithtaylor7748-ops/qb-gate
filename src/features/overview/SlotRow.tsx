@@ -1,9 +1,10 @@
 /**
- * Claude 账户列表里的一行（2026-11-06 照 Cockpit Tools 的账户页重排成表格行）。
+ * Claude 账户列表里的一行（2026-11-06 重新设计，使用者：「感觉现在的太臃肿了」）。
  *
- * 三列：账户（邮箱、命名、套餐、剩余天数）| 额度（5 小时 / 7 天两根条）| 操作（图标按钮）。
- * 表头在 `AccountTableHead`，三个账户页共用同一套列宽（`workspace.css` 的 `.acct-row`）。
- * 原来是一个带框的盒子，里面四五层（标题行、两根条、来源、刷新图标），使用者说「太臃肿了」。
+ * 一行三块，从左到右：账户（邮箱、命名、套餐、剩余天数）· 额度（5 小时 / 7 天两根条）· 操作（图标按钮）。
+ * 没有表头 —— 每一块自己看得懂，省下的那一行留给账户。三个账户页共用同一套列宽（`workspace.css` 的 `.acct-row`）。
+ * 原来是一个带框的盒子，里面四五层（标题行、两根条、来源、刷新图标）。
+ * ⛔ 这一页不照 Cockpit Tools 的账户页做（使用者更正过：照 Cockpit 的只有会话弹窗），怎么排是这里自己定的。
  *
  * # 「切换」这个词对过期槽位是错的
  *
@@ -56,17 +57,6 @@ export function expiryText(s: Slot): string {
   if (s.login_problem?.startsWith("访问令牌被拒")) return "令牌被拒";
   if (s.login_problem) return "登录已失效";
   return s.logged_in ? fmtDaysLeft(s.cli_days_left) : "未登录";
-}
-
-/** 三个账户页共用的表头。只是视觉上的列名，读屏器读每一行自己的内容。 */
-export function AccountTableHead({ quota = "额度" }: { quota?: string }) {
-  return (
-    <div className="acct-head" aria-hidden="true">
-      <span>账户</span>
-      <span>{quota}</span>
-      <span>操作</span>
-    </div>
-  );
 }
 
 export default function SlotRow({

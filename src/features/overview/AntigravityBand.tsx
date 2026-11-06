@@ -62,7 +62,7 @@ import type { TavernGeminiQuota } from "../../lib/generated/TavernGeminiQuota";
 import type { UiStatus } from "../../lib/generated/UiStatus";
 import { AFTER, R } from "../../lib/resources";
 import AntigravitySlotRow, {
-  AntigravityTableHead,
+  AntigravityQuotaLegend,
   canAttach,
 } from "./AntigravitySlotRow";
 import BridgeModal, {
@@ -851,7 +851,7 @@ export default function AntigravityBand() {
               )}
             </div>
           )}
-          {slots.length > 0 && <AntigravityTableHead />}
+          {slots.length > 0 && <AntigravityQuotaLegend />}
           <div className="account-slot-list">{slotRows}</div>
           {/* 脚注一行装下计数 + 翻页：这一页是固定高度，不另起一行。 */}
           <div className="account-pagination">

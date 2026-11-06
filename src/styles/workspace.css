@@ -1284,12 +1284,15 @@ body:has(.official-page) {
   flex: 1;
   min-height: 0;
 }
-/* ------------------------------------------- 账户表（2026-11-06 照 Cockpit Tools 的账户页重排）
+/* ------------------------------------------- 账户列表（2026-11-06 重新设计）
 
-   三个账户页同一套：表头一条浅灰底（账户 / 额度 / 操作），下面每个账户一行，行与行之间一条细线，
-   当前那一行浅色底 + 左边一道强调色。原来每个账户是一个带框的盒子、里面四五层，使用者说「太臃肿了」。
+   使用者说原来「太臃肿了」：每个账户一个带框的盒子、里面四五层。现在一个账户一行，三块从左到右：
+   账户 · 额度 · 操作（图标按钮），行与行之间一条细线，当前那一行浅色底 + 左边一道强调色。
+   没有表头（每一块自己看得懂）；反重力那一页只在列表上方留一行「5h / 周」的轻量列名（`.acct-legend`）。
+   ⛔ 不照 Cockpit Tools 的账户页做（使用者更正过：照 Cockpit 的只有会话弹窗）。
    ⛔ 这一页是固定高度的（`test:ui` 的 `assertFixedAccounts` 四档都查「不裁切、列表不内部滚动」）：
-   一页四行，行高跟着可用高度走（每行最高 96px，多出来的空白留在表的下面）。 */
+   一页四行，行高跟着可用高度走（每行最高 96px，多出来的空白留在列表的下面）。
+   操作列定宽（不是 auto）：auto 的话每行按钮数不一样（当前那一行没有「切换」），额度列就对不齐了。 */
 .account-slot-list {
   display: grid;
   grid-template-rows: repeat(4, minmax(0, 96px));
@@ -1297,25 +1300,21 @@ body:has(.official-page) {
   gap: 0;
   flex: 1;
   min-height: 0;
+  border-top: 1px solid var(--border);
 }
-.acct-head,
+.acct-legend,
 .account-slot-list .acct-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) 112px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) 108px;
   column-gap: 14px;
   align-items: center;
 }
-.acct-head {
+.acct-legend {
   flex: none;
-  padding: 6px 12px;
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
+  padding: 0 12px;
   color: var(--text-3);
-  font-size: var(--text-xs);
-  font-weight: 600;
-}
-.acct-head > span:last-child {
-  text-align: right;
+  font-size: var(--text-2xs);
+  line-height: 14px;
 }
 .account-slot-list .acct-row {
   min-height: 0;
@@ -1478,9 +1477,10 @@ body:has(.official-page) {
   gap: 2px;
   min-width: 0;
 }
+/* 四颗（反重力只填了一半的那一行：刷新、并入、切换、删除）要放得进 108px 的操作列。 */
 .acct-ops .btn--sm {
   min-height: 26px;
-  padding: 3px 6px;
+  padding: 3px 5px;
 }
 .acct-ops .acct-del:hover:not(:disabled) {
   color: var(--danger);
@@ -1502,7 +1502,7 @@ body:has(.official-page) {
   cursor: not-allowed;
   opacity: 0.55;
 }
-/* 反重力的额度小矩阵：组名 | 5h | 周。「5h」「周」只在表头写一次，所以格子里不写名字。 */
+/* 反重力的额度小矩阵：组名 | 5h | 周。「5h」「周」只在列表上方那一行列名里写一次，所以格子里不写名字。 */
 .ag-matrix {
   display: grid;
   gap: 3px;
@@ -1522,9 +1522,6 @@ body:has(.official-page) {
 }
 .ag-mrow .gauge-track {
   min-width: 12px;
-}
-.ag-mrow--head > span:not(:first-child) {
-  padding-left: 1px;
 }
 .ag-mname {
   overflow: hidden;
@@ -1751,11 +1748,14 @@ body:has(.official-page) {
   .account-usage .slotusage .gauge-reset {
     display: none;
   }
-  .acct-head,
+  .acct-legend,
   .account-slot-list .acct-row {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 100px;
     column-gap: 8px;
     padding-inline: 8px;
+  }
+  .acct-ops .btn--sm {
+    padding: 3px 4px;
   }
   .acct-quota .gauge-pct {
     min-width: 3.2em;
@@ -1819,12 +1819,11 @@ body:has(.official-page) {
     display: none;
   }
 }
-/* 680 那一档左边只剩不到 300px：三列排不下，一行改成两层 ——
-   上层「账户 · 操作」，下层额度（两根条并排）。表头没了列可对，收掉。 */
+/* 680 那一档左边只剩不到 300px：三块排不下，一行改成两层 ——
+   上层「账户 · 操作」，下层额度（两根条并排）。反重力那行列名跟着用同一套两层网格，
+   所以「5h / 周」还是对准下层那张小矩阵。 */
 @container accounts (max-width: 700px) {
-  .acct-head {
-    display: none;
-  }
+  .acct-legend,
   .account-slot-list .acct-row {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
@@ -1832,6 +1831,10 @@ body:has(.official-page) {
       "quota quota";
     row-gap: 3px;
     padding: 4px 6px;
+  }
+  .acct-legend {
+    row-gap: 0;
+    padding-block: 0;
   }
   .acct-who {
     grid-area: who;
@@ -1855,6 +1858,15 @@ body:has(.official-page) {
   }
   .acct-ops .btn--sm {
     padding: 3px 4px;
+  }
+}
+/* 又窄又矮（680×640 那一档）：反重力一行要三层（名字 / 两半的徽标 / 两行小矩阵），四行网格装不下 ——
+   收掉行里的小矩阵和上面那行列名（0.32.0 起这一档就是这么收的）。账户和两半登没登录照旧在，
+   配额在右下角那张用量卡（剩得最少的那一格）和 `/usage` 上都有，收掉不丢信息。 */
+@container accounts (max-width: 700px) and (max-height: 700px) {
+  [data-testid="antigravity-accounts"] .acct-legend,
+  [data-testid="ag-slot"] .acct-quota {
+    display: none;
   }
 }
 @container accounts (max-height: 840px) {

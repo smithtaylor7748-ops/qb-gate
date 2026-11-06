@@ -1,7 +1,7 @@
 /**
  * Codex desktop: official login slots, explicit switching, local rollout usage.
  *
- * 2026-11-06 照 Cockpit Tools 的账户页重排：左边是一张表（账户 / 额度 / 操作）。
+ * 2026-11-06 重新设计（不照 Cockpit Tools 的账户页做）：左边一个账户一行（账户 · 额度 · 操作三块）。
  * 标题栏原来挤着会话、全部刷新、「每 10 分」、审查、模型、刷新、新建七样，现在只剩会话、刷新、新建：
  * 两个显示开关去掉了（那两类限额照旧在额度的悬停提示里），自动刷新的档位挪进设置页，
  * 两颗长得一样的刷新合成一颗。行上不再标「令牌到点」、不再摆「让官方换新」——
@@ -19,7 +19,6 @@ import {
   Trash2,
   Wine,
 } from "lucide-react";
-import { AccountTableHead } from "./SlotRow";
 import { SessionsEntry } from "../accounts/SessionsDialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Link, useNavigate } from "react-router-dom";
@@ -652,7 +651,6 @@ export default function GptBand() {
               </p>
             </div>
           )}
-          {slots.length > 0 && <AccountTableHead />}
           <div className="account-slot-list">
             {slots.slice(page * PER_PAGE, (page + 1) * PER_PAGE).map((s) => {
               const shown = slotName(s.email, s.label);
