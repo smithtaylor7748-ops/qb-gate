@@ -404,6 +404,15 @@ mod tests {
             ));
             let _ = std::fs::remove_dir_all(&p);
             std::fs::create_dir_all(&p).unwrap();
+            // 换成长名：CI 机器的 %TEMP% 是 8.3 短名（`C:\Users\RUNNER~1\…`），而联结点解析出来的
+            // 真实路径是长名，两边一比就对不上（0.25.9 发版时 GitHub 上红在这）。
+            // 真实情况里进程路径本来就是长名，测试要跟它一致。
+            let p = std::fs::canonicalize(&p)
+                .map(|c| {
+                    let s = c.to_string_lossy().to_string();
+                    PathBuf::from(s.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(s))
+                })
+                .unwrap_or(p);
             Self(p)
         }
     }
