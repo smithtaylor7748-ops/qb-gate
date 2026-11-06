@@ -1,16 +1,21 @@
 /** Claude official accounts: four slots per page; launch and current usage share the right column.
  * Switching stays manual and retains the existing account dialog and process checks.
+ *
+ * 2026-11-06 照 Cockpit Tools 的账户页重排（使用者：「重新设计整个页面吧，感觉现在的太臃肿了」）：
+ * 左边是一张表（账户 / 额度 / 操作），标题栏只剩会话、刷新、新建三样；
+ * 槽位里 Claude Code 自己那张访问令牌到点不再标成问题（几小时就到点，平时用桌面端时它一直是到点的），
+ * 「切换并打开」也去掉了。
  */
 
 import { useEffect, useState } from "react";
 import {
+  ArrowLeftRight,
+  LogIn,
   MonitorSmartphone,
   PlayCircle,
   Plus,
-  RefreshCw,
   Terminal,
   Trash2,
-  Users,
   Wine,
 } from "lucide-react";
 import { SessionsEntry } from "../accounts/SessionsDialog";
@@ -42,7 +47,7 @@ import Tile from "./Tile";
 import AccountUsageCard from "./AccountUsageCard";
 import OfficialConfigResidue from "./OfficialConfigResidue";
 import KillBar from "./KillBar";
-import SlotRow, { switchLabel } from "./SlotRow";
+import SlotRow, { AccountTableHead, switchLabel } from "./SlotRow";
 import CredentialBadge, { useCredentials } from "./CredentialBadge";
 import { credentialApi } from "../../lib/credentials";
 import QuotaRefreshAll from "./QuotaRefreshAll";
@@ -253,30 +258,30 @@ export default function AccountBand() {
     <>
       <div className="account-workspace">
         <Card className="account-slots">
-          {/* ------------------------------------------------ 左：槽位 */}
+          {/* ------------------------------------------------ 左：账户表 */}
           <div className="account-slot-content">
-            <div className="mb-1 flex items-center gap-2">
+            <div className="acct-toolbar">
               <h2 className="card-title">
-                <Users size={14} aria-hidden="true" />
-                账户槽位
+                账户
+                <span className="acct-count">{slots.length}</span>
               </h2>
-              <span className="ml-auto flex flex-shrink-0 gap-1.5">
+              <span className="acct-toolbar-actions">
                 <SessionsEntry
                   kind="claude"
                   current={slots.find((s) => s.active)?.label}
                 />
-                <QuotaRefreshAll run={() => refreshAllClaude()} />
-                <Button
-                  size="sm"
-                  icon={<RefreshCw size={12} />}
-                  loading={accounts.loading}
-                  title="立刻重读一遍槽位与额度。后台每 30 秒自己也会读一次。"
-                  aria-label="刷新账户"
-                  onClick={() => void accounts.refresh()}
+                {/* 原来这里两颗长得一样的刷新（全部刷新 / 重读槽位），合成这一颗：先重读、再问一遍。
+                    后台每 30 秒照旧自己重读一次本机槽位（不联网）。 */}
+                <QuotaRefreshAll
+                  run={async () => {
+                    await accounts.refresh().catch(() => undefined);
+                    return refreshAllClaude();
+                  }}
                 />
                 <Button
                   size="sm"
-                  icon={<Plus size={12} />}
+                  variant="primary"
+                  icon={<Plus size={13} />}
                   onClick={requestNewSlot}
                 >
                   新建
@@ -312,70 +317,77 @@ export default function AccountBand() {
               </p>
             ) : (
               <>
+                <AccountTableHead />
                 <div className="account-slot-list">
                   {pageSlots.map((s) => (
                     <SlotRow
                       key={s.label}
                       slot={s}
                       onOpen={requestAccountDetail}
-                      // 额度条右边的刷新图标：2026-10-26 起（阶段 6 · U2）点它向官方问一次这个账户，一次只问一个。
+                      // 操作列第一颗：2026-10-26 起（阶段 6 · U2）点它向官方问一次这个账户，一次只问一个。
                       onRefresh={() => void refreshQuota(s.label)}
                       refreshing={quotaFor === s.label}
-                      actions={
+                      badges={
                         <>
                           <ClaudeExtras q={claudeLive[s.label]} />
-                          {/* 凭证徽标：Claude 的令牌面板不碰，到点只给「切换并打开」。 */}
+                          {/* 凭证徽标只在真有事时出现：令牌到点、瞬时问题、没登录都不画（CredentialBadge 的 QUIET），
+                              也不带「切换并打开」。 */}
                           <CredentialBadge
                             status={creds.map[s.label]}
                             busy={!!busy}
-                            onAction={() =>
-                              s.active
-                                ? void launch("claude-code")
-                                : requestSwitch(s.label)
-                            }
                             onEmailAccept={() =>
                               void credentialApi
                                 .emailAccept("claude", s.label)
                                 .then(creds.reload)
                             }
                           />
+                        </>
+                      }
+                      actions={
+                        <>
                           {s.active ? (
                             // 激活槽位过期时原来什么按钮都没有 —— 用户看到
                             // 「凭证已过期」却无处下手。这里补一个只启动、
                             // 不切换的入口。没过期的那一档，重登入口在详情页里
                             // （令牌可能已被回收，而本地时间戳看不出来）。
-                            needsLogin(s) ? (
+                            needsLogin(s) && (
                               <Button
                                 size="sm"
                                 variant="primary"
+                                icon={<LogIn size={13} />}
+                                aria-label="重新登录"
+                                title="用 Claude Code 在这个槽位里重新登录一次"
                                 loading={busy === "claude-code"}
                                 disabled={!!busy}
                                 onClick={() => launch("claude-code")}
-                              >
-                                重新登录
-                              </Button>
-                            ) : (
-                              <span className="text-xs text-accent">
-                                使用中
-                              </span>
+                              />
                             )
                           ) : (
                             <Button
                               size="sm"
+                              variant="ghost"
+                              icon={
+                                s.logged_in ? (
+                                  <ArrowLeftRight size={13} />
+                                ) : (
+                                  <LogIn size={13} />
+                                )
+                              }
+                              aria-label={switchLabel(s)}
+                              title={`${switchLabel(s)}：把当前账户换成 ${slotName(s.email, s.label)}`}
                               disabled={!!busy}
                               onClick={() => requestSwitch(s.label)}
-                            >
-                              {switchLabel(s)}
-                            </Button>
+                            />
                           )}
-                          {/* 「管理账户」就是删除，所以它直接长在条上，
+                          {/* 「管理账户」就是删除，所以它直接长在行上，
                             不再跳去一个单独的管理页。当前账户删不了 ——
                             删掉它会留下一个指向空处的联结点，而没有任何
                             东西会去修它。 */}
                           <Button
                             size="sm"
-                            variant="danger"
-                            icon={<Trash2 size={12} />}
+                            variant="ghost"
+                            className="acct-del"
+                            icon={<Trash2 size={13} />}
                             aria-label={`删除 ${slotName(s.email, s.label)}`}
                             disabled={!!busy || s.active}
                             title={
@@ -392,7 +404,7 @@ export default function AccountBand() {
                 </div>
                 <div className="account-pagination">
                   <span className="notice">
-                    {shown.length} 个槽位
+                    共 {shown.length} 个
                     {pages > 1 && ` · 第 ${page + 1} / ${pages} 页`}
                   </span>
                   {pages > 1 && (
@@ -570,8 +582,10 @@ function ClaudeExtras({ q }: { q: ClaudeQuota | undefined }) {
   const when = q.last_success
     ? `上次成功：${new Date(q.last_success).toLocaleString()}`
     : `官方接口 · ${q.fetched_at}`;
+  if (!sonnetLive && !(extra && extra.utilization != null)) return null;
+  // 窄窗口收掉（`.acct-extra`）：账户列第二行装不下半截徽标，完整的在账户详情的官方额度区。
   return (
-    <>
+    <span className="acct-extra">
       {sonnetLive && (
         <Pill tone="default" title={`7 天 · Sonnet · ${when}`}>
           Sonnet 剩 {Math.max(0, Math.round(100 - sonnet.used_percent))}%
@@ -595,6 +609,6 @@ function ClaudeExtras({ q }: { q: ClaudeQuota | undefined }) {
           超额 {Math.round(extra.utilization)}%
         </Pill>
       )}
-    </>
+    </span>
   );
 }

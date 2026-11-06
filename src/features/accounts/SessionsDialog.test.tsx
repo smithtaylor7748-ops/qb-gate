@@ -73,7 +73,7 @@ it("opens on the current slot and offers only that client's slots", async () => 
     expect.objectContaining({ source: "claude-code:slot:b", kind: "chat" }),
   );
   const select = (await screen.findByLabelText("槽位")) as HTMLSelectElement;
-  await screen.findByRole("option", { name: "a · 1" });
+  await screen.findByRole("option", { name: "a · 1 个" });
   expect([...select.options].map((o) => o.value)).toEqual([
     "claude-code:slot:a",
     "claude-code:slot:b",

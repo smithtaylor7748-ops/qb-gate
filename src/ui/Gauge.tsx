@@ -57,6 +57,11 @@ export interface GaugeProps {
   binding?: boolean;
   /** 整根换成一句话（读数过期之类）。给了它就不画条。 */
   note?: ReactNode;
+  /**
+   * 悬停提示里补的一句（重置倒计时之类，2026-11-06）。挂在整根上，条子自己的提示后面也接上它 ——
+   * 反重力那张小矩阵一格只有条子和百分比，倒计时只放这里。
+   */
+  hint?: string;
   className?: string;
 }
 
@@ -67,11 +72,12 @@ export default function Gauge({
   extra,
   binding,
   note,
+  hint,
   className = "",
 }: GaugeProps) {
   if (note) {
     return (
-      <span className={`gauge gauge--dead ${className}`}>
+      <span className={`gauge gauge--dead ${className}`} title={hint}>
         <span className="gauge-name">{name}</span>
         <span className="gauge-note">{note}</span>
       </span>
@@ -81,7 +87,7 @@ export default function Gauge({
   // 没测到：斜纹空槽 + 「—」。**不画 0。**
   if (used == null || !Number.isFinite(used)) {
     return (
-      <span className={`gauge ${className}`}>
+      <span className={`gauge ${className}`} title={hint}>
         <span className="gauge-name">{name}</span>
         <span
           className="gauge-track"
@@ -105,9 +111,14 @@ export default function Gauge({
   const t = gaugeTone(left);
   const label = `${typeof name === "string" ? name : ""}已用 ${Math.round(u)}%，剩 ${left}%`;
   return (
-    <span className={`gauge ${className}`}>
+    <span className={`gauge ${className}`} title={hint}>
       <span className="gauge-name">{name}</span>
-      <span className="gauge-track" title={label} role="img" aria-label={label}>
+      <span
+        className="gauge-track"
+        title={hint ? `${label} · ${hint}` : label}
+        role="img"
+        aria-label={label}
+      >
         {/* 上色的那段 = 已经用掉的。空槽 = 还剩的。
             颜色按剩余量给：长度说「用了多少」，颜色说「还够不够」。 */}
         <span

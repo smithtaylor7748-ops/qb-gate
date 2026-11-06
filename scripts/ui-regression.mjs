@@ -186,14 +186,16 @@ async function assertFixedAccounts(page, scope) {
         overflow.push(`clipped text: ${el.className}`);
     }
     return {
-      widthDifference: Math.abs(left.width - right.width),
+      // 2026-11-06 账户页重排：左边那张账户表比右边宽（3 : 2），680 那一档两边一样宽。
+      // 原来这里要求两列等宽；现在只要求左边不比右边窄、两列顶边对齐、一样高。
+      leftNarrower: right.width - left.width,
       heightDifference: Math.abs(left.height - right.height),
       aligned: Math.abs(left.y - right.y),
       overflow,
     };
   });
   assert.ok(
-    geometry.widthDifference < 2 &&
+    geometry.leftNarrower < 2 &&
       geometry.heightDifference < 2 &&
       geometry.aligned < 2,
     `${scope}: columns must match ${JSON.stringify(geometry)}`,
@@ -954,14 +956,34 @@ try {
   await page.getByRole("dialog").waitFor({ state: "hidden" });
   assert.equal(await closeCodex.isDisabled(), true);
   assert.match(await page.locator(".account-launch").innerText(), /未运行/);
+  // 2026-11-06 账户页重排：「当前槽位」那枚徽标改叫「当前」，跟另外两页一样。
   assert.match(
     await page.getByTestId("codex-slot").first().innerText(),
-    /当前槽位/,
+    /当前/,
+  );
+  // 标题栏只剩会话、刷新、新建：「审查」「模型」两个开关和「每 10 分」下拉框都拿掉了
+  // （档位在设置页「账户额度」），两颗一样的刷新合成一颗。
+  const codexHead = page.locator('[data-testid="codex-accounts"] .card-head');
+  for (const gone of ["审查", "模型"])
+    assert.equal(
+      await codexHead.getByRole("button", { name: gone, exact: true }).count(),
+      0,
+      `GPT 账户标题栏不该再有「${gone}」`,
+    );
+  assert.equal(await codexHead.getByRole("combobox").count(), 0);
+  assert.equal(
+    await codexHead.getByRole("button", { name: "刷新", exact: true }).count(),
+    1,
   );
   // 2026-09-23：登录正常时不再画「已登录 · 本地凭据」，行上也没有「打开」了
   // （起桌面端走右边的磁贴；没登录的槽位才留「登录」）。
   const firstCodex = page.getByTestId("codex-slot").first();
   assert.doesNotMatch(await firstCodex.innerText(), /本地凭据/);
+  // 令牌到点不是毛病（官方客户端下次运行自己换新）：行上不标、也不摆「让官方换新」。
+  assert.doesNotMatch(
+    await page.locator('[data-testid="codex-accounts"]').innerText(),
+    /令牌到点|让官方换新|切换并打开/,
+  );
   assert.equal(
     await firstCodex.getByRole("button", { name: "打开", exact: true }).count(),
     0,
@@ -996,7 +1018,7 @@ try {
   await page.getByRole("button", { name: "取消", exact: true }).click();
   assert.match(
     await page.getByTestId("codex-slot").first().innerText(),
-    /当前槽位/,
+    /当前/,
   );
   // 0.27.0：桌面端没在跑的时候，「启动」不该再弹那个「关闭旧窗口并打开」——
   // 使用者的原话是「每次点启动都会跳这个」。起完再点一次才该弹。
@@ -1209,6 +1231,23 @@ try {
     /官方接口/,
     "打开页面不该联网",
   );
+  // 2026-11-06（使用者点名的三处）：槽位里 Claude Code 那张访问令牌到点是常态，不标成问题；
+  // 不给「切换并打开」；读不到重置时刻时不写「↻ 未知」。表头是「账户 / 额度 / 操作」。
+  const claudeTable = await page.locator(".account-slots").innerText();
+  assert.doesNotMatch(claudeTable, /令牌到点|切换并打开|↻\s*未知/);
+  assert.equal(
+    await page
+      .locator(".account-slots")
+      .locator(".gauge-reset", {
+        hasText: "未知",
+      })
+      .count(),
+    0,
+  );
+  assert.match(
+    await page.locator(".account-slots .acct-head").innerText(),
+    /账户[\s\S]*额度[\s\S]*操作/,
+  );
   await claudeRows
     .nth(1)
     .getByRole("button", { name: "联网刷新这个账户的额度", exact: true })
@@ -1228,19 +1267,34 @@ try {
   // 0.32.0：两个页签合成一份列表 —— 演示三条账户，第一条两半都登了且激活。
   await page.getByTestId("ag-slot").first().waitFor();
   assert.equal(await page.getByTestId("ag-slot").count(), 3);
+  // 2026-11-06 账户页重排：邮箱一行、命名在第二行，「当前账户」那枚徽标改叫「当前」。
   assert.match(
     await page.getByTestId("ag-slot").first().innerText(),
-    /someone@example\.com - 个人账户[\s\S]*当前账户/,
+    /someone@example\.com[\s\S]*当前[\s\S]*个人账户/,
   );
   // 两半各自一枚徽标：第一条都登了，第二条 CLI 那一半压根儿没建。
   assert.match(
     await page.getByTestId("ag-slot").first().innerText(),
     /IDE 已登录[\s\S]*CLI 已登录/,
   );
-  assert.match(
-    await page.getByTestId("ag-slot").nth(1).innerText(),
-    /并入…/,
+  // 「并入…」挪进了操作列，是一颗图标按钮（可访问名还是「并入…」）。
+  assert.equal(
+    await page
+      .getByTestId("ag-slot")
+      .nth(1)
+      .getByRole("button", { name: "并入…" })
+      .count(),
+    1,
     "只填了一半的行要给得出「并入…」",
+  );
+  // 来源行末尾那两颗小按钮（「CLI」「配额详情」）去掉了：CLI 那一半跟着这一行的刷新一起问。
+  assert.equal(
+    await page
+      .getByTestId("ag-slot")
+      .first()
+      .getByRole("button", { name: /Gemini CLI 额度|配额详情/ })
+      .count(),
+    0,
   );
   // 配额格显示剩余最低的那一族（演示里 Gemini 3.7 Flash 62%），不是 0、不是总量。
   assert.match(await page.getByTestId("ag-quota").innerText(), /62%/);
@@ -1265,7 +1319,7 @@ try {
     () =>
       document
         .querySelectorAll('[data-testid="ag-slot"]')[1]
-        ?.textContent?.includes("当前账户") === true,
+        ?.textContent?.includes("当前") === true,
   );
   await page.waitForFunction(
     () =>
@@ -1303,9 +1357,15 @@ try {
         ?.textContent?.includes("在线 ·") === true,
   );
   const agOnline = await page.getByTestId("ag-slot").first().innerText();
+  // 2026-11-06：Claude / Gemini 两行 × 5h / 周两格的小矩阵。「5h」「周」只在表头写一次，
+  // 行里不再每格重复（使用者：「5h」「7d」重复出现，太乱）；倒计时只在悬停里。
+  assert.match(agOnline, /Claude[\s\S]*%[\s\S]*%[\s\S]*Gemini[\s\S]*%[\s\S]*%/);
+  assert.doesNotMatch(agOnline, /5h|周/);
   assert.match(
-    agOnline,
-    /Claude[\s\S]*5h[\s\S]*周[\s\S]*Gemini[\s\S]*5h[\s\S]*周/,
+    await page
+      .locator('[data-testid="antigravity-accounts"] .acct-head')
+      .innerText(),
+    /5h[\s\S]*周/,
   );
   assert.match(agOnline, /AI 积分 1,000/);
   assert.match(await page.getByTestId("ag-quota").innerText(), /95%/);

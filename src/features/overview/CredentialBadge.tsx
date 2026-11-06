@@ -35,12 +35,27 @@ const TONE: Record<string, Tone> = {
 };
 
 const ACTION_LABEL: Record<string, string> = {
-  official_refresh: "让官方换新",
   open_desktop: "打开桌面端",
-  switch_open: "切换并打开",
   relogin: "重新登录",
   web_verify: "去网页验证",
 };
+
+/**
+ * 行上不给的两个动作（2026-11-06）：
+ * - 「切换并打开」：使用者没要过；
+ * - 「让官方换新」：GPT 那一行点刷新时自己先让官方 `codex app-server` 换新再问（`GptBand` 的 `refreshRow`），
+ *   不用再单独摆一颗按钮。
+ */
+const HIDDEN_ACTIONS = new Set(["switch_open", "official_refresh"]);
+
+/**
+ * 不画徽标的几种（2026-11-06 使用者：「为什么都令牌到点，这个不科学」）：
+ * - 访问令牌到点：只管几个小时，官方客户端下次运行自己就换新，是常态，不是毛病；
+ *   Claude 那份是槽位里 Claude Code 命令行的，平时用桌面端时它本来就一直「到点」；
+ * - 网络 / 代理之类的瞬时问题：不是登录的事；
+ * - 没登录：行上已经有「登录」。
+ */
+const QUIET = new Set(["ok", "access_expired", "transient", "logged_out"]);
 
 /**
  * 账户行上的常驻凭证徽标：悬停是原因，旁边最多一个动作按钮。
@@ -58,13 +73,21 @@ export default function CredentialBadge({
   onAction?: (action: string) => void;
   onEmailAccept?: () => void;
 }) {
-  if (!status || (status.kind === "ok" && !status.email_mismatch)) return null;
-  const action = status.action;
+  if (!status) return null;
+  const showKind = !QUIET.has(status.kind);
+  if (!showKind && !status.email_mismatch) return null;
+  // 常态那几种不带动作按钮；「切换并打开」「让官方换新」也不给（见 HIDDEN_ACTIONS）。
+  const action =
+    showKind && status.action && !HIDDEN_ACTIONS.has(status.action)
+      ? status.action
+      : null;
   return (
     <span className="inline-flex items-center gap-1">
-      <Pill tone={TONE[status.kind] ?? "default"} title={status.reason}>
-        {status.label}
-      </Pill>
+      {showKind && (
+        <Pill tone={TONE[status.kind] ?? "default"} title={status.reason}>
+          {status.label}
+        </Pill>
+      )}
       {status.email_mismatch && (
         <Pill tone="warn" title={status.email_mismatch}>
           邮箱变了

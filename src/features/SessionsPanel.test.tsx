@@ -184,8 +184,11 @@ it("locks to one source, filters by kind, searches content and shows tokens", as
       <SessionsPanel lockedSource="claude-code:slot:a" />
     </ToastProvider>,
   );
+  // 2026-11-06 照 Cockpit 的会话管理重排：一行一条，「Token 使用 合计（入 · 出）」。
   expect(
-    await screen.findByText("1.2K 入 · 300 出 · 1.5K 合计", { exact: false }),
+    await screen.findByText("Token 使用 1.5K（入 1.2K · 出 300）", {
+      exact: false,
+    }),
   ).toBeTruthy();
   expect(screen.queryByRole("group", { name: "哪一处的会话" })).toBeNull();
   expect(screen.getByText("demo")).toBeTruthy();

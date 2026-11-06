@@ -3010,8 +3010,104 @@ const demoSessionSources = [
     client: "claude-code",
   },
   { id: "codex:default", label: "Codex · 官方默认目录", client: "codex" },
+  // 2026-11-06：账户页的会话弹窗按项目分组，演示里得有一个槽位多几条、分两三个项目才看得出样子。
+  {
+    id: "codex:slot:codex-demo-0",
+    label: "Codex · 官方槽位 codex-demo-0",
+    client: "codex",
+  },
 ];
+/** 账户页会话弹窗用的几条：同一个槽位、几个项目、一条子代理。 */
+function demoSlotSession(
+  n: number,
+  source: string,
+  sourceLabel: string,
+  client: "claude-code" | "codex",
+  project: string,
+  title: string,
+  hoursAgo: number,
+  kind: "chat" | "subagent" = "chat",
+): SessionSummary {
+  const id = `${n.toString(16).padStart(8, "0")}-0000-4000-8000-0000000000${(10 + n).toString()}`;
+  return {
+    id: `${source}|projects/D--work-${project}/${id}.jsonl`,
+    client,
+    source,
+    source_label: sourceLabel,
+    official: true,
+    session_id: id,
+    title,
+    cwd: `D:\\work\\${project}`,
+    started_at: new Date(Date.now() - (hoursAgo + 2) * 3_600_000).toISOString(),
+    updated_at: new Date(Date.now() - hoursAgo * 3_600_000).toISOString(),
+    size: 40_000 + n * 23_417,
+    kind,
+    project,
+    tokens:
+      client === "claude-code"
+        ? { input: 90_000 * n, output: 4_100 * n, total: 94_100 * n }
+        : null,
+    running: false,
+    unowned: false,
+    path: `${HOME}\\AppData\\Local\\ClaudeIpGate\\${client === "codex" ? "codex-profiles\\codex-demo-0\\home\\sessions" : "claude-profile-demo-main\\projects"}\\D--work-${project}\\${id}.jsonl`,
+  };
+}
 const demoSessions: SessionSummary[] = [
+  demoSlotSession(
+    1,
+    "claude-code:slot:demo-main",
+    "Claude Code · 官方槽位 demo-main",
+    "claude-code",
+    "shop",
+    "结账页的优惠券叠加规则写成表驱动",
+    5,
+  ),
+  demoSlotSession(
+    2,
+    "claude-code:slot:demo-main",
+    "Claude Code · 官方槽位 demo-main",
+    "claude-code",
+    "shop",
+    "子代理：把 checkout 目录里的测试跑一遍",
+    6,
+    "subagent",
+  ),
+  demoSlotSession(
+    3,
+    "claude-code:slot:demo-main",
+    "Claude Code · 官方槽位 demo-main",
+    "claude-code",
+    "api",
+    "限流中间件的单测补到边界值",
+    30,
+  ),
+  demoSlotSession(
+    4,
+    "codex:slot:codex-demo-0",
+    "Codex · 官方槽位 codex-demo-0",
+    "codex",
+    "api",
+    "把 OpenAPI 文档里的分页参数统一一下",
+    2,
+  ),
+  demoSlotSession(
+    5,
+    "codex:slot:codex-demo-0",
+    "Codex · 官方槽位 codex-demo-0",
+    "codex",
+    "site",
+    "首页的图片换成懒加载，顺手压一下体积",
+    20,
+  ),
+  demoSlotSession(
+    6,
+    "codex:slot:codex-demo-0",
+    "Codex · 官方槽位 codex-demo-0",
+    "codex",
+    "site",
+    "部署脚本里加上回滚那一步",
+    52,
+  ),
   {
     id: "claude-code:relay|projects/D--work-shop/1f0c9a2e.jsonl",
     client: "claude-code",

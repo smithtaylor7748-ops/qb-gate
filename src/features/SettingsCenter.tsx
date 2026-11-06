@@ -20,6 +20,7 @@ import { useResource, useSession } from "../lib/store";
 import { useAction, useWorkspace } from "../lib/workspace";
 import { Button, ExternalLink, Modal } from "../ui";
 import { ManagedDirControl } from "../pages/managed/ManagedPanel";
+import { QUOTA_AUTO_STEPS } from "./overview/QuotaRefreshAll";
 import packageInfo from "../../package.json";
 
 export default function SettingsCenter() {
@@ -125,6 +126,48 @@ function General() {
           ],
         ] as Toggle[]
       ).map(row)}
+      {/* 2026-11-06：原来在 GPT / 反重力账户列表的标题栏上（「每 10 分」那个下拉框），
+          挤掉了一行，挪到这里。只在窗口开着、看得见时问；停用和无权限的跳过。 */}
+      <h2 className="qb-subheading">账户额度</h2>
+      <p className="qb-muted">
+        账户页的刷新图标随时能手动问一次；这里定窗口开着时多久自动问一遍。Claude
+        那一页不自动问。
+      </p>
+      {(
+        [
+          ["gpt_quota_auto_minutes", "GPT 账户自动刷新额度"],
+          ["antigravity_quota_auto_minutes", "反重力账户自动刷新额度"],
+        ] as const
+      ).map(([key, title]) => (
+        <label className="qb-setting-row" key={key}>
+          <span>
+            <strong>{title}</strong>
+            <small>按顺序向官方问一遍每个账户的额度，结果只显示。</small>
+          </span>
+          <select
+            aria-label={title}
+            value={settings.data?.[key] ?? 10}
+            disabled={!!action.pending}
+            onChange={(e) =>
+              void action.run(
+                key,
+                () =>
+                  api.settingsSave({
+                    ...settings.data!,
+                    [key]: Number(e.target.value),
+                  }),
+                "偏好已保存",
+              )
+            }
+          >
+            {QUOTA_AUTO_STEPS.map((m) => (
+              <option key={m} value={m}>
+                {m ? `每 ${m} 分钟` : "不自动刷新"}
+              </option>
+            ))}
+          </select>
+        </label>
+      ))}
       <h2 className="qb-subheading">后台运行</h2>
       <p className="qb-muted">
         门禁、看门狗、本机路由和智能调度都在面板进程里跑：关窗口只是收进托盘，托盘菜单的「退出

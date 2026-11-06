@@ -1,15 +1,25 @@
-/** Codex desktop: official login slots, explicit switching, local rollout usage. */
+/**
+ * Codex desktop: official login slots, explicit switching, local rollout usage.
+ *
+ * 2026-11-06 照 Cockpit Tools 的账户页重排：左边是一张表（账户 / 额度 / 操作）。
+ * 标题栏原来挤着会话、全部刷新、「每 10 分」、审查、模型、刷新、新建七样，现在只剩会话、刷新、新建：
+ * 两个显示开关去掉了（那两类限额照旧在额度的悬停提示里），自动刷新的档位挪进设置页，
+ * 两颗长得一样的刷新合成一颗。行上不再标「令牌到点」、不再摆「让官方换新」——
+ * 点刷新时令牌到点了，就先让官方 `codex app-server` 换新再问（面板自己永远不换 GPT 的令牌）。
+ */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ArrowLeftRight,
   Gauge,
+  LogIn,
   MonitorSmartphone,
   Plus,
   RefreshCw,
   Square,
   Trash2,
-  Users,
   Wine,
 } from "lucide-react";
+import { AccountTableHead } from "./SlotRow";
 import { SessionsEntry } from "../accounts/SessionsDialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Link, useNavigate } from "react-router-dom";
@@ -40,6 +50,8 @@ import Tile from "./Tile";
 import { Button, Card, ConfirmDialog, Modal, Pill, useToast } from "../../ui";
 
 const PER_PAGE = 4;
+/** 这两种凭证状态点刷新时先让官方 `codex app-server` 换新再问（面板自己永远不换 GPT 的令牌）。 */
+const TOKEN_STALE = new Set(["access_expired", "access_rejected"]);
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** 两份联网额度里问得更晚的那一份（`fetched_at` 是定宽的本地时刻，按字符串比就是按时间比）。 */
 function newer(
@@ -286,40 +298,65 @@ export default function GptBand() {
   };
 
   const creds = useCredentials("gpt", accounts.data);
-  const [officialBusy, setOfficialBusy] = useState("");
-  /** 官方换不成的槽位：行上的按钮改成「打开这个槽位的桌面端」。 */
-  const [officialFailed, setOfficialFailed] = useState<Record<string, boolean>>(
-    {},
-  );
-  /** 「让官方换新」：后台起官方 codex app-server，让它自己换这个槽位到点的令牌。 */
-  async function officialRefresh(id: string) {
-    setOfficialBusy(id);
-    try {
-      const r = await credentialApi.codexOfficialRefresh(id);
-      if (r.refreshed) {
-        toast.ok(r.detail);
-        setOfficialFailed((m) => ({ ...m, [id]: false }));
+  /**
+   * 点某一行的刷新：令牌到点了（本机时钟看 JWT 的 `exp`）就先后台起官方 `codex app-server`，
+   * 让它自己换这个槽位的令牌，换成了再问额度。换不成就照实说一句，不硬问 ——
+   * 拿着到点的令牌去问只会被 401，然后被说成「登录已失效」。
+   */
+  async function refreshRow(slot: CodexSlot) {
+    // 「令牌被拒」（没到点却被回 401）原来也是挂一颗「让官方换新」，同一条路。
+    if (TOKEN_STALE.has(creds.map[slot.id]?.kind ?? "")) {
+      setSlotQuotas((prev) => ({
+        ...prev,
+        [slot.id]: {
+          local: prev[slot.id]?.local ?? null,
+          live: prev[slot.id]?.live ?? null,
+          liveError: "",
+          localError: prev[slot.id]?.localError ?? "",
+          loading: true,
+        },
+      }));
+      try {
+        const r = await credentialApi.codexOfficialRefresh(slot.id);
+        if (!r.refreshed) {
+          const msg = `${r.detail}。打开这个槽位的桌面端，它会自己换新，再点刷新`;
+          toast.info(msg);
+          setSlotQuotas((prev) => ({
+            ...prev,
+            [slot.id]: {
+              local: prev[slot.id]?.local ?? null,
+              live: prev[slot.id]?.live ?? null,
+              liveError: msg,
+              localError: prev[slot.id]?.localError ?? "",
+              loading: false,
+            },
+          }));
+          return;
+        }
         creds.reload();
-        void refreshSlotQuota(id);
-      } else {
-        toast.info(`${r.detail}。可以打开这个槽位的桌面端，让它自己换。`);
-        setOfficialFailed((m) => ({ ...m, [id]: true }));
+      } catch (e) {
+        const msg = errorText(e);
+        toast.error(msg);
+        setSlotQuotas((prev) => ({
+          ...prev,
+          [slot.id]: {
+            local: prev[slot.id]?.local ?? null,
+            live: prev[slot.id]?.live ?? null,
+            liveError: msg,
+            localError: prev[slot.id]?.localError ?? "",
+            loading: false,
+          },
+        }));
+        return;
       }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
-      setOfficialFailed((m) => ({ ...m, [id]: true }));
-    } finally {
-      setOfficialBusy("");
     }
+    await refreshSlotQuota(slot.id);
   }
-  /** 页面上的两个开关：代码审查 / 模型专属那两类限额画不画（只记在这台机器的界面偏好里）。 */
-  const [showCodeReview, setShowCodeReview] = useState(() => pref("gpt.cr"));
-  const [showModel, setShowModel] = useState(() => pref("gpt.model"));
 
   /**
-   * 「全部刷新」：按顺序问每个账户，同一个账户（account id / 邮箱）只问一次；
-   * 停用 / 无权限 / 没登录的跳过；令牌到点的先让官方换新，换不了就跳过（行上照实写）。
-   * 自动刷新（`auto`）走同一条，不弹提示。
+   * 「刷新」：按顺序问每个账户，同一个账户（account id / 邮箱）只问一次；
+   * 停用 / 无权限 / 没登录的跳过；令牌到点的先让官方换新，换不了就跳过（结果那句话里照实写）。
+   * 自动刷新（`auto`）走同一条，不弹提示、也不替到点的那几个起 app-server。
    */
   async function refreshAllGpt(auto: boolean): Promise<string> {
     const seen = new Set<string>();
@@ -343,20 +380,18 @@ export default function GptBand() {
         skipped.push(`${slotName(s.email, s.label)}（${c.label}）`);
         continue;
       }
-      if (c?.kind === "access_expired") {
+      if (TOKEN_STALE.has(c?.kind ?? "")) {
         if (auto) {
-          skipped.push(`${slotName(s.email, s.label)}（令牌到点）`);
+          skipped.push(`${slotName(s.email, s.label)}（${c?.label}）`);
           continue;
         }
         try {
           const r = await credentialApi.codexOfficialRefresh(s.id);
           if (!r.refreshed) {
-            setOfficialFailed((m) => ({ ...m, [s.id]: true }));
             skipped.push(`${slotName(s.email, s.label)}（${r.detail}）`);
             continue;
           }
         } catch (e) {
-          setOfficialFailed((m) => ({ ...m, [s.id]: true }));
           skipped.push(`${slotName(s.email, s.label)}（${errorText(e)}）`);
           continue;
         }
@@ -571,63 +606,31 @@ export default function GptBand() {
           className="account-slots"
           title={
             <>
-              <Users size={14} />
-              账户槽位
+              账户
+              <span className="acct-count">{slots.length}</span>
             </>
           }
           actions={
-            <div className="flex flex-wrap justify-end gap-1.5">
+            <div className="acct-toolbar-actions">
               <SessionsEntry kind="codex" current={active?.id} />
+              {/* 一颗刷新：先重读本机槽位与快照，再按顺序向官方问一遍（`refreshAllGpt`）。 */}
               <QuotaRefreshAll
-                run={refreshAllGpt}
+                run={async (auto) => {
+                  if (!auto) await reload().catch(() => undefined);
+                  return refreshAllGpt(auto);
+                }}
                 autoKey="gpt_quota_auto_minutes"
               />
-              {/* 两个显示偏好：窗口窄时收起（固定高度的账户页，标题栏换行会把槽位列表挤裁）。 */}
-              <span className="qb-wide-only gap-1.5">
-                <Button
-                  size="sm"
-                  variant={showCodeReview ? "primary" : "ghost"}
-                  title="额度条里多画「代码审查」那一类限额"
-                  aria-pressed={showCodeReview}
-                  onClick={() => {
-                    setPref("gpt.cr", !showCodeReview);
-                    setShowCodeReview(!showCodeReview);
-                  }}
-                >
-                  审查
-                </Button>
-                <Button
-                  size="sm"
-                  variant={showModel ? "primary" : "ghost"}
-                  title="额度条里多画「模型专属」那一类限额（含 Spark）"
-                  aria-pressed={showModel}
-                  onClick={() => {
-                    setPref("gpt.model", !showModel);
-                    setShowModel(!showModel);
-                  }}
-                >
-                  模型
-                </Button>
-              </span>
               <Button
                 size="sm"
-                icon={<RefreshCw size={12} />}
-                aria-label="刷新 Codex 账户"
-                loading={accounts.loading}
-                onClick={() =>
-                  void reload().catch((e) => toast.error(String(e)))
-                }
-              />
-              <Button
-                size="sm"
-                icon={<Plus size={12} />}
-                aria-label="新建"
+                variant="primary"
+                icon={<Plus size={13} />}
                 onClick={() => {
                   setError("");
                   setAdding(true);
                 }}
               >
-                <span className="qb-wide-only">新建</span>
+                新建
               </Button>
             </div>
           }
@@ -649,111 +652,129 @@ export default function GptBand() {
               </p>
             </div>
           )}
+          {slots.length > 0 && <AccountTableHead />}
           <div className="account-slot-list">
-            {slots.slice(page * PER_PAGE, (page + 1) * PER_PAGE).map((s) => (
-              <div
-                key={s.id}
-                className={"slotrow" + (s.active ? " slotrow--active" : "")}
-                data-testid="codex-slot"
-              >
-                <div className="slotrow-main">
-                  {/* 「邮箱 - 命名」（0.27.0）。这一格 nowrap + 省略号，
-                      所以 title 上挂完整的那一串。 */}
-                  <strong
-                    className="slotrow-label"
-                    title={slotName(s.email, s.label)}
-                  >
-                    {slotName(s.email, s.label)}
-                  </strong>
-                  <span className="slotrow-side">
-                    {s.active ? (
-                      <Pill tone="accent">当前槽位</Pill>
-                    ) : (
-                      <Button
-                        size="sm"
-                        disabled={busy}
-                        onClick={() => open(s, "switch")}
-                      >
-                        切换
-                      </Button>
-                    )}
+            {slots.slice(page * PER_PAGE, (page + 1) * PER_PAGE).map((s) => {
+              const shown = slotName(s.email, s.label);
+              // 「登录已失效」的行令牌还在本机：让它能再问一次（原来被灰掉、悬停说「还没登录」，
+              // 而一次偶发的 401 就能把一行卡成这样，直到凭据文件变了或者面板重启，2026-09-25）。
+              const canRefresh =
+                s.logged_in || s.auth_state.startsWith("登录已失效");
+              return (
+                <div
+                  key={s.id}
+                  className={
+                    "slotrow acct-row" + (s.active ? " slotrow--active" : "")
+                  }
+                  data-testid="codex-slot"
+                >
+                  <div className="acct-who">
+                    <div className="acct-line">
+                      <strong className="acct-email" title={shown}>
+                        {s.email ?? s.label}
+                      </strong>
+                      {s.active && <Pill tone="ok">当前</Pill>}
+                    </div>
+                    <div className="acct-line acct-meta">
+                      {s.email && (
+                        <span className="acct-name" title={s.label}>
+                          {s.label}
+                        </span>
+                      )}
+                      {s.plan && <span className="acct-plan">{s.plan}</span>}
+                      {/* 登录正常时不画那句「已登录 · 本地凭据」（2026-09-23 使用者删的）；
+                          没登录 / 登录文件损坏 / API 模式这几种要照旧说出来，那是下一步该做什么。
+                          「登录已失效」（点刷新时服务端不认了，`usecase::login_health`）标红：
+                          令牌还躺在本机，可登录已经没了 —— 跟「从没登过」是两件事。 */}
+                      {!s.logged_in && (
+                        <span
+                          className={
+                            "acct-days" +
+                            (s.auth_state.startsWith("登录已失效")
+                              ? " qb-tone-danger"
+                              : "")
+                          }
+                          title={s.auth_state}
+                        >
+                          {s.auth_state}
+                        </span>
+                      )}
+                      {/* 只在真有事时出现（停用、无权限、要重新登录、邮箱变了）。
+                          「令牌到点」「让官方换新」不画：点刷新时自己先让官方换新。 */}
+                      <CredentialBadge
+                        status={creds.map[s.id]}
+                        onAction={() => void requestLaunch(s)}
+                        onEmailAccept={() =>
+                          void credentialApi
+                            .emailAccept("gpt", s.id)
+                            .then(creds.reload)
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="acct-quota">
+                    <CodexQuotaBars state={slotQuotas[s.id]} />
+                  </div>
+                  <div className="acct-ops">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon={<RefreshCw size={13} />}
+                      aria-label="联网刷新这个槽位的额度"
+                      title={
+                        canRefresh
+                          ? "联网问一次这个槽位的额度（ChatGPT 官方接口，只问这一个）；令牌到点了先让官方换新"
+                          : "还没登录，没有令牌可问"
+                      }
+                      loading={slotQuotas[s.id]?.loading}
+                      disabled={!canRefresh}
+                      onClick={() => void refreshRow(s)}
+                    />
                     {/* 2026-09-23 使用者要求去掉「打开」：起桌面端走右边那块磁贴。
                         没登录的槽位留着「登录」—— 不然新建之后没登完，就只能先切过去再去磁贴登。 */}
                     {!s.logged_in && (
                       <Button
                         size="sm"
+                        variant="ghost"
+                        icon={<LogIn size={13} />}
+                        aria-label="登录"
+                        title={`打开 ${shown} 的桌面端，在官方窗口里登录`}
                         disabled={busy || !desktop.data?.executable}
                         onClick={() => void requestLaunch(s)}
-                      >
-                        登录
-                      </Button>
+                      />
+                    )}
+                    {!s.active && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={<ArrowLeftRight size={13} />}
+                        aria-label="切换"
+                        title={`切换：把当前账户换成 ${shown}`}
+                        disabled={busy}
+                        onClick={() => open(s, "switch")}
+                      />
                     )}
                     <Button
                       size="sm"
-                      aria-label={`移除 Codex ${slotName(s.email, s.label)}`}
-                      icon={<Trash2 size={12} />}
+                      variant="ghost"
+                      className="acct-del"
+                      aria-label={`移除 Codex ${shown}`}
+                      title={
+                        s.active
+                          ? "当前账户移除不了：请先切换到另一个账户。"
+                          : `移除 ${shown}（登录资料保留在本机归档里）`
+                      }
+                      icon={<Trash2 size={13} />}
                       disabled={busy || s.active}
                       onClick={() => open(s, "archive")}
                     />
-                  </span>
+                  </div>
                 </div>
-                <p
-                  className="notice codex-slot-identity"
-                  title={`${s.email ?? "尚未读取到账户邮箱"}${s.plan ? ` · ${s.plan}` : ""}`}
-                >
-                  {s.email ?? "尚未读取到账户邮箱"}
-                  {s.plan ? ` · ${s.plan}` : ""}{" "}
-                  <CredentialBadge
-                    status={
-                      creds.map[s.id] && officialFailed[s.id]
-                        ? { ...creds.map[s.id], action: "open_desktop" }
-                        : creds.map[s.id]
-                    }
-                    busy={officialBusy === s.id}
-                    onAction={(a) =>
-                      a === "official_refresh"
-                        ? void officialRefresh(s.id)
-                        : void requestLaunch(s)
-                    }
-                    onEmailAccept={() =>
-                      void credentialApi
-                        .emailAccept("gpt", s.id)
-                        .then(creds.reload)
-                    }
-                  />
-                </p>
-                {/* 登录正常时不画那句「已登录 · 本地凭据」（2026-09-23 使用者删的）；
-                    没登录 / 登录文件损坏 / API 模式这几种要照旧说出来，那是下一步该做什么。 */}
-                {/* 「登录已失效」（点刷新时服务端不认了，`usecase::login_health`）标红：
-                    令牌还躺在本机，可登录已经没了 —— 跟「从没登过」是两件事。 */}
-                {!s.logged_in && (
-                  <span
-                    className={
-                      "notice" +
-                      (s.auth_state.startsWith("登录已失效")
-                        ? " notice--danger"
-                        : "")
-                    }
-                  >
-                    {s.auth_state}
-                  </span>
-                )}
-                <CodexQuotaBars
-                  state={slotQuotas[s.id]}
-                  // 「登录已失效」的行令牌还在本机：让它能再问一次（原来被灰掉、悬停说「还没登录」，
-                  // 而一次偶发的 401 就能把一行卡成这样，直到凭据文件变了或者面板重启，2026-09-25）。
-                  canRefresh={
-                    s.logged_in || s.auth_state.startsWith("登录已失效")
-                  }
-                  onRefresh={() => void refreshSlotQuota(s.id)}
-                  showCodeReview={showCodeReview}
-                  showModel={showModel}
-                />
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div className="account-pagination">
-            <span className="notice">{slots.length} 个槽位 · 每页 4 个</span>
+            <span className="notice">共 {slots.length} 个</span>
             <ArchivedSlots
               load={codexApi.archived}
               restore={codexApi.restore}
@@ -1271,20 +1292,4 @@ function CodexUsageCard({
       </div>
     </Card>
   );
-}
-
-/** 界面偏好（只在这台机器上记；读写不了就当没开）。 */
-function pref(key: string): boolean {
-  try {
-    return localStorage.getItem(`qb.${key}`) === "1";
-  } catch {
-    return false;
-  }
-}
-function setPref(key: string, on: boolean) {
-  try {
-    localStorage.setItem(`qb.${key}`, on ? "1" : "0");
-  } catch {
-    /* 存不了就算了 */
-  }
 }

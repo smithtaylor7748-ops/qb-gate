@@ -11,7 +11,7 @@ import { MessagesSquare } from "lucide-react";
 import SessionsPanel, { bytes } from "../SessionsPanel";
 import { sessionsApi, type AntigravityConversation } from "../../lib/sessions";
 import type { SessionSourceCount } from "../../lib/generated/SessionSourceCount";
-import { Button, Modal } from "../../ui";
+import { Button, EmptyState, Modal } from "../../ui";
 import { ago } from "./sessionGroups";
 
 export type SessionsKind = "claude" | "codex" | "antigravity";
@@ -46,35 +46,36 @@ function SlotSessions({
   const value = picked ?? `${prefix}?`;
   const known = slots.some((s) => s.id === value);
   return (
-    <>
-      <div className="qb-session-dialog-head">
-        <label className="qb-field">
-          <span>槽位</span>
-          <select
-            aria-label="槽位"
-            value={value}
-            onChange={(e) => setPicked(e.target.value)}
-          >
-            {!known && (
-              <option value={value}>
-                {picked ? picked.slice(prefix.length) : "（还没有槽位）"}
-              </option>
-            )}
-            {slots.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label.replace(/^.*官方槽位\s*/, "")} · {s.count}
-              </option>
-            ))}
-          </select>
-        </label>
-        {kind === "claude" && (
-          <span className="qb-muted">
-            连官方默认目录里归这个账户的会话一起列；找不到归属依据的单列一组，不算给谁。
-          </span>
-        )}
-      </div>
-      <SessionsPanel key={value} lockedSource={value} onSources={onSources} />
-    </>
+    <SessionsPanel
+      key={value}
+      lockedSource={value}
+      onSources={onSources}
+      toolbarStart={
+        <select
+          className="qb-session-select"
+          aria-label="槽位"
+          title="看哪个槽位的会话"
+          value={value}
+          onChange={(e) => setPicked(e.target.value)}
+        >
+          {!known && (
+            <option value={value}>
+              {picked ? picked.slice(prefix.length) : "（还没有槽位）"}
+            </option>
+          )}
+          {slots.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.label.replace(/^.*官方槽位\s*/, "")} · {s.count} 个
+            </option>
+          ))}
+        </select>
+      }
+      hint={
+        kind === "claude"
+          ? "也列出官方默认目录里归这个账户的会话；找不到归属依据的单列一组。"
+          : undefined
+      }
+    />
   );
 }
 
@@ -93,36 +94,46 @@ function AntigravityList() {
     };
   }, []);
   return (
-    <section className="qb-mcp" data-testid="antigravity-conversations">
-      <p className="notice">
-        反重力的对话库在 <code>~\.gemini\antigravity*\conversations</code>
-        ，全机共用，不分账户。这里只读：不删、不改。
+    <section
+      className="qb-session-panel"
+      data-testid="antigravity-conversations"
+    >
+      <p className="qb-session-hint">
+        对话库在 <code>~\.gemini\antigravity*\conversations</code>
+        ，全机共用、不分账户；这里只读，不删不改。
       </p>
       {error && <p className="notice notice--danger">{error}</p>}
-      {!items ? (
-        !error && <p className="qb-muted">正在读对话库…</p>
-      ) : items.length === 0 ? (
-        <p className="qb-muted">这台机器上还没有反重力的对话。</p>
-      ) : (
-        <div className="qb-mcp-list">
-          {items.map((c) => (
-            <div key={`${c.dir}/${c.id}`} className="qb-mcp-row">
-              <div className="qb-mcp-head">
+      <div className="qb-session-list">
+        {!items ? (
+          !error && <p className="qb-session-loading">正在读对话库…</p>
+        ) : items.length === 0 ? (
+          <div className="qb-session-empty">
+            <EmptyState
+              icon={<MessagesSquare size={20} />}
+              title="这台机器上还没有反重力的对话"
+            />
+          </div>
+        ) : (
+          items.map((c) => (
+            <div key={`${c.dir}/${c.id}`} className="qb-session-item">
+              <div className="qb-session-main">
                 <span className="qb-session-trash-name" title={c.title ?? ""}>
                   {c.title ??
                     (c.legacy ? "旧格式归档，读不出标题" : "读不出标题")}
                 </span>
-                <span className="qb-muted qb-session-when">
-                  {ago(c.updated_at)}
+                <span className="qb-session-meta2">
+                  <span>{bytes(c.size)}</span>
+                  <span>{c.dir}</span>
+                  <code className="qb-session-code">{c.id}</code>
                 </span>
               </div>
-              <span className="qb-muted qb-mcp-summary">
-                {c.dir} · <code>{c.id}</code> · {bytes(c.size)}
-              </span>
+              <div className="qb-session-side">
+                <span className="qb-session-when">{ago(c.updated_at)}</span>
+              </div>
             </div>
-          ))}
-        </div>
-      )}
+          ))
+        )}
+      </div>
     </section>
   );
 }

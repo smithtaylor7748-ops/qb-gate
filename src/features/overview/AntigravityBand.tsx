@@ -34,7 +34,6 @@ import {
   Plus,
   RefreshCw,
   Square,
-  Users,
   Wine,
 } from "lucide-react";
 import { SessionsEntry } from "../accounts/SessionsDialog";
@@ -62,7 +61,10 @@ import type { AntigravityUsage } from "../../lib/generated/AntigravityUsage";
 import type { TavernGeminiQuota } from "../../lib/generated/TavernGeminiQuota";
 import type { UiStatus } from "../../lib/generated/UiStatus";
 import { AFTER, R } from "../../lib/resources";
-import AntigravitySlotRow, { canAttach } from "./AntigravitySlotRow";
+import AntigravitySlotRow, {
+  AntigravityTableHead,
+  canAttach,
+} from "./AntigravitySlotRow";
 import BridgeModal, {
   BridgeCorner,
   useBridgeLink,
@@ -248,7 +250,7 @@ export default function AntigravityBand() {
   const [cliQuota, setCliQuota] = useState<
     Record<string, { q: CliQuota | null; loading: boolean }>
   >({});
-  async function refreshCli(id: string) {
+  async function refreshCli(id: string, quiet = false) {
     setCliQuota((m) => ({
       ...m,
       [id]: { q: m[id]?.q ?? null, loading: true },
@@ -257,7 +259,8 @@ export default function AntigravityBand() {
       const q = await antigravityApi.cliQuota(id, true);
       setCliQuota((m) => ({ ...m, [id]: { q, loading: false } }));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
+      // 跟 IDE 那一半一起问时不另弹一条：IDE 那一半问不成已经会弹，两条叠在一起只是噪音。
+      if (!quiet) toast.error(e instanceof Error ? e.message : String(e));
       setCliQuota((m) => ({
         ...m,
         [id]: { q: m[id]?.q ?? null, loading: false },
@@ -741,8 +744,14 @@ export default function AntigravityBand() {
         onOpenIde={() => void requestIdeLaunch(s)}
         online={online[s.id]?.quota ?? null}
         onlineError={online[s.id]?.error ?? ""}
-        onlineLoading={online[s.id]?.loading ?? false}
-        onRefresh={() => void refreshOnline(s.id)}
+        onlineLoading={
+          (online[s.id]?.loading ?? false) || (cliQuota[s.id]?.loading ?? false)
+        }
+        // 一下问两半：IDE 那一半的四格，CLI 那一半登着的话也问它（原来来源行末尾单独一颗「CLI」）。
+        onRefresh={() => {
+          void refreshOnline(s.id);
+          if (s.cli_logged_in) void refreshCli(s.id, true);
+        }}
         onLoginCli={() => void login(s.id)}
         onArchive={() => {
           setError("");
@@ -750,8 +759,6 @@ export default function AntigravityBand() {
         }}
         onAttachStart={setAttachFrom}
         cliSummary={cliText(cliQuota[s.id]?.q ?? null)}
-        cliLoading={cliQuota[s.id]?.loading ?? false}
-        onRefreshCli={() => void refreshCli(s.id)}
         credential={
           <CredentialBadge
             status={creds.map[s.id]}
@@ -784,36 +791,32 @@ export default function AntigravityBand() {
           className="account-slots"
           title={
             <>
-              <Users size={14} />
-              反重力账户
+              账户
+              <span className="acct-count">{slots.length}</span>
             </>
           }
           actions={
-            <div className="flex flex-wrap justify-end gap-1.5">
+            <div className="acct-toolbar-actions">
               <SessionsEntry kind="antigravity" />
+              {/* 一颗刷新：先重读本机状态，再按顺序向官方问一遍（`refreshAllAg`）。
+                  自动刷新的档位在设置页「账户额度」。 */}
               <QuotaRefreshAll
-                run={refreshAllAg}
+                run={async (auto) => {
+                  if (!auto) await status.refresh().catch(() => undefined);
+                  return refreshAllAg(auto);
+                }}
                 autoKey="antigravity_quota_auto_minutes"
               />
               <Button
                 size="sm"
-                icon={<RefreshCw size={12} />}
-                aria-label="刷新反重力状态"
-                loading={status.loading}
-                onClick={() =>
-                  void status.refresh().catch((e) => toast.error(String(e)))
-                }
-              />
-              <Button
-                size="sm"
-                icon={<Plus size={12} />}
-                aria-label="新建"
+                variant="primary"
+                icon={<Plus size={13} />}
                 onClick={() => {
                   setError("");
                   setAdding(true);
                 }}
               >
-                <span className="qb-wide-only">新建</span>
+                新建
               </Button>
             </div>
           }
@@ -848,6 +851,7 @@ export default function AntigravityBand() {
               )}
             </div>
           )}
+          {slots.length > 0 && <AntigravityTableHead />}
           <div className="account-slot-list">{slotRows}</div>
           {/* 脚注一行装下计数 + 翻页：这一页是固定高度，不另起一行。 */}
           <div className="account-pagination">
@@ -858,7 +862,7 @@ export default function AntigravityBand() {
             ) : (
               <span className="notice">
                 {status.data
-                  ? `${count} 个账户`
+                  ? `共 ${count} 个`
                   : status.error
                     ? "账户清单读不出来"
                     : "读取中…"}

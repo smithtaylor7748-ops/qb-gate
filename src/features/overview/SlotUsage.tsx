@@ -43,8 +43,7 @@
  * 3. **推算的恢复时刻要标「推算」。** 桌面端那份只有用量没有重置时刻，
  *    拿不到实测值时是从样本的断崖下跌反推的，误差约半个采样间隔。
  */
-import { RefreshCw } from "lucide-react";
-import { Button, Gauge } from "../../ui";
+import { Gauge } from "../../ui";
 import type { SlotUsage, UsageWindow } from "../../lib/api";
 
 /** 五小时窗口的分钟数。读数比这还旧，那份五小时读数必然跨过了窗口。 */
@@ -118,18 +117,30 @@ function WindowGauge({
   // 窗口在这份读数之后已经重置过（后端 `reset_passed`，2026-09-25）。原来只按读数的年龄判过期：
   // 五小时窗口 40 分钟前就重置了、读数才 90 分钟旧，照样画「剩 8%」标红、重置时刻写「未知」。
   if (w.reset_passed) {
-    return (
-      <Gauge name={name} used={null} note="已重置过，这份读数是重置之前的" />
-    );
+    const why = "已重置过，这份读数是重置之前的";
+    return <Gauge name={name} used={null} note={why} hint={why} />;
   }
   if (expired) {
-    return <Gauge name={name} used={null} note="读数已过期，不是当前值" />;
+    const why = "读数已过期，不是当前值";
+    return <Gauge name={name} used={null} note={why} hint={why} />;
   }
   return (
     <Gauge
       name={name}
       used={w.used}
       binding={binding}
+      // 账户表里那一格窄，重置时刻只在悬停里（`.acct-quota .gauge-reset` 收掉了行内那一截）；
+      // 详情页和用量页照旧画在条子后面。推算的照旧说是推算。
+      hint={
+        w.resets_at
+          ? `${fmtReset(w.resets_at)} 重置${
+              w.estimated
+                ? " · 推算：从样本里那次断崖下跌反推的，误差约七八分钟"
+                : ""
+            }`
+          : undefined
+      }
+      // 读不到重置时刻就什么都不画（2026-11-06 使用者：「这个未知是什么？删掉」）。
       extra={
         w.resets_at ? (
           <span
@@ -143,69 +154,33 @@ function WindowGauge({
             ↻ {fmtReset(w.resets_at)}
             {w.estimated && <em>推算</em>}
           </span>
-        ) : (
-          <span className="gauge-reset" title="两源都没给出这个窗口的重置时刻">
-            ↻ 未知
-          </span>
-        )
+        ) : undefined
       }
     />
   );
 }
 
 /**
- * 额度区右边那颗刷新图标（2026-09-23，三个账户页同一个位置）。
- *
- * 2026-10-26 起（阶段 6 · U2）Claude 这一侧跟 GPT 一样：点它才带这个账户的令牌向官方问**一次**，
- * 一次只问这一个账户，没有定时器。令牌到点了不问（说清楚怎么让 Claude Code 自己换新）。
+ * 刷新图标不在这里了（2026-11-06 账户页重排）：它在账户列表那一行的「操作」列，
+ * 跟切换、删除排在一起 —— 原来夹在额度条右边，每行多出一列空白。
  */
-function RefreshButton({
-  onRefresh,
-  refreshing,
-}: {
-  onRefresh: () => void;
-  refreshing?: boolean;
-}) {
-  return (
-    <Button
-      size="sm"
-      variant="ghost"
-      className="slotusage-refresh"
-      icon={<RefreshCw size={12} />}
-      aria-label="联网刷新这个账户的额度"
-      title="用这个账户的令牌向官方问一次额度（只读，一次只问这一个）"
-      loading={refreshing}
-      onClick={onRefresh}
-    />
-  );
-}
-
 export default function SlotUsageBars({
   usage,
-  onRefresh,
-  refreshing,
 }: {
-  /** `null` = 两源都没有读数：只画一句话和刷新图标，**不画假数字**。 */
+  /** `null` = 两源都没有读数：只画一句话，**不画假数字**。 */
   usage: SlotUsage | null;
-  /** 不给就不画刷新图标（账户详情页头部）。 */
-  onRefresh?: () => void;
-  refreshing?: boolean;
 }) {
-  const refreshable = onRefresh ? " slotusage--refreshable" : "";
   if (!usage) {
     return (
-      <div className={`slotusage${refreshable}`}>
+      <div className="slotusage">
         <div className="slotusage-bars">
           <span
             className="gauge-src"
-            title="这个槽位的桌面端样本和 Claude Code 快照里都还没有额度记录。点右边的刷新图标向官方问一次，或者用它跑一次 Claude Code / 开一次桌面端。"
+            title="这个槽位的桌面端样本和 Claude Code 快照里都还没有额度记录。点这一行的刷新图标向官方问一次，或者用它跑一次 Claude Code / 开一次桌面端。"
           >
             还没有额度读数
           </span>
         </div>
-        {onRefresh && (
-          <RefreshButton onRefresh={onRefresh} refreshing={refreshing} />
-        )}
       </div>
     );
   }
@@ -223,7 +198,7 @@ export default function SlotUsageBars({
   }
 
   return (
-    <div className={`slotusage${refreshable}`}>
+    <div className="slotusage">
       <div className="slotusage-bars">
         <WindowGauge
           name="5 小时"
@@ -238,9 +213,6 @@ export default function SlotUsageBars({
           binding={bind === "seven"}
         />
       </div>
-      {onRefresh && (
-        <RefreshButton onRefresh={onRefresh} refreshing={refreshing} />
-      )}
       <span className="gauge-src" title={SOURCE_HINT[usage.source]}>
         {SOURCE_NAME[usage.source]} · {fmtAge(usage.age_minutes)}
       </span>

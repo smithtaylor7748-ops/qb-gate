@@ -971,7 +971,6 @@
     "update dialog: manual check, notes, cost sentence, demo install refusal, reopen from settings",
     "Claude localization leftovers: hidden without leftovers, listed with the close-Claude cost, confirmed cleanup, entry disappears; GPT own setting with duplicate-table repair and skipped default home",
     "tavern bridge settings from all three account pages: each dialog carries only its own bridge with no tab bar (Claude with per-call detail), no field of another provider, no overflow at three widths, the footer lands on the SillyTavern card's console tab and on the card, quick jump opens that provider's dialog",
-    "software page bridge sections: collapsed means unmounted, each CLI card carries only its own bridge (Claude with per-call detail), no overflow at three widths",
     "software page SillyTavern card: missing Node gates install behind the winget choice, import source prefilled, install makes it managed, update says latest, uninstall backs up first",
     "SillyTavern card: seven tabs, arrow keys switch; versions tab: release list, downgrade names itself and still gates on Node, swap back to the kept copy",
     "SillyTavern card console tab: a failed start is recognized with a hint, colors are rendered not printed, the previous run is one click away",

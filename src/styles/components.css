@@ -1260,55 +1260,12 @@
   font-size: var(--text-xs);
   color: var(--text-3);
 }
-/* 额度条右边那块空白放刷新图标（2026-09-23 使用者指的位置）：
-   左列是条子，右列是图标、纵向居中跨过条子那几行，来源那一行横跨在最下面。 */
+/* 刷新图标原来夹在额度条右边那块空白里（2026-09-23），2026-11-06 账户页重排时挪进了账户表的
+   「操作」列；反重力那两行 5h / 周也改成了 `workspace.css` 里的 `.ag-matrix`。 */
 .slotusage-bars {
   display: grid;
   gap: 3px 10px;
   min-width: 0;
-}
-.slotusage--refreshable {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-}
-.slotusage--refreshable > .slotusage-bars {
-  grid-column: 1;
-  grid-row: 1;
-}
-.slotusage--refreshable > .slotusage-refresh {
-  grid-column: 2;
-  grid-row: 1;
-}
-.slotusage--refreshable > .gauge-src {
-  grid-column: 1 / -1;
-}
-/* 反重力账户行的联网额度：一组一行（Claude / Gemini），每行 5h 与周两格。
-   两格各占一半，条子自己伸缩；倒计时在窄档跟别的重置时刻一起收掉。 */
-.ag-group {
-  display: grid;
-  grid-template-columns: 3.6em minmax(0, 1fr) minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.ag-group-name {
-  color: var(--text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.gauge--mini {
-  gap: 5px;
-}
-.gauge--mini .gauge-name {
-  width: auto;
-}
-.gauge--mini .gauge-track {
-  min-width: 28px;
-  max-width: 90px;
-}
-.gauge--mini .gauge-pct {
-  min-width: 3em;
 }
 .gauge {
   display: flex;

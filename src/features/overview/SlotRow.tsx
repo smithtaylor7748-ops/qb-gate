@@ -1,15 +1,9 @@
 /**
- * 一条账户槽位横条。
+ * Claude 账户列表里的一行（2026-11-06 照 Cockpit Tools 的账户页重排成表格行）。
  *
- * # 为什么把它抽出来
- *
- * 0.19.2 之前这一坨是 `AccountBand` 里 `pageSlots.map()` 中的一个裸 `div`。
- * 于是「管理」页（`Official.tsx`）自己另画了一套，显示的东西**比它要管的
- * 这一条还少** —— 没有剩余天数、没有额度、没有到期语气色。
- * 同一个东西两处各画一份，落后的那一份不会报错，只会悄悄变成另一个页面。
- *
- * 现在总览与详情页头部共用这一个（0.20.0 把那个「管理」页整个删了 ——
- * 使用者的原话：管理账户不就是删除吗）。
+ * 三列：账户（邮箱、命名、套餐、剩余天数）| 额度（5 小时 / 7 天两根条）| 操作（图标按钮）。
+ * 表头在 `AccountTableHead`，三个账户页共用同一套列宽（`workspace.css` 的 `.acct-row`）。
+ * 原来是一个带框的盒子，里面四五层（标题行、两根条、来源、刷新图标），使用者说「太臃肿了」。
  *
  * # 「切换」这个词对过期槽位是错的
  *
@@ -17,18 +11,18 @@
  * refreshToken 剩余天数，两者故意不合并 —— **过期槽位必须仍然可切**，
  * 因为你得先切过去才能在那个槽里重新登录（档案 §4.8，
  * `expired_slot_is_still_switchable` 那个单测钉着）。
- * 所以不禁用按钮，只换文案。
+ * 所以不禁用按钮，只换文案（图标按钮的可访问名与悬停提示）。
  *
- * # 打开详情的是标签，不是整行
+ * # 打开详情的是邮箱，不是整行
  *
  * 整行可点听起来更顺手，但这一行里本来就有按钮 —— 嵌套的可交互元素
  * 对键盘和读屏都是个坑（点哪儿算哪个？Tab 停几次？）。
- * 标签本身做成按钮，位置固定、读屏报得出名字，右边的动作各归各的。
+ * 邮箱本身做成按钮，位置固定、读屏报得出名字，右边的动作各归各的。
  */
 
+import { RefreshCw } from "lucide-react";
 import type { Slot } from "../../lib/api";
-import { slotName } from "../../lib/slotName";
-import { Pill, fmtDaysLeft } from "../../ui";
+import { Button, Pill, fmtDaysLeft } from "../../ui";
 import SlotUsageBars from "./SlotUsage";
 
 /**
@@ -64,62 +58,108 @@ export function expiryText(s: Slot): string {
   return s.logged_in ? fmtDaysLeft(s.cli_days_left) : "未登录";
 }
 
+/** 三个账户页共用的表头。只是视觉上的列名，读屏器读每一行自己的内容。 */
+export function AccountTableHead({ quota = "额度" }: { quota?: string }) {
+  return (
+    <div className="acct-head" aria-hidden="true">
+      <span>账户</span>
+      <span>{quota}</span>
+      <span>操作</span>
+    </div>
+  );
+}
+
 export default function SlotRow({
   slot: s,
   onOpen,
   actions,
+  badges,
   onRefresh,
   refreshing,
 }: {
   slot: Slot;
-  /** 点标签打开详情。不给就是纯展示。 */
+  /** 点邮箱打开详情。不给就是纯展示。 */
   onOpen?: (label: string) => void;
-  /** 右侧动作区。各个页面自己决定放什么。 */
+  /** 操作列（刷新图标之后）。各个页面自己决定放什么。 */
   actions?: React.ReactNode;
-  /** 额度条右边的刷新图标（2026-09-23）。不给就不画。2026-10-26 起点它向官方问一次这个账户（阶段 6 · U2）。 */
+  /** 账户列第二行末尾的小徽标（凭证有事时、超额之类）。 */
+  badges?: React.ReactNode;
+  /** 操作列第一颗：向官方问一次这个账户的额度（阶段 6 · U2）。不给就不画。 */
   onRefresh?: () => void;
   refreshing?: boolean;
 }) {
-  // 「邮箱 - 命名」（0.27.0）。邮箱比命名长得多，而这一格是 nowrap + 省略号，
-  // 所以 title 上挂完整的那一串 —— 省略号吃掉的部分要有地方看得到。
-  const shown = slotName(s.email, s.label);
+  // 邮箱是主名，命名放第二行；没读到邮箱就拿命名顶上来。nowrap + 省略号，title 挂全名。
+  const main = s.email ?? s.label;
+  const tone = daysTone(s);
+  const bad = !!s.login_problem || !s.logged_in;
   return (
-    <div className={`slotrow${s.active ? " slotrow--active" : ""}`}>
-      <div className="slotrow-main">
-        {onOpen ? (
-          <button
-            type="button"
-            className="slotrow-label slotrow-open"
-            title={`查看 ${shown} 的详情`}
-            onClick={() => onOpen(s.label)}
-          >
-            {shown}
-          </button>
-        ) : (
-          <span className="slotrow-label" title={shown}>
-            {shown}
+    <div className={`slotrow acct-row${s.active ? " slotrow--active" : ""}`}>
+      <div className="acct-who">
+        <div className="acct-line">
+          {onOpen ? (
+            <button
+              type="button"
+              className="acct-email slotrow-open"
+              title={`查看 ${main} 的详情`}
+              onClick={() => onOpen(s.label)}
+            >
+              {main}
+            </button>
+          ) : (
+            <span className="acct-email" title={main}>
+              {main}
+            </span>
+          )}
+          {s.active && <Pill tone="ok">当前</Pill>}
+        </div>
+        <div className="acct-line acct-meta">
+          {s.email && s.email !== s.label && (
+            <span className="acct-name" title={s.label}>
+              {s.label}
+            </span>
+          )}
+          <span className="acct-plan" title={s.billing ?? undefined}>
+            {s.plan ?? "套餐未知"}
           </span>
-        )}
-        <span className="slotrow-plan" title={s.billing ?? undefined}>
-          {s.plan ?? "套餐未知"}
-        </span>
-        <span className="slotrow-side">
-          <Pill tone={daysTone(s)} title={s.login_problem ?? undefined}>
+          {/* 剩余天数只在有事时上色：正常的那一档是灰字，不抢眼。 */}
+          <span
+            className={`acct-days${
+              bad
+                ? " qb-tone-danger"
+                : tone === "warn" || tone === "danger"
+                  ? ` qb-tone-${tone}`
+                  : ""
+            }`}
+            title={s.login_problem ?? undefined}
+          >
             {expiryText(s)}
-          </Pill>
-          {actions}
-        </span>
+          </span>
+          {badges}
+        </div>
       </div>
-      {/* 额度。两源都没有就不画条 —— 给一个「剩 100%」比不给更糟，
-          那是替一个根本没读到的数字打包票。有刷新图标的那一处（总览）
-          画一句「还没有额度读数」，让图标有地方待。 */}
-      {(s.usage || (onRefresh && s.logged_in)) && (
-        <SlotUsageBars
-          usage={s.usage ?? null}
-          onRefresh={onRefresh}
-          refreshing={refreshing}
-        />
-      )}
+      <div className="acct-quota">
+        {/* 额度。两源都没有就不画条 —— 给一个「剩 100%」比不给更糟，
+            那是替一个根本没读到的数字打包票。 */}
+        {s.usage || (onRefresh && s.logged_in) ? (
+          <SlotUsageBars usage={s.usage ?? null} />
+        ) : (
+          <span className="gauge-src">—</span>
+        )}
+      </div>
+      <div className="acct-ops">
+        {onRefresh && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<RefreshCw size={13} />}
+            aria-label="联网刷新这个账户的额度"
+            title="用这个账户的令牌向官方问一次额度（只读，一次只问这一个）"
+            loading={refreshing}
+            onClick={onRefresh}
+          />
+        )}
+        {actions}
+      </div>
     </div>
   );
 }

@@ -1159,13 +1159,20 @@ input[type="checkbox"].ipv6-switch:disabled {
   background: var(--surface);
   color: var(--accent);
 }
+/* 左边那张账户表比右边的启动 / 用量宽（2026-11-06 重排）：表有三列，右边只是两张卡。
+   窄到 700px 以下（680 那一档）两边回到一样宽，否则右边的磁贴装不下那句常驻代价。 */
 .account-workspace {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   gap: 12px;
   align-items: stretch;
   flex: 1;
   min-height: 0;
+}
+@container accounts (max-width: 700px) {
+  .account-workspace {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .account-workspace-right {
   display: grid;
@@ -1277,16 +1284,266 @@ body:has(.official-page) {
   flex: 1;
   min-height: 0;
 }
+/* ------------------------------------------- 账户表（2026-11-06 照 Cockpit Tools 的账户页重排）
+
+   三个账户页同一套：表头一条浅灰底（账户 / 额度 / 操作），下面每个账户一行，行与行之间一条细线，
+   当前那一行浅色底 + 左边一道强调色。原来每个账户是一个带框的盒子、里面四五层，使用者说「太臃肿了」。
+   ⛔ 这一页是固定高度的（`test:ui` 的 `assertFixedAccounts` 四档都查「不裁切、列表不内部滚动」）：
+   一页四行，行高跟着可用高度走（每行最高 96px，多出来的空白留在表的下面）。 */
 .account-slot-list {
   display: grid;
-  grid-template-rows: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-rows: repeat(4, minmax(0, 96px));
+  align-content: start;
+  gap: 0;
   flex: 1;
   min-height: 0;
 }
-.account-slot-list .slotrow {
+.acct-head,
+.account-slot-list .acct-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) 112px;
+  column-gap: 14px;
+  align-items: center;
+}
+.acct-head {
+  flex: none;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.acct-head > span:last-child {
+  text-align: right;
+}
+.account-slot-list .acct-row {
   min-height: 0;
-  justify-content: center;
+  padding: 6px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.account-slot-list .acct-row:hover {
+  background: var(--surface-2);
+}
+.account-slot-list .acct-row.slotrow--active {
+  background: var(--accent-bg);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.acct-who {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.acct-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.acct-email {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+/* 第二行：命名 · 套餐 · 剩余天数 · 有事时的徽标。放不下就从后面截掉，不换行（这一行是固定高度网格里的一格）。 */
+.acct-meta {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  overflow: hidden;
+}
+.acct-meta > * {
+  flex-shrink: 0;
+}
+.acct-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-plan {
+  padding: 0 6px;
+  border: 1px solid var(--accent-border);
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.acct-days {
+  white-space: nowrap;
+}
+.acct-extra {
+  display: inline-flex;
+  gap: 4px;
+}
+.acct-count {
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 18px;
+}
+/* 标题栏：标题 + 计数在左，会话 / 刷新 / 新建三样在右。一行，不换行。 */
+.acct-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.account-slots .card-head {
+  flex-wrap: nowrap;
+  margin-bottom: 0;
+}
+.account-slots .card-title {
+  white-space: nowrap;
+}
+.acct-toolbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+/* 额度列：一行一根条（名字 · 条 · 剩多少 · 重置时刻），最下面一行小字是来源与时刻。 */
+.acct-quota {
+  min-width: 0;
+}
+.acct-quota .slotusage {
+  display: grid;
+  gap: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  min-width: 0;
+}
+.acct-quota .slotusage-bars {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.acct-quota .gauge {
+  gap: 6px;
+}
+.acct-quota .gauge-name {
+  width: 3.4em;
+  white-space: nowrap;
+}
+/* 「读数已过期，不是当前值」这类一整句：一行，放不下就省略号（悬停的 title 在 `Gauge` 上）。 */
+.acct-quota .gauge-note,
+.acct-quota .slotusage-bars > .gauge-src {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-quota .gauge-track {
+  min-width: 28px;
+  max-width: none;
+  height: 6px;
+}
+.acct-quota .gauge-pct {
+  min-width: 3.8em;
+}
+/* 重置时刻只在悬停里（`Gauge` 的 `hint`）：行内那一截把条子挤得只剩三十来像素。 */
+.acct-quota .gauge-reset {
+  display: none;
+}
+.acct-quota .gauge-src {
+  justify-self: start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-2xs);
+}
+/* 操作列：图标按钮一排靠右。删除悬停时才变红 —— 常驻红框太抢眼。 */
+.acct-ops {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  min-width: 0;
+}
+.acct-ops .btn--sm {
+  min-height: 26px;
+  padding: 3px 6px;
+}
+.acct-ops .acct-del:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+/* 反重力：两半的小徽标；没登录的那一枚自己就是按钮。 */
+.ag-half {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.ag-half--btn {
+  border: 1px dashed currentColor;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-2xs);
+}
+.ag-half--btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+/* 反重力的额度小矩阵：组名 | 5h | 周。「5h」「周」只在表头写一次，所以格子里不写名字。 */
+.ag-matrix {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.ag-mrow {
+  display: grid;
+  grid-template-columns: 3.4em minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+}
+/* 一格只有六十来像素（1180 那一档）：条子可以缩到很短，百分比不许被挤出格子（test:ui 抓到过 8px）。 */
+.ag-mrow .gauge {
+  gap: 4px;
+  min-width: 0;
+}
+.ag-mrow .gauge-track {
+  min-width: 12px;
+}
+.ag-mrow--head > span:not(:first-child) {
+  padding-left: 1px;
+}
+.ag-mname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+.ag-mrow .gauge-name {
+  display: none;
+}
+.ag-mrow .gauge-pct {
+  min-width: 0;
+}
+.ag-implied {
+  margin-left: 2px;
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--text-3);
 }
 .account-pagination {
   display: flex;
@@ -1313,8 +1570,41 @@ body:has(.official-page) {
   min-height: 0;
   grid-template-rows: repeat(2, minmax(0, 1fr));
 }
+/* 启动磁贴轻一点（2026-11-06 重排）：白底细框，颜色只留在图标那一小块上；
+   桌面端那一贴的常驻代价照旧是黄字（「查不到 IP 立即关闭」是它的常态，见 `.tile--warn`）。 */
 .account-launch .tile {
   justify-content: center;
+  background: var(--surface);
+  border-color: var(--border);
+}
+.account-launch .tile:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+.account-launch .tile-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.account-launch .tile--accent .tile-icon {
+  background: var(--accent-bg);
+}
+.account-launch .tile--warn {
+  background: var(--surface);
+  border-color: var(--warn-border);
+}
+.account-launch .tile--warn .tile-icon {
+  background: var(--warn-bg);
+}
+.account-launch .tile--warn .tile-name {
+  color: var(--text);
+}
+.account-launch .tile-name {
+  font-weight: 600;
 }
 /* GPT 页只有三个动作（启动 / 酒馆 / 一键关闭），2×2 会缺一格 ——
    让「一键关闭」那格横跨两列，看起来是刻意排的，不像少了一块。
@@ -1381,22 +1671,6 @@ body:has(.official-page) {
   font-size: 12px;
 }
 
-/* 0.32.0：一条账户行底下那排「两半」的徽标与按钮。
-   横向可折行 —— 窄窗口下 IDE / CLI 两枚徽标各占一行也比被裁掉强
-   （`.account-slot-list` 是固定高度的四行网格，裁切会被 test:ui 抓到）。 */
-.ag-halves {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  min-width: 0;
-}
-.ag-half {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  min-width: 0;
-}
 /* 弹窗里的配额 / 按模型两张表。只引变量。 */
 .ag-table {
   width: 100%;
@@ -1437,24 +1711,6 @@ body:has(.official-page) {
   gap: 8px;
   min-width: 0;
 }
-.codex-slot-identity {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-[data-testid="codex-slot"] {
-  gap: 2px;
-}
-[data-testid="codex-slot"] > * {
-  flex-shrink: 0;
-}
-[data-testid="codex-slot"] .notice {
-  line-height: 16px;
-}
-[data-testid="codex-slot"] .btn--sm {
-  min-height: 26px;
-  padding-block: 3px;
-}
 .account-launch > div:has(.launchcol) {
   gap: 6px;
 }
@@ -1488,51 +1744,23 @@ body:has(.official-page) {
   .account-workspace h2 {
     font-size: 15px;
   }
-  .account-slot-list .slotrow {
-    padding: 5px 7px;
-  }
-  .account-slot-list .slotrow-main {
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-  .account-slot-list .slotrow-plan {
-    display: none;
-  }
-  .account-slot-list .slotrow-side > .pill {
-    display: none;
-  }
-  .account-slot-list .slotrow-label {
-    flex: 1;
-  }
-  .account-slot-list .gauge-reset,
-  .account-slot-list .gauge-binding,
-  /* GPT 用量卡里那两根额度条（0.32.0）跟槽位行同一个待遇：窄档先收重置时刻。
-     「还剩多少」和「哪个窗口卡着你」是这两根条的全部意义，重置时刻在明细里有。 */
+  /* 窄档（900 那一档往下）：重置时刻、「卡这儿」先收，「还剩多少」和颜色留着 ——
+     那是这两根条的全部意义，重置时刻在明细里有。GPT 用量卡里那两根条同一个待遇。 */
+  .acct-quota .gauge-reset,
+  .acct-quota .gauge-binding,
   .account-usage .slotusage .gauge-reset {
     display: none;
   }
-  .account-slot-list .gauge-track {
-    min-width: 20px;
+  .acct-head,
+  .account-slot-list .acct-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    column-gap: 8px;
+    padding-inline: 8px;
   }
-  /* 0.32.0：反重力那一侧一行有三层（名字 / 两半的徽标 / 配额条），
-     680×640 这一档四行网格装不下第三层 —— 收掉它。
-     ⛔ 收的是**配额条与那句状态**，不是两半的徽标：徽标回答的是
-     「这个账户能不能用」，收掉它这一行就只剩一个名字，等于没说话。
-     配额在右下角那张用量卡和 `/usage` 上都有，收掉不丢信息。 */
-  .account-slot-list [data-testid="ag-slot"] > .gauge,
-  .account-slot-list [data-testid="ag-slot"] > .notice,
-  .account-slot-list [data-testid="ag-slot"] > .slotusage {
-    display: none;
+  .acct-quota .gauge-pct {
+    min-width: 3.2em;
   }
-  /* 两半那一行**不许折行**：`.slotrow` 是固定高度网格里的一格，折出来的第二行
-     直接顶出格子（test:ui 当场红）。窄档只留两枚徽标 —— 登录动作在宽一点的窗口
-     或明细里做，而「登没登录」这一位信息是这一行的全部意义，不能收。 */
-  .account-slot-list .ag-halves {
-    flex-wrap: nowrap;
-    gap: 2px 5px;
-    overflow: hidden;
-  }
-  .account-slot-list .ag-halves .btn {
+  .acct-extra {
     display: none;
   }
   .account-launch .tile {
@@ -1591,6 +1819,44 @@ body:has(.official-page) {
     display: none;
   }
 }
+/* 680 那一档左边只剩不到 300px：三列排不下，一行改成两层 ——
+   上层「账户 · 操作」，下层额度（两根条并排）。表头没了列可对，收掉。 */
+@container accounts (max-width: 700px) {
+  .acct-head {
+    display: none;
+  }
+  .account-slot-list .acct-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "who ops"
+      "quota quota";
+    row-gap: 3px;
+    padding: 4px 6px;
+  }
+  .acct-who {
+    grid-area: who;
+    gap: 1px;
+  }
+  .acct-ops {
+    grid-area: ops;
+  }
+  .acct-quota {
+    grid-area: quota;
+  }
+  .acct-quota .slotusage-bars:not(:has(.ag-matrix)) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 10px;
+  }
+  .acct-quota .slotusage > .gauge-src {
+    display: none;
+  }
+  .acct-quota .gauge-name {
+    width: auto;
+  }
+  .acct-ops .btn--sm {
+    padding: 3px 4px;
+  }
+}
 @container accounts (max-height: 840px) {
   .official-score {
     padding: 10px 12px;
@@ -1615,10 +1881,9 @@ body:has(.official-page) {
   .account-workspace h2 {
     font-size: 15px;
   }
-  .account-slot-list {
-    gap: 6px;
-  }
-  .account-slot-list .gauge-src {
+  /* 只收最下面那一行来源（`.slotusage` 的直接子项）；条子位置上的那句状态
+     （「还没有额度读数」「IDE 还没写下额度信息」）不收 —— 收了那一格就空着，读起来像坏了。 */
+  .account-slot-list .slotusage > .gauge-src {
     display: none;
   }
   .account-usage .ustats {
@@ -2085,22 +2350,271 @@ body:has(.official-page) {
   cursor: not-allowed;
 }
 
-/* 账户页标题栏里的显示偏好（自动刷新档位、GPT 的「审查 / 模型」开关）：窗口窄时收起。
-   账户页是固定高度的，标题栏一换行就把槽位列表挤裁（test:ui 的 680x640）。 */
-.qb-wide-only {
-  display: none;
-}
-@media (min-width: 768px) {
-  .qb-wide-only {
-    display: inline-flex;
-  }
-}
+/* （原来这里有一条 `.qb-wide-only`：账户页标题栏上的自动刷新档位、GPT 的「审查 / 模型」开关窄窗口时收起。
+   2026-11-06 那三样都从标题栏拿掉了 —— 档位进了设置页，两个开关去掉 —— 这条规则也一起删了。） */
 
-/* 账户行上凭证徽标里的按钮（「让官方换新」「是我」……）：跟文字一样高，
+/* 账户行上凭证徽标里的按钮（「去网页验证」「是我」……）：跟文字一样高，
    不把固定高度的槽位行撑高（test:ui 的 680x640）。 */
 .btn.credential-inline-btn {
   height: auto;
   min-height: 0;
   padding-block: 0;
   line-height: 1.25;
+}
+
+/* 会话面板（2026-11-06 照 Cockpit Tools 的会话管理重排，使用者：「Cockpit 什么样子，你就做成什么样子」）：
+   顶上一条操作栏卡片，下面一条「全选」栏，再下面按项目分组的列表（组标题吸顶，一行一条，细线分隔）。
+   扩展中心「会话」分页、账户页的会话弹窗、回收站弹窗共用。 */
+.qb-session-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.qb-session-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.qb-session-bar,
+.qb-session-selbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.qb-session-selbar {
+  padding: 6px 10px;
+}
+.qb-session-bar-gap {
+  flex: 1 1 0;
+}
+.qb-session-field {
+  flex: 1 1 220px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+.qb-session-field:focus-within {
+  border-color: var(--accent-border);
+}
+.qb-session-field > span {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.qb-session-field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+.qb-session-select {
+  height: 30px;
+  max-width: 240px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+.qb-session-badge {
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+}
+.qb-session-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.qb-session-selcount {
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.qb-segmented {
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.qb-segmented button {
+  appearance: none;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.qb-segmented button + button {
+  border-left: 1px solid var(--border);
+}
+.qb-segmented button[aria-pressed="true"] {
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-weight: 600;
+}
+.qb-session-list {
+  min-width: 0;
+  max-height: min(56vh, 560px);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.qb-session-list--trash {
+  max-height: 320px;
+}
+.qb-session-group + .qb-session-group {
+  border-top: 1px solid var(--border);
+}
+.qb-session-group-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.qb-session-group-toggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.qb-session-group-toggle b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+.qb-session-group-toggle > span {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.qb-session-group-note {
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.qb-session-link {
+  appearance: none;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--accent);
+  cursor: pointer;
+}
+.qb-session-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  padding: 10px 12px;
+}
+.qb-session-item + .qb-session-item {
+  border-top: 1px solid var(--border);
+}
+.qb-session-item:hover {
+  background: var(--surface-2);
+}
+.qb-session-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.qb-session-titleline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.qb-session-meta2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.qb-session-meta2 .qb-session-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.qb-session-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+.qb-session-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.qb-session-loading {
+  margin: 0;
+  padding: 24px 12px;
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+}
+.qb-session-empty {
+  padding: 28px 12px;
+}
+.qb-session-pager {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--text-3);
 }
