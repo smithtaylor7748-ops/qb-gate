@@ -12,7 +12,7 @@
  * - 链接要求「导入后直接用」、带着用量脚本的，照实列成「没照做的」。
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useNavigate } from "react-router-dom";
 import { Link2 } from "lucide-react";
@@ -23,10 +23,13 @@ import { deeplinkApi, type DeepLinkEntry } from "../lib/deeplink";
 import type { Client } from "../lib/generated/Client";
 import type { RouteModelMap } from "../lib/generated/RouteModelMap";
 import { UPSTREAM_FORMAT_LABEL } from "../lib/station";
-import { setSession, useSession } from "../lib/store";
+import { getSession, setSession, useSession } from "../lib/store";
 import { Button, CodeBlock, Modal, useToast } from "../ui";
 
 const KEY = "deeplink.entry";
+// A peek can finish after a paste, dismissal or import. None of those actions
+// may be undone by that old read, even when the visible inbox is now empty.
+let inboxRevision = 0;
 
 const CLIENT_NAME: Record<string, string> = {
   "claude-code": "Claude Code",
@@ -49,7 +52,15 @@ function message(e: unknown): string {
 
 /** 让确认框显示这一条（粘贴之后、收到通知之后都走这里）。 */
 export function showDeepLink(entry: DeepLinkEntry | null): void {
+  const current = getSession<DeepLinkEntry | null>(KEY, null);
+  if (entry && current && entry.id < current.id) return;
+  inboxRevision++;
   setSession<DeepLinkEntry | null>(KEY, entry);
+}
+
+function dismissDeepLink(id: number): void {
+  if (getSession<DeepLinkEntry | null>(KEY, null)?.id === id)
+    showDeepLink(null);
 }
 
 /** 没照做的那几样，照实列出来。 */
@@ -86,11 +97,15 @@ export default function DeepLinkHost() {
   const [key, setKey] = useState("");
   const toast = useToast();
   const navigate = useNavigate();
+  const peekSequence = useRef(0);
 
   const fetchPending = useCallback(async () => {
+    const sequence = ++peekSequence.current;
+    const revision = inboxRevision;
     try {
       const e = await deeplinkApi.peek();
-      if (e) showDeepLink(e);
+      if (e && sequence === peekSequence.current && revision === inboxRevision)
+        showDeepLink(e);
     } catch {
       // 读不到就算了：链接还在后端，下次通知或重开面板再取。
     }
@@ -104,9 +119,11 @@ export default function DeepLinkHost() {
     const p = listen(CHANNELS.deeplink, () => void fetchPending());
     void p.then((stop) => {
       if (disposed) stop();
+      else void fetchPending(); // Cover links received while listener registration was pending.
     });
     return () => {
       disposed = true;
+      peekSequence.current++;
       void p.then((stop) => stop());
     };
   }, [fetchPending]);
@@ -129,7 +146,7 @@ export default function DeepLinkHost() {
   const dismiss = () => {
     if (busy) return;
     void deeplinkApi.ack(entry.id).catch(() => undefined);
-    showDeepLink(null);
+    dismissDeepLink(entry.id);
   };
 
   const doImport = async () => {
@@ -140,7 +157,7 @@ export default function DeepLinkHost() {
         group,
         key: key.trim() ? key.trim() : null,
       });
-      showDeepLink(null);
+      dismissDeepLink(entry.id);
       toast.ok(out.message);
       if (out.client) {
         setSession<Client>("station.client", out.client);
@@ -149,7 +166,8 @@ export default function DeepLinkHost() {
         navigate("/relays");
       }
     } catch (e) {
-      setError(message(e));
+      if (getSession<DeepLinkEntry | null>(KEY, null)?.id === entry.id)
+        setError(message(e));
     } finally {
       setBusy(false);
     }

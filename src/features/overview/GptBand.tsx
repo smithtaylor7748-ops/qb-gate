@@ -28,11 +28,10 @@ import type { CodexSlot } from "../../lib/generated/CodexSlot";
 import type { CodexUsage } from "../../lib/generated/CodexUsage";
 import type { TavernGptQuota } from "../../lib/generated/TavernGptQuota";
 import { AFTER, R } from "../../lib/resources";
-import { stationApi } from "../../lib/station";
 import { invalidate, useResource, useSession } from "../../lib/store";
 import { slotName } from "../../lib/slotName";
 import { endTask, resetTask, useTask, type TaskState } from "../../lib/tasks";
-import StationTurnState from "../station/StationTurnState";
+import StationQualityCheck from "../station/StationQualityCheck";
 import GptZh, { gptZhOn } from "../zh/GptZh";
 import BridgeModal, {
   BridgeCorner,
@@ -549,32 +548,7 @@ export default function GptBand() {
     setError("");
     setAsk({ id: slot.id, label: slot.label, action });
   };
-  // 官方 Codex 的 turn-state「识别」（实验，默认关，只对 Codex）。
-  // 开关 / 规则 / 接管了哪个槽位都从后端路由状态回读，不本地臆测 —— 见 StationTurnState。
-  // 「识别开着」看的是 `turnstate_takeover`（落盘 marker），不是内存里的 armed 位。
-  const [ts, setTs] = useState<{
-    enabled: boolean;
-    team: boolean;
-    takeover: string | null;
-  }>({ enabled: false, team: false, takeover: null });
   const [tsOpen, setTsOpen] = useState(false);
-  const refreshTs = useCallback(async () => {
-    try {
-      const rs = await stationApi.routerStatus("codex");
-      setTs({
-        enabled: rs.turnstate_enabled,
-        team: rs.turnstate_team,
-        takeover: rs.turnstate_takeover,
-      });
-    } catch {
-      // 路由没起时读不到；保持上一次的值，不让整块报错。
-    }
-  }, []);
-  useEffect(() => {
-    void refreshTs();
-    const timer = window.setInterval(() => void refreshTs(), 5000);
-    return () => window.clearInterval(timer);
-  }, [refreshTs]);
   // 一键中文（2026-09-25）：写 GPT 自己的设置项 `[desktop] localeOverride`。
   // 按钮文字如实显示现状（全部份都是 zh-CN 才叫「开」），弹窗里逐个列出要改的文件。
   const locale = useResource("codexLocale", CODEX_R.locale);
@@ -803,19 +777,16 @@ export default function GptBand() {
             title="Codex 桌面端"
             actions={
               <div className="flex items-center gap-1.5">
-                {/* 官方 Codex 识别（turn-state）的入口：放在卡片标题栏，不占纵向空间 ——
-                    这一页是固定高度（test:ui 钉着 900×740 不许裁切），卡片里再加一行就裁。
-                    开关、个人/Team、识别模式启动、状态表和完整说明都在弹窗里；
-                    这个按钮的文字如实显示后端状态（注入开没开、接没接进路由）。 */}
+                {/* 质量检查沿用标题栏位置，避免增加固定高度账户页的纵向占用。 */}
                 <Button
                   size="sm"
-                  variant={ts.takeover !== null ? "primary" : "default"}
+                  variant="default"
                   className="turnstate-entry"
                   data-testid="codex-turnstate"
-                  aria-label={`Codex 识别（turn-state）：${ts.takeover !== null ? `已开启，作用于槽位 ${ts.takeover}` : "未开启"}；注入${ts.enabled ? "开" : "关"}`}
+                  aria-label="GPT 质量检查"
                   onClick={() => setTsOpen(true)}
                 >
-                  {ts.takeover !== null ? "识别：开" : "识别"}
+                  质量检查
                 </Button>
                 {/* 一键中文的入口，同样放在标题栏（这一页固定高度，卡片里不许再加一行）。 */}
                 <Button
@@ -947,17 +918,20 @@ export default function GptBand() {
           />
         </div>
       </div>
-      {/* 开关、个人/Team、「开启识别（作用于当前槽位）」、状态表与完整说明都在这里。
-          关掉弹窗立刻回读一次，标题栏那个按钮的文字跟着变，不等下一轮轮询。 */}
       <Modal
         open={tsOpen}
         onClose={() => {
           setTsOpen(false);
-          void refreshTs();
         }}
-        title="Codex 识别（turn-state）· 开关、配置与状态"
+        title="GPT 质量检查"
+        size="huge"
       >
-        <StationTurnState />
+        {tsOpen && (
+          <StationQualityCheck
+            accountId={active?.id}
+            route={active?.label ?? "官方 Codex"}
+          />
+        )}
       </Modal>
       <Modal
         open={zhOpen}

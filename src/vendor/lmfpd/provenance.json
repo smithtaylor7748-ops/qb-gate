@@ -1,0 +1,73 @@
+{
+  "upstreamRepository": "https://github.com/Ikaleio/lm-detector",
+  "upstreamCommit": "1e58ed83c1cde17f88cba89560ad4d083042ae92",
+  "sdkVersion": "0.2.0",
+  "dataVersion": "0.0.1793708131735",
+  "packages": {
+    "lmfpd-sdk": {
+      "version": "0.2.0",
+      "tarball": "https://registry.npmjs.org/lmfpd-sdk/-/lmfpd-sdk-0.2.0.tgz",
+      "integrity": "sha512-nW0lY2SJVtnvRibgaMIPfhMylO54/aHozUp/Yz5GHEWjNUZ8LAzyA6tYTI7Vbqm6qO2iI3+RcMbi27ibgzGmjQ==",
+      "archiveSha256": "82e418023484ce57a73ccdb2e754ce16d30c5379d27952d404378529745d550d",
+      "gitHead": "1e58ed83c1cde17f88cba89560ad4d083042ae92",
+      "indexSha256": "3c17ea6400aa31e9b17d8e79977e8665832ac8c537946da4319af4ae40d1c368"
+    },
+    "lmfpd-data": {
+      "version": "0.0.1793708131735",
+      "tarball": "https://registry.npmjs.org/lmfpd-data/-/lmfpd-data-0.0.1793708131735.tgz",
+      "integrity": "sha512-f5ecg7CXe2u7OJzmAE6ND8V9LwnSO9wsGEterivf2D04oI6EO6ZHHLtg0EBcum3y7Qic0nwewPdh8hc846fBKw==",
+      "archiveSha256": "9cec66f3a527d75b77ba399fb6f1d919cbf749d9c1bb32600c5ebf1cad741212",
+      "gitHead": "e9bd7c545bf75f35aa02aaf0878b36b89fe7dfa4"
+    }
+  },
+  "upstreamSources": {
+    "shared/shared-detector.ts": {
+      "gitBlobSha1": "676daabd58cd235a3c7081b54ed8a3fddb452711",
+      "sha256": "2cf7e22d4db63d79bdf80573af96e8448202c92989b1b5b1a328a53e7527dcbd"
+    },
+    "shared/positional.ts": {
+      "gitBlobSha1": "5b548a8e95ab143638ba1e872fb10b599cabc99f",
+      "sha256": "e2c72c352ac3c1120ff23891ec40fff9a652973345badb29a9ce389de9cfc28a"
+    },
+    "shared/detector-codec.ts": {
+      "gitBlobSha1": "1f112f3b0ef949ee7e76d979439af72e9960a074",
+      "sha256": "dc81fc16d94e7d4e34918142338bc810e07f42e0ddea32d5e229dced254addbb"
+    },
+    "shared/fingerprint-core.js": {
+      "gitBlobSha1": "db33e4c6d804fca9a40e50ffc8734d2da6fd0173",
+      "sha256": "f7a88e9b0141b0088608a2c86ba9f26cf6b916860e94c3c7f14028c94c165be7"
+    },
+    "shared/types.ts": {
+      "gitBlobSha1": "a96a0da8eb419e8b3ee65889e885763c9c5d0ed3",
+      "sha256": "18b97d80667bb6530ab357737e1b2488c7d527be11f87fcde327c9ad38302fdc"
+    },
+    "sdk/ts/src/analysis.ts": {
+      "gitBlobSha1": "4391df8135f85ca0e31a848734ca93634e4e24fe",
+      "sha256": "f028f0fef5d986987f87d38f23d346dbfb4ddba62b298ba03960b7c16370572c"
+    },
+    "sdk/ts/src/types.ts": {
+      "gitBlobSha1": "b1d910c4e73a101a139b5b6334e6c28c73cda4b5",
+      "sha256": "02d7c17c43218a46bea8cb13ea90bb6164b7309989f36dc6907c5dbafc0d1911"
+    },
+    "shared/detect-run.ts": {
+      "gitBlobSha1": "361667eb533642664b7cc8d63ee32406be2164e8",
+      "sha256": "8139e3cdd82c65a3bb438db3590a773b6f63a03dee2ed3724c8d8bd8355ec877"
+    },
+    "shared/detect-request.ts": {
+      "gitBlobSha1": "500a590f77c086b44a5db2aa70fb20f34e5a2bf9",
+      "sha256": "9d5593f896320e9974e3e50312fe7fbd2c459aca27d763db0a2399fe4fa55bfa"
+    },
+    "shared/challenge-browser.js": {
+      "gitBlobSha1": "940c42259f19376d6f6756def574b2bc28d5f9b4",
+      "sha256": "65884da44d29b7d5337993609414596272010cb07cffe98b0c5546b1fe9728e4"
+    }
+  },
+  "reference": {
+    "builtAt": "2026-11-03T12:06:39.864352+00:00",
+    "sha256": "59dffad8128dca8bcf0cfb024f0fcebe7f0b7d7fbae3583b4b5d1418c18e601f",
+    "bytes": 4808724,
+    "bundleSha256": "2e19810b40a9b2ffe84b312c20874e2932c9f151816d6348cb485c60871bd9a4",
+    "compressedSha256": "a598429e657614590018207223a77a1de19f1b45d1ba6d78253d5549679e31f0"
+  },
+  "licenseSha256": "238afb57e498990742f84b9ce6167b4e256ac06104a9938ce953bc41c14bea51"
+}

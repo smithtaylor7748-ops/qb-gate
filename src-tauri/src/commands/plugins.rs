@@ -131,9 +131,8 @@ pub async fn codex_egress_config_save(cfg: plugins::codex_egress::EgressConfig) 
 
 /// 启动插件（它会接管当前激活槽位 / 默认 `~/.codex` 的 Codex 配置并起服务）。
 ///
-/// ⛔ 与核心的官方 turn-state 识别互斥（双向，另一半在 `station_turnstate_enable`）。
-/// 0.24.7 起两边**都改同一个槽位的 `config.toml`**（识别改 `model_provider`，插件也接管它），
-/// 同时开就是两个程序抢同一个文件。识别开着时请先在账户页「识别」弹窗里点「关闭识别」。
+/// ⛔ 旧 turn-state 接管尚未恢复时禁止覆盖同一槽位的 `config.toml`。
+/// 旧识别入口已停用；遗留接管须先在账户页「质量检查」中恢复，再启动插件。
 /// 看的是落盘的 marker（`turnstate_ops::takeover`），不只看内存里的路由状态 ——
 /// 面板重启后后者归零，前者才是真相（启动时会自动关闭并恢复，这里再兜一道底）。
 #[tauri::command]
@@ -146,7 +145,7 @@ pub async fn codex_egress_start(state: tauri::State<'_, AppState>) -> Result<Str
         .official_codex_armed();
     if armed || qb_app::usecase::turnstate_ops::takeover().is_some() {
         return Err(crate::error::GateError::Other(
-            "账户页的「识别（turn-state）」还开着。它和这个插件都要改同一个 Codex 槽位的配置，一次只能开一个：到账户页「识别」弹窗点「关闭识别」（会恢复槽位配置），再启动插件。"
+            "旧 turn-state 接管配置尚未恢复。它和这个插件会修改同一个 Codex 槽位：请先到账户页「质量检查」中恢复旧接管配置，再启动插件。"
                 .into(),
         ));
     }

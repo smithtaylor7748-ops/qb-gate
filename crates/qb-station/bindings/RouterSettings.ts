@@ -6,6 +6,7 @@ import type { Client } from "./Client";
 import type { PoolStrategy } from "./PoolStrategy";
 import type { RectifierSwitches } from "./RectifierSwitches";
 import type { RoutingMode } from "./RoutingMode";
+import type { SessionRecoverySettings } from "./SessionRecoverySettings";
 
 /**
  * 一个软件的本机路由设置（cc-switch 的 `AppProxyConfig`，每个 app 一行）。
@@ -49,6 +50,10 @@ non_streaming_timeout_secs: number, breaker: BreakerSettings,
  * 整流器（cc-switch 的 `RectifierConfig`，默认全开）。
  */
 rectifier: RectifierSwitches, 
+/**
+ * Codex Responses 请求历史修复；两个开关默认关闭，不修改本地会话文件。
+ */
+session_recovery: SessionRecoverySettings, 
 /**
  * 聚合模型（中转站重构阶段 3）。老数据没有就是关着。
  */

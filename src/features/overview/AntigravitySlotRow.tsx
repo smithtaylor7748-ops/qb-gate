@@ -27,14 +27,14 @@ import type { ReactNode } from "react";
  * # 额度（2026-09-23 重做；2026-11-06 收成一张小矩阵）
  *
  * 使用者说原来那块「太乱」：Claude / Gemini 两行，每行都写一遍「5h」「周」，再加倒计时。
- * 现在「5h」「周」只在列表上方那一行列名里出现一次，一格只剩条子和百分比，倒计时放悬停：
+ * 「5h」「周」只在列表上方那一行列名里出现一次；条子下面显示重置倒计时，完整时间放悬停：
  *
  * | 有什么 | 画什么 |
  * |---|---|
  * | 点过刷新（联网问到了四格） | Claude / Gemini 两行 × 5h / 周两格；来源行写问的时刻、档位、AI 积分 |
  * | 联网问到了、但是免费档（Google 不给 5 小时那一格） | 5h 那一格画斜纹（没读到，不是 0） |
- * | 联网问到了、但只有按模型的 | 按模型合成的两组 |
- * | 还没点过 | IDE 写在本机的最低那一族，来源行写「IDE 写入 hh:mm」—— 不说成此刻 |
+ * | 联网问到了、但只有按模型的 | 按实际模型逐项展示，不推断共享配额 |
+ * | 还没点过 | IDE 写在本机的各模型，来源行写「IDE 写入 hh:mm」—— 不说成此刻 |
  *
  * ⛔ 联网**只从这一行的刷新图标发出**，一次只问这一个账户（使用者定的：只手动刷新）；
  * Gemini CLI 那一半登着的话同一下也问它（原来来源行末尾单独一颗「CLI」，2026-11-06 去掉），
@@ -46,14 +46,16 @@ import { Button, Gauge, Pill } from "../../ui";
 import { slotName } from "../../lib/slotName";
 import {
   countdown,
-  groupLabel,
   groupWindows,
   lowestQuota,
   modelGroups,
   percent,
+  quotaPools,
   resetIn,
   tierShort,
 } from "../../lib/antigravityQuota";
+import { resetPassed } from "../../lib/quotaClock";
+import QuotaCountdown from "./QuotaCountdown";
 import type { AntigravityAccount } from "../../lib/generated/AntigravityAccount";
 import type { AntigravityOnlineQuota } from "../../lib/generated/AntigravityOnlineQuota";
 import type { AntigravityQuotaGroup } from "../../lib/generated/AntigravityQuotaGroup";
@@ -174,7 +176,7 @@ function Half({
   );
 }
 
-/** 一格：条子 + 百分比，倒计时在悬停里。缺这一格就画斜纹，**不画 0**。 */
+/** 一格：条子、百分比与本地倒计时。缺这一格就画斜纹，不画 0。 */
 function Cell({
   w,
   name,
@@ -190,23 +192,23 @@ function Cell({
         className="gauge--cell"
         name={name}
         used={null}
-        hint="这一格没有读到（免费档 Google 不给 5 小时那一格）"
+        hint="接口没有返回这个窗口的额度，不代表剩余为 0"
       />
     );
   // 过了重置时刻就不画旧百分比。
   if (w.reset_epoch != null && w.reset_epoch * 1000 <= now)
     return (
       <Gauge
-        className="gauge--cell"
         name={name}
         used={null}
-        value="已重置"
-        hint="过了重置时刻，这是重置前问到的数 · 点刷新再问一次"
+        extra={<QuotaCountdown epoch={w.reset_epoch} now={now} />}
+        className="gauge--cell gauge--countdown"
+        hint="已到上次读数的重置时间；当前额度尚待刷新确认"
       />
     );
   return (
     <Gauge
-      className="gauge--cell"
+      className="gauge--cell gauge--countdown"
       name={name}
       used={100 - w.remaining * 100}
       value={
@@ -227,6 +229,7 @@ function Cell({
       ]
         .filter(Boolean)
         .join(" · ")}
+      extra={<QuotaCountdown epoch={w.reset_epoch} now={now} />}
     />
   );
 }
@@ -236,27 +239,25 @@ function GroupRow({
   group,
   windows,
   now,
+  label,
+  poolId,
 }: {
   group: AntigravityQuotaGroup;
   windows: AntigravityQuotaWindow[];
   now: number;
+  label: string;
+  poolId: string;
 }) {
   const [five, week] = groupWindows(windows, group);
   return (
     <div className="ag-mrow">
       <span
         className="ag-mname"
-        title={
-          group === "claude"
-            ? "Claude 与 GPT-OSS 共用这一份额度（Google 的分组）"
-            : group === "argon"
-              ? "Gemini 4 Argon 单独的一份周额度"
-              : "Gemini 各模型共用这一份额度"
-        }
+        title={`${label} · 官方配额池 ${poolId}；只代表该池返回的窗口`}
       >
-        {group === "argon" ? "Argon" : groupLabel(group)}
+        {label === "Gemini 4 Argon" ? "Gemini 4" : label}
       </span>
-      {group === "argon" ? (
+      {group === "argon" && !five ? (
         <span className="ag-mgap" aria-hidden="true" />
       ) : (
         <Cell w={five} name="5h" now={now} />
@@ -316,36 +317,50 @@ export default function AntigravitySlotRow({
   const shown = slotName(s.email, s.label);
 
   // ---------------------------------------------------------- 额度区
+  const models = online?.models.length ? online.models : s.quota;
   const bars =
     online && online.windows.length > 0 ? (
       <div className="ag-matrix">
-        <GroupRow group="claude" windows={online.windows} now={now} />
-        <GroupRow group="gemini" windows={online.windows} now={now} />
-        {online.windows.some((w) => w.group === "argon") && (
-          <GroupRow group="argon" windows={online.windows} now={now} />
-        )}
+        {quotaPools(online.windows).map((pool) => (
+          <GroupRow
+            key={pool.id}
+            group={pool.group}
+            label={pool.label}
+            poolId={pool.id}
+            windows={pool.windows}
+            now={now}
+          />
+        ))}
       </div>
-    ) : online && online.models.length > 0 ? (
-      modelGroups(online.models).map(({ group, model }) => (
-        <Gauge
-          key={group}
-          name={groupLabel(group)}
-          used={model.remaining == null ? null : 100 - model.remaining * 100}
-          value={
-            model.remaining == null
-              ? undefined
-              : `剩 ${Math.round(model.remaining * 100)}%`
-          }
-          hint={[
-            `${model.label} · ${resetIn(model.reset_epoch, now) || "重置时刻读不出来"}${model.reset_at ? `（${model.reset_at}）` : ""}`,
-            model.remaining_implied
-              ? "Google 没给这个模型的比例 —— 它的 JSON 会把 0 省掉，按用光算"
-              : "",
-          ]
-            .filter(Boolean)
-            .join(" · ")}
-        />
-      ))
+    ) : models.length > 0 ? (
+      <div className="ag-model-quotas" aria-label="各模型额度">
+        {modelGroups(models).map(({ key, label, model }) => (
+          <Gauge
+            key={key}
+            className="gauge--countdown"
+            name={<span title={model.model_key ?? label}>{label}</span>}
+            used={
+              model.remaining == null || resetPassed(model.reset_epoch, now)
+                ? null
+                : 100 - model.remaining * 100
+            }
+            value={
+              model.remaining == null || resetPassed(model.reset_epoch, now)
+                ? undefined
+                : `剩 ${Math.round(model.remaining * 100)}%`
+            }
+            hint={[
+              `${model.label} · ${resetIn(model.reset_epoch, now) || "重置时刻读不出来"}${model.reset_at ? `（${model.reset_at}）` : ""}`,
+              model.remaining_implied
+                ? "Google 没给这个模型的比例 —— 它的 JSON 会把 0 省掉，按用光算"
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+            extra={<QuotaCountdown epoch={model.reset_epoch} now={now} />}
+          />
+        ))}
+      </div>
     ) : s.identity_error ? (
       // ⛔ 读不出来 ≠ 没登录。有 identity_error 时说的是前者。
       <span className="gauge-src qb-tone-warn" title={s.identity_error}>
@@ -381,8 +396,18 @@ export default function AntigravitySlotRow({
   const source: { text: string; title: string; warn: boolean } | null =
     onlineError
       ? {
-          text: "刷新没成 · 悬停看原因",
-          title: [onlineError, cliLine].filter(Boolean).join(" · "),
+          text: onlineHasData
+            ? "刷新没成 · 保留上次读数"
+            : "刷新没成 · 悬停看原因",
+          title: [
+            onlineError,
+            onlineHasData
+              ? `上次成功：${online?.last_success ?? online?.fetched_at}；倒计时沿用该次返回的重置时间`
+              : "",
+            cliLine,
+          ]
+            .filter(Boolean)
+            .join(" · "),
           warn: true,
         }
       : online && !onlineHasData

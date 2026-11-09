@@ -43,7 +43,7 @@ import { api } from "../../lib/api";
 import { AG_R, antigravityApi } from "../../lib/antigravity";
 import {
   countdown,
-  groupLabel,
+  quotaPoolLabel,
   lowestQuota,
   modelGroups,
   percent,
@@ -88,6 +88,8 @@ import CredentialBadge, { useCredentials } from "./CredentialBadge";
 import { credentialApi } from "../../lib/credentials";
 import QuotaRefreshAll from "./QuotaRefreshAll";
 import type { TavernGeminiQuota as CliQuota } from "../../lib/generated/TavernGeminiQuota";
+import { resetPassed, useQuotaClock } from "../../lib/quotaClock";
+import QuotaCountdown from "./QuotaCountdown";
 
 const PER_PAGE = 4;
 const NUM = new Intl.NumberFormat("zh-CN");
@@ -1241,7 +1243,7 @@ function AntigravityUsageCard({
   const [data, setData] = useState<AntigravityUsage | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
+  const now = useQuotaClock();
   const [geminiQuota, setGeminiQuota] = useState<TavernGeminiQuota | null>(
     null,
   );
@@ -1255,7 +1257,6 @@ function AntigravityUsageCard({
         const r = await antigravityApi.usage(days);
         if (!signal?.cancelled) {
           setData(r);
-          setNow(Date.now());
         }
       } catch (e) {
         if (!signal?.cancelled)
@@ -1381,13 +1382,13 @@ function AntigravityUsageCard({
       return q.windows
         .map(
           (w) =>
-            `${groupLabel(w.group)} ${spanLabel(w.span)} ${percent(w.remaining)}${w.remaining_implied ? "（没给比例，按用光算）" : ""}`,
+            `${quotaPoolLabel(w)} ${spanLabel(w.span)} ${resetPassed(w.reset_epoch, now) ? "到点，待刷新确认" : percent(w.remaining)}${w.remaining_implied ? "（没给比例，按用光算）" : ""}`,
         )
         .join(" · ");
     return [
       ...modelGroups(q.models).map(
-        ({ group, model }) =>
-          `${groupLabel(group)} ${percent(model.remaining)}${model.remaining_implied ? "（没给比例，按用光算）" : ""}`,
+        ({ label, model }) =>
+          `${label} ${resetPassed(model.reset_epoch, now) ? "到点，待刷新确认" : percent(model.remaining)}${model.remaining_implied ? "（没给比例，按用光算）" : ""}`,
       ),
       q.windows_note ?? "",
     ]
@@ -1562,19 +1563,27 @@ function AntigravityUsageCard({
           <span className="ustat-name">剩余配额</span>
           <span className="ustat-value">
             {onlineTight
-              ? percent(onlineTight.remaining)
+              ? resetPassed(onlineTight.reset_epoch, now)
+                ? "待刷新"
+                : percent(onlineTight.remaining)
               : onlineLowModel
-                ? percent(onlineLowModel.remaining)
+                ? resetPassed(onlineLowModel.reset_epoch, now)
+                  ? "待刷新"
+                  : percent(onlineLowModel.remaining)
                 : cliLow
-                  ? `${cliLow.remaining_percent}%`
+                  ? resetPassed(cliLow.reset_epoch, now)
+                    ? "待刷新"
+                    : `${cliLow.remaining_percent}%`
                   : low
-                    ? percent(low.remaining)
+                    ? resetPassed(low.reset_epoch, now)
+                      ? "待刷新"
+                      : percent(low.remaining)
                     : "—"}
           </span>
           {/* 按 0 推出来的（Google 只给了重置时刻）要说出来，不许装成读到的 0（2026-09-25）。 */}
           <span className="ustat-sub">
             {onlineTight
-              ? `${groupLabel(onlineTight.group)} ${spanLabel(onlineTight.span)} · ${countdown(onlineTight.reset_epoch, now)}${onlineTight.remaining_implied ? " · 没给比例，按用光算" : ""}`
+              ? `${quotaPoolLabel(onlineTight)} ${spanLabel(onlineTight.span)} · ${countdown(onlineTight.reset_epoch, now)}${onlineTight.remaining_implied ? " · 没给比例，按用光算" : ""}`
               : onlineLowModel
                 ? `${onlineLowModel.family} · ${resetIn(onlineLowModel.reset_epoch, now)}${onlineLowModel.implied ? " · 没给比例，按用光算" : ""}`
                 : cliLow
@@ -1593,32 +1602,20 @@ function AntigravityUsageCard({
         <div className="slotusage">
           {geminiQuota.models.map((model) => (
             <QuotaBar
+              className="gauge--countdown"
               // 汇总接口的桶没有 model_id / token_type（2026-09-25 起不再被合成一个），
               // 键要带上名字，不然几格全是 `null-null`。
               key={`${model.model_id}-${model.token_type}-${model.label}`}
               name={model.label}
               used={
-                model.remaining_percent == null
+                model.remaining_percent == null ||
+                resetPassed(model.reset_epoch, now)
                   ? null
                   : 100 - model.remaining_percent
               }
               // 按对象认是不是最紧的那一格：按 model_id 比，没有 id 的几格会全被标成「卡这儿」。
               binding={cliLow === model}
-              extra={
-                model.reset_at ? (
-                  <span
-                    className="gauge-reset"
-                    title={
-                      model.remaining_implied
-                        ? "Google 没给这一格的比例 —— 它的 JSON 会把 0 省掉，按用光算"
-                        : undefined
-                    }
-                  >
-                    ↻ {model.reset_at}
-                    {model.remaining_implied && <em>推算</em>}
-                  </span>
-                ) : undefined
-              }
+              extra={<QuotaCountdown epoch={model.reset_epoch} now={now} />}
             />
           ))}
         </div>

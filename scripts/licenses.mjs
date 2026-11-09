@@ -81,6 +81,18 @@ for (const p of metadata.packages) {
 }
 for (const [name, version, source, dir] of [
   [
+    "lmfpd-sdk",
+    "0.2.0",
+    "https://registry.npmjs.org/lmfpd-sdk/-/lmfpd-sdk-0.2.0.tgz",
+    "src/vendor/lmfpd",
+  ],
+  [
+    "lmfpd-data",
+    "0.0.1793708131735",
+    "https://registry.npmjs.org/lmfpd-data/-/lmfpd-data-0.0.1793708131735.tgz",
+    "public/quality-reference/lmfpd-0.2.0",
+  ],
+  [
     "EasyAntigravity",
     "1.1.4",
     "https://github.com/DSDS-CMHL/EasyAntigravity",

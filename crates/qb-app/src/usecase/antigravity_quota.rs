@@ -124,6 +124,14 @@ pub enum QuotaSpan {
 pub struct AntigravityQuotaWindow {
     pub group: QuotaGroup,
     pub span: QuotaSpan,
+    /// 原始 bucketId 去掉窗口后缀后的配额池；不同池即使同属 Gemini 也不可合并。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pool_id: Option<String>,
+    /// Google 返回的配额组显示名；未返回时由界面按池 ID 标注。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub pool_label: Option<String>,
     /// 剩余比例 0–1。
     pub remaining: f32,
     /// `true` = Google 没给比例、按 proto3 缺省值算成了 0（见模块头）。界面要说出来。
@@ -854,6 +862,12 @@ pub fn parse_summary(body: &str) -> Result<Vec<AntigravityQuotaWindow>> {
             let Some((g, s)) = bucket_kind(b) else {
                 continue;
             };
+            let id = b.get("bucketId").and_then(Value::as_str).unwrap_or("");
+            let pool_id = ["-weekly", ":weekly", "-5h", ":5h"]
+                .iter()
+                .find_map(|suffix| id.strip_suffix(suffix))
+                .unwrap_or(id)
+                .to_string();
             let reset_epoch = b.get("resetTime").and_then(epoch_of).filter(|x| *x > 0);
             let fraction = b.get("remainingFraction").and_then(number);
             let (remaining, implied) = match fraction {
@@ -862,12 +876,22 @@ pub fn parse_summary(body: &str) -> Result<Vec<AntigravityQuotaWindow>> {
                 None if reset_epoch.is_some() => (0.0, true),
                 None => continue,
             };
-            if out.iter().any(|w| w.group == g && w.span == s) {
+            if out
+                .iter()
+                .any(|w| w.pool_id.as_deref() == Some(&pool_id) && w.span == s)
+            {
                 continue;
             }
             out.push(AntigravityQuotaWindow {
                 group: g,
                 span: s,
+                pool_id: Some(pool_id),
+                pool_label: group
+                    .get("displayName")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned),
                 remaining,
                 remaining_implied: implied,
                 reset_epoch,
@@ -893,7 +917,7 @@ pub fn parse_summary(body: &str) -> Result<Vec<AntigravityQuotaWindow>> {
 /// 纯函数：`fetchAvailableModels` → 各模型额度（拿不到汇总时的兜底）。
 ///
 /// 只留 Gemini / Claude / GPT 的模型（`chat_*` / `tab_*` 是 IDE 内部用的）；
-/// 同名的（Google 有两个 id 都叫「Gemini 3.1 Pro (High)」）合成一条，取剩得少的那个。
+/// 保留原始模型 ID；同名不证明共享同一份配额，不合并。
 pub fn parse_models(body: &str) -> Result<Vec<AntigravityModelQuota>> {
     let v: Value = serde_json::from_str(body)
         .map_err(|e| GateError::Other(format!("模型清单的回复不是 JSON：{e}")))?;
@@ -904,7 +928,11 @@ pub fn parse_models(body: &str) -> Result<Vec<AntigravityModelQuota>> {
     let mut out: Vec<AntigravityModelQuota> = Vec::new();
     for (id, m) in models {
         let lid = id.to_ascii_lowercase();
-        if !(lid.contains("gemini") || lid.contains("claude") || lid.contains("gpt")) {
+        if !(lid.contains("gemini")
+            || lid.contains("argon")
+            || lid.contains("claude")
+            || lid.contains("gpt"))
+        {
             continue;
         }
         let Some(q) = m.get("quotaInfo") else {
@@ -934,18 +962,10 @@ pub fn parse_models(body: &str) -> Result<Vec<AntigravityModelQuota>> {
             .filter(|s| !s.is_empty())
             .map(|s| vec![s.to_string()])
             .unwrap_or_default();
-        if let Some(seen) = out.iter_mut().find(|x| x.label == label) {
-            if remaining < seen.remaining {
-                seen.remaining = remaining;
-                seen.reset_epoch = reset_epoch;
-                seen.reset_at = reset_epoch.and_then(local_minute);
-                seen.remaining_implied = remaining_implied;
-            }
-            continue;
-        }
         out.push(AntigravityModelQuota {
             label,
             model_id: 0,
+            model_key: Some(id.clone()),
             remaining,
             reset_at: reset_epoch.and_then(local_minute),
             reset_epoch,
@@ -1071,7 +1091,7 @@ mod tests {
     }
 
     #[test]
-    fn models_keep_only_real_model_families_and_merge_same_names() {
+    fn models_keep_distinct_ids_even_when_display_names_match() {
         let body = r#"{"models":{
             "gemini-3.1-pro-high":{"displayName":"Gemini 3.1 Pro (High)","quotaInfo":{"remainingFraction":0.8,"resetTime":"2026-09-28T00:00:00Z"}},
             "gemini-pro-agent":{"displayName":"Gemini 3.1 Pro (High)","quotaInfo":{"remainingFraction":0.6,"resetTime":"2026-09-28T00:00:00Z"}},
@@ -1080,10 +1100,46 @@ mod tests {
             "gpt-oss-120b-medium":{"displayName":"GPT-OSS 120B"}}}"#;
         let m = parse_models(body).expect("认得出");
         let names: Vec<_> = m.iter().map(|x| x.label.as_str()).collect();
-        assert_eq!(names, vec!["Claude Sonnet 4.6", "Gemini 3.1 Pro (High)"]);
-        assert_eq!(m[1].remaining, Some(0.6), "同名取剩得少的");
+        assert_eq!(
+            names,
+            vec![
+                "Claude Sonnet 4.6",
+                "Gemini 3.1 Pro (High)",
+                "Gemini 3.1 Pro (High)"
+            ]
+        );
+        assert_eq!(m[1].remaining, Some(0.8));
+        assert_eq!(m[2].remaining, Some(0.6));
+        assert_ne!(m[1].model_key, m[2].model_key, "同名不证明同池");
         assert_eq!(m[0].remaining, Some(0.0), "没有比例但有重置时刻 = 用光了");
         assert_eq!(m[0].tags, vec!["New".to_string()]);
+    }
+
+    #[test]
+    fn gemini_four_and_other_returned_pools_keep_their_own_windows() {
+        // Argon 的真实池名由 cockpit-tools quota_summary_tests / AntigravityQuotaSection 核对。
+        // gemini-separate 是测试未知未来池不会吞掉的合成字段，不声称它是线上型号。
+        let windows = parse_summary(
+            r#"{"groups":[{"buckets":[
+            {"bucketId":"gemini-weekly","remainingFraction":0.2},
+            {"bucketId":"gemini-argon-wtu-weekly","remainingFraction":0.9},
+            {"bucketId":"gemini-separate-weekly","remainingFraction":0.7}
+        ]}]}"#,
+        )
+        .unwrap();
+        assert_eq!(windows.len(), 3);
+        let argon = windows
+            .iter()
+            .find(|w| w.group == QuotaGroup::Argon)
+            .unwrap();
+        assert_eq!(argon.pool_id.as_deref(), Some("gemini-argon-wtu"));
+        assert_eq!(argon.remaining, 0.9);
+        assert!(windows
+            .iter()
+            .any(|w| w.pool_id.as_deref() == Some("gemini-separate") && w.remaining == 0.7));
+        let models = parse_models(r#"{"models":{"argon-model":{"displayName":"Gemini 4 Argon","quotaInfo":{"remainingFraction":0.75}}}}"#).unwrap();
+        assert_eq!(models[0].model_key.as_deref(), Some("argon-model"));
+        assert_eq!(models[0].remaining, Some(0.75));
     }
 
     #[test]

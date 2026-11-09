@@ -13,23 +13,132 @@ pub fn workspace_state() -> Result<Workspace> {
     workspace::snapshot()
 }
 #[tauri::command]
-pub async fn provider_save(app: tauri::AppHandle, provider: Provider) -> Result<Provider> {
+pub async fn provider_save(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+    provider: Provider,
+) -> Result<Provider> {
     let _guard = operations::exclusive_soon().await?;
-    let p = workspace::provider_save(provider)?;
+    // Keep persistent sources and send-time snapshots in the same critical section.
+    let mut router = state
+        .station
+        .lock()
+        .map_err(|_| crate::error::GateError::Other("中转站状态损坏".into()))?;
+    let db = crate::repository::Repository::open()?;
+    let p = workspace::provider_save_in(&db, provider)?;
+    super::station::load_upstreams_locked(&db, &mut router)?;
+    drop(router);
     operations::changed(&events::ui(&app), "provider", &p.id);
     Ok(p)
 }
 #[tauri::command]
 pub async fn credential_save(
     app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
     credential: Credential,
     action: String,
     key: Option<String>,
 ) -> Result<Credential> {
     let _guard = operations::exclusive_soon().await?;
-    let c = workspace::credential_save(credential, &action, key.as_deref())?;
+    let mut router = state
+        .station
+        .lock()
+        .map_err(|_| crate::error::GateError::Other("中转站状态损坏".into()))?;
+    let db = crate::repository::Repository::open()?;
+    let c = workspace::credential_save_in(&db, credential, &action, key.as_deref())?;
+    super::station::load_upstreams_locked(&db, &mut router)?;
+    drop(router);
     operations::changed(&events::ui(&app), "credential", &c.id);
     Ok(c)
+}
+
+#[cfg(test)]
+mod source_update_tests {
+    use super::*;
+    use qb_app::local_router::RouterState;
+    use qb_app::usecase::station_liveness::ProbeTarget;
+    use qb_station::station::route::Route;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn saved_address_and_key_replace_send_and_probe_sources_together() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let db = crate::repository::Repository::open_in(&root).unwrap();
+        let provider = workspace::provider_save_in(
+            &db,
+            Provider {
+                id: String::new(),
+                name: "fixture".into(),
+                base_url: "https://first.example/v1".into(),
+                website: String::new(),
+                note: String::new(),
+                tags: Vec::new(),
+                favorite: false,
+                revision: 0,
+                topup_per_usd: None,
+            },
+        )
+        .unwrap();
+        let credential = workspace::credential_save_in(
+            &db,
+            Credential {
+                id: String::new(),
+                provider_id: provider.id.clone(),
+                label: "fixture".into(),
+                masked: String::new(),
+                available: false,
+                revision: 0,
+            },
+            "replace",
+            Some("fixture-key-old"),
+        )
+        .unwrap();
+        let mut route = Route::new(Client::Codex, &provider.id, "fixture");
+        route.credential_id = Some(credential.id.clone());
+        db.put("station_routes", &route.id, &route).unwrap();
+        let state = Arc::new(Mutex::new(RouterState::default()));
+        {
+            let mut router = state.lock().unwrap();
+            super::super::station::load_upstreams_locked(&db, &mut router).unwrap();
+            router.set_now(Client::Codex, &route.id);
+        }
+        let old = ProbeTarget::load(&db, &route, (None, 0.0)).unwrap();
+        assert!(RouterState::admit_probe(&state, Client::Codex, old.source(), false).is_some());
+        {
+            let mut router = state.lock().unwrap();
+            workspace::provider_save_in(
+                &db,
+                Provider {
+                    base_url: "https://second.example/v1".into(),
+                    ..provider
+                },
+            )
+            .unwrap();
+            super::super::station::load_upstreams_locked(&db, &mut router).unwrap();
+        }
+        let new_address = ProbeTarget::load(&db, &route, (None, 0.0)).unwrap();
+        assert!(RouterState::admit_probe(&state, Client::Codex, old.source(), false).is_none());
+        assert!(
+            RouterState::admit_probe(&state, Client::Codex, new_address.source(), false).is_some()
+        );
+        {
+            let mut router = state.lock().unwrap();
+            workspace::credential_save_in(&db, credential, "replace", Some("fixture-key-new"))
+                .unwrap();
+            super::super::station::load_upstreams_locked(&db, &mut router).unwrap();
+        }
+        let new_key = ProbeTarget::load(&db, &route, (None, 0.0)).unwrap();
+        assert!(
+            RouterState::admit_probe(&state, Client::Codex, new_address.source(), false).is_none()
+        );
+        assert!(RouterState::admit_probe(&state, Client::Codex, new_key.source(), false).is_some());
+        assert!(state
+            .lock()
+            .unwrap()
+            .route_allowed(Client::Codex, &route.id));
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 #[tauri::command]
 pub async fn session_launch(

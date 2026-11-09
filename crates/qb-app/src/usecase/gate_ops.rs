@@ -83,6 +83,7 @@ pub async fn stop_managed(
     state: &GateState,
     all_sessions: bool,
 ) -> Result<crate::killswitch::KillReport> {
+    super::quality_check::gate_stopped(all_sessions);
     let mut errors = Vec::new();
     let relocked = match lock_all() {
         Ok(n) => n,
@@ -192,6 +193,7 @@ pub async fn run_watchdog(
     // 连续「查不到」是从哪一刻开始的。`decide` 拿它跟 `unknown_grace()` 比。
     // 判出任何别的结论都要清零，否则网络恢复之后旧的计时还会接着算。
     let mut unknown_since: Option<std::time::Instant> = None;
+    let mut settings_changes = crate::settings::subscribe_changes();
     loop {
         if *stop.borrow_and_update() {
             break;
@@ -253,7 +255,6 @@ pub async fn run_watchdog(
         }
         // 本轮按哪一档判：租约里记的那一档说了算，没租约才退回启动时给的。
         let mode = state.lease.lock().unwrap().mode.unwrap_or(fallback_mode);
-        let interval = mode.interval();
         if !cleanup_blocked
             && !state.manual_paused.load(Ordering::SeqCst)
             && (state.lease.lock().unwrap().is_held() || rearm)
@@ -337,7 +338,15 @@ pub async fn run_watchdog(
         } else if state.manual_paused.load(Ordering::SeqCst) {
             rearm = false;
         }
-        tokio::select! {_=tokio::time::sleep(interval)=>{},changed=stop.changed()=>{if changed.is_err(){break;}}}
+        if !watchdog::wait_for_next_check(
+            &mut stop,
+            &mut settings_changes,
+            crate::settings::gate_check_interval,
+        )
+        .await
+        {
+            break;
+        }
     }
     *state.watchdog_running.lock().unwrap() = false;
 }

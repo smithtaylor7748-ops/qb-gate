@@ -42,14 +42,10 @@ import {
 } from "../../lib/station";
 import { Button } from "../../ui";
 import {
-  Chart,
-  dash,
-  mtok,
-  pct,
-  RANGES,
-  rangeOf,
-  type RangeId,
-} from "./shared";
+  StationUsageChart,
+  useStationUsageOverview,
+} from "./StationUsageChart";
+import { dash, mtok, pct, RANGES, rangeOf, type RangeId } from "./shared";
 
 /**
  * 这一页最多取最近多少条。
@@ -106,6 +102,12 @@ export default function StationLogs({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [range, setRange] = useState<RangeId>("24h");
+  const usage = useStationUsageOverview(
+    route.client,
+    range,
+    range === "1h" ? "minute" : "hour",
+    route.id,
+  );
   const [failedOnly, setFailedOnly] = useState(false);
   const [model, setModel] = useState("");
 
@@ -142,7 +144,8 @@ export default function StationLogs({
     [mine],
   );
 
-  const since = Date.now() - rangeOf(range).hours * 3600_000;
+  const since =
+    range === "all" ? -Infinity : Date.now() - rangeOf(range).hours * 3600_000;
   const inRange = useMemo(
     () => mine.filter((r) => Number(r.at_ms) >= since),
     [mine, since],
@@ -208,30 +211,32 @@ export default function StationLogs({
       <div className="qb-st-logstats">
         <div className="qb-card">
           <div className="qb-st-srcline">
-            <b>路由日志口径</b>
-            <span>只统计经过本机路由的请求 · {rangeOf(range).name}</span>
+            <b>本机完整用量</b>
+            <span>按最终归属此线路统计 · {rangeOf(range).name}</span>
           </div>
           <div className="qb-st-logkpis">
-            <Kpi k="请求" v={num(stats.total)} />
-            <Kpi k="成功" v={num(stats.ok)} />
-            <Kpi k="失败" v={num(stats.total - stats.ok)} s={stats.byCode} />
-            <Kpi k="首字 P50" v={secs(stats.p50)} />
-            <Kpi k="首字 P95" v={secs(stats.p95)} />
-            <Kpi k="最慢首字" v={secs(stats.worst)} />
-            <Kpi k="耗时中位" v={secs(stats.totalMedian)} />
+            <Kpi k="请求" v={num(usage.data?.totals.requests)} />
+            <Kpi
+              k="成功"
+              v={num(
+                usage.data
+                  ? usage.data.totals.requests - usage.data.totals.failed
+                  : undefined,
+              )}
+            />
+            <Kpi k="失败" v={num(usage.data?.totals.failed)} />
+            <Kpi k="首字 P50（样本）" v={secs(stats.p50)} />
+            <Kpi k="首字 P95（样本）" v={secs(stats.p95)} />
+            <Kpi k="最慢首字（样本）" v={secs(stats.worst)} />
+            <Kpi k="耗时中位（样本）" v={secs(stats.totalMedian)} />
           </div>
-          <Chart rows={inRange} range={range} gran="hour" />
-          <div className="qb-st-legend">
-            <span>
-              <i style={{ background: "var(--accent)" }} />
-              请求量
-            </span>
-            <span>
-              <i style={{ background: "var(--warn)" }} />
-              首字 P95
-            </span>
-            <span>各按自己的量程</span>
-          </div>
+          <StationUsageChart data={usage.data} error={usage.error} />
+          <p className="qb-st-note">
+            延迟仅来自最近最多 2,000 条日志中涉及此线路的{" "}
+            {stats.total.toLocaleString()}{" "}
+            条样本（含失败后转至其他线路的尝试）；不代表完整历史。下方模型 /
+            失败筛选只筛日志样本。
+          </p>
         </div>
 
         <div className="qb-card">
@@ -325,7 +330,7 @@ export default function StationLogs({
                 <tr>
                   <td colSpan={8} style={{ color: "var(--text-3)" }}>
                     {mine.length === 0
-                      ? "这条线路还没有请求。本机路由启动、客户端把地址指过来之后，每一发都会记在这里。"
+                      ? "最近日志样本中没有此线路的记录；完整请求数见上方统计。"
                       : "这一档里没有符合筛选条件的记录。"}
                   </td>
                 </tr>
@@ -608,8 +613,8 @@ function numOrNull(v: bigint | number | null | undefined): number | null {
   return v == null ? null : Number(v);
 }
 
-function num(n: number): string {
-  return n ? n.toLocaleString() : "—";
+function num(n: number | null | undefined): string {
+  return n == null ? "—" : n.toLocaleString();
 }
 
 /** 取不到就是「—」，**不显示 0** —— 0 秒首字是个荒谬的断言。 */

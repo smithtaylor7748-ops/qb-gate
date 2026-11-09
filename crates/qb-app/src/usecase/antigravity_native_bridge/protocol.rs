@@ -124,6 +124,8 @@ pub fn prepare(body: &[u8], model: &str, prompt: &str) -> Result<Prepared, Strin
         systems.push(prompt.trim().to_string());
     }
     let mut contents: Vec<Value> = Vec::new();
+    let mut has_user = false;
+    let mut dialogue_started = false;
     for message in messages {
         if ["tool_calls", "function_call"].iter().any(|key| {
             message
@@ -132,7 +134,7 @@ pub fn prepare(body: &[u8], model: &str, prompt: &str) -> Result<Prepared, Strin
         }) {
             return Err("历史消息包含工具调用；请使用独立的纯文本聊天".into());
         }
-        let text = match &message["content"] {
+        let mut text = match &message["content"] {
             Value::String(s) => s.clone(),
             Value::Array(parts) => {
                 let mut text = Vec::new();
@@ -147,14 +149,22 @@ pub fn prepare(body: &[u8], model: &str, prompt: &str) -> Result<Prepared, Strin
             _ => return Err("消息 content 应为字符串或 text 分段数组".into()),
         };
         let role = match message["role"].as_str() {
-            Some("system" | "developer") => {
+            Some("system" | "developer") if !dialogue_started => {
                 systems.push(text);
                 continue;
             }
-            Some("user") => "user",
+            Some(role @ ("system" | "developer")) => {
+                text = format!("[{role}]\n{text}\n[/{role}]");
+                "user"
+            }
+            Some("user") => {
+                has_user = true;
+                "user"
+            }
             Some("assistant") => "model",
             _ => return Err("只支持 system、developer、user、assistant 文本消息".into()),
         };
+        dialogue_started = true;
         if let Some(last) = contents.last_mut().filter(|x| x["role"] == role) {
             last["parts"]
                 .as_array_mut()
@@ -164,7 +174,7 @@ pub fn prepare(body: &[u8], model: &str, prompt: &str) -> Result<Prepared, Strin
             contents.push(json!({"role": role, "parts": [{"text": text}]}));
         }
     }
-    if contents.is_empty() || !contents.iter().any(|c| c["role"] == "user") {
+    if !has_user {
         return Err("至少需要一条 user 消息".into());
     }
     let mut request = json!({"contents": contents});
@@ -183,8 +193,8 @@ pub fn prepare(body: &[u8], model: &str, prompt: &str) -> Result<Prepared, Strin
     }
     if let Some(value) = v
         .get("max_completion_tokens")
-        .or_else(|| v.get("max_tokens"))
         .filter(|x| !x.is_null())
+        .or_else(|| v.get("max_tokens").filter(|x| !x.is_null()))
     {
         let n = value
             .as_u64()
@@ -372,6 +382,61 @@ mod tests {
         assert_eq!(r.request["contents"][1]["role"], "model");
         assert_eq!(r.request["generationConfig"]["maxOutputTokens"], 500);
         assert!(r.request.get("tools").is_none());
+    }
+
+    #[test]
+    fn instructions_in_the_conversation_keep_their_original_position() {
+        let body = json!({"messages":[
+            {"role":"system","content":"角色卡"},
+            {"role":"developer","content":"开场规则"},
+            {"role":"user","content":"第一轮"},
+            {"role":"assistant","content":"先前回复"},
+            {"role":"system","content":"本轮场景注释"},
+            {"role":"user","content":"继续故事"},
+            {"role":"developer","content":"本轮输出格式"}
+        ]});
+        let prepared = prepare(body.to_string().as_bytes(), "gemini-test", "独立提示").unwrap();
+        assert_eq!(
+            prepared.request["systemInstruction"]["parts"][0]["text"],
+            "独立提示\n\n角色卡\n\n开场规则"
+        );
+        assert_eq!(
+            prepared.request["contents"],
+            json!([
+                {"role":"user","parts":[{"text":"第一轮"}]},
+                {"role":"model","parts":[{"text":"先前回复"}]},
+                {"role":"user","parts":[
+                    {"text":"[system]\n本轮场景注释\n[/system]"},
+                    {"text":"继续故事"},
+                    {"text":"[developer]\n本轮输出格式\n[/developer]"}
+                ]}
+            ])
+        );
+    }
+
+    #[test]
+    fn a_late_instruction_is_not_a_substitute_for_a_user_message() {
+        let body = json!({"messages":[
+            {"role":"assistant","content":"历史回复"},
+            {"role":"system","content":"作者注释"}
+        ]});
+        assert!(prepare(body.to_string().as_bytes(), "gemini-test", "").is_err());
+    }
+
+    #[test]
+    fn an_unset_completion_limit_preserves_the_legacy_output_limit() {
+        for (completion_limit, expected) in [(Value::Null, 320), (json!(160), 160)] {
+            let body = json!({
+                "messages": [{"role":"user","content":"continue"}],
+                "max_completion_tokens": completion_limit,
+                "max_tokens": 320
+            });
+            let prepared = prepare(body.to_string().as_bytes(), "gemini-test", "").unwrap();
+            assert_eq!(
+                prepared.request["generationConfig"]["maxOutputTokens"],
+                expected
+            );
+        }
     }
 
     #[test]

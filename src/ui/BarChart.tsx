@@ -62,6 +62,8 @@ export interface BarChartProps {
   height?: number;
   /** 一根有值的柱子都没有时显示的话。 */
   empty?: string;
+  /** 请求数之类的计数，y 轴不显示分数刻度。 */
+  integerTicks?: boolean;
   className?: string;
 }
 
@@ -106,6 +108,7 @@ export default function BarChart({
   highlight,
   height = 150,
   empty = "这一档没有记录。",
+  integerTicks = false,
   className = "",
 }: BarChartProps) {
   const box = useRef<HTMLDivElement>(null);
@@ -131,7 +134,9 @@ export default function BarChart({
   const known = values.filter((v): v is number => v != null);
   const n = data.length;
   const max = known.length ? Math.max(...known) : 0;
-  const ticks = niceTicks(max);
+  const ticks = niceTicks(integerTicks ? Math.max(4, max) : max).filter(
+    (tick) => !integerTicks || Number.isInteger(tick),
+  );
   const top = ticks[ticks.length - 1] || 1;
   const plotW = Math.max(40, width - LEFT - RIGHT);
   const band = n > 0 ? plotW / n : plotW;
@@ -141,7 +146,7 @@ export default function BarChart({
   const svgH = TOP + height + AXIS;
 
   // x 轴标签：少的时候全标；多的时候从最后一根（通常是今天）往前每隔几根标一个。
-  const every = n <= 12 ? 1 : Math.ceil(n / 8);
+  const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(plotW / 60))));
   const showAxis = (i: number) => (n - 1 - i) % every === 0;
 
   const maxIdx = known.length ? values.indexOf(max) : -1;
@@ -280,6 +285,7 @@ export default function BarChart({
           height={height}
           fill="transparent"
           onPointerMove={onPointer}
+          onPointerDown={onPointer}
           onPointerLeave={() => setActive(null)}
         />
       </svg>

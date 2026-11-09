@@ -110,6 +110,8 @@ pub async fn settings_save(mut next: settings::Settings) -> Result<settings::Set
     // 这里原样保留旧值：前端改个开关不该顺手把它改掉 —— 文件还在旧目录，面板就又找不到了。
     next.managed_apps_dir = before.managed_apps_dir.clone();
     next.app_dirs = before.app_dirs.clone();
+    // IP 锁面板专用命令修改；其它设置页的旧快照不能覆盖刚保存的巡检节奏。
+    next.gate_check_interval_secs = before.gate_check_interval_secs;
     // 国家码规整成两位大写再落盘：使用者手打个 `us` 或者多敲个空格，
     // 判定那边就永远匹配不上，整层会**悄悄失效** —— 比报错难查得多。
     next.country_allowlist = settings::normalize_countries(next.country_allowlist);

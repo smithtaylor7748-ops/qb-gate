@@ -32,8 +32,8 @@ import type { SiteQuota } from "./generated/SiteQuota";
 import type { UsageScript } from "./generated/UsageScript";
 import type { RelayUsageReport } from "./generated/RelayUsageReport";
 import type { RelayUsageTotals } from "./generated/RelayUsageTotals";
+import type { RelayUsageOverview } from "./generated/RelayUsageOverview";
 import type { RelayRequestPage } from "./generated/RelayRequestPage";
-import type { TurnStateModelStatus } from "./generated/TurnStateModelStatus";
 import type { Schedule } from "./generated/Schedule";
 import type { Session } from "./generated/Session";
 import type { Route } from "./generated/Route";
@@ -145,6 +145,20 @@ export const stationApi = {
   usageTotals: (client: Client, hours: number | null) =>
     call<RelayUsageTotals>("station_usage_totals", { client, hours }),
 
+  /** 总量、线路计数和时间桶共享同一次完整查询；全部历史按天包含归档。 */
+  usageOverview: (
+    client: Client,
+    hours: number | null,
+    granularity: string,
+    routeId: string | null = null,
+  ) =>
+    call<RelayUsageOverview>("station_usage_overview", {
+      client,
+      hours,
+      granularity,
+      routeId,
+    }),
+
   /** 中转用量页的逐条日志（新的在前；明细只留 30 天，更早的只剩按天汇总）。 */
   usageRequests: (q: {
     client: Client | null;
@@ -155,28 +169,6 @@ export const stationApi = {
     limit: number;
   }) => call<RelayRequestPage>("station_usage_requests", q),
 
-  /**
-   * 官方 Codex 的 turn-state 注入开关 + 账号规则（实验功能，默认关闭，只对 Codex）。
-   * `team` 为真 = Team 规则（12 块 / 332），否则个人（10 块 / 292）。
-   */
-  turnstateConfigure: (enabled: boolean, team: boolean) =>
-    call<void>("station_turnstate_configure", { enabled, team }),
-  /** 每个 model 当前的 turn-state 外形（不含值本身）。 */
-  turnstateStatus: () =>
-    call<TurnStateModelStatus[]>("station_turnstate_status", {}),
-
-  /**
-   * 开启识别（实验功能，只对 Codex）：作用于**当前激活的 Codex 账户槽位**。
-   *
-   * 后端一口气做完：在路由里挂上官方上游（`OAuthPassthrough`，唯一受控例外，仍只绑
-   * 127.0.0.1）→ 拉起路由 → 备份并增量改那个槽位的 `config.toml`（`model_provider` 指到
-   * 本机路由，`auth.json` 一个字不碰）→ 落盘 marker。不另起 Codex、不复制 OAuth ——
-   * 开完到账户页照常启动 Codex（已开着的要重启，新会话才走路由）。
-   *
-   * ⛔ 别在前端把这几步拆开：中间失败会留下「路由起了、配置没改」的半成品；后端失败时
-   * 会把上游摘回去。返回的路由状态里 `turnstate_takeover` 就是被接管的槽位。
-   */
-  turnstateEnable: () => call<RouterStatus>("station_turnstate_enable", {}),
   /**
    * 关闭识别：把官方上游从本机路由摘掉，并按落盘 marker 把那个槽位的 `config.toml`
    * 反向恢复。不动正在跑的那个 Codex（它接下来会收到 503，界面上提示重启）。

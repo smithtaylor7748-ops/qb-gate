@@ -10,6 +10,8 @@ import {
   lowestQuota,
   modelGroups,
   percent,
+  quotaPools,
+  quotaPoolLabel,
   quotaErrorLabel,
   resetIn,
   tierShort,
@@ -110,7 +112,7 @@ describe("反重力联网额度（四格）的显示", () => {
   it("紧凑倒计时照 4h55m / 3d11m 的写法，零段省掉", () => {
     const now = 1_790_000_000_000;
     expect(countdown(null, now)).toBe("");
-    expect(countdown(1_790_000_000, now)).toBe("已重置");
+    expect(countdown(1_790_000_000, now)).toBe("到点待刷新");
     expect(countdown(1_790_000_000 + 30, now)).toBe("<1m");
     expect(countdown(1_790_000_000 + 4 * 3600 + 55 * 60 + 20, now)).toBe(
       "4h55m",
@@ -136,19 +138,55 @@ describe("反重力联网额度（四格）的显示", () => {
     expect(groupWindows(all, "claude")).toEqual([all[1], null]);
   });
 
-  // ⛔ 免费档没有四格：按模型合成两组，没读到比例的不参与（没读到 ≠ 0）。
-  it("免费档按模型合成 Claude / Gemini 两组，各取最低", () => {
+  it("按模型兜底保留 Gemini 4、其它 Gemini 与未知额度，不猜共享配额", () => {
     const g = modelGroups([
       q("Gemini 3.8 Flash (High)", 0.9),
       q("Gemini 3.1 Pro (High)", 0.4),
       q("Claude Sonnet 4.6", 0.7),
+      q("Gemini 4 Argon", 0.8),
       q("GPT-OSS 120B", null, null),
     ]);
-    expect(g.map((x) => [x.group, x.model.label])).toEqual([
-      ["claude", "Claude Sonnet 4.6"],
-      ["gemini", "Gemini 3.1 Pro (High)"],
+    expect(g.map((x) => [x.label, x.model.remaining])).toEqual([
+      ["Gemini 3.8 Flash (High)", 0.9],
+      ["Gemini 3.1 Pro (High)", 0.4],
+      ["Claude Sonnet 4.6", 0.7],
+      ["Gemini 4 Argon", 0.8],
+      ["GPT-OSS 120B", null],
     ]);
-    expect(modelGroups([q("GPT-OSS 120B", null, null)])).toEqual([]);
+    expect(modelGroups([])).toEqual([]);
+  });
+
+  it("池 ID 决定配对，同属 Gemini 的不同池不可互相覆盖", () => {
+    const pools = quotaPools([
+      { ...w("gemini", "weekly", 0.2), pool_id: "gemini" },
+      { ...w("argon", "weekly", 0.9), pool_id: "gemini-argon-wtu" },
+      {
+        ...w("gemini", "weekly", 0.7),
+        pool_id: "gemini-separate",
+        pool_label: "Server pool",
+      },
+    ]);
+    expect(pools.map((p) => p.id)).toEqual([
+      "gemini",
+      "gemini-argon-wtu",
+      "gemini-separate",
+    ]);
+    expect(pools[1].label).toBe("Gemini 4 Argon");
+    expect(pools[2].label).toBe("Server pool · gemini-separate");
+    expect(
+      quotaPoolLabel({
+        ...w("gemini", "weekly", 0.7),
+        pool_id: "gemini-separate",
+        pool_label: "Server pool",
+      }),
+    ).toBe(pools[2].label);
+    expect(
+      quotaPoolLabel({
+        ...w("gemini", "weekly", 0.7),
+        pool_id: "gemini-separate",
+      }),
+    ).toBe("gemini-separate");
+    expect(quotaPools([w("gemini", "weekly", 0.3)])[0].id).toBe("gemini");
   });
 
   it("档位写短：Ultra / Pro / 免费档，认不出就原样", () => {

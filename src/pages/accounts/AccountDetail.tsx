@@ -40,6 +40,8 @@ import { slotName } from "../../lib/slotName";
 import { Button, Gauge, Modal, Pill, fmtDaysLeft } from "../../ui";
 import { daysTone, expiryText } from "../../features/overview/SlotRow";
 import SlotUsageBars, { fmtReset } from "../../features/overview/SlotUsage";
+import { resetEpoch, useQuotaClock } from "../../lib/quotaClock";
+import QuotaCountdown from "../../features/overview/QuotaCountdown";
 import {
   DETAIL_KEY,
   requestDelete,
@@ -195,6 +197,7 @@ function ProbeRow({ label }: { label: string }) {
  * 点按钮才带这个账户的令牌问一次 —— 跟「实测一次」一样，按钮上写明会联网。
  */
 export function OfficialQuota({ slot: s }: { slot: Slot }) {
+  const now = useQuotaClock();
   const accounts = useResource("accounts", R.accounts);
   const [q, setQ] = useState<ClaudeQuota | null>(null);
   const [busy, setBusy] = useState(false);
@@ -231,8 +234,6 @@ export function OfficialQuota({ slot: s }: { slot: Slot }) {
   }
 
   const never = !s.logged_in && !s.login_problem;
-  const now = Date.now();
-  const fetched = q ? new Date(q.fetched_at).getTime() : 0;
   const extra = q?.extra?.enabled ? q.extra : null;
   const money = (n: number | null) =>
     n == null
@@ -264,31 +265,40 @@ export function OfficialQuota({ slot: s }: { slot: Slot }) {
           </Button>
         </span>
       </div>
-      {error && <p className="notice qb-tone-danger">{error}</p>}
+      {error && (
+        <p className="notice qb-tone-danger">
+          {error}
+          {q && " · 保留上次成功读数和重置时间，尚未确认当前额度。"}
+        </p>
+      )}
       {q ? (
         <div className="slotusage-bars">
           {q.windows.map((w) => {
             const reset = w.resets_at ? new Date(w.resets_at).getTime() : NaN;
             // 重置时刻夹在「问的时刻」与「现在」之间：这一格是重置之前的读数。
-            if (reset > fetched && reset <= now) {
+            if (Number.isFinite(reset) && reset <= now) {
               return (
                 <Gauge
                   key={w.key}
                   name={w.label}
                   used={null}
-                  note="已重置过，这份读数是重置之前的"
+                  note="已到重置时间 · 待刷新确认额度"
                 />
               );
             }
             return (
               <Gauge
+                className="gauge--countdown"
                 key={w.key}
                 name={w.label}
                 used={w.used_percent}
+                hint={
+                  w.resets_at
+                    ? `${fmtReset(w.resets_at)} 重置 · 上次成功返回的时间`
+                    : undefined
+                }
                 extra={
-                  <span className="gauge-reset">
-                    ↻ {w.resets_at ? fmtReset(w.resets_at) : "未知"}
-                  </span>
+                  <QuotaCountdown epoch={resetEpoch(w.resets_at)} now={now} />
                 }
               />
             );

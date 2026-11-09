@@ -75,7 +75,7 @@ impl<T: Clone> Last<T> {
 }
 
 /// GPT：按 Codex 槽位 id。
-static LAST_GPT: Last<TavernGptQuota> = Last::new();
+static LAST_GPT: Last<(Option<String>, TavernGptQuota)> = Last::new();
 /// Gemini CLI：按反重力账户槽位 id（CLI 是那条槽位的一半）。
 static LAST_GEMINI: Last<TavernGeminiQuota> = Last::new();
 
@@ -721,8 +721,12 @@ pub async fn gpt_quota(slot_id: Option<&str>, refresh: bool) -> Result<Option<Ta
         .ok()
         .flatten();
     if !refresh {
-        if let Some(q) = LAST_GPT.get(&id) {
-            return Ok(Some(q));
+        if let Some((asked, q)) = LAST_GPT.get(&id) {
+            if !matches!((asked.as_deref(), ident.as_deref()), (Some(a), Some(b)) if !a.eq_ignore_ascii_case(b))
+            {
+                return Ok(Some(q));
+            }
+            LAST_GPT.forget(&id);
         }
         // 面板重启后：先给落盘的「上次成功」，标上那一次的时刻；账户换了就作废。
         return Ok(super::quota_disk::get::<TavernGptQuota>(
@@ -735,7 +739,7 @@ pub async fn gpt_quota(slot_id: Option<&str>, refresh: bool) -> Result<Option<Ta
         }));
     }
     let q = fetch_gpt(&id).await?;
-    LAST_GPT.put(&id, q.clone());
+    LAST_GPT.put(&id, (ident.clone(), q.clone()));
     super::quota_disk::put(
         &format!("gpt:{id}"),
         ident.as_deref(),

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -22,7 +23,13 @@ const settings: RouterSettings = {
   routing_mode: "selected",
   allowed_routes: [],
   pool_strategy: "priority",
-  admission: { route_limits: {}, max_wait_ms: 0, max_waiters: 0 },
+  session_recovery: { strip_item_ids: false, filter_encrypted_content: false },
+  admission: {
+    overflow_to_pool: false,
+    route_limits: {},
+    max_wait_ms: 0,
+    max_waiters: 0,
+  },
   max_attempts: 3,
   first_byte_timeout_secs: 60,
   idle_timeout_secs: 300,
@@ -211,6 +218,9 @@ it("starts without admission limits and saves load distribution only with an exp
     target: { value: "4" },
   });
   fireEvent.click(screen.getByRole("radio", { name: /允许所勾选线路/ }));
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "容量不足时分流到其他允许线路" }),
+  );
   fireEvent.click(screen.getByRole("radio", { name: /优先空闲线路/ }));
   expect(writes()).toHaveLength(0);
   expect(
@@ -229,11 +239,87 @@ it("starts without admission limits and saves load distribution only with an exp
     allowed_routes: ["free"],
     pool_strategy: "least-loaded",
     admission: {
+      overflow_to_pool: true,
       route_limits: { free: { max_concurrent: 2, rpm: 30, check_quota: true } },
       max_wait_ms: 3000,
       max_waiters: 4,
     },
   });
+});
+
+it("displays priority while overflow is disabled and retains the explicit load choice for re-enabling", async () => {
+  const original = mock.call.getMockImplementation()!;
+  mock.call.mockImplementation((command, args) =>
+    command === "station_router_settings"
+      ? Promise.resolve({
+          ...settings,
+          routing_mode: "pool",
+          allowed_routes: ["free", "paid"],
+          pool_strategy: "least-loaded",
+          admission: { ...settings.admission, overflow_to_pool: true },
+        })
+      : original(command, args),
+  );
+  render(<StationRouterSettings {...props} />);
+  const load = (await screen.findByRole("radio", {
+    name: /优先空闲线路/,
+  })) as HTMLInputElement;
+  const priority = screen.getByRole("radio", {
+    name: /首选与备用/,
+  }) as HTMLInputElement;
+  const overflow = screen.getByRole("checkbox", {
+    name: "容量不足时分流到其他允许线路",
+  });
+  expect(load.checked).toBe(true);
+  fireEvent.click(overflow);
+  expect(load.checked).toBe(false);
+  expect(load.disabled).toBe(true);
+  expect(priority.checked).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(mock.ok).toHaveBeenCalledOnce());
+  expect(writes()[0][1].settings.admission.overflow_to_pool).toBe(false);
+  fireEvent.click(overflow);
+  expect(load.checked).toBe(true);
+  expect(load.disabled).toBe(false);
+});
+
+it("ignores the old client's save response after changing client", async () => {
+  const original = mock.call.getMockImplementation()!;
+  let finish: ((value: RouterSettings) => void) | undefined;
+  mock.call.mockImplementation((command, args) => {
+    if (command === "station_router_settings")
+      return Promise.resolve({
+        ...settings,
+        client: args.client,
+        admission: {
+          ...settings.admission,
+          max_wait_ms: args.client === "claude-code" ? 1234 : 0,
+        },
+      });
+    if (command === "station_router_settings_save")
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    return original(command, args);
+  });
+  const onSaved = vi.fn();
+  const mounted = render(
+    <StationRouterSettings {...props} onSaved={onSaved} />,
+  );
+  await screen.findByRole("radio", { name: /仅所选线路/ });
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(finish).toBeDefined());
+  mounted.rerender(
+    <StationRouterSettings {...props} client="claude-code" onSaved={onSaved} />,
+  );
+  expect(screen.getByText("读取中…")).toBeTruthy();
+  await act(async () => finish?.(settings));
+  const wait = (await screen.findByLabelText(
+    "最多等待（毫秒）",
+  )) as HTMLInputElement;
+  expect(wait.value).toBe("1234");
+  expect(mock.ok).not.toHaveBeenCalled();
+  expect(onSaved).not.toHaveBeenCalled();
 });
 
 it.each(["-1", "1.5"])(

@@ -19,8 +19,6 @@ jobs:
         with:
           components: rustfmt
       - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
       - run: npm ci
       - name: Verify tag, versions, and public source
         run: npm run release:check

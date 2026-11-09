@@ -39,9 +39,12 @@ export function StationRouteBoundary({
           (!settings
             ? "读取成功后才可开启智能调度。"
             : pool
-              ? settings.pool_strategy === "least-loaded"
+              ? settings.admission?.overflow_to_pool &&
+                settings.pool_strategy === "least-loaded"
                 ? "优先空闲线路：每次请求都可能分配给下列任意站，各站分别计费；首选正常也可能使用其他站。"
-                : "首选失败或容量不足时可使用下列备用，各站分别计费；智能调度只能在此名单内选线。"
+                : settings.admission?.overflow_to_pool
+                  ? "首选失败或容量不足时可使用下列备用，各站分别计费；智能调度只能在此名单内选线。"
+                  : "首选失败时可使用下列备用；容量溢出分流已关闭，满并发时等待或返回繁忙。智能调度只在此名单内选线。"
               : selected
                 ? `仅用「${routeLabel(selected)}」。失败直接报错，不改用其他站。`
                 : "先选择一条线路；失败时不会改用其他站。")}

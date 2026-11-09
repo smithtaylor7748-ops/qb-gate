@@ -75,6 +75,9 @@ const DEFAULT_PREFS: Prefs = {
   floors: { min_success_rate: null, max_ttft_p95_ms: null, max_rate: null },
 };
 
+// 关闭再打开弹窗仍接着同一条写入队列，避免旧实例的慢写覆盖新实例。
+const preferenceWrites = { current: Promise.resolve() as Promise<void> };
+
 // 线路不从上面传进来：`decide` 每次都从库里现读一遍，
 // 两处各持一份列表必然漂移（界面显示旧的、排序按新的）。
 //
@@ -97,8 +100,11 @@ export default function StationSchedule({
   const [reload, setReload] = useState(0);
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<"status" | "prefs">("status");
-  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const saveQueue = preferenceWrites;
   const saveRevision = useRef(0);
+  const previewRevision = useRef(0);
+  const clientRef = useRef(client);
+  clientRef.current = client;
   const loadedPrefs = useRef<Prefs | null>(null);
   // 从库里读回来那一份之前不要往回存 —— 否则默认偏好会把使用者存过的
   // 那套盖掉，而他只是打开弹窗看了一眼。
@@ -107,14 +113,18 @@ export default function StationSchedule({
 
   const run = useCallback(
     async (p: Prefs) => {
+      const revision = ++previewRevision.current;
+      const current = () =>
+        revision === previewRevision.current && clientRef.current === client;
       setBusy(true);
       setError(null);
       try {
-        setView(await stationApi.decide(p, client));
+        const next = await stationApi.decide(p, client);
+        if (current()) setView(next);
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        if (current()) setError(e instanceof Error ? e.message : String(e));
       } finally {
-        setBusy(false);
+        if (current()) setBusy(false);
       }
     },
     [client],
@@ -123,9 +133,13 @@ export default function StationSchedule({
   // 存着的那一份偏好读回来 —— 这个弹窗显示的必须是驻留循环正在用的那套。
   useEffect(() => {
     let dropped = false;
+    setLoadedFor(null);
     setSettingsError(null);
-    void stationApi
-      .schedules()
+    setSaving(false);
+    setView(null);
+    void saveQueue.current
+      .catch(() => {})
+      .then(() => stationApi.schedules())
       .then((all) => {
         if (dropped) return;
         const mine = all.find((s) => s.client === client);
@@ -144,12 +158,17 @@ export default function StationSchedule({
       });
     return () => {
       dropped = true;
+      saveRevision.current++;
     };
   }, [client, reload]);
 
   useEffect(() => {
+    if (!loaded) return;
     void run(prefs);
-  }, [run, prefs]);
+    return () => {
+      previewRevision.current++;
+    };
+  }, [run, prefs, loaded]);
 
   // 回调用 ref 接，不进下面那个 effect 的依赖 —— 进了的话，
   // 父组件每重渲染一次（传进来的箭头函数都是新的）就会多存一遍。
@@ -162,25 +181,27 @@ export default function StationSchedule({
   useEffect(() => {
     if (!loaded || prefs === loadedPrefs.current) return;
     const revision = ++saveRevision.current;
+    const current = () =>
+      revision === saveRevision.current && clientRef.current === client;
     setSaving(true);
     saveQueue.current = saveQueue.current
       .catch(() => {})
       .then(async () => {
         const saved = await stationApi.scheduleSet(client, null, prefs);
-        if (revision === saveRevision.current) {
+        if (current()) {
           setSettingsError(null);
           onSavedRef.current?.(saved);
         }
       })
       .catch((e: unknown) => {
-        if (revision === saveRevision.current) {
+        if (current()) {
           setSettingsError(
             `调度偏好未保存：${e instanceof Error ? e.message : String(e)}`,
           );
         }
       })
       .finally(() => {
-        if (revision === saveRevision.current) setSaving(false);
+        if (current()) setSaving(false);
       });
   }, [loaded, prefs, client]);
 

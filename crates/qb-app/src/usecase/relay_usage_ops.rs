@@ -118,8 +118,8 @@ fn totals_at(
             total.merge(&RelayUsageTotals::from_hour(&row));
         }
         None => {
-            for row in db.usage_days("1970-01-01", 0, Some(client))? {
-                total.add(&row);
+            for row in db.usage_overview_rows(None, now_ms, client, None, None)? {
+                total.merge(&RelayUsageTotals::from_hour(&row.totals));
             }
         }
         Some(_) => {
@@ -129,6 +129,162 @@ fn totals_at(
         }
     }
     Ok(total)
+}
+
+/// 总览柱状图的一个时间桶；起止为实际统计范围，末桶结束包含查询时刻。
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export)]
+pub struct RelayUsageBucket {
+    #[ts(type = "number")]
+    pub start_ms: i64,
+    #[ts(type = "number")]
+    pub end_ms: i64,
+    pub totals: RelayUsageTotals,
+}
+
+/// 总量、线路计数和趋势来自同一次完整查询，使用完全相同的客户端 / 时间过滤。
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export)]
+pub struct RelayUsageOverview {
+    #[ts(type = "number")]
+    pub since_ms: i64,
+    #[ts(type = "number")]
+    pub through_ms: i64,
+    /// 实际粒度：minute 为 5 分钟，hour 为整小时，day 为本地自然日。
+    /// 全部历史只有日归档，强制使用 day，不能冒充按小时的完整历史。
+    pub granularity: String,
+    pub totals: RelayUsageTotals,
+    pub by_route: Vec<RelayUsageGroup>,
+    pub buckets: Vec<RelayUsageBucket>,
+}
+
+pub fn overview(
+    db: &Repository,
+    client: &str,
+    hours: Option<u32>,
+    granularity: &str,
+    route_id: Option<&str>,
+) -> Result<RelayUsageOverview> {
+    overview_at(
+        db,
+        client,
+        hours,
+        granularity,
+        route_id,
+        Local::now().timestamp_millis(),
+    )
+}
+
+fn overview_at(
+    db: &Repository,
+    client: &str,
+    hours: Option<u32>,
+    granularity: &str,
+    route_id: Option<&str>,
+    now_ms: i64,
+) -> Result<RelayUsageOverview> {
+    let since = match hours {
+        Some(hours @ (1 | 24 | 168)) => Some(now_ms - i64::from(hours) * 3_600_000),
+        None => None,
+        Some(_) => {
+            return Err(GateError::Other(
+                "用量时间范围只支持 1、24、168 小时或全部".into(),
+            ))
+        }
+    };
+    if !matches!(granularity, "minute" | "hour" | "day") {
+        return Err(GateError::Other("不支持的用量时间粒度".into()));
+    }
+    // 一周的 5 分钟柱子没有可读性；全部历史也没有按小时的归档证据。
+    let granularity = match (hours, granularity) {
+        (None, _) => "day",
+        (Some(168), "minute") => "hour",
+        (_, g) => g,
+    };
+    let step = match granularity {
+        "minute" => Some(300_000),
+        "hour" => Some(3_600_000),
+        _ => None,
+    };
+    let rows = db.usage_overview_rows(since, now_ms, client, route_id, step)?;
+    let mut total = RelayUsageTotals::default();
+    let mut routes: BTreeMap<String, (String, RelayUsageTotals)> = BTreeMap::new();
+    let mut buckets: BTreeMap<i64, RelayUsageTotals> = BTreeMap::new();
+    for row in rows {
+        let start = match step {
+            Some(_) => row
+                .bucket
+                .parse::<i64>()
+                .map_err(|_| GateError::Other("用量时间桶无效".into()))?,
+            None => midnight_ms(
+                NaiveDate::parse_from_str(&row.bucket, "%Y-%m-%d")
+                    .map_err(|_| GateError::Other("用量日期无效".into()))?,
+            ),
+        };
+        let values = RelayUsageTotals::from_hour(&row.totals);
+        total.merge(&values);
+        routes
+            .entry(row.route_id.clone())
+            .or_insert_with(|| (row.route_id, RelayUsageTotals::default()))
+            .1
+            .merge(&values);
+        buckets.entry(start).or_default().merge(&values);
+    }
+    let since_ms = since.unwrap_or_else(|| {
+        buckets
+            .first_key_value()
+            .map(|(at, _)| *at)
+            .unwrap_or(now_ms)
+    });
+    let bucket_start = |at: i64| -> i64 {
+        match step {
+            Some(step) => at.div_euclid(step) * step,
+            None => midnight_ms(
+                Local
+                    .timestamp_millis_opt(at)
+                    .single()
+                    .unwrap()
+                    .date_naive(),
+            ),
+        }
+    };
+    let bucket_end = |at: i64| -> i64 {
+        match step {
+            Some(step) => at + step,
+            None => midnight_ms(
+                Local
+                    .timestamp_millis_opt(at)
+                    .single()
+                    .unwrap()
+                    .date_naive()
+                    + Duration::days(1),
+            ),
+        }
+    };
+    // 把无请求的间隔补为 0，所有柱子的边界严格裁到查询范围。
+    // 包括全部历史的空日期，图上时间距离不能被压成“只算有请求的天”。
+    if since.is_some() || !buckets.is_empty() {
+        let mut at = bucket_start(since_ms);
+        while at <= now_ms {
+            buckets.entry(at).or_default();
+            at = bucket_end(at);
+        }
+    }
+    Ok(RelayUsageOverview {
+        since_ms,
+        through_ms: now_ms,
+        granularity: granularity.into(),
+        totals: total,
+        by_route: sorted(routes),
+        buckets: buckets
+            .into_iter()
+            .map(|(start, totals)| RelayUsageBucket {
+                start_ms: start.max(since_ms),
+                end_ms: bucket_end(start).min(now_ms),
+                totals,
+            })
+            .collect(),
+    })
 }
 
 /// 一天（只列有请求的那几天；没请求的那天前端画空、写「—」）。
@@ -447,6 +603,124 @@ mod tests {
             (all.requests, all.input_tokens, all.station_cost),
             (3, Some(35), Some(0.7))
         );
+        drop(db);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn overview_counts_more_than_a_log_page_and_uses_identical_route_and_bucket_windows() {
+        let (path, db) = database();
+        let boundary = 1_800_000_000_000_i64;
+        let now = boundary + 30 * 60_000;
+        let since = now - 3_600_000;
+        let mut rows: Vec<_> = (0..2_301)
+            .map(|i| {
+                serde_json::json!({
+                    "id":format!("n{i}"), "at_ms":boundary - 1, "client":"codex", "route_id":"a",
+                    "model":"m", "status":200, "input_tokens":2, "station_cost":0.5
+                })
+            })
+            .collect();
+        for (id, at, client, route) in [
+            ("at-start", since, "codex", "a"),
+            ("before-start", since - 1, "codex", "a"),
+            ("at-boundary", boundary, "codex", "b"),
+            ("at-now", now, "codex", "b"),
+            ("future", now + 1, "codex", "b"),
+            ("other-client", boundary, "claude-code", "b"),
+        ] {
+            rows.push(serde_json::json!({"id":id,"at_ms":at,"client":client,"route_id":route,"model":"m","status":200}));
+        }
+        db.insert_router_requests(&rows).unwrap();
+        let result = overview_at(&db, "codex", Some(1), "hour", None, now).unwrap();
+        assert_eq!(result.totals.requests, 2_304);
+        assert_eq!(
+            result.totals,
+            totals_at(&db, "codex", Some(1), now).unwrap()
+        );
+        assert_eq!(
+            result
+                .by_route
+                .iter()
+                .map(|r| r.totals.requests)
+                .sum::<u64>(),
+            2_304
+        );
+        assert_eq!(
+            result
+                .buckets
+                .iter()
+                .map(|r| r.totals.requests)
+                .sum::<u64>(),
+            2_304
+        );
+        assert_eq!(result.buckets.len(), 2);
+        assert_eq!(
+            (
+                result.buckets[0].start_ms,
+                result.buckets[0].end_ms,
+                result.buckets[0].totals.requests
+            ),
+            (since, boundary, 2_302)
+        );
+        assert_eq!(
+            (
+                result.buckets[1].start_ms,
+                result.buckets[1].end_ms,
+                result.buckets[1].totals.requests
+            ),
+            (boundary, now, 2)
+        );
+        let route = overview_at(&db, "codex", Some(1), "minute", Some("a"), now).unwrap();
+        assert_eq!(route.totals.requests, 2_302);
+        assert_eq!(route.by_route.len(), 1);
+        assert_eq!(
+            route.buckets.iter().map(|r| r.totals.requests).sum::<u64>(),
+            2_302
+        );
+        let empty = overview_at(&db, "codex", Some(1), "hour", Some("missing"), now).unwrap();
+        assert_eq!(empty.totals.requests, 0);
+        assert!(empty.buckets.iter().all(|b| b.totals.requests == 0));
+        drop(db);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn all_time_overview_keeps_archive_and_detail_on_the_same_day_without_a_thirty_day_cutoff() {
+        let (path, db) = database();
+        let day = NaiveDate::from_ymd_opt(2026, 8, 1).unwrap();
+        let old_midnight = midnight_ms(day);
+        let old_noon = old_midnight + 12 * 3_600_000;
+        let now = midnight_ms(day + Duration::days(400)) + 1234;
+        let rows = [
+            serde_json::json!({"id":"archived","at_ms":old_midnight,"client":"codex","route_id":"a","model":"m","status":200,"input_tokens":7}),
+            serde_json::json!({"id":"detail-same-day","at_ms":old_noon,"client":"codex","route_id":"a","model":"m","status":200,"input_tokens":3}),
+            serde_json::json!({"id":"today","at_ms":now,"client":"codex","route_id":"b","model":"m","status":200}),
+            serde_json::json!({"id":"future","at_ms":now+1,"client":"codex","route_id":"b","model":"m","status":200}),
+        ];
+        db.insert_router_requests(&rows).unwrap();
+        db.prune_router_requests(old_noon).unwrap();
+        let result = overview_at(&db, "codex", None, "hour", None, now).unwrap();
+        assert_eq!(result.granularity, "day", "日归档不能假装小时证据");
+        assert_eq!(result.totals.requests, 3);
+        assert_eq!(result.totals.input_tokens, Some(10));
+        assert_eq!(result.totals, totals_at(&db, "codex", None, now).unwrap());
+        assert_eq!(result.since_ms, old_midnight);
+        assert_eq!(result.buckets.len(), 401);
+        assert_eq!(result.buckets[0].totals.requests, 2);
+        assert_eq!(result.buckets[1].totals.requests, 0);
+        assert_eq!(result.buckets.last().unwrap().end_ms, now);
+        assert_eq!(
+            result
+                .buckets
+                .iter()
+                .map(|b| b.totals.requests)
+                .sum::<u64>(),
+            3
+        );
+        let route = overview_at(&db, "codex", None, "day", Some("a"), now).unwrap();
+        assert_eq!(route.totals.requests, 2);
+        assert_eq!(route.by_route[0].key, "a");
         drop(db);
         std::fs::remove_dir_all(path).unwrap();
     }

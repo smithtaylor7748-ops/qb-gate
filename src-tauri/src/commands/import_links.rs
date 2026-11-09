@@ -119,10 +119,19 @@ pub fn deeplink_import(
     id: u64,
     choice: DeepLinkChoice,
 ) -> Result<DeepLinkOutcome> {
+    // A provider import can add fallback endpoints to an existing station.
+    // Publish those sources under the same lock used by send-time admission.
+    let mut router = state
+        .station
+        .lock()
+        .map_err(|_| crate::error::GateError::Other("中转站状态损坏".into()))?;
     let db = crate::repository::Repository::open()?;
     let out = state.deeplinks.import(&db, id, &choice)?;
+    if out.client.is_some() {
+        crate::commands::station::load_upstreams_locked(&db, &mut router)?;
+    }
+    drop(router);
     if let Some(client) = out.client {
-        crate::commands::station::load_upstreams(&state)?;
         crate::commands::station::sync_aggregate_config(&state, client)?;
     }
     // 站点、凭证、线路可能多了一条：界面重拉工作区。

@@ -3,14 +3,13 @@
  *
  * # 为什么单独一个文件
  *
- * 总览卡和请求日志弹窗画的是**同一条曲线**、用的是**同一套时间档**。
+ * 总览卡和请求日志弹窗用的是**同一套时间档**；完整统计柱状图在 StationUsageChart。
  * 各写一份的话，两处会慢慢漂开 —— 而漂开之后最难受的不是样式不一致，
  * 是同一段时间在两个地方算出不同的请求数，而没有任何地方说得清哪个对。
  *
  * ⛔ 颜色只引 `tokens.css` 的变量，不写 hex。
  */
 
-import type { RouterRequest } from "../../lib/station";
 import type { Client } from "../../lib/generated/Client";
 
 /**
@@ -25,7 +24,7 @@ export const STATION_CLIENTS: { id: Client; name: string; short: string }[] = [
   { id: "grok-build", name: "Grok Build", short: "Grok Build" },
 ];
 
-/** 时间范围。`hours` 只用来算起点，「全部」给一个够大的数。 */
+/** 时间范围；全部必须作为无下界查询处理，不能把下列占位小时数当截断点。 */
 export const RANGES = [
   { id: "1h", name: "近 1 小时", hours: 1 },
   { id: "24h", name: "近 24 小时", hours: 24 },
@@ -35,106 +34,7 @@ export const RANGES = [
 export type RangeId = (typeof RANGES)[number]["id"];
 export const rangeOf = (id: RangeId) => RANGES.find((r) => r.id === id)!;
 
-export type GranId = "hour" | "day";
-
-// ------------------------------------------------------------------ 曲线
-
-/**
- * 请求量 + 首字 P95，**各按自己的量程**。
- *
- * ⛔ 那一格没请求就**断开**，不画成 0 —— 连到 0 会让人以为那段时间延迟为零。
- */
-export function Chart({
-  rows,
-  range,
-  gran,
-}: {
-  rows: RouterRequest[];
-  range: RangeId;
-  gran: GranId;
-}) {
-  const W = 440;
-  const H = 46;
-  if (!rows.length)
-    return (
-      <div className="qb-st-chart-empty">这段时间没有经过本机路由的请求</div>
-    );
-
-  const now = Date.now();
-  const step = gran === "day" ? 24 : 1;
-  const span = Math.min(rangeOf(range).hours, 24 * 30);
-  const n = Math.max(2, Math.ceil(span / step));
-  const buckets: RouterRequest[][] = Array.from({ length: n }, () => []);
-  for (const r of rows) {
-    const age = (now - Number(r.at_ms)) / 3600_000;
-    if (age >= 0 && age < span) buckets[n - 1 - Math.floor(age / step)].push(r);
-  }
-
-  const counts = buckets.map((b) => b.length);
-  const maxC = Math.max(1, ...counts);
-  const p95 = buckets.map((b) => {
-    const v = b
-      .map((x) => (x.first_token_ms == null ? null : Number(x.first_token_ms)))
-      .filter((x): x is number => x != null)
-      .sort((a, b2) => a - b2);
-    return v.length
-      ? v[Math.min(v.length - 1, Math.floor(v.length * 0.95))]
-      : null;
-  });
-  const maxT = Math.max(1, ...p95.filter((v): v is number => v != null));
-
-  const x = (i: number) => (i * W) / (n - 1);
-  const y = (v: number, m: number) => H - 4 - (v / m) * (H - 10);
-  const pts = counts.map(
-    (c, i) => `${x(i).toFixed(1)},${y(c, maxC).toFixed(1)}`,
-  );
-
-  // 首字那条线分段画：断开的格子不连过去。
-  const segs: string[][] = [];
-  let cur: string[] = [];
-  p95.forEach((v, i) => {
-    if (v == null) {
-      if (cur.length > 1) segs.push(cur);
-      cur = [];
-    } else cur.push(`${x(i).toFixed(1)},${y(v, maxT).toFixed(1)}`);
-  });
-  if (cur.length > 1) segs.push(cur);
-
-  return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      width="100%"
-      height={H}
-      preserveAspectRatio="none"
-      role="img"
-      style={{ display: "block" }}
-    >
-      <title>所选时段的请求量与首字延迟</title>
-      <path
-        d={`M0,${H - 4} L${pts.join(" L")} L${W},${H - 4} Z`}
-        fill="var(--accent-bg)"
-      />
-      <polyline
-        points={pts.join(" ")}
-        fill="none"
-        stroke="var(--accent)"
-        strokeWidth={1.4}
-        strokeLinejoin="round"
-        vectorEffect="non-scaling-stroke"
-      />
-      {segs.map((s, i) => (
-        <polyline
-          key={i}
-          points={s.join(" ")}
-          fill="none"
-          stroke="var(--warn)"
-          strokeWidth={1.1}
-          vectorEffect="non-scaling-stroke"
-        />
-      ))}
-    </svg>
-  );
-}
+export type GranId = "minute" | "hour" | "day";
 
 export const dash = <span className="qb-st-dim">—</span>;
 

@@ -101,6 +101,7 @@ pub(crate) struct Record {
     pub watch: Option<Arc<Mutex<StreamWatch>>>,
     /// 要不要入队落库。本机自己答的（聚合模型的模型发现，`aggregate::decide`）不落：一条线都没打。
     logged: bool,
+    tracks_selection: bool,
 }
 
 impl Record {
@@ -117,12 +118,19 @@ impl Record {
             log,
             watch: None,
             logged: true,
+            tracks_selection: true,
         }
     }
 
     /// 这一发不进请求日志（在飞计数照样减）。
     pub(crate) fn unlogged(&mut self) {
         self.logged = false;
+    }
+
+    /// 内部固定目标检测不经过 switch.begin，不得在结束时改动交互请求的在飞计数。
+    pub(crate) fn independent(mut self) -> Self {
+        self.tracks_selection = false;
+        self
     }
 }
 
@@ -168,7 +176,9 @@ impl Drop for Record {
                 None => {}
             }
         }
-        s.switch.end(self.client);
+        if self.tracks_selection {
+            s.switch.end(self.client);
+        }
         if self.logged {
             s.push_log(std::mem::take(&mut self.log));
         }

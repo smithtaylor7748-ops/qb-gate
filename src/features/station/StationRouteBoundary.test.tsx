@@ -105,6 +105,7 @@ it("makes load distribution explicit even while the preferred route is healthy",
         {
           routing_mode: "pool",
           pool_strategy: "least-loaded",
+          admission: { overflow_to_pool: true },
           allowed_routes: ["free", "paid"],
         } as RouterSettings
       }
@@ -130,6 +131,25 @@ it("does not attribute local admission refusal to an upstream route", () => {
   );
   expect(screen.getByText("未发往上游 · 本机请求容量限制")).toBeTruthy();
   expect(screen.queryByText(/付费站/)).toBeNull();
+});
+
+it("reports overflow as off even if a stored load strategy is retained", () => {
+  render(
+    <StationRouteBoundary
+      settings={
+        {
+          routing_mode: "pool",
+          pool_strategy: "least-loaded",
+          allowed_routes: ["free", "paid"],
+          admission: { overflow_to_pool: false },
+        } as RouterSettings
+      }
+      selected="free"
+      routeLabel={label}
+    />,
+  );
+  expect(screen.getByText(/容量溢出分流已关闭/)).toBeTruthy();
+  expect(screen.queryByText(/首选正常也可能使用其他站/)).toBeNull();
 });
 
 it("retains actual failure before a later local capacity refusal", () => {

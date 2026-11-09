@@ -73,9 +73,16 @@ export function StationAdmissionStatus({
           <div className="qb-st-admission-summary">
             <span>
               {settings.routing_mode === "pool" &&
+              settings.admission.overflow_to_pool &&
               settings.pool_strategy === "least-loaded"
                 ? "名单内优先空闲线路"
                 : "优先所选线路"}
+            </span>
+            <span>
+              {settings.routing_mode === "pool" &&
+              settings.admission.overflow_to_pool
+                ? "容量溢出分流已开启"
+                : "容量溢出分流已关闭"}
             </span>
             <span>
               {settings.admission.max_wait_ms > 0 &&

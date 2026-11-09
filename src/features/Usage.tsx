@@ -47,12 +47,10 @@ import { AG_R } from "../lib/antigravity";
 import { R } from "../lib/resources";
 import { CODEX_R } from "../lib/codexAccounts";
 import { setSession, useResource } from "../lib/store";
-import { resetIn } from "../lib/antigravityQuota";
 import { daysFrom, lastDays, shortDay, today as todayYmd } from "../lib/dates";
 import { slotName } from "../lib/slotName";
 import { NUM, pct, short, usd, usdTick } from "../lib/usageFormat";
 import type { AccountSpend } from "../lib/generated/AccountSpend";
-import type { AntigravityIdentity } from "../lib/generated/AntigravityIdentity";
 import type { AntigravityUsage } from "../lib/generated/AntigravityUsage";
 import type { CodexRateLimitScan } from "../lib/generated/CodexRateLimitScan";
 import type { CodexUsageSummary } from "../lib/generated/CodexUsageSummary";
@@ -60,6 +58,7 @@ import type { SpendWindow } from "../lib/generated/SpendWindow";
 import type { TokenSummary } from "../lib/generated/TokenSummary";
 import { SIDES, SIDE_KEY, type Side } from "../lib/side";
 import SlotUsageBars from "./overview/SlotUsage";
+import AntigravityQuotaDetail from "./overview/AntigravityQuotaDetail";
 import {
   BarChart,
   Button,
@@ -244,6 +243,9 @@ export default function Usage() {
   const activeClaude = slots.find((s) => s.active);
   const activeGpt = codexAccounts.data?.slots.find((s) => s.active);
   const agIdentity = agStatus.data?.identity ?? null;
+  const activeAg = agStatus.data?.accounts.slots.find(
+    (slot) => slot.active && slot.ide_dir,
+  );
   const claudeLabel = activeClaude?.label ?? "";
   const gptId = activeGpt?.id ?? "";
 
@@ -853,12 +855,12 @@ export default function Usage() {
                   : "还没有带额度信息的会话记录 —— 走中转或 API Key 的会话不带额度，这很正常。"}
               </p>
             )
-          ) : agIdentity ? (
-            <AgQuota identity={agIdentity} />
           ) : (
-            <p className="notice">
-              反重力 IDE 登录后这里显示各模型的剩余额度。
-            </p>
+            <AntigravityQuotaDetail
+              accountId={activeAg?.id ?? null}
+              identity={agIdentity}
+              identityError={agStatus.data?.identity_error}
+            />
           )}
         </Card>
 
@@ -1156,39 +1158,5 @@ function PriceTable({ prices }: { prices: TokenSummary["prices_used"] }) {
         </tbody>
       </table>
     </div>
-  );
-}
-
-function AgQuota({ identity }: { identity: AntigravityIdentity }) {
-  return (
-    <>
-      <div className="slotusage">
-        {identity.models.map((m) => (
-          <Gauge
-            key={`${m.label}-${m.model_id}`}
-            name={m.label}
-            used={m.remaining == null ? null : 100 - m.remaining * 100}
-            value={
-              m.remaining == null
-                ? undefined
-                : `剩 ${Math.round(m.remaining * 100)}%`
-            }
-            extra={
-              m.reset_epoch ? (
-                <span className="gauge-reset">
-                  ↻ {resetIn(m.reset_epoch, Date.now())}
-                </span>
-              ) : undefined
-            }
-          />
-        ))}
-      </div>
-      <p className="notice mt-2">
-        读自反重力 IDE 写在 <code>state.vscdb</code> 的 <code>userStatus</code>
-        ，零网络。
-        <strong>只有 IDE 上次同步时那么新</strong>（IDE 写入{" "}
-        {identity.written_at}）。Hub 不写这份状态 —— 它那一格在账户页上。
-      </p>
-    </>
   );
 }

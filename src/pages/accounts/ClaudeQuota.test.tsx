@@ -177,3 +177,24 @@ it("shows why it did not ask, and cannot ask for a slot that never logged in", a
   })) as HTMLButtonElement;
   expect(button.disabled).toBe(true);
 });
+
+it("failed refresh preserves successful reset times without inventing another quota reading", async () => {
+  mock.call.mockImplementation(
+    async (command: string, args?: { refresh?: boolean }) => {
+      if (command === "claude_quota") {
+        if (args?.refresh) throw new Error("访问令牌已经到点了，没有发请求");
+        return quota;
+      }
+      if (command === "accounts_list") return { slots: [base] };
+    },
+  );
+  wrap(<OfficialQuota slot={base} />);
+  await screen.findByText("7 天 · Opus");
+  const before = screen.getAllByText(/后重置/).map((node) => node.textContent);
+  fireEvent.click(screen.getByRole("button", { name: "向官方问一次" }));
+  await screen.findByText(/保留上次成功读数和重置时间/);
+  expect(screen.getAllByText(/后重置/).map((node) => node.textContent)).toEqual(
+    before,
+  );
+  expect(screen.getByText("剩 59%")).toBeTruthy();
+});

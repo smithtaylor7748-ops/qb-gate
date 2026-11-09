@@ -4,6 +4,8 @@ import type { CodexWindow } from "../../lib/generated/CodexWindow";
 import type { TavernGptQuota } from "../../lib/generated/TavernGptQuota";
 import type { TavernQuotaWindow } from "../../lib/generated/TavernQuotaWindow";
 import { gptExtras } from "../../lib/gptExtras";
+import { resetEpoch, resetPassed, useQuotaClock } from "../../lib/quotaClock";
+import QuotaCountdown from "./QuotaCountdown";
 
 export interface CodexQuotaState {
   local: CodexRateLimitScan | null;
@@ -45,7 +47,17 @@ function localWindows(scan: CodexRateLimitScan | null) {
 }
 
 /** 一格还剩多少（百分比）。`null` = 不知道 —— 联网那一格没给比例，或者本机那一格已经重置过。 */
-function leftOf(window: TavernQuotaWindow | CodexWindow): number | null {
+function epochOf(window: TavernQuotaWindow | CodexWindow): number | null {
+  return "remaining_percent" in window
+    ? window.reset_epoch
+    : resetEpoch(window.window.resets_at);
+}
+
+function leftOf(
+  window: TavernQuotaWindow | CodexWindow,
+  now: number,
+): number | null {
+  if (resetPassed(epochOf(window), now)) return null;
   if ("remaining_percent" in window) return window.remaining_percent;
   // 本机快照里这一格的重置时刻已经过去：记的是重置之前的数，现在剩多少不知道（2026-09-25）。
   if (window.window.reset_passed) return null;
@@ -75,6 +87,7 @@ function leftOf(window: TavernQuotaWindow | CodexWindow): number | null {
  * - 联网那一格没给比例时原来按 0 参加比紧，结果谁都对不上、「卡这儿」标记整个丢了。
  */
 export default function CodexQuotaBars({ state }: { state?: CodexQuotaState }) {
+  const now = useQuotaClock();
   const liveWindows: TavernQuotaWindow[] =
     state?.live?.windows.filter((window) => window.present) ?? [];
   const scan = state?.local ?? null;
@@ -115,7 +128,7 @@ export default function CodexQuotaBars({ state }: { state?: CodexQuotaState }) {
 
   // 只在「知道剩多少」的那几格里比紧。
   const known = windows
-    .map(leftOf)
+    .map((window) => leftOf(window, now))
     .filter((left): left is number => left != null);
   const tight = known.length ? Math.min(...known) : null;
 
@@ -126,21 +139,20 @@ export default function CodexQuotaBars({ state }: { state?: CodexQuotaState }) {
           const isLive = "remaining_percent" in window;
           const name = isLive ? window.label : window.name;
           // 过了重置时刻就不画旧百分比（联网那份按 `reset_epoch` 判，本机快照按 `reset_passed`）。
-          const passed = isLive
-            ? window.reset_epoch != null &&
-              window.reset_epoch * 1000 <= Date.now()
-            : window.window.reset_passed;
+          const passed =
+            resetPassed(epochOf(window), now) ||
+            (!isLive && window.window.reset_passed);
           if (passed) {
             return (
               <Gauge
                 key={`${name}-${index}`}
                 name={name}
                 used={null}
-                note="已重置，快照是重置前的数 · 点刷新"
+                note="已到重置时间 · 待刷新确认额度"
               />
             );
           }
-          const left = leftOf(window);
+          const left = leftOf(window, now);
           const used = left == null ? null : 100 - left;
           const reset = isLive
             ? window.reset_at
@@ -149,30 +161,17 @@ export default function CodexQuotaBars({ state }: { state?: CodexQuotaState }) {
               : null;
           return (
             <Gauge
+              className="gauge--countdown"
               key={`${name}-${index}`}
               name={name}
               used={used}
               binding={left != null && left === tight && known.length > 1}
-              // 账户表里重置时刻只在悬停里（行内那一截被 `.acct-quota .gauge-reset` 收掉了）。
               hint={
                 reset
                   ? `${reset} 重置 · ${online ? "官方额度接口返回的" : "Codex 写在本机会话记录里的"}`
                   : undefined
               }
-              extra={
-                reset ? (
-                  <span
-                    className="gauge-reset"
-                    title={
-                      online
-                        ? "官方额度接口返回的重置时间"
-                        : "Codex 写在本机会话记录里的重置时间"
-                    }
-                  >
-                    ↻ {reset}
-                  </span>
-                ) : undefined
-              }
+              extra={<QuotaCountdown epoch={epochOf(window)} now={now} />}
             />
           );
         })}
@@ -193,7 +192,7 @@ export default function CodexQuotaBars({ state }: { state?: CodexQuotaState }) {
         }
       >
         {state?.liveError
-          ? "刷新没成 · 悬停看原因"
+          ? "刷新没成 · 保留上次读数"
           : online && state?.live?.last_success
             ? `上次成功：${stamp(state.live.last_success)}`
             : online

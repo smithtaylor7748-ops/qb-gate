@@ -1366,7 +1366,7 @@ pub fn select_exclusively(
     Ok(settings)
 }
 
-/// 删除线路同时撤销跨线授权。保留 current 的失效指向，绝不自动选择另一条。
+/// 删除线路同时撤销跨线授权与当前选择，绝不自动选择另一条。
 pub fn remove_route(db: &Repository, id: &str) -> Result<Option<Client>> {
     db.transaction(|| remove_route_in_transaction(db, id))
 }
@@ -1389,6 +1389,9 @@ pub fn remove_route_in_transaction(db: &Repository, id: &str) -> Result<Option<C
         queue.pin = None;
     }
     let stop = settings.allowed_routes.is_empty() || queue.current.as_deref() == Some(id);
+    if queue.current.as_deref() == Some(id) {
+        queue.current = None;
+    }
     if stop {
         settings.routing_mode = RoutingMode::Selected;
     }
@@ -2237,7 +2240,12 @@ mod tests {
         remove_route(&db, &a.id).unwrap();
         assert_eq!(
             load_dispatch_queue(&db, Client::Codex).unwrap().current,
-            Some(a.id)
+            None
+        );
+        db.put("station_routes", &a.id, &a).unwrap();
+        assert_eq!(
+            load_dispatch_queue(&db, Client::Codex).unwrap().current,
+            None
         );
         assert!(!load_schedule(&db, Client::Codex).unwrap().enabled);
         drop(db);

@@ -10,7 +10,12 @@ const settings = {
   routing_mode: "selected",
   allowed_routes: ["paid"],
   pool_strategy: "least-loaded",
-  admission: { route_limits: {}, max_wait_ms: 0, max_waiters: 0 },
+  admission: {
+    overflow_to_pool: true,
+    route_limits: {},
+    max_wait_ms: 0,
+    max_waiters: 0,
+  },
 } as unknown as RouterSettings;
 const status = {
   current_route: "free",

@@ -24,5 +24,8 @@ rusqlite.workspace = true
 tokio.workspace = true
 ts-rs.workspace = true
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

@@ -183,12 +183,19 @@ pub(crate) fn load_upstreams(state: &AppState) -> Result<usize> {
         .lock()
         .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
     let db = crate::repository::Repository::open()?;
+    load_upstreams_locked(&db, &mut router)
+}
+
+pub(crate) fn load_upstreams_locked(
+    db: &crate::repository::Repository,
+    router: &mut local_router::RouterState,
+) -> Result<usize> {
     let routes: Vec<Route> = db.list("station_routes")?;
     let providers: Vec<qb_contract::domain::Provider> = db.list("providers")?;
     let upstreams: Vec<_> = routes
         .iter()
         .filter_map(|route| {
-            let source = station_ops::source(&db, route).ok()?;
+            let source = station_ops::source(db, route).ok()?;
             let provider = providers.iter().find(|p| p.id == route.station_id);
             let site = provider.map_or(route.station_id.as_str(), |p| p.name.as_str());
             let group = if route.group.is_empty() {
@@ -202,7 +209,7 @@ pub(crate) fn load_upstreams(state: &AppState) -> Result<usize> {
             Some(Upstream {
                 label: format!("{site} · {group}"),
                 alternates: provider
-                    .map(|p| station_ops::alternates(&db, p))
+                    .map(|p| station_ops::alternates(db, p))
                     .unwrap_or_default(),
                 ..Upstream::relay(route, source.base_url, source.key)
             })
@@ -327,105 +334,6 @@ pub fn station_router_status(state: State<'_, AppState>, client: Client) -> Rout
     status_of(&state, client)
 }
 
-/// 配置官方 Codex 的 turn-state 注入。**实验功能,默认关闭。只对 Codex,不碰 Claude。**
-///
-/// `enabled` = 注入总开关;`team` = 账号规则(true → Team 12 块,false → 个人 10 块)。
-/// 关着时仍会被动采集与展示,只是不往请求里塞。采集是免费的(读官方响应带回的头),
-/// 不额外发探测请求、不换出口、不消耗多余额度。
-#[tauri::command]
-pub fn station_turnstate_configure(
-    state: State<'_, AppState>,
-    enabled: bool,
-    team: bool,
-) -> Result<()> {
-    let kind = if team {
-        local_router::TurnKind::Team
-    } else {
-        local_router::TurnKind::Personal
-    };
-    state
-        .station
-        .lock()
-        .map_err(|_| GateError::Other("中转站状态损坏".into()))?
-        .turnstate_configure(enabled, kind);
-    Ok(())
-}
-
-/// 每个 model 当前的 turn-state 外形（块数、长度、剩余秒、strikes、观测次数）。
-/// **不含 turn-state 的值本身。**
-#[tauri::command]
-pub fn station_turnstate_status(
-    state: State<'_, AppState>,
-) -> Result<Vec<qb_station::turnstate::ModelStatus>> {
-    let now = chrono::Utc::now().timestamp_millis();
-    Ok(state
-        .station
-        .lock()
-        .map_err(|_| GateError::Other("中转站状态损坏".into()))?
-        .turnstate_status(now))
-}
-
-/// 开启识别：把当前激活的 Codex 账户槽位接进本机路由。**只 Codex。**
-///
-/// 0.24.7 起**不再另建环境目录、不再复制 OAuth、不再另起 Codex**（老做法留下两份轮换式
-/// 刷新令牌，谁先刷新另一份就作废 —— 档案 §7.29 同款隐患）。现在三步：
-/// 1. 在路由里挂上官方上游（`OAuthPassthrough`）并拉起路由 —— 先做这步，路由起不来就
-///    不去动槽位配置；
-/// 2. `usecase::turnstate_ops::enable`：备份并增量改槽位的 `config.toml`
-///    （`model_provider` → `qb_turnstate`，base 不带 `/v1`），写 marker；失败就把上游摘回去；
-/// 3. 之后使用者照常从账户页启动那个槽位的 Codex —— 它读到的就是走路由的配置。
-///    已经开着的 Codex 只在启动时读一次配置，**要重启才生效**，界面上说明。
-///
-/// ⛔ 与出站插件（ccodex）互斥，双向。两边**都要改同一个槽位的 `config.toml`**，
-/// 同时开就是两个程序抢同一个文件，谁赢都说不清。
-#[tauri::command]
-pub async fn station_turnstate_enable(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<RouterStatus> {
-    let _guard = crate::operations::exclusive().await?;
-    let client = Client::Codex;
-    if crate::plugins::codex_egress::running() {
-        return Err(GateError::Other(
-            "出站插件（ccodex）正在运行。它和识别都要改同一个槽位的 Codex 配置，一次只能开一个：先到扩展中心停掉插件（会恢复 Codex 配置），再开启识别。"
-                .into(),
-        ));
-    }
-    // 路由先起：官方上游挂上并选中（load_upstreams 会保住它）。
-    {
-        let db = crate::repository::Repository::open()?;
-        let mut s = state
-            .station
-            .lock()
-            .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
-        let settings = station_ops::select_exclusively(
-            &db,
-            client,
-            local_router::OFFICIAL_CODEX_ROUTE_ID,
-            chrono::Utc::now().timestamp_millis(),
-        )?;
-        s.set_settings(settings);
-        s.arm_official_codex();
-    }
-    load_upstreams(&state)?;
-    ensure_router(&app, client).await?;
-    // 官方 base **不带 `/v1`**：官方端点是 `.../backend-api/codex/responses`，
-    // `client_base_url(Codex, …)` 给的 `http://127.0.0.1:15721/codex` 正好对上。
-    let base = local_router::client_base_url(client, local_router::DEFAULT_PORT);
-    if let Err(e) =
-        tokio::task::spawn_blocking(move || qb_app::usecase::turnstate_ops::enable(&base))
-            .await
-            .map_err(|e| GateError::Other(e.to_string()))?
-    {
-        if let Ok(mut s) = state.station.lock() {
-            s.disarm_official_codex();
-        }
-        return Err(e);
-    }
-    crate::operations::changed(&crate::events::ui(&app), "turnstate", "enabled");
-    Ok(status_of(&state, client))
-}
-
 /// 关闭识别：摘掉官方上游，并按 marker 把那个槽位的 `config.toml` 反向恢复。**只 Codex。**
 ///
 /// 不动正在跑的那个 Codex（它接下来的请求会如实收到 503「还没选上游」，界面提示重启）。
@@ -437,12 +345,13 @@ pub async fn station_turnstate_disable(
     state: State<'_, AppState>,
 ) -> Result<RouterStatus> {
     let _guard = crate::operations::exclusive().await?;
-    if let Ok(mut s) = state.station.lock() {
-        s.disarm_official_codex();
-    }
     tokio::task::spawn_blocking(qb_app::usecase::turnstate_ops::disable)
         .await
         .map_err(|e| GateError::Other(e.to_string()))??;
+    if let Ok(mut s) = state.station.lock() {
+        s.turnstate_configure(false, local_router::TurnKind::Personal);
+        s.disarm_official_codex();
+    }
     crate::operations::changed(&crate::events::ui(&app), "turnstate", "disabled");
     Ok(status_of(&state, Client::Codex))
 }
@@ -610,6 +519,10 @@ pub fn station_endpoint_add(
     provider_id: String,
     url: String,
 ) -> Result<qb_station::station::endpoints::StationEndpoints> {
+    let mut router = state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
     let db = crate::repository::Repository::open()?;
     let e = station_ops::add_endpoint(
         &db,
@@ -617,7 +530,7 @@ pub fn station_endpoint_add(
         &url,
         chrono::Utc::now().timestamp_millis(),
     )?;
-    load_upstreams(&state)?;
+    load_upstreams_locked(&db, &mut router)?;
     Ok(e)
 }
 
@@ -627,9 +540,13 @@ pub fn station_endpoint_remove(
     provider_id: String,
     url: String,
 ) -> Result<qb_station::station::endpoints::StationEndpoints> {
+    let mut router = state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
     let db = crate::repository::Repository::open()?;
     let e = station_ops::remove_endpoint(&db, &provider_id, &url)?;
-    load_upstreams(&state)?;
+    load_upstreams_locked(&db, &mut router)?;
     Ok(e)
 }
 
@@ -640,6 +557,10 @@ pub fn station_endpoint_promote(
     provider_id: String,
     url: String,
 ) -> Result<qb_station::station::endpoints::StationEndpoints> {
+    let mut router = state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
     let db = crate::repository::Repository::open()?;
     station_ops::promote_endpoint(
         &db,
@@ -647,7 +568,7 @@ pub fn station_endpoint_promote(
         &url,
         chrono::Utc::now().timestamp_millis(),
     )?;
-    load_upstreams(&state)?;
+    load_upstreams_locked(&db, &mut router)?;
     station_ops::load_endpoints(&db, &provider_id)
 }
 
@@ -1523,12 +1444,12 @@ pub fn station_put_route(
             station_ops::load_dispatch_queue(&db, route.client)?.order,
         );
     }
+    // DB 与运行期来源在同一把锁内更新，返回成功前旧快照不能再领取名额。
+    load_upstreams_locked(&db, &mut router)?;
     drop(router);
     if rewrite_desktop {
         qb_app::usecase::desktop_direct_ops::reapply()?;
     }
-    // 线路变了,上游表要跟着重装 —— 否则新加的线路转发时找不到 base_url。
-    load_upstreams(&state)?;
     // 聚合名单里的线改了模型映射 / 名字，客户端配置里列的聚合模型跟着变。
     sync_aggregate_config(&state, route.client)?;
     // 重命名改变线路身份：旧授权清除，当前指向安全失效，用户显式选新线路后再继续。
@@ -1553,9 +1474,9 @@ pub fn station_remove_route(app: tauri::AppHandle, id: String) -> Result<Vec<Rou
             router.set_settings(station_ops::load_router_settings(&db, client)?);
             router.set_queue(client, station_ops::load_dispatch_queue(&db, client)?.order);
         }
+        load_upstreams_locked(&db, &mut router)?;
         client
     };
-    load_upstreams(&state)?;
     if let Some(client) = client {
         sync_aggregate_config(&app.state::<AppState>(), client)?;
     }
@@ -1576,14 +1497,21 @@ pub fn station_logs(state: State<'_, AppState>, limit: Option<u32>) -> Result<Ve
 
 /// 把手里还没落库的那批请求日志写掉，回开着的库。日志页、用量页读之前都先走这一步。
 fn flushed_logs(state: &AppState) -> Result<crate::repository::Repository> {
-    let drained = {
+    flushed_logs_using(state, crate::repository::Repository::open)
+}
+
+fn flushed_logs_using(
+    state: &AppState,
+    open: impl FnOnce() -> Result<crate::repository::Repository>,
+) -> Result<crate::repository::Repository> {
+    let (db, drained) = {
         let mut s = state
             .station
             .lock()
             .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
-        s.drain_logs()
+        let db = open()?;
+        (db, s.drain_logs())
     };
-    let db = crate::repository::Repository::open()?;
     let catalog = qb_station::station::pricing::Catalog::new(stored_prices());
     let now = chrono::Utc::now().timestamp_millis();
     if let Err(e) = station_ops::persist_router_requests(&db, drained.clone(), &catalog, now) {
@@ -1617,6 +1545,25 @@ pub fn station_usage_totals(
 ) -> Result<qb_app::usecase::relay_usage_ops::RelayUsageTotals> {
     let db = flushed_logs(&state)?;
     qb_app::usecase::relay_usage_ops::totals(&db, client_key(client), hours)
+}
+
+/// 首页总量、每线路请求数与柱状趋势共享同一完整统计窗口；不受日志页条数限制。
+#[tauri::command]
+pub fn station_usage_overview(
+    state: State<'_, AppState>,
+    client: Client,
+    hours: Option<u32>,
+    granularity: String,
+    route_id: Option<String>,
+) -> Result<qb_app::usecase::relay_usage_ops::RelayUsageOverview> {
+    let db = flushed_logs(&state)?;
+    qb_app::usecase::relay_usage_ops::overview(
+        &db,
+        client_key(client),
+        hours,
+        &granularity,
+        route_id.as_deref(),
+    )
 }
 
 /// 中转用量页的逐条日志：按软件 / 线路 / 模型 / 只看失败筛，分页（明细只留 30 天）。
@@ -2482,12 +2429,18 @@ pub async fn station_probe_now(
             });
         (jobs, http)
     };
-    let attempts = station_liveness::run_admitted(jobs, &http, now, |target| {
-        local_router::RouterState::admit_probe(
+    let attempts = station_liveness::run_admitted(jobs, &http, now, |target, kind| {
+        local_router::RouterState::admit_probe_when(
             &state.station,
             target.client,
-            &target.route_id,
+            target.source(),
             false,
+            || {
+                kind == ProbeKind::Free
+                    || crate::repository::Repository::open()
+                        .and_then(|db| station_liveness::load_probe_settings(&db))
+                        .is_ok_and(|settings| settings.paid)
+            },
         )
     })
     .await;
@@ -2535,8 +2488,13 @@ pub fn station_pin(
 /// 存测活设置（三个软件共用一份）。不合格整份不存。
 #[tauri::command]
 pub fn station_probe_settings_save(
+    state: State<'_, AppState>,
     settings: qb_station::schedule::liveness::ProbeSettings,
 ) -> Result<qb_station::schedule::liveness::ProbeSettings> {
+    let _router = state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
     let db = crate::repository::Repository::open()?;
     qb_app::usecase::station_liveness::save_probe_settings(&db, &settings)?;
     Ok(settings)
@@ -2740,28 +2698,20 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
         &topup,
         now,
     ) {
-        let attempts = station_liveness::run_admitted(jobs, &http, now, |target| {
-            // 每个并发槽真正开始探测前现读许可；排队等待期间关调度、撤销或删除都立即生效。
-            let Ok(router) = state.station.lock() else {
-                return None;
-            };
-            if router.settings(target.client).routing_mode != qb_station::router::RoutingMode::Pool
-                || !router.route_allowed(target.client, &target.route_id)
-            {
-                return None;
-            }
-            let Ok(db) = crate::repository::Repository::open() else {
-                return None;
-            };
-            if !station_ops::load_schedule(&db, target.client).is_ok_and(|s| s.enabled) {
-                return None;
-            }
-            drop(router);
-            local_router::RouterState::admit_probe(
+        let attempts = station_liveness::run_admitted(jobs, &http, now, |target, kind| {
+            local_router::RouterState::admit_probe_when(
                 &state.station,
                 target.client,
-                &target.route_id,
+                target.source(),
                 true,
+                || {
+                    let Ok(db) = crate::repository::Repository::open() else {
+                        return false;
+                    };
+                    station_ops::load_schedule(&db, target.client).is_ok_and(|s| s.enabled)
+                        && (kind == station_liveness::ProbeKind::Free
+                            || station_liveness::load_probe_settings(&db).is_ok_and(|s| s.paid))
+                },
             )
         })
         .await;
@@ -3059,6 +3009,21 @@ fn keep_schedule(state: &AppState, db: &crate::repository::Repository, sched: &S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opening_database_failure_keeps_unflushed_usage() {
+        let state = AppState::default();
+        state
+            .station
+            .lock()
+            .unwrap()
+            .requeue_logs(vec![RouterRequest::default()]);
+        let result = flushed_logs_using(&state, || {
+            Err(GateError::Other("fixture db unavailable".into()))
+        });
+        assert!(result.is_err());
+        assert_eq!(state.station.lock().unwrap().pending_logs(), 1);
+    }
     use qb_station::station::model::Protocols;
 
     fn allow_pool(

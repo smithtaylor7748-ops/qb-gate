@@ -108,13 +108,13 @@ export function spanLabel(span: AntigravityQuotaSpan): string {
 }
 
 /**
- * 紧凑的倒计时：`4h55m` / `3d11m` / `<1m`，过了就是「已重置」。给窄窄的额度条用 ——
+ * 紧凑的倒计时：`4h55m` / `3d11m` / `<1m`，到点仍待刷新确认。给窄窄的额度条用 ——
  * 完整的本地时刻放在悬停里。
  */
 export function countdown(resetEpoch: number | null, nowMs: number): string {
   if (resetEpoch == null) return "";
   const diff = resetEpoch * 1000 - nowMs;
-  if (diff <= 0) return "已重置";
+  if (diff <= 0) return "到点待刷新";
   const minutes = Math.floor(diff / 60_000);
   if (minutes < 1) return "<1m";
   const d = Math.floor(minutes / 1440);
@@ -143,26 +143,59 @@ export function groupWindows(
   return [pick("five-hour"), pick("weekly")];
 }
 
+/** 只按接口返回的池 ID 配对窗口，不把所有 Gemini 压成一个池。旧缓存按既有组读取。 */
+export function quotaPools(windows: AntigravityQuotaWindow[]) {
+  const pools = new Map<
+    string,
+    {
+      id: string;
+      label: string;
+      group: AntigravityQuotaGroup;
+      windows: AntigravityQuotaWindow[];
+    }
+  >();
+  for (const window of windows) {
+    const id = window.pool_id ?? window.group;
+    if (!pools.has(id))
+      pools.set(id, {
+        id,
+        group: window.group,
+        label: quotaPoolLabel(window),
+        windows: [],
+      });
+    pools.get(id)!.windows.push(window);
+  }
+  return [...pools.values()];
+}
+
+/** 账户行、Hub 提示和详情共用同一池名；未知池保留原始 ID，避免同名来源混淆。 */
+export function quotaPoolLabel(window: AntigravityQuotaWindow): string {
+  const id = window.pool_id ?? window.group;
+  const known = [
+    "claude",
+    "3p",
+    "gemini",
+    "argon",
+    "gemini-argon-wtu",
+  ].includes(id);
+  return known
+    ? groupLabel(window.group).replace("（周）", "")
+    : window.pool_label?.trim()
+      ? `${window.pool_label.trim()} · ${id}`
+      : id;
+}
+
 /**
- * 免费档没有四格（Google 回 403），只有按模型的：照汇总的分法合成两组，各取剩得最少的那个。
- * `remaining` 为 `null` 的不参与（没读到 ≠ 0）。
+ * 没有汇总池时逐个保留实际模型，不凭名称推断 Gemini / Claude 之间共享配额。
  */
 export function modelGroups(
   models: AntigravityModelQuota[],
-): { group: AntigravityQuotaGroup; model: AntigravityModelQuota }[] {
-  const out: { group: AntigravityQuotaGroup; model: AntigravityModelQuota }[] =
-    [];
-  for (const group of ["claude", "gemini"] as const) {
-    let low: AntigravityModelQuota | null = null;
-    for (const m of models) {
-      if (m.remaining == null) continue;
-      const isGemini = /gemini/i.test(m.label);
-      if ((group === "gemini") !== isGemini) continue;
-      if (low == null || m.remaining < (low.remaining ?? 1)) low = m;
-    }
-    if (low) out.push({ group, model: low });
-  }
-  return out;
+): { key: string; label: string; model: AntigravityModelQuota }[] {
+  return models.map((model, index) => ({
+    key: model.model_key ?? `${model.model_id}:${model.label}:${index}`,
+    label: model.label,
+    model,
+  }));
 }
 
 /** 档位的短写法：Ultra / Pro / 免费档；认不出就原样（太长截断）。 */

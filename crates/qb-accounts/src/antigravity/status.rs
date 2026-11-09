@@ -70,6 +70,10 @@ pub struct AntigravityModelQuota {
     /// 模型枚举号；生成记录里 `model_enum` 是 `MODEL_PLACEHOLDER_M<号>`。`0` = 没读到。
     #[ts(type = "number")]
     pub model_id: u64,
+    /// 联网模型清单的原始 ID；本机枚举来源没有这一项。不同 ID 不凭显示名猜测共享额度。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub model_key: Option<String>,
     /// 剩余比例 0–1。`None` = 这一条没带额度信息。
     pub remaining: Option<f32>,
     /// 重置时刻，本地时间 `YYYY-MM-DD HH:MM`。
@@ -211,6 +215,7 @@ pub fn parse_identity(inner: &[u8], written_at: String) -> Result<AntigravityIde
                 .and_then(timestamp_secs)
                 .filter(|s| *s > 0);
             models.push(AntigravityModelQuota {
+                model_key: None,
                 label: label.to_string(),
                 model_id: row.sub(2).and_then(|s| s.varint(1)).unwrap_or(0),
                 remaining: quota

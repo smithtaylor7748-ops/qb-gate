@@ -103,14 +103,26 @@ pub(super) struct Waiting {
     state: Arc<Mutex<RouterState>>,
     route_id: String,
     deadline: Instant,
+    registered: std::sync::atomic::AtomicBool,
+}
+
+impl Waiting {
+    fn release_in(&self, s: &mut RouterState) {
+        if self
+            .registered
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            if let Some(a) = s.admissions.get_mut(&self.route_id) {
+                a.waiting = a.waiting.saturating_sub(1);
+            }
+        }
+    }
 }
 
 impl Drop for Waiting {
     fn drop(&mut self) {
         if let Ok(mut s) = self.state.lock() {
-            if let Some(a) = s.admissions.get_mut(&self.route_id) {
-                a.waiting = a.waiting.saturating_sub(1);
-            }
+            self.release_in(&mut s);
         }
     }
 }
@@ -161,23 +173,46 @@ impl RouterState {
     pub fn admit_probe(
         state: &Arc<Mutex<Self>>,
         client: Client,
-        route: &str,
+        source: &Upstream,
         require_permission: bool,
     ) -> Option<AdmissionPermit> {
+        Self::admit_probe_when(state, client, source, require_permission, || true)
+    }
+
+    /// 调用方的持久化策略与名额领取同锁核对，避免关停/撤权夹在两次加锁之间。
+    pub fn admit_probe_when(
+        state: &Arc<Mutex<Self>>,
+        client: Client,
+        source: &Upstream,
+        require_permission: bool,
+        eligible: impl FnOnce() -> bool,
+    ) -> Option<AdmissionPermit> {
         let mut s = state.lock().ok()?;
+        if !eligible() {
+            return None;
+        }
+        if !s.upstreams.get(&source.route_id).is_some_and(|live| {
+            live.base_url == source.base_url
+                && live.auth == source.auth
+                && live.format == source.format
+                && live.model_map == source.model_map
+                && live.model_exact == source.model_exact
+        }) {
+            return None;
+        }
         if require_permission && s.settings(client).routing_mode != RoutingMode::Pool {
             return None;
         }
         s.try_admit(
             client,
-            route,
+            &source.route_id,
             require_permission,
             chrono::Utc::now().timestamp_millis(),
         )
         .ok()?;
         Some(AdmissionPermit {
             state: Arc::clone(state),
-            route_id: route.to_owned(),
+            route_id: source.route_id.clone(),
         })
     }
 
@@ -235,6 +270,7 @@ impl RouterState {
     pub(super) fn order_by_load(&self, client: Client, lines: &mut [Upstream]) {
         let settings = self.settings(client);
         if settings.routing_mode != RoutingMode::Pool
+            || !settings.admission.overflow_to_pool
             || settings.pool_strategy != PoolStrategy::LeastLoaded
         {
             return;
@@ -308,7 +344,18 @@ mod tests {
         client: Client,
         route: &str,
     ) -> std::result::Result<AdmissionPermit, Rejection> {
-        acquire_from(state, client, route, Instant::now(), true, None).await
+        acquire_from(
+            state,
+            client,
+            route,
+            Instant::now(),
+            None,
+            WaitPolicy {
+                may_wait: true,
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     fn state(concurrent: u32, rpm: u32) -> Arc<Mutex<RouterState>> {
@@ -337,6 +384,7 @@ mod tests {
         let mut cfg = s.settings(Client::ClaudeCode);
         cfg.admission.max_wait_ms = ms;
         cfg.admission.max_waiters = 1;
+        cfg.admission.overflow_to_pool = true;
         s.set_settings(cfg);
     }
 
@@ -362,7 +410,8 @@ mod tests {
     async fn atomic_capacity_and_probe_share_a_single_budget() {
         let s = state(2, 0);
         let first = acquire(&s, Client::ClaudeCode, "a").await.unwrap();
-        let probe = RouterState::admit_probe(&s, Client::ClaudeCode, "a", false).unwrap();
+        let source = s.lock().unwrap().upstreams["a"].clone();
+        let probe = RouterState::admit_probe(&s, Client::ClaudeCode, &source, false).unwrap();
         let mut tasks = Vec::new();
         for _ in 0..32 {
             let s = Arc::clone(&s);
@@ -382,6 +431,61 @@ mod tests {
         let another = acquire(&s, Client::ClaudeCode, "a").await.unwrap();
         drop((another, probe));
         assert_eq!(s.lock().unwrap().admissions["a"].active, 0);
+    }
+
+    #[test]
+    fn review_deleted_current_cannot_reauthorize_recreated_source() {
+        let s = state(0, 0);
+        let mut s = s.lock().unwrap();
+        let source = s.upstreams["a"].clone();
+        s.remove_upstream("a");
+        s.put_upstream(source);
+        assert!(!s.route_allowed(Client::ClaudeCode, "a"));
+        s.set_now(Client::ClaudeCode, "a");
+        assert!(s.route_allowed(Client::ClaudeCode, "a"));
+
+        s.put_upstream(Upstream {
+            route_id: "b".into(),
+            ..Default::default()
+        });
+        s.request_switch(Client::ClaudeCode, "b");
+        s.remove_upstream("b");
+        s.put_upstream(Upstream {
+            route_id: "b".into(),
+            ..Default::default()
+        });
+        assert!(!s.route_allowed(Client::ClaudeCode, "b"));
+        assert!(
+            !s.route_allowed(Client::ClaudeCode, "a"),
+            "deleted pending selection must not restore its predecessor"
+        );
+    }
+
+    #[test]
+    fn review_probe_rejects_source_changed_while_queued() {
+        for change in ["url", "key", "protocol", "model"] {
+            let s = state(0, 0);
+            let source = s.lock().unwrap().upstreams["a"].clone();
+            let mut edited = source.clone();
+            match change {
+                "url" => edited.base_url = "http://127.0.0.1/new-source".into(),
+                "key" => edited.auth = UpstreamAuth::Bearer("new-test-key".into()),
+                "model" => edited.model_exact.push(("a".into(), "b".into())),
+                _ => edited.format = Some(qb_proxy::convert::plan::ApiFormat::OpenaiChat),
+            }
+            s.lock().unwrap().put_upstream(edited.clone());
+            assert!(
+                RouterState::admit_probe(&s, Client::ClaudeCode, &source, false).is_none(),
+                "stale {change} snapshot must be rejected before a probe consumes capacity"
+            );
+            assert!(s
+                .lock()
+                .unwrap()
+                .admissions
+                .get("a")
+                .is_none_or(|a| a.sent.is_empty()));
+            assert!(RouterState::admit_probe(&s, Client::ClaudeCode, &edited, false).is_some());
+        }
     }
 
     #[tokio::test]
@@ -519,7 +623,7 @@ mod tests {
     #[tokio::test]
     async fn pool_wait_deadline_cannot_be_extended_and_disabled_queue_stops_waiter() {
         let s = state(1, 0);
-        waiting_enabled(&s, 45);
+        waiting_enabled(&s, 1000);
         {
             let mut s = s.lock().unwrap();
             let mut cfg = s.settings(Client::ClaudeCode);
@@ -532,7 +636,13 @@ mod tests {
         pause_pool(&s, Client::ClaudeCode, "a", started, &mut waiter)
             .await
             .unwrap();
-        waiting_enabled(&s, 1000);
+        let original_deadline = waiter.as_ref().unwrap().deadline;
+        waiting_enabled(&s, 2000);
+        pause_pool(&s, Client::ClaudeCode, "a", started, &mut waiter)
+            .await
+            .unwrap();
+        assert_eq!(waiter.as_ref().unwrap().deadline, original_deadline);
+        waiter.as_mut().unwrap().deadline = Instant::now();
         loop {
             if let Err(reason) = pause_pool(&s, Client::ClaudeCode, "a", started, &mut waiter).await
             {
@@ -540,7 +650,6 @@ mod tests {
                 break;
             }
         }
-        assert!(started.elapsed() < Duration::from_millis(300));
         drop(waiter);
         let mut waiter = None;
         pause_pool(&s, Client::ClaudeCode, "a", Instant::now(), &mut waiter)
@@ -562,6 +671,47 @@ mod tests {
         drop(waiter);
         assert_eq!(s.lock().unwrap().admissions["a"].waiting, 0);
     }
+
+    #[tokio::test]
+    async fn pool_wait_rechecks_shorter_nonzero_deadline_after_waking() {
+        let s = state(1, 0);
+        waiting_enabled(&s, 5000);
+        {
+            let mut state = s.lock().unwrap();
+            let mut settings = state.settings(Client::ClaudeCode);
+            settings.routing_mode = RoutingMode::Pool;
+            settings.allowed_routes = vec!["a".into()];
+            state.set_settings(settings);
+        }
+        let copy = Arc::clone(&s);
+        let task = tokio::spawn(async move {
+            let mut holder = None;
+            pause_pool(
+                &copy,
+                Client::ClaudeCode,
+                "a",
+                Instant::now() - Duration::from_millis(100),
+                &mut holder,
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while s
+                .lock()
+                .unwrap()
+                .admissions
+                .get("a")
+                .is_none_or(|a| a.waiting == 0)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        waiting_enabled(&s, 1);
+        assert_eq!(task.await.unwrap().unwrap_err().reason, "wait-timeout");
+        assert_eq!(s.lock().unwrap().admissions["a"].waiting, 0);
+    }
 }
 
 /// 最后发送前调用；每次轮询都现读权限、设置和额度，绝不持锁 await。
@@ -576,7 +726,9 @@ pub(super) async fn pause_pool(
         let mut s = state
             .lock()
             .map_err(|_| Rejection::new("permission", None))?;
-        if !s.route_allowed(client, anchor) || s.settings(client).routing_mode != RoutingMode::Pool
+        if !s.route_allowed(client, anchor)
+            || s.settings(client).routing_mode != RoutingMode::Pool
+            || !s.settings(client).admission.overflow_to_pool
         {
             return Err(Rejection::new("permission", None));
         }
@@ -584,17 +736,27 @@ pub(super) async fn pause_pool(
         if settings.max_waiters == 0 || settings.max_wait_ms == 0 {
             return Err(Rejection::new("wait-timeout", None));
         }
-        if holder.is_none() {
+        if holder
+            .as_ref()
+            .is_none_or(|w| !w.registered.load(std::sync::atomic::Ordering::Relaxed))
+        {
             let a = s.admissions.entry(anchor.to_owned()).or_default();
             if a.waiting >= settings.max_waiters {
                 return Err(Rejection::new("queue-full", None));
             }
             a.waiting += 1;
-            *holder = Some(Waiting {
-                state: Arc::clone(state),
-                route_id: anchor.to_owned(),
-                deadline: started + Duration::from_millis(u64::from(settings.max_wait_ms)),
-            });
+            if let Some(waiter) = holder.as_ref() {
+                waiter
+                    .registered
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            } else {
+                *holder = Some(Waiting {
+                    state: Arc::clone(state),
+                    route_id: anchor.to_owned(),
+                    deadline: started + Duration::from_millis(u64::from(settings.max_wait_ms)),
+                    registered: std::sync::atomic::AtomicBool::new(true),
+                });
+            }
         }
         if let Some(waiter) = holder.as_mut() {
             waiter.deadline = waiter
@@ -614,11 +776,20 @@ pub(super) async fn pause_pool(
     let s = state
         .lock()
         .map_err(|_| Rejection::new("permission", None))?;
-    if !s.route_allowed(client, anchor) || s.settings(client).routing_mode != RoutingMode::Pool {
+    if !s.route_allowed(client, anchor)
+        || s.settings(client).routing_mode != RoutingMode::Pool
+        || !s.settings(client).admission.overflow_to_pool
+    {
         return Err(Rejection::new("permission", None));
     }
-    if s.settings(client).admission.max_waiters == 0
-        || s.settings(client).admission.max_wait_ms == 0
+    let settings = s.settings(client).admission;
+    if let Some(waiter) = holder.as_mut() {
+        waiter.deadline = waiter
+            .deadline
+            .min(started + Duration::from_millis(u64::from(settings.max_wait_ms)));
+    }
+    if settings.max_waiters == 0
+        || settings.max_wait_ms == 0
         || holder.as_ref().is_none_or(|w| Instant::now() >= w.deadline)
     {
         return Err(Rejection::new("wait-timeout", None));
@@ -627,13 +798,21 @@ pub(super) async fn pause_pool(
 }
 
 /// 最后发送前调用；每次轮询都现读权限、设置和额度，绝不持锁 await。
+#[derive(Default)]
+pub(super) struct WaitPolicy<'a> {
+    pub may_wait: bool,
+    pub requires_overflow: bool,
+    pub pool_waiter: Option<&'a Waiting>,
+    pub strict_source: bool,
+}
+
 pub(super) async fn acquire_from(
     state: &Arc<Mutex<RouterState>>,
     client: Client,
     route: &str,
     started: Instant,
-    may_wait: bool,
     source: Option<&Upstream>,
+    wait: WaitPolicy<'_>,
 ) -> std::result::Result<AdmissionPermit, Rejection> {
     let mut waiting: Option<Waiting> = None;
     let mut deadline = None;
@@ -643,10 +822,41 @@ pub(super) async fn acquire_from(
                 .lock()
                 .map_err(|_| Rejection::new("permission", None))?;
             let now = chrono::Utc::now().timestamp_millis();
+            if wait.requires_overflow && !s.settings(client).admission.overflow_to_pool {
+                return Err(Rejection::new("permission", None));
+            }
+            if let Some(waiter) = wait
+                .pool_waiter
+                .filter(|w| w.registered.load(std::sync::atomic::Ordering::Relaxed))
+            {
+                let settings = s.settings(client).admission;
+                let latest_deadline = waiter
+                    .deadline
+                    .min(started + Duration::from_millis(u64::from(settings.max_wait_ms)));
+                if settings.max_waiters == 0
+                    || settings.max_wait_ms == 0
+                    || Instant::now() >= latest_deadline
+                {
+                    return Err(Rejection::new("wait-timeout", None));
+                }
+            }
+            if waiting.is_some() {
+                let settings = s.settings(client).admission;
+                if settings.max_wait_ms == 0 || settings.max_waiters == 0 {
+                    return Err(Rejection::new("wait-timeout", None));
+                }
+                let limit = Duration::from_millis(u64::from(settings.max_wait_ms));
+                deadline = Some(deadline.map_or(limit, |old: Duration| old.min(limit)));
+            }
             if let Some(source) = source {
                 let unchanged = s.upstreams.get(route).is_some_and(|live| {
                     live.auth == source.auth
                         && live.format == source.format
+                        && live.model_map == source.model_map
+                        && live.model_exact == source.model_exact
+                        && (!wait.strict_source
+                            || (live.base_url == source.base_url
+                                && live.alternates == source.alternates))
                         && (live.base_url == source.base_url
                             || live.alternates.contains(&source.base_url))
                 });
@@ -661,17 +871,20 @@ pub(super) async fn acquire_from(
             }
             match s.try_admit(client, route, true, now) {
                 Ok(()) => {
+                    if let Some(waiter) = wait.pool_waiter {
+                        waiter.release_in(&mut s);
+                    }
                     return Ok(AdmissionPermit {
                         state: Arc::clone(state),
                         route_id: route.to_owned(),
-                    })
+                    });
                 }
                 Err(rejection) => {
                     if matches!(rejection.reason, "permission" | "quota-exhausted") {
                         return Err(rejection);
                     }
                     let settings = s.settings(client).admission;
-                    if !may_wait || settings.max_wait_ms == 0 || settings.max_waiters == 0 {
+                    if !wait.may_wait || settings.max_wait_ms == 0 || settings.max_waiters == 0 {
                         return Err(rejection);
                     }
                     let limit = Duration::from_millis(u64::from(settings.max_wait_ms));
@@ -686,6 +899,7 @@ pub(super) async fn acquire_from(
                             state: Arc::clone(state),
                             route_id: route.to_owned(),
                             deadline: started + limit,
+                            registered: std::sync::atomic::AtomicBool::new(true),
                         });
                     }
                 }

@@ -31,6 +31,8 @@ fn main() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/lib/generated");
     let out = || -> std::result::Result<(), ts_rs::ExportError> {
         qb_gate_lib::domain::export_types(&root)?;
+        qb_app::usecase::quality_check::QualityCheckRequest::export_all_to(&root)?;
+        qb_app::usecase::quality_check::QualityCheckResult::export_all_to(&root)?;
         qb_accounts::codex::CodexAccounts::export_all_to(&root)?;
         qb_accounts::archive_dir::ArchivedSlot::export_all_to(&root)?;
         qb_app::usecase::credential_status::SlotCredential::export_all_to(&root)?;
@@ -268,6 +270,8 @@ fn main() {
         qb_gate_lib::station::site_quota::SiteQuota::export_all_to(&root)?;
         // 中转用量页（中转站重构阶段 6 · U1）。
         qb_gate_lib::usecase::relay_usage_ops::RelayUsageReport::export_all_to(&root)?;
+        qb_gate_lib::usecase::relay_usage_ops::RelayUsageOverview::export_all_to(&root)?;
+        qb_gate_lib::usecase::relay_usage_ops::RelayUsageBucket::export_all_to(&root)?;
         qb_gate_lib::usecase::relay_usage_ops::RelayRequestPage::export_all_to(&root)?;
         // 会话管理器（中转站重构阶段 6 · S1）。
         qb_gate_lib::usecase::session_ops::SessionList::export_all_to(&root)?;

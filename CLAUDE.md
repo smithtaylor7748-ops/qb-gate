@@ -5,9 +5,9 @@
 实现层面的「为什么这么写」在 [docs/DESIGN-NOTES.zh-CN.md](docs/DESIGN-NOTES.zh-CN.md)，
 修不掉的缺口在 [docs/KNOWN-ISSUES.zh-CN.md](docs/KNOWN-ISSUES.zh-CN.md)。
 
-2026-11-09 核对：仓库基线是 `2eac5b3` / `v0.25.11`，GitHub 已发布该版本；下一次出包的版本号必须高于已发布版本（当前至少高于 `0.25.11`），仍由使用者决定。本轮修复写入 `CHANGELOG` 的 `## 未发布`，不提前改版本文件。
+2026-11-09 发版：续接基线为已推送 main 的 `36b723d`，更新前基线 `2eac5b3`。使用者已明确授权发布 GitHub 正式版并选择 **0.25.12**，由 GitHub Actions 构建安装包、生成更新清单，使用者通过软件内置更新安装。此前工作区补修与质量检测集成纳入本版；本机安装版仍是 0.25.11，不由开发会话重启或替换。后续需求继续使用未发布段，出包才提版本。
 
-2026-11-09 依赖漏洞修复：源码构建最低 Rust 为 **1.89**（`rusqlite` 0.41.1 的要求），本机核查工具链 1.98.1，CI 使用 stable。这项构建要求不等于产品发版；`rmcp` / SQLite 依赖更新仍在未发布段。
+2026-11-09 依赖漏洞修复：源码构建最低 Rust 为 **1.89**（`rusqlite` 0.41.1 的要求），本机核查工具链 1.98.1，CI 使用 stable。这项构建要求不等于产品发版；`rmcp` / SQLite 依赖更新纳入 0.25.12。
 
 ---
 
@@ -156,6 +156,8 @@ cargo deny check
 测延迟 / 托盘旧菜单 id 各 1，外加 ts-rs 给 7 个被删的导出类型自动生成的 7 条；新加的 4 条是两条命令护栏、纯净度原文与门槛一致、
 老 `progress.json` 读得进来。**别拿这个当先例**：删功能时测试跟着走是对的，删测试来让某个还在的功能「过」永远是错的。
 
+`test:ui` 的 Vite `server.watch.ignored` 必须保留 `**/target/**`：文件监听器不自动遵循 Git 忽略规则，Rust 构建产物（包括指向其他盘的 incremental 目录）曾把静态依赖热身从 2.2 秒拖到 81.5 秒。不要通过扩大页面导航时限掩盖这个问题；状态分别异步刷新时，等待实际要断言的状态。
+
 ⛔ **跑完这十项不要接着出安装包** —— 先问「出包还是有别的需求」，见本文件开头那一节。
 
 然后：
@@ -228,6 +230,13 @@ operations，是跨域编排而不是门禁自己的事。留在 `gate` 里正�
 「剩没剩」复查也是 `AccountSwitch`。三处任何一处换了范围，报的数就跟做的事对不上。
 
 Claude 页曾仍调用全局 `stop_managed(true)`，2026-11-09 改为 `claudeOnly` 专用编排；会话按客户端正向识别，进程按 Claude 三种角色正向识别。只收回已关闭 Claude 会话的租约，不暂停共享门禁或停掉其它桥。新范围单测通过，未在正在工作的真实会话上执行关停。
+
+### IP 巡检间隔（2026-11-09，未发布）
+
+`Settings.gate_check_interval_secs` 允许 1–30 秒、默认 5 秒，各受管软件共用；IP 锁与门禁设置复用 `GateCheckInterval`。
+只能用专用 `gate_check_interval_save` 改该字段，旧整页 `settings_save` 必须保留当前值，防止过期快照覆盖。
+落盘成功后通知 watchdog，以上次检查结束时刻重算下一期限；缩短 / 延长即时生效，过期则下一轮立即执行，不重叠探测。
+检查未知即关闭和无宽限政策不变；30 秒上限须与租约 TTL / 网络超时一起评估，不能任意放宽。
 
 ## ⛔ 这是个开源项目：别人的机器跟你的不一样
 
@@ -338,6 +347,12 @@ Claude 页曾仍调用全局 `stop_managed(true)`，2026-11-09 改为 `claudeOnl
    「登录已失效」开头 —— 界面按这个前缀把它跟「从没登过」分开标红，改措辞之前先看两处前端。
    ⛔ **「访问令牌到点了」不许说成「登录失效」**：那是这一条要修的错本身。
 
+2026-11-09 的额度倒计时仅用 15 秒本地 display tick，不额外联网、不更改现有自动刷新配置。
+网络失败或访问令牌过期保留最后成功快照；到 reset 时撤下旧百分比并显示“待刷新确认”，不可自行补满或推下一周期。
+Claude 列表须恢复 `quota-last` 磁盘缓存；Claude / GPT 内存缓存核对账户身份，确认更换账户才作废旧缓存。
+反重力 `pool_id` / `pool_label` 与 `model_key` 必须穿透类型、后端和界面，相同 reset 窗口不能合并不同池；
+只显示真实返回的 Gemini 4 等池与模型，不虚构缺失窗口、不按缺失数据推断免费档。测试使用隔离缓存目录。
+
 开关 `settings.antigravity_hub_quota`（默认开）字段名没改、语义扩成「反重力联网额度」，关掉之后点刷新只得到一句「设置里关掉了」。
 
 ⛔ **响应形状不许猜。** 这几个接口没有公开文档。换机器、上游改版、界面开始显示「读不出来」时先跑
@@ -407,7 +422,7 @@ cargo run -p qb-app --example antigravity-hub-quota -- --account <槽位 id>
 | `server.rs`    | 监听、认软件、绑这个软件此刻的当前线路（拷贝）、收齐请求体、问聚合模型那一层，分给下面两条路      |
 | `aggregate.rs` | 聚合模型（阶段 3）：模型发现本机自己答；带前缀的模型直达名单里那一条，解不出来报错、不回落        |
 | `forward.rs`   | **中转线路**的重试循环（cc-switch `forward_with_retry_inner`）                                    |
-| `official.rs`  | **官方 Codex**（turn-state）：不进重试、不换线、不整流，原样直通                                  |
+| `official.rs`  | **历史官方 Codex 透传**：不进重试、不换线、不整流，原样直通                                  |
 | `log.rs`       | 一发一条 `RouterRequest`，边转边解用量，后台每 5 秒批量落 `router_requests`                       |
 
 要守住的：
@@ -442,6 +457,20 @@ cargo run -p qb-app --example antigravity-hub-quota -- --account <槽位 id>
     token / 首字 / 花费只记在最后回话的那条上；请求本身的问题、客户端断开、这条线不接、缺模型、本机这一侧**不记**
     （跟熔断那边记中性一致），整流前那一次也不记。有本机证据的线这一跳**不去拉账单**。
     ⛔ 请求日志弹窗里那张「站点账单口径」的卡（`station_refresh_health` → `route_health`）照旧只看账单 —— 两种口径不混在一张卡上。
+
+#### 选线与分流入口、Codex 请求侧会话修复（2026-11-09，未发布）
+
+`StationCenter` 统一“选线与分流”弹窗：第一页“允许范围、分流与故障备用”，第二页“自动选线偏好”。
+自动选线只改变定期排序，停它不能顺带撤销许可池内故障备用；容量分流由独立的默认关闭开关控制。
+需要严格单线路用 selected；A 并发 2 超额才去 B 的场景用显式 pool + priority + overflow_to_pool，不用提前分摊的 least-loaded 冒充。
+
+`RouterSettings.session_recovery` 的 `strip_item_ids` / `filter_encrypted_content` 独立默认 false，
+只在本机 Codex `/responses` 普通中转与聚合请求发送前应用，官方 OAuth 不进此路径。不得改 JSONL 或其它会话文件。
+仅清受支持顶层协议条目的 ID / 加密推理状态；保留 `call_id`、正文、`phase`、业务 ID、可读摘要与未知明文字段，不递归删业务 JSON。
+任一修复开启时若包含 `previous_response_id` / `conversation` / `item_reference` 就拒绝：缺失的服务端历史不能补造。
+仅清 ID 且原生 Responses 保留 encrypted compaction；过滤密文或转换到 Chat / Anthropic 时，无可解码可读摘要的 compaction（含缺 payload）拒绝。
+密文过滤遇到明确加密工具 / 子代理协议块同样拒绝；可逆的 CC Switch 本地摘要允许恢复。显式修复禁用旧 opaque-state 整流，
+不能再偷偷删摘要或以占位符替换压缩。日志只记录处理数量，不记录正文，不声称所有上游可恢复或长对话语义不变。
 
 #### 协议转换与聚合模型（2026-10-25，中转站重构阶段 3，照搬 cc-switch v4.0.14）
 
@@ -565,62 +594,42 @@ cargo run -p qb-install --example self-update-check -- --as <上一版> --downlo
 3. **绝不自动加**。这两件事都只在使用者当次点击之后执行，没有定时器、没有启动时触发。
    跟「账户切换只能人工触发」同一类：会改变系统行为的动作，不许自己发生。
 
-### 官方 Codex 的 turn-state 口子（0.24.0，使用者定的）
+### Codex 质量检查与旧 turn-state 接管恢复（2026-11-09，未发布）
 
-使用者明确要求：把 ccodex-sleep-state 的 turn-state 机制 clean-room 重写、**只用在官方 Codex** 上
-（「只改 GPT Codex，不改 Claude」「本机路由只路由 `127.0.0.1`，不属于当初决定不引入的那部分」）。
-代码在 `crates/qb-station/src/turnstate.rs`（外形解析 + active/ready，纯函数）、
-`crates/qb-station/src/sse.rs`（SSE 终止事件分类，纯函数）、
-`crates/qb-app/src/local_router/official.rs`（`UpstreamAuth::OAuthPassthrough` 官方模式 + 采集/注入）。
+旧官方 turn-state 的重新开启、按 292 / 332 长度筛选和跨请求注入入口已停用；**不要根据历史 0.24.0 设计重新开放**。
+官方 `openai/codex` 固定提交 `27fcd7cbedd7efd63fd704bd01a0cfe1d7b85a26`，`codex-rs/core/src/client.rs` 第 333–343 行
+定义的是单个 turn 内保持不变的粘性路由令牌；不同 turn 与身份变化后必须清空。公开证据不支持按长度判断模型质量、额度或模型身份。
+旧协议代码的保留不代表允许再次开启该产品功能；现有客户端自己携带的官方状态按原透传边界处理，不能替换为其他 turn 的令牌。
 
-六条硬约束，动了任何一条就要同步改 [DISCLAIMER.md](DISCLAIMER.md) §5.3：
+界面以 `StationQualityCheck.tsx` 的“GPT 质量检查”替代。只有点击开始才串行发送，默认一题，可选指纹 / 动画与 1–3 轮，
+每批最多 15 发；必须固定明确账户或已授权 Codex 线路，不修改全局 current / pending，不自动换线或重试。
+中转仅支持 Responses / Chat 原生文本检测，沿用来源快照、容量 / RPM / 排队和真实用量日志；同批来源变更必须拒绝续跑。
+官方调用指定账户的临时只读 CLI，会话忽略用户配置、禁搜索与 shell 工具；不读取 / 复制 auth，不重新登录或改官方系统提示。
+官方 CLI 不保证输出 Token 上限，须明确显示，使用超时 / 字节上限及专属 Job 取消整棵子进程树；不支持所需 CLI 参数时明确要求升级。
+取消、目标改变或关闭弹窗须停止当前及后续请求；后端保留提前取消标记。手动关门、看门狗撤销和全局停止必须撤销对应整个批次，不能被下一题重新放行。检测期间工具操作或不完整成功终态均不得计为通过。
 
-1. **只对 `Client::Codex`。** Claude Code / 桌面端一律不进官方模式、不注入、不采集 ——
-   turn-state 是 OpenAI 的请求头，Anthropic 协议里没有对应物。有测试
-   `turn_state_stays_off_for_claude_routes` 钉着。
-2. **一行 ccodex 源码都不许抄。** 它是第三方 GPL，抄进来堵死商业授权档（见「抄代码之前先看 license」）。
-   只按公开协议行为自己写，Mihomo / 订阅 / 出站协议 / 代理出口池一概不引入。
-3. **不「换出口凑 292」。** 没有代理出口池，只在当前这一条连接上采集。
-4. **被动采集，不发合成探测请求。** 只读官方响应本就带回的头喂给 `Store::offer`；
-   不额外发模型请求烧额度。客户端自己带了 turn-state 就保留它的，不覆盖（不弄坏它自己的状态）。
-5. **`OAuthPassthrough` 是「路由不承载官方身份」的唯一受控例外。** 只有它保留客户端的 OAuth、
-   不剥不换；其余上游仍走 `CLIENT_AUTH_HEADERS` 剥离 + 换上线路自己的 Key。不改系统代理；
-   2026-10-24 起路由可以开到所有网卡上、中转线路可以走出站代理，但**官方线只给本机、永远直连**
-   （见上面「本机路由不在此列」那一节的三条）。
-6. **长度不是质量/额度指标。** 界面与文案照 ccodex 自己的口径写：符合 292/332 不证明任何服务端事实，
-   也不增加额度。默认关闭，只在使用者手动开启后生效。
+评分核心来自 MIT `lmfpd-sdk` 0.2.0 / `lmfpd-data` 0.0.1793708131735；固定本地参考库先验编译内的 SHA-256，禁止运行时下载替换。
+无许可证的 `li-zane/codex-jiangzhi-jiance` / `codex-candy-eval` 封装不复制。指纹算法与原 SDK 对照，改算法必须重验；
+库内概率不是降智概率，合并参考类必须明示。糖果题独立编写，明确允许按形状选择，严格读取唯一整数 JSON；
+灯塔动画独立编写，iframe 必须空 sandbox 与限制 CSP，禁脚本 / 联网 / 导航，静态合格仍须人工复核。
+历史只保存条件、分项结果与用量等元数据，不保存回复正文 / HTML / 错误原文；协议不同不能混比。历史来源标记必须使用进程随机盐，不保存密钥或可离线枚举的原始摘要；来源未知或重启后不直接混比。题组或参考库变化必须保留版本边界。
 
-把官方 Codex 接进路由那段接线在 `crates/qb-app/src/usecase/turnstate_ops.rs`（槽位接管：
-`apply_to_config` / `revert_config` 两个纯函数 + `enable` / `disable` + 落盘 marker）与
-`src-tauri/src/commands/station.rs`（`station_turnstate_enable` / `station_turnstate_disable`）。
-**0.24.7 起识别直接作用于当前激活的 Codex 账户槽位** —— 不再造 `qb-router-codex-official`
-分身环境、不再复制 OAuth、不另起第二个 Codex（使用者批准推翻 0.24.0 的做法；老做法会让两份
-Codex 各自轮换同一族刷新令牌而互相登出）。四条容易踩的：
+原五题留在高级折叠区，`lib/codexQuality.ts` 固定答案为 25 / B / 64 / -10 / 4，仍由使用者手动发送与导入；原 v1 历史不能覆盖。
+最终答案 JSON 直接核对五题；Responses JSON/SSE、Codex `exec --json` JSONL 必须明确完成，失败或 incomplete 不计分；
+CLI `reasoning_output_tokens` 与 Responses 详情字段分别解析，缺失保持未知，不从前一响应继承声明或用量。
+小题组、返回模型名、推理 Token 都不能认证模型身份或证明 / 排除整体“降智”；第三方多轮检测项目链接不是官方认证。
 
-- **官方 base_url 不带 `/v1`**（官方端点是 `.../backend-api/codex/responses`）；中转 Codex 才带。
-  差一段 404 而看不出来。细节见 `docs/DESIGN-NOTES.zh-CN.md`「识别直接作用于槽位」一节。
-- **只改槽位 `config.toml` 的两处（`model_provider` + `[model_providers.qb_turnstate]`），
-  `auth.json` 一个字不碰。** 关闭时按 marker **反向恢复这两处，不整份盖回备份** —— 整份盖正是
-  §7.10「auth.json 覆盖登出」那类事故的形状；接管期间 Codex 自己写进去的项目授权 / MCP 要留着。
-- **marker（`state_dir/turnstate-takeover.json`）是「识别开着」的唯一真相。** 面板启动时发现它
-  就**自动关闭并恢复**（`lib.rs` 的 setup 里；本机路由随面板消失，留着会让那个槽位的 Codex
-  对着死端口）—— 这也是「默认关闭、只在手动开启后生效」那条硬约束的落地。互斥守卫看它，
-  不只看内存里的 `official_codex_armed()`（面板重启后后者归零，前者不会）。
-- **挂官方上游是显式动作**（`station_turnstate_enable`），不搭在注入开关上；`replace_upstreams`
-  会保住那条 `OAuthPassthrough` 上游，别让中转线路重装把它冲掉。
+只保留 `station_turnstate_disable` / `turnstate_ops::disable` 的旧配置恢复能力：
 
-**代理 / 订阅 / 机场出站 / 换出口凑 292 不在核心里**（0.24.2，使用者定的）：它们归**独立的
-第三方程序** `ccodex-sleep-state`（GPL），扩展中心只以 `connect` 方式接入它
-（`crates/qb-extensions/src/plugins/codex_egress.rs`：定位 exe、带窗口独立起 `setup`、
-停止 = 结束进程 + 跑它自己的 `restore`；一键安装只下载它 Releases 里的**成品二进制包**并按
-`SHA256SUMS` 校验，`pick_release` 只认 github.com 的下载地址）。**不编译、不复制它一行源码** ——
-GPL 聚合而非衍生，商业档才不受影响。它接管的是**当前激活 Codex 槽位**的目录（`CODEX_HOME`
-显式传给它，接管的目录记进托管记录，`restore` 恢复当初那份），与官方识别**双向互斥**：
-0.24.7 起两边**都要改同一个槽位的 `config.toml`**（识别改 `model_provider`，插件整份接管），
-同时开就是两个程序抢同一个文件。`codex_egress_start` 里的
-`official_codex_armed() || turnstate_ops::takeover().is_some()` 守卫和 `station_turnstate_enable`
-里的 `codex_egress::running()` 守卫都别删；解开靠 `station_turnstate_disable`（0.24.6 之前
-挂上官方线就没有任何地方能摘掉，使用者被锁死在两者之间）。
+- marker（`state_dir/turnstate-takeover.json`）仍是旧接管的持久证据；启动发现后继续自动撤销并恢复，不因移除入口而遗弃。
+- 仅逆向恢复当时接管的 `model_provider` 与 `[model_providers.qb_turnstate]`，不整份覆盖 `config.toml`，不改 `auth.json`，保留用户后改的 MCP / 项目授权。
+- 恢复失败保留 marker、明确报告，允许重试；不要提前清记录。恢复后界面要求使用者自行重启曾使用旧入口的 Codex，不自动终止真实会话。
+- 历史官方透传只限本机、直连，不换 OAuth、不混入 API Key 许可池；恢复 / 拆除时仍必须保持这些边界。
+
+独立第三方程序 `ccodex-sleep-state` 的扩展接入保留自身职责：只连接发布成品，不编译或复制其 GPL 源码，
+出站代理 / 订阅 / 机场池不进入 QB 核心。其接管目录仍明确指向当时的 Codex 槽位，停止仍调用自身 restore。
+运行中外部插件与遗留官方接管不能同时改同一个 config.toml；既有 `official_codex_armed()` / marker 防护继续保留，
+解除遗留接管使用恢复命令，不能重新引入旧开启入口来“修复”互斥。
 
 ### 酒馆的 GPT 桥接只驱动官方 CLI（0.25.0，使用者定的）
 
@@ -638,7 +647,7 @@ GPL 聚合而非衍生，商业档才不受影响。它接管的是**当前激�
 2. **`auth.json` 零接触。** 不读、不复制、不转发任何令牌；身份全靠 `CODEX_HOME=<激活 GPT 槽位>\home`
    交给 CLI 自己去读。这跟 turn-state 那条「`auth.json` 一个字不碰」同源。
 3. **只绑 `127.0.0.1`**，Bearer token 面板生成、只给本机酒馆；**没有 API Key 回退**。
-4. **`-c model_provider="openai"` 强制官方**：槽位开着识别时 `config.toml` 指向本机路由，桥接不受牵连。
+4. **`-c model_provider="openai"` 强制官方**：槽位若仍有历史 turn-state 接管，桥接仍强制官方，不受遗留配置牵连。
 5. **默认 `--ephemeral`**，对话不落槽位会话历史；插件面板里「记入槽位用量」打开才写。
 
 2026-11-09 的「复制中转连接」是独立的 SillyTavern 原生连接，不是官方 CLI 桥接的凭据回退。地址由实际本机路由生成：GPT 复制 `/codex/v1`，Google 复制 `/gemini` 并提示口令填 `Proxy Password`（SillyTavern 自己追加 `/v1beta`）。必须匹配有 Key、协议兼容的真实中转 `Route`，官方 Codex 识别路径不能充当中转就绪状态。复制不改酒馆设置、不起进程；本机 HTTP 模拟测试不等于真人账户端到端验证。
@@ -650,7 +659,7 @@ GPL 聚合而非衍生，商业档才不受影响。它接管的是**当前激�
 - **固定官方生产端点 `https://cloudcode-pa.googleapis.com`。** `loadCodeAssist` 读项目，`fetchAvailableModels` 读真实模型，`streamGenerateContent?alt=sse` 生成。模型发现与生成在同一端点；缺项目要求先在官方 IDE 初始化，不自动 `onboardUser`，不跨 daily/sandbox 探测，不接中转兜底。
 - **一个 IDE 登录、一种已发现模型、一次请求。** 启动后改配置须先停止；每次生成核对槽位登录指纹，变化即拒绝。401 仅允许同一来源内存刷新后再试一次；429、403、生成失败不换号、不换模型、不换中转。归档或合并正在用的槽位须先停桥。
 - **只绑定 `127.0.0.1`**，包括健康检查在内都需本机随机 Bearer；默认端口 5004，配置与本机密钥在 `plugins/antigravity-native-bridge/`。禁止 HTTP 重定向带走官方身份；流式断连/停止取消任务，错误只显示状态与允许列表内的机器代号，不回显上游原文。
-- **只接文本角色卡与多轮对话**，支持增量 SSE、非流式汇总和上游 token 用量；图片、音频、工具调用和未知内容明确拒绝。模型列表只来自官方返回的文本模型，不捏造默认模型。实际账户的项目/模型权限和内部接口兼容性仍需使用者显式验证，mock 通过不得写成真人端到端成功。
+- **只接文本角色卡与多轮对话**，仅开头连续 system / developer 提升为全局 systemInstruction，中途指令保留相对顺序；token 上限为 null 按未指定兼容。Claude 模型的 sessionId 与 Sub2API 有差异，尚未证明是缺陷。支持增量 SSE、非流式汇总和上游 token 用量；图片、音频、工具调用和未知内容明确拒绝。模型列表只来自官方返回的文本模型，不捏造默认模型。实际账户的项目/模型权限和内部接口兼容性仍需使用者显式验证，mock 通过不得写成真人端到端成功。
 - 启动受 `LaunchTarget::Antigravity.gated()` 控制；全局停止收掉原生桥，门禁失败只在反重力纳入门禁时收掉它。「关闭 Claude」不能停止它或释放它独立的 `antigravity-native-bridge` 租约；「停止酒馆」收全部桥。保留现有 Gemini CLI 路径。
 
 配套三条：子进程一律挂进 `KillOnCloseJob`（面板退出 / `stop()` 不留孤儿 `codex.exe`）；
@@ -825,7 +834,7 @@ check_switch, swap_with_previous}`、`qb-platform::sessions::OwnedProgram::launc
    别照 al01cn 那样直接删 —— 角色卡连着几百段聊天。
 2. **只认酒馆自己的格式、导入不覆盖**：卡 = 带 `ccv3` / `chara` 文本块的 PNG，世界书 = 顶层有 `entries` 的 JSON；同名加 ` (2)`。
    别家格式说清楚为什么没进来、请在酒馆里导入 —— 面板不替它转格式。**不改卡与世界书的内容**（`tavern_assets` 那条没变）。
-3. ⛔ **扩展的 git 操作不拿 `operations::exclusive()`**：克隆可能要几分钟，看门狗每 5 秒要那把锁巡检。它们之间用 `tavern_library::git_lock` 排队。
+3. ⛔ **扩展的 git 操作不拿 `operations::exclusive()`**：克隆可能要几分钟，看门狗按统一巡检间隔（1–30 秒，默认 5 秒）要那把锁巡检。它们之间用 `tavern_library::git_lock` 排队。
    只在点了之后跑、不经 shell、`GIT_TERMINAL_PROMPT=0`；更新只 `pull --ff-only`（本地改过就不动）；远端地址里的账号密码抹掉再显示（`redact_url`）；
    从地址安装只收 https、克隆下来没有 `manifest.json` 就删掉那份刚克隆的。
 4. **不写酒馆的 `settings.json`**：扩展「停用」只读出来显示。
@@ -1342,7 +1351,7 @@ Gemini CLI 的 `GEMINI.md`、Hermes 的 `SOUL.md`。**写进哪一份由使用�
   （`project_ops`、`mcp_ops`、`skill_ops`、`prompt_ops`、`ext_place`）一个都不许提账户切换的入口（`account_ops`、`codex_accounts`、
   `accounts::switch`、`killswitch`……）。
 - **线路和派单顺序走手动操作原来那两条路**（`select_route_in` / `save_queue_in`，手动点一行、手排顺序也用它们，不另写一份）：
-  线路排队、下一发生效，调度开着时跟手动选一样钉住 4 小时；项目里存的线路已经删了 —— 不换、记提醒，不替使用者另挑一条。
+  线路排队、下一发生效；项目选线与普通手动选线都回到 `selected` 并停止调度，只有独立的池内固定首选操作才保留备用；项目里存的线路已经删了 —— 不换、记提醒，不替使用者另挑一条。
   派单顺序只收这个软件还在的线；**调度开着时不落**（顺序归调度排，记提醒）。
 - **「不使用项目」先把当前项目这一组存一下再清**（cc-switch 只清指针：在项目里改过的设置一清就丢）；什么配置都不动。
 - 删项目只删记录，不动任何配置；删之前再确认一次。反重力不经本机路由，没有项目（建、换、清都拒绝）。
@@ -1368,7 +1377,7 @@ workspace 里模块名要全局唯一），全局只挂一份的确认框是 `De
   一把加密存的 Key、一条线路，**不切过去**；同一软件、站点、分组已经有线路就**在动任何东西之前**拒绝；其余地址进备用地址。
   MCP → 列表，**一个目标都不勾**、不写任何客户端配置，同名已有的跳过；提示词 → 库，不启用；Skill **不从链接装**，
   确认框只是带着来源（`https://github.com/<仓库>/tree/<分支>/<目录>`）去 Skills 分页，扫描、挑、装都由使用者来。
-  链接里的 `enabled=true`、用量脚本（`usage*`，阶段 6 才有）认出来但不照做，确认框列成「没照做的」。
+  链接里的 `enabled=true`、用量脚本（`usage*`）认出来但不照做，确认框列成「没照做的」；用量脚本需用户另行配置并启用。
 - **链接是不可信输入**（照 cc-switch）：地址只收 http / https；远程配置（`configUrl`）拒绝；图标（`icon` / `iconUrl`）丢掉、
   不替链接下载；Codex / Grok Build 配置里让客户端执行命令或读本机凭据的键（`auth`、`aws`、`env_http_headers`、`mtls_cert_dir`……）
   拒绝；只用 `env_key` 间接给 Key、链接自己又没给的拒绝（导进来等于把本机环境变量里的 Key 发到链接给的地址）；
@@ -1376,7 +1385,7 @@ workspace 里模块名要全局唯一），全局只挂一份的确认框是 `De
 - **模型和协议照预设那一套落到线路上**：主模型进模型映射的「兜底」、各档进各档、`[1M]` 剥掉。**上游协议跟预设不一样 ——
   链接写了就填**（只在跟这个软件的原生协议不同时填）：预设不填协议，是因为它知道的只是「官方端点长什么样」；
   链接是这个站点自己说的，不填的话「只说 OpenAI Chat 的站」配给 Claude Code 一发都通不了。
-- 导入成了线路之后跟手动存线路一样重装上游、更新聚合模型（`load_upstreams` / `sync_aggregate_config`），界面跳到中转站页那个软件的分页
+- 导入成了线路之后跟手动存线路一样重装上游、更新聚合模型（`load_upstreams_locked` / `sync_aggregate_config`）；持久化与上游重载必须在同一路由锁内完成，因为导入可能为已有站点增加备用地址。确认框按收件版本隔离旧 peek 与导入完成，旧 A 不能清掉新 B；事件订阅完成后补读。Sub2API Codex 导出的 JSON 包裹 TOML、静态 token 和 actor 标记头有兼容回归。界面跳到中转站页那个软件的分页
   （分页记在会话态 `station.client`）。
 
 钉着的是 `qb_extensions::deeplink` 的六个（两种协议同一个格式、不可信的部分拒绝或照实报、协议要配得上软件、配置只补链接没写的、
@@ -1436,7 +1445,7 @@ MiniMax 国内 / 国际、OpenCode Go）。认哪一家、怎么解析在 `qb-st
 本机路由五个软件（Claude Code、桌面端、Codex、Gemini CLI、Grok Build）的请求：概览、按天 / 今天按小时的趋势（`ui/BarChart`，
 站内花费 / 官方价折算 / Token / 请求数四选一，一张图一个量）、全年热力图（`ui/YearHeatmap`）、按软件 / 站点 / 模型三张表、
 逐条日志（按模型、只看失败筛，分页）。从中转站页总览那一格的「用量明细」进来（带着当前软件），不进侧栏；能滚动。
-后端 `usecase::relay_usage_ops`，命令 `station_usage_report` / `station_usage_requests`（读之前先把内存里没落库的那批写掉）。首页 KPI 另用 `station_usage_totals` 读完整本机记录：1 / 24 / 168 小时按精确滚动窗口汇总，全部历史含归档，不拿日志分页当总量。缺失 Token / 价格保持未知；USD 站内额度估算只合计已知价格部分。
+后端 `usecase::relay_usage_ops`，命令 `station_usage_report` / `station_usage_requests`（读之前先把内存里没落库的那批写掉；必须先成功开库再取走日志缓冲，不能因开库失败丢日志）。首页 KPI、线路本段请求与柱状图共用 `station_usage_overview` 的一次完整 SQL 聚合（`usage_overview_rows`）：1 / 24 / 168 小时使用相同精确起止时刻、排除未来记录；全部历史含归档并按本地日展示，保留缺失日期的零桶。分钟粒度为 5 分钟，长历史合并相邻桶至最多 60 根柱，不抽样丢计数。日志表及 TTFT / 总延迟仍取最近 2000 条样本，必须明确标注，不能拿样本当请求总量。缺失 Token / 价格保持未知；USD 站内额度估算只合计已知价格部分。`station_usage_totals` 保留兼容，不另造一个不一致的统计来源。
 
 - **按天汇总表 `usage_daily`（迁移 10）**：`router_requests` 只留 30 天，裁之前在**同一个事务**里先按「本地日期 + 软件 + 线路 +
   模型 + 上游模型」加进汇总（`Repository::prune_router_requests`）。汇总和明细永远不重叠，相加就是全部 ——
@@ -1640,7 +1649,10 @@ Claude Code 和 Codex 留在本机的会话记录：列表（按来源筛、搜�
 - **后台快照不能覆盖较新的用户操作**（2026-11-09）：提交派单前，在同一路由状态锁内重读开关、偏好、队列、固定线路和内存 current / pending；期间有变化就丢弃这轮结果。手动选择、落盘与钉住在同一状态锁内完成；恢复旧线路时已有 pending 也算已选。设置页读取失败不得回写默认值，写入排队且失败显错；当前 / 下一发 / 最近请求实际线路分开显示。
 - **请求允许范围先于排序**（2026-11-09，未发布）：`RouterSettings.routing_mode` 是唯一跨线授权来源。默认 `selected` 只用当前 / 待用所选线路，旧 JSON 即使带 `auto_failover:true` 也不迁成许可池；`pool` 只能访问明确保存的 `allowed_routes`。普通选线、指定线路启动及项目选线收回为 `selected` 并停止调度；“固定池内首选”才保留池内备用。关闭智能调度只停止排序，不退出用户已明确批准的池，界面必须说清这一点。池、队列、当前线与调度状态在同一锁 / 事务中协调；新增线路不自动授权。
 - **发送前读最新许可，不信旧候选拷贝**：聚合发现 / 固定前缀、等待请求体后的首发、官方线及每次重试（含整流与同线路备用地址）均受当前范围限制。删除或撤销阻止尚未准入的发送，已准入在途请求不承诺撤回；不持状态锁等待网络。被拒绝而未发包不伪造 attempt、不计站点健康错误、不写成“最近实际访问了该站”。不凭价格或站名推断免费；明确名单是授权边界，预算硬上限仍未实现。
-- **可选发送准入不得扩大许可**（2026-11-09，未发布）：每线路并发 / RPM / 额度检查、有限等待默认关闭；`least-loaded` 只在显式许可池生效。每次真实发送（含重试与测活）原子领取容量并计 RPM，并发名额随响应流结束 / 取消释放；本机排队 / 拒绝不伪造上游消费或健康失败。一个请求共用等待期限，延长设置不延长既有等待，关闭 / 收紧立即按新上限处理；池先查全部即时可用候选，都忙才占一个等候位置。
+- **容量分流必须另开开关**（2026-11-09，未发布）：`AdmissionSettings.overflow_to_pool` 默认 `false`。明确 `pool` + `priority` + 当前 A 的 `max_concurrent=2` + 开关开，才实现同一对话两条 SSE 占住 A 后第 3 发去许可 B；关开关则守住 A 等待或返回 429。A 空出后优先回 A，分流不改全局 `current`。`least-loaded` 也只在开关开时生效，可能在满额前分摊。容量开关不关闭池内故障备用；严格不跨站用 `selected`。
+- **可选发送准入不得扩大许可**：每线路并发 / RPM / 额度检查和有限等待默认关闭。每次真实发送（含重试与测活）同锁领取容量并计 RPM；并发名额随响应结束 / 取消释放，等待位置在准入时立即释放，不等上游首字节。一个请求共用总期限，设置延长不延长旧等待，关闭或缩短期限立即生效。只有分流开关开才先查全部即时可用候选，都忙再排队；本机拒绝不伪造消费或健康失败。
+- **容量按线路 ID、当前进程计算**：同一线路的不同会话共享名额；同站 / 同 Key 的不同线路 ID 不合并，外部流量和其他 QB 进程不在计数内。已发送响应流不拆分或迁移；依赖上游状态的对话应固定线路。
+- **来源修改与撤销必须同步**：删除清理数据库和运行时 current / pending，同 ID 重建不能恢复旧许可。站点 / Key 保存、链接导入及备用地址更新必须同锁持久化并重载上游；测活既查 route_id，也查地址 / Key / 协议 / 模型快照及当前政策，关闭付费测活阻止尚未准入的旧任务。前端排名要隔离旧版本响应，派单保存要跨卸载 / 重挂保持顺序。
 - **额度证据不得猜**：当前只消费内置 DeepSeek `is_available` 的明确机器可用性；逐线路开启且 5 分钟内明确不可用才拒绝。未知、过期、余额 0 均不自行推断，请求路径不主动刷新，来源改动作废旧证据。官方 OAuth 身份不参与 API 线路容量池，消费预算仍须另行实现。
 - **界面上必须写明「面板关掉即停」**。循环活在面板进程里，关掉面板调度
   就不再换上游了，而客户端还在照着上一次选的那条线跑 —— 可能是几天前
@@ -1661,7 +1673,7 @@ Claude Code 和 Codex 留在本机的会话记录：列表（按来源筛、搜�
   「还没选上游」）；
 - **测活判死要让位给真实流量**：判死之后本机路由在那条线上成功过，就不算判死（`station_ops::line_facts`）——
   一次测活不能把正在干活的线打进故障档；
-- **调度开着时**：手动选的线钉住 4 小时（`station_select_route` 顺手钉上，它挂了就不算）；热备顺序归调度排，
+- **调度开着时**：普通 `station_select_route` 会回到 `selected` 并关闭调度；只有明确的池内固定首选才保留池并钉住 4 小时（故障时不继续强占首位）。仍在调度的池内热备顺序归调度排，
   `station_dispatch_queue_save` 拒收手排的顺序（路由设置弹窗里那张表只读）；
 - **测活两种**（`usecase::station_liveness`，判读在 `schedule::liveness`，改写自 sub2guard）：免费的发空请求体，
   只证明「线通、Key 认」，调度开着时自动跑，最近走过真实流量的线不测；花钱的**默认关**（使用者选的），

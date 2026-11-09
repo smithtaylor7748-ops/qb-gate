@@ -13,6 +13,10 @@ label: string,
  */
 model_id: number, 
 /**
+ * 联网模型清单的原始 ID；本机枚举来源没有这一项。不同 ID 不凭显示名猜测共享额度。
+ */
+model_key?: string, 
+/**
  * 剩余比例 0–1。`None` = 这一条没带额度信息。
  */
 remaining: number | null, 

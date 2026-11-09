@@ -7,6 +7,14 @@ import type { AntigravityQuotaSpan } from "./AntigravityQuotaSpan";
  */
 export type AntigravityQuotaWindow = { group: AntigravityQuotaGroup, span: AntigravityQuotaSpan, 
 /**
+ * 原始 bucketId 去掉窗口后缀后的配额池；不同池即使同属 Gemini 也不可合并。
+ */
+pool_id?: string, 
+/**
+ * Google 返回的配额组显示名；未返回时由界面按池 ID 标注。
+ */
+pool_label?: string, 
+/**
  * 剩余比例 0–1。
  */
 remaining: number, 

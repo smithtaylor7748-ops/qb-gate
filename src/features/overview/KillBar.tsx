@@ -83,13 +83,16 @@ export default function KillBar({
     resetTask("killswitch-execute");
     try {
       const r = await api.killswitchExecute(true);
-      endTask("killswitch-execute");
-      toast.ok(
-        `关闭 ${r.killed.length} 个 Claude 进程` +
-          (r.failed.length ? `，${r.failed.length} 个没收掉` : ""),
-      );
-      setKill(null);
       invalidate(...AFTER.gate, "plugins");
+      if (r.failed.length) {
+        throw new Error(
+          `已关闭 ${r.killed.length} 个 Claude 进程；仍有 ${r.failed.length} 个未关闭：` +
+            r.failed.map(([pid, reason]) => `PID ${pid}: ${reason}`).join("；"),
+        );
+      }
+      endTask("killswitch-execute");
+      toast.ok(`关闭 ${r.killed.length} 个 Claude 进程`);
+      setKill(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       endTask("killswitch-execute", msg);

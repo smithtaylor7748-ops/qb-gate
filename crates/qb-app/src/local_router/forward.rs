@@ -189,7 +189,7 @@ pub(super) enum Mode {
 pub(super) async fn relay(
     state: &Arc<Mutex<RouterState>>,
     http: &reqwest::Client,
-    inbound: Inbound,
+    mut inbound: Inbound,
     first: Upstream,
     mut record: Record,
     mode: Mode,
@@ -223,9 +223,36 @@ pub(super) async fn relay(
         }
     }
 
-    let json: Option<Value> = serde_json::from_slice::<Value>(&inbound.body)
+    let mut json: Option<Value> = serde_json::from_slice::<Value>(&inbound.body)
         .ok()
         .filter(Value::is_object);
+    if caller == Client::Codex
+        && is_responses(&inbound.path)
+        && !matches!(first.auth, UpstreamAuth::OAuthPassthrough)
+        && settings.session_recovery.active()
+    {
+        let repaired = json
+            .as_mut()
+            .ok_or("会话修复需要可解析的 Responses JSON 请求。")
+            .and_then(|body| super::session_recovery::repair(body, settings.session_recovery));
+        match repaired {
+            Ok(changes) if changes.ids > 0 || changes.encrypted > 0 => {
+                inbound.body = Bytes::from(json.as_ref().unwrap().to_string());
+                tracing::info!(
+                    removed_item_ids = changes.ids,
+                    removed_encrypted_states = changes.encrypted,
+                    "Codex 请求历史修复"
+                );
+            }
+            Ok(_) => {}
+            Err(message) => {
+                record.log.status = Some(400);
+                record.log.fault = Some("session-recovery-refused".into());
+                record.log.error = Some(message.into());
+                return text(StatusCode::BAD_REQUEST, message);
+            }
+        }
+    }
     let streaming = is_streaming(&inbound, json.as_ref());
     record.log.streaming = streaming;
     let mut sessions = Sessions::default();
@@ -261,6 +288,8 @@ pub(super) async fn relay(
         streaming,
         admission_started: Instant::now(),
         may_wait: true,
+        requires_overflow: false,
+        pool_waiter: None,
     };
     let rectifier = rectifier_config(settings.rectifier);
 
@@ -270,7 +299,11 @@ pub(super) async fn relay(
     let mut attempted = 0usize;
     let mut last: Option<(Failure, Fault)> = None;
     let mut last_admission = None;
-    let pool_wait = routed && settings.routing_mode == RoutingMode::Pool && lines.len() > 1;
+    let pool_wait = routed
+        && settings.routing_mode == RoutingMode::Pool
+        && settings.admission.overflow_to_pool
+        && lines.len() > 1;
+    let mut overflowed = false;
     let mut deferred = Vec::new();
     let mut pool_waiter = None;
 
@@ -361,6 +394,22 @@ pub(super) async fn relay(
             }
             break;
         }
+        if caller == Client::Codex
+            && settings.session_recovery.active()
+            && plan::select(false, &inbound.path, line.format)
+                .is_ok_and(|conversion| !conversion.is_passthrough())
+        {
+            if let Some(Err(message)) = json.as_ref().map(super::session_recovery::guard_conversion)
+            {
+                if let Ok(mut s) = state.lock() {
+                    s.breaker_mut(&line.route_id, caller).release(permit);
+                }
+                record.log.status = Some(400);
+                record.log.fault = Some("session-recovery-refused".into());
+                record.log.error = Some(message.into());
+                return text(StatusCode::BAD_REQUEST, message);
+            }
+        }
         attempted += 1;
         record.log.route_id = line.route_id.clone();
         let previous_upstream_model = record.log.upstream_model.clone();
@@ -376,6 +425,14 @@ pub(super) async fn relay(
         // 池内先尝试所有即时可用容量；都忙时上方统一有界等待。
         let line_ctx = LineCtx {
             may_wait: !pool_wait,
+            pool_waiter: pool_waiter.as_ref(),
+            requires_overflow: routed
+                && (overflowed
+                    || (settings.admission.overflow_to_pool
+                        && last.is_none()
+                        && settings.pool_strategy
+                            == qb_station::router::PoolStrategy::LeastLoaded
+                        && line.route_id != first.route_id)),
             ..ctx
         };
         let mut result = try_line(&line_ctx, &line, &body).await;
@@ -383,9 +440,14 @@ pub(super) async fn relay(
         // 整流：改一下请求再打同一条线一次。不换线、不伤熔断；每条线最多一次。
         // 整流改的是客户端那一侧的请求（转换之前的），改完重新转换。
         if let Attempt::Failed(failure) = &result {
-            if let Some((fixed, why)) =
-                rectify(caller, &inbound.path, &body, &failure.error, &rectifier)
-            {
+            if let Some((fixed, why)) = rectify(
+                caller,
+                &inbound.path,
+                &body,
+                &failure.error,
+                &rectifier,
+                !settings.session_recovery.active(),
+            ) {
                 tracing::info!(
                     "本机路由：{} 因为请求形状被拒（{}），{why}之后对同一条线重试一次",
                     line.route_id,
@@ -432,7 +494,11 @@ pub(super) async fn relay(
                     deferred.push(line.clone());
                 }
                 last_admission = Some(rejection);
-                if routed && settings.routing_mode == RoutingMode::Pool {
+                if routed
+                    && settings.routing_mode == RoutingMode::Pool
+                    && settings.admission.overflow_to_pool
+                {
+                    overflowed = true;
                     while next_index < lines.len() {
                         let candidate = lines[next_index].clone();
                         next_index += 1;
@@ -591,6 +657,8 @@ struct LineCtx<'a> {
     streaming: bool,
     admission_started: Instant,
     may_wait: bool,
+    requires_overflow: bool,
+    pool_waiter: Option<&'a admission::Waiting>,
 }
 
 /// 这条线这一发：选了哪种转换、发什么、打哪儿、响应怎么换回去。
@@ -889,6 +957,7 @@ fn rectify(
     body: &Outgoing,
     error: &ProxyError,
     cfg: &RectifierConfig,
+    allow_opaque_rectification: bool,
 ) -> Option<(Outgoing, &'static str)> {
     let json = body.json.as_ref()?;
     if cfg.enabled
@@ -901,7 +970,8 @@ fn rectify(
             return Some((Outgoing::from_json(v, &body.bytes), "media"));
         }
     }
-    if caller == Client::Codex && is_responses(path) {
+    // 显式会话修复启用后，不再用旧整流器丢推理摘要或用占位符替换压缩上下文。
+    if caller == Client::Codex && is_responses(path) && allow_opaque_rectification {
         // 中转线路对 Codex 来说永远是「第三方」：它收到的压缩密文多半是官方签发的。
         if let Some(rejection) =
             opaque_state_rectifier::detect_opaque_state_rejection(error, cfg, json, true)
@@ -1031,8 +1101,13 @@ async fn attempt(ctx: &LineCtx<'_>, line: &Upstream, plan: &LinePlan) -> Attempt
         ctx.inbound.caller,
         &line.route_id,
         ctx.admission_started,
-        ctx.may_wait,
         Some(line),
+        admission::WaitPolicy {
+            may_wait: ctx.may_wait,
+            requires_overflow: ctx.requires_overflow,
+            pool_waiter: ctx.pool_waiter,
+            strict_source: false,
+        },
     )
     .await
     {
@@ -1942,6 +2017,7 @@ mod tests {
             let mut s = state.lock().unwrap();
             let mut settings = RouterSettings::for_client(client);
             settings.routing_mode = RoutingMode::Pool;
+            settings.admission.overflow_to_pool = true;
             settings.allowed_routes = vec![a.route_id.clone(), b.route_id.clone()];
             tune(&mut settings);
             s.set_settings(settings);
@@ -1979,6 +2055,431 @@ mod tests {
     }
 
     const CLAUDE_OK: &str = r#"{"id":"msg_1","type":"message","content":[],"usage":{"input_tokens":3,"output_tokens":4}}"#;
+
+    #[tokio::test]
+    async fn session_recovery_preserves_call_links_readable_history_and_business_ids() {
+        for filter in [false, true] {
+            let (a, hits) = stub(Script::json(200, RESPONSES_OK)).await;
+            let (b, _) = stub(Script::json(200, RESPONSES_OK)).await;
+            let h = two_lines(Client::Codex, line("a", a), line("b", b), |settings| {
+                settings.session_recovery.strip_item_ids = true;
+                settings.session_recovery.filter_encrypted_content = filter;
+            })
+            .await;
+            let original = serde_json::json!({
+                "model":"m", "metadata":{"id":"business-meta"},
+                "tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"id":{"type":"string"}}}}],
+                "input":[
+                    {"type":"message","id":"msg_1","role":"user","content":[{"type":"input_text","text":"find id 7"}]},
+                    {"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"keep this summary"}],"encrypted_content":"opaque"},
+                    {"type":"message","id":"msg_2","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"looking up"}]},
+                    {"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{\"id\":7}"},
+                    {"type":"function_call_output","id":"fco_1","call_id":"call_1","output":"{\"id\":7,\"result\":\"found\"}"},
+                    {"type":"custom_tool_call","id":"ctc_1","call_id":"call_2","name":"run","input":"id=7"},
+                    {"type":"custom_tool_call_output","id":"cto_1","call_id":"call_2","output":"done"},
+                    {"type":"unknown_business_item","id":"keep-unknown","content":{"id":"keep-nested"}}
+                ]
+            });
+            assert_eq!(
+                post(&h, "/codex/v1/responses", &original.to_string())
+                    .await
+                    .0,
+                200
+            );
+            let forwarded: Value = serde_json::from_str(&hits.lock().unwrap()[0].1).unwrap();
+            let mut expected = original.clone();
+            for item in expected["input"].as_array_mut().unwrap().iter_mut().take(7) {
+                item.as_object_mut().unwrap().remove("id");
+            }
+            if filter {
+                expected["input"][1]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("encrypted_content");
+            }
+            assert_eq!(forwarded, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn session_recovery_defaults_and_official_oauth_leave_the_body_untouched() {
+        for official in [false, true] {
+            let (a, hits) = stub(Script::json(200, RESPONSES_OK)).await;
+            let (b, _) = stub(Script::json(200, RESPONSES_OK)).await;
+            let mut first = line("a", a);
+            if official {
+                first.auth = UpstreamAuth::OAuthPassthrough;
+            }
+            let h = two_lines(Client::Codex, first, line("b", b), |settings| {
+                settings.session_recovery.strip_item_ids = official;
+                settings.session_recovery.filter_encrypted_content = official;
+            })
+            .await;
+            let body = r#"{ "model":"m", "previous_response_id":"resp_old", "input":[{"type":"reasoning","id":"rs_1","encrypted_content":"opaque","summary":[]}] }"#;
+            assert_eq!(post(&h, "/codex/v1/responses", body).await.0, 200);
+            assert_eq!(hits.lock().unwrap()[0].1, body);
+        }
+    }
+
+    #[tokio::test]
+    async fn session_recovery_refuses_references_or_unreadable_context_before_any_upstream() {
+        for body in [
+            serde_json::json!({"input":[],"previous_response_id":"resp_old"}),
+            serde_json::json!({"input":[],"conversation":{"id":"conv_old"}}),
+            serde_json::json!({"input":[{"type":"item_reference","id":"msg_old"}]}),
+            serde_json::json!({"input":[{"type":"compaction","encrypted_content":"opaque"}]}),
+            serde_json::json!({"input":[{"type":"agent_message","content":[{"type":"encrypted_content","encrypted_content":"task"}]}]}),
+            serde_json::json!({"input":[{"type":"function_call_output","call_id":"call_1","output":[{"type":"encrypted_content","encrypted_content":"result"}]}]}),
+        ] {
+            let (a, a_hits) = stub(Script::json(200, RESPONSES_OK)).await;
+            let (b, b_hits) = stub(Script::json(200, RESPONSES_OK)).await;
+            let h = two_lines(Client::Codex, line("a", a), line("b", b), |settings| {
+                settings.session_recovery.filter_encrypted_content = true;
+            })
+            .await;
+            let (status, message) = post(&h, "/codex/v1/responses", &body.to_string()).await;
+            assert_eq!(status, 400);
+            assert!(message.contains("会话修复"));
+            assert!(a_hits.lock().unwrap().is_empty());
+            assert!(b_hits.lock().unwrap().is_empty());
+            assert!(last_log(&h).await.attempts.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn session_recovery_never_falls_back_to_lossy_opaque_rectification() {
+        let (a, hits) = stub(Script::json(400, r#"{"error":{"code":"invalid_encrypted_content","message":"invalid encrypted content"}}"#)).await;
+        let (b, _) = stub(Script::json(200, RESPONSES_OK)).await;
+        let h = two_lines(Client::Codex, line("a", a), line("b", b), |settings| {
+            settings.session_recovery.strip_item_ids = true;
+            settings.max_attempts = 1;
+        })
+        .await;
+        let body = r#"{"model":"m","input":[{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"do not discard"}],"encrypted_content":"opaque"}]}"#;
+        assert_eq!(post(&h, "/codex/v1/responses", body).await.0, 400);
+        assert_eq!(
+            hits.lock().unwrap().len(),
+            1,
+            "ID cleanup must not enable ciphertext removal through retry"
+        );
+        let forwarded: Value = serde_json::from_str(&hits.lock().unwrap()[0].1).unwrap();
+        assert_eq!(
+            forwarded["input"][0]["summary"][0]["text"],
+            "do not discard"
+        );
+        assert_eq!(forwarded["input"][0]["encrypted_content"], "opaque");
+    }
+
+    #[tokio::test]
+    async fn session_recovery_keeps_decodable_compaction_text_when_converting_to_chat() {
+        let (a, hits) = stub(Script::json(200, r#"{"id":"c1","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}"#)).await;
+        let (b, _) = stub(Script::json(200, RESPONSES_OK)).await;
+        let mut first = line("a", a);
+        first.format = Some(plan::ApiFormat::OpenaiChat);
+        let h = two_lines(Client::Codex, first, line("b", b), |settings| {
+            settings.session_recovery.filter_encrypted_content = true;
+        })
+        .await;
+        let body = serde_json::json!({"model":"m","input":[
+            {"type":"compaction","encrypted_content":qb_proxy::codex_compaction::encode_compaction_summary("earlier: task 7 is complete")},
+            {"role":"user","content":"continue task 8"}
+        ]});
+        assert_eq!(
+            post(&h, "/codex/v1/responses", &body.to_string()).await.0,
+            200
+        );
+        let hits = hits.lock().unwrap();
+        assert!(hits[0].0.ends_with("/chat/completions"));
+        let forwarded: Value = serde_json::from_str(&hits[0].1).unwrap();
+        let messages = forwarded["messages"].to_string();
+        assert!(messages.contains("earlier: task 7 is complete"));
+        assert!(messages.contains("continue task 8"));
+        assert!(!messages.contains("encrypted_content"));
+    }
+
+    #[tokio::test]
+    async fn session_recovery_id_only_preserves_native_compaction_but_refuses_lossy_conversion() {
+        for chat in [false, true] {
+            let (a, hits) = stub(Script::json(200, RESPONSES_OK)).await;
+            let (b, _) = stub(Script::json(200, RESPONSES_OK)).await;
+            let mut first = line("a", a);
+            if chat {
+                first.format = Some(plan::ApiFormat::OpenaiChat);
+            }
+            let h = two_lines(Client::Codex, first, line("b", b), |settings| {
+                settings.session_recovery.strip_item_ids = true;
+                settings.max_attempts = 1;
+            })
+            .await;
+            let body = r#"{"model":"m","input":[{"type":"compaction","id":"cmp_1","encrypted_content":"opaque"}]}"#;
+            let (status, message) = post(&h, "/codex/v1/responses", body).await;
+            if chat {
+                assert_eq!(status, 400);
+                assert!(message.contains("会话修复停止"));
+                assert!(hits.lock().unwrap().is_empty());
+                assert!(last_log(&h).await.attempts.is_empty());
+            } else {
+                assert_eq!(status, 200);
+                let forwarded: Value = serde_json::from_str(&hits.lock().unwrap()[0].1).unwrap();
+                assert_eq!(
+                    forwarded["input"][0],
+                    serde_json::json!({"type":"compaction","encrypted_content":"opaque"})
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn same_conversation_two_slots_overflow_is_explicit_and_does_not_switch_the_primary() {
+        for client in [Client::ClaudeCode, Client::Codex] {
+            for enabled in [false, true] {
+                let codex = client == Client::Codex;
+                let path = if codex {
+                    "/codex/v1/responses"
+                } else {
+                    "/v1/messages"
+                };
+                let mut script = Script::sse(vec![if codex {
+                    "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"held\"}\n\n"
+                } else {
+                    "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"held\"}}\n\n"
+                }]);
+                script.stall_ms = 5000;
+                let (a, a_hits) = stub(script).await;
+                let response = if codex {
+                    r#"{"id":"resp_1","object":"response","status":"completed","output":[],"usage":{"input_tokens":3,"output_tokens":4}}"#
+                } else {
+                    CLAUDE_OK
+                };
+                let (b, b_hits) = stub(Script::json(200, response)).await;
+                let h = two_lines(client, line("a", a), line("b", b), |s| {
+                    s.admission.overflow_to_pool = enabled;
+                    s.max_attempts = 1; // A full slot is not a failed upstream attempt.
+                    s.admission.route_limits.insert(
+                        "a".into(),
+                        qb_station::router::RouteLimits {
+                            max_concurrent: 2,
+                            ..Default::default()
+                        },
+                    );
+                })
+                .await;
+                let body = if codex {
+                    r#"{"model":"m","stream":true,"metadata":{"session_id":"same-conversation"},"input":[{"role":"user","content":"hello"}]}"#
+                } else {
+                    r#"{"model":"m","stream":true,"metadata":{"session_id":"same-conversation"},"messages":[{"role":"user","content":"hello"}]}"#
+                };
+                let http = reqwest::Client::new();
+                let url = format!("{}{path}", h.base_url());
+                let mut held = Vec::new();
+                for _ in 0..2 {
+                    let response = http.post(&url).body(body).send().await.unwrap();
+                    assert_eq!(response.status(), 200);
+                    held.push(response);
+                }
+                assert_eq!(h.state.lock().unwrap().admissions["a"].active, 2);
+                assert_eq!(a_hits.lock().unwrap().len(), 2);
+                assert!(b_hits.lock().unwrap().is_empty());
+                let result = tokio::time::timeout(Duration::from_secs(2), post(&h, path, body))
+                    .await
+                    .unwrap();
+                assert_eq!(result.0, if enabled { 200 } else { 429 });
+                assert_eq!(a_hits.lock().unwrap().len(), 2);
+                assert_eq!(b_hits.lock().unwrap().len(), usize::from(enabled));
+                let log = last_log(&h).await;
+                assert_eq!(
+                    log.session_id.as_deref(),
+                    Some(if codex {
+                        "codex_same-conversation"
+                    } else {
+                        "same-conversation"
+                    })
+                );
+                assert_eq!(log.attempts.len(), usize::from(enabled));
+                if enabled {
+                    assert_eq!(log.attempts[0].route_id, "b");
+                }
+                assert_eq!(
+                    h.state.lock().unwrap().current(client).as_deref(),
+                    Some("a")
+                );
+                drop(held);
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    while h.state.lock().unwrap().admissions["a"].active != 0 {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .unwrap();
+                let next = http.post(&url).body(body).send().await.unwrap();
+                assert_eq!(next.status(), 200);
+                assert_eq!(a_hits.lock().unwrap().len(), 3);
+                assert_eq!(b_hits.lock().unwrap().len(), usize::from(enabled));
+                drop(next);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn pool_waiter_is_released_when_sent_before_slow_response_headers() {
+        let mut script = Script::json(200, CLAUDE_OK);
+        script.delay_ms = 700;
+        let (a, a_hits) = stub(script).await;
+        let (b, _) = stub(Script::json(200, CLAUDE_OK)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
+            s.admission.max_wait_ms = 2000;
+            s.admission.max_waiters = 1;
+            for id in ["a", "b"] {
+                s.admission.route_limits.insert(
+                    id.into(),
+                    qb_station::router::RouteLimits {
+                        max_concurrent: 1,
+                        ..Default::default()
+                    },
+                );
+            }
+        })
+        .await;
+        let sources = h.state.lock().unwrap().upstreams.clone();
+        let held_a =
+            RouterState::admit_probe(&h.state, Client::ClaudeCode, &sources["a"], false).unwrap();
+        let held_b =
+            RouterState::admit_probe(&h.state, Client::ClaudeCode, &sources["b"], false).unwrap();
+        let url = format!("{}/v1/messages", h.base_url());
+        let request = tokio::spawn(async move {
+            reqwest::Client::new()
+                .post(url)
+                .body(r#"{"model":"m"}"#)
+                .send()
+                .await
+                .unwrap()
+                .status()
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while h.state.lock().unwrap().admissions["a"].waiting == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        drop(held_a);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while a_hits.lock().unwrap().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        {
+            let s = h.state.lock().unwrap();
+            assert_eq!(s.admissions["a"].active, 1);
+            assert_eq!(
+                s.admissions["a"].waiting, 0,
+                "sending must free the waiting slot before response headers arrive"
+            );
+        }
+        assert_eq!(request.await.unwrap(), 200);
+        drop(held_b);
+    }
+
+    #[tokio::test]
+    async fn overflow_off_waits_for_the_primary_even_with_an_idle_backup() {
+        let (a, a_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
+            s.admission.overflow_to_pool = false;
+            s.pool_strategy = qb_station::router::PoolStrategy::LeastLoaded;
+            s.admission.max_wait_ms = 2000;
+            s.admission.max_waiters = 1;
+            s.admission.route_limits.insert(
+                "a".into(),
+                qb_station::router::RouteLimits {
+                    max_concurrent: 1,
+                    ..Default::default()
+                },
+            );
+        })
+        .await;
+        let source = h.state.lock().unwrap().upstreams["a"].clone();
+        let held = RouterState::admit_probe(&h.state, Client::ClaudeCode, &source, false).unwrap();
+        let url = format!("{}/v1/messages", h.base_url());
+        let pending = tokio::spawn(async move {
+            reqwest::Client::new()
+                .post(url)
+                .body(r#"{"model":"m"}"#)
+                .send()
+                .await
+                .unwrap()
+                .status()
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while h.state.lock().unwrap().admissions["a"].waiting == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(a_hits.lock().unwrap().is_empty());
+        assert!(b_hits.lock().unwrap().is_empty());
+        drop(held);
+        assert_eq!(pending.await.unwrap(), 200);
+        assert_eq!(a_hits.lock().unwrap().len(), 1);
+        assert!(b_hits.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn turning_overflow_off_stops_an_already_queued_pool_request() {
+        let (a, a_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
+            s.admission.max_wait_ms = 2000;
+            s.admission.max_waiters = 1;
+            for id in ["a", "b"] {
+                s.admission.route_limits.insert(
+                    id.into(),
+                    qb_station::router::RouteLimits {
+                        max_concurrent: 1,
+                        ..Default::default()
+                    },
+                );
+            }
+        })
+        .await;
+        let sources = h.state.lock().unwrap().upstreams.clone();
+        let held: Vec<_> = ["a", "b"]
+            .into_iter()
+            .map(|id| {
+                RouterState::admit_probe(&h.state, Client::ClaudeCode, &sources[id], false).unwrap()
+            })
+            .collect();
+        let url = format!("{}/v1/messages", h.base_url());
+        let pending = tokio::spawn(async move {
+            reqwest::Client::new()
+                .post(url)
+                .body(r#"{"model":"m"}"#)
+                .send()
+                .await
+                .unwrap()
+                .status()
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while h.state.lock().unwrap().admissions["a"].waiting == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        {
+            let mut s = h.state.lock().unwrap();
+            let mut settings = s.settings(Client::ClaudeCode);
+            settings.admission.overflow_to_pool = false;
+            s.set_settings(settings);
+        }
+        drop(held);
+        assert_eq!(pending.await.unwrap(), 403);
+        assert!(a_hits.lock().unwrap().is_empty());
+        assert!(b_hits.lock().unwrap().is_empty());
+    }
 
     #[tokio::test]
     async fn admission_stream_slot_survives_headers_and_is_released_on_client_abort() {
@@ -2072,8 +2573,11 @@ mod tests {
             }
         })
         .await;
-        let held_a = RouterState::admit_probe(&h.state, Client::ClaudeCode, "a", false).unwrap();
-        let held_b = RouterState::admit_probe(&h.state, Client::ClaudeCode, "b", false).unwrap();
+        let sources = h.state.lock().unwrap().upstreams.clone();
+        let held_a =
+            RouterState::admit_probe(&h.state, Client::ClaudeCode, &sources["a"], false).unwrap();
+        let held_b =
+            RouterState::admit_probe(&h.state, Client::ClaudeCode, &sources["b"], false).unwrap();
         let url = format!("{}/v1/messages", h.base_url());
         let pending = tokio::spawn(async move {
             reqwest::Client::new()
@@ -2121,7 +2625,8 @@ mod tests {
             );
         })
         .await;
-        let held = RouterState::admit_probe(&h.state, Client::ClaudeCode, "b", false).unwrap();
+        let source = h.state.lock().unwrap().upstreams["b"].clone();
+        let held = RouterState::admit_probe(&h.state, Client::ClaudeCode, &source, false).unwrap();
         assert_eq!(post(&h, "/v1/messages", r#"{"model":"m"}"#).await.0, 502);
         let log = last_log(&h).await;
         assert_eq!(log.route_id, "a");

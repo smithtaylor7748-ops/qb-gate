@@ -45,6 +45,8 @@
  */
 import { Gauge } from "../../ui";
 import type { SlotUsage, UsageWindow } from "../../lib/api";
+import { resetEpoch, resetPassed, useQuotaClock } from "../../lib/quotaClock";
+import QuotaCountdown from "./QuotaCountdown";
 
 /** 五小时窗口的分钟数。读数比这还旧，那份五小时读数必然跨过了窗口。 */
 const FIVE_HOUR_MIN = 5 * 60;
@@ -105,19 +107,21 @@ function WindowGauge({
   window: w,
   expired,
   binding,
+  now,
 }: {
   name: string;
   window: UsageWindow | null | undefined;
   expired: boolean;
   /** 两个窗口里紧的那个。整行的判断要以它为准。 */
   binding: boolean;
+  now: number;
 }) {
   // 没这一项就整条不画。画一条空槽会被读成「剩 0」。
   if (!w) return null;
   // 窗口在这份读数之后已经重置过（后端 `reset_passed`，2026-09-25）。原来只按读数的年龄判过期：
   // 五小时窗口 40 分钟前就重置了、读数才 90 分钟旧，照样画「剩 8%」标红、重置时刻写「未知」。
-  if (w.reset_passed) {
-    const why = "已重置过，这份读数是重置之前的";
+  if (w.reset_passed || resetPassed(resetEpoch(w.resets_at), now)) {
+    const why = "已到重置时间 · 待刷新确认额度";
     return <Gauge name={name} used={null} note={why} hint={why} />;
   }
   if (expired) {
@@ -126,11 +130,10 @@ function WindowGauge({
   }
   return (
     <Gauge
+      className="gauge--countdown"
       name={name}
       used={w.used}
       binding={binding}
-      // 账户表里那一格窄，重置时刻只在悬停里（`.acct-quota .gauge-reset` 收掉了行内那一截）；
-      // 详情页和用量页照旧画在条子后面。推算的照旧说是推算。
       hint={
         w.resets_at
           ? `${fmtReset(w.resets_at)} 重置${
@@ -142,19 +145,11 @@ function WindowGauge({
       }
       // 读不到重置时刻就什么都不画（2026-11-06 使用者：「这个未知是什么？删掉」）。
       extra={
-        w.resets_at ? (
-          <span
-            className="gauge-reset"
-            title={
-              w.estimated
-                ? "从样本里那次断崖下跌反推的，不是官方客户端写下的时刻，误差约七八分钟"
-                : "官方客户端写下的重置时刻"
-            }
-          >
-            ↻ {fmtReset(w.resets_at)}
-            {w.estimated && <em>推算</em>}
-          </span>
-        ) : undefined
+        <QuotaCountdown
+          epoch={resetEpoch(w.resets_at)}
+          now={now}
+          estimated={w.estimated}
+        />
       }
     />
   );
@@ -170,6 +165,7 @@ export default function SlotUsageBars({
   /** `null` = 两源都没有读数：只画一句话，**不画假数字**。 */
   usage: SlotUsage | null;
 }) {
+  const now = useQuotaClock();
   if (!usage) {
     return (
       <div className="slotusage">
@@ -184,14 +180,29 @@ export default function SlotUsageBars({
       </div>
     );
   }
-  const fhDead = expiredIn(usage, FIVE_HOUR_MIN);
-  const sdDead = expiredIn(usage, SEVEN_DAY_MIN);
+  const measured = Date.parse(usage.measured_at);
+  const age = Number.isFinite(measured)
+    ? Math.max(usage.age_minutes, Math.floor((now - measured) / 60_000))
+    : usage.age_minutes;
+  const aged = { ...usage, age_minutes: age };
+  const fhDead = expiredIn(aged, FIVE_HOUR_MIN);
+  const sdDead = expiredIn(aged, SEVEN_DAY_MIN);
 
   // 紧的那个：两边都有有效读数时才比得出来，差距太小就不标
   // （都在 50% 上下时标一个「卡这儿」只是噪音）。
   // 已经重置过的那一格不参加比紧（它的数不是当前值）。
-  const fh = fhDead || usage.five_hour?.reset_passed ? null : usage.five_hour;
-  const sd = sdDead || usage.seven_day?.reset_passed ? null : usage.seven_day;
+  const fh =
+    fhDead ||
+    usage.five_hour?.reset_passed ||
+    resetPassed(resetEpoch(usage.five_hour?.resets_at), now)
+      ? null
+      : usage.five_hour;
+  const sd =
+    sdDead ||
+    usage.seven_day?.reset_passed ||
+    resetPassed(resetEpoch(usage.seven_day?.resets_at), now)
+      ? null
+      : usage.seven_day;
   let bind: "five" | "seven" | null = null;
   if (fh && sd && Math.abs(fh.used - sd.used) >= 10) {
     bind = fh.used > sd.used ? "five" : "seven";
@@ -205,16 +216,18 @@ export default function SlotUsageBars({
           window={usage.five_hour}
           expired={fhDead}
           binding={bind === "five"}
+          now={now}
         />
         <WindowGauge
           name="7 天"
           window={usage.seven_day}
           expired={sdDead}
           binding={bind === "seven"}
+          now={now}
         />
       </div>
       <span className="gauge-src" title={SOURCE_HINT[usage.source]}>
-        {SOURCE_NAME[usage.source]} · {fmtAge(usage.age_minutes)}
+        {SOURCE_NAME[usage.source]} · {fmtAge(age)}
       </span>
     </div>
   );

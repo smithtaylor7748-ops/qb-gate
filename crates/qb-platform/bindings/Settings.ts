@@ -56,6 +56,12 @@ antigravity_hub_quota: boolean,
  */
 gate_auto_rearm: boolean, 
 /**
+ * IP 锁每轮检测结束后的等待秒数。默认 5，允许 1–30；CLI 与桌面端共用。
+ * 只经 IP 锁面板的专用命令修改，保存后运行中的看门狗重新计算等待期限。
+ * 上限为门禁判定缓存的 45 秒有效期留出探测时间；旧配置缺字段仍为 5 秒。
+ */
+gate_check_interval_secs: number, 
+/**
  * 面板托管安装的根目录（v0.9.0）。Claude Code 装在 `<它>\claude-code\`，
  * Codex 装在 `<它>\codex\`。
  *

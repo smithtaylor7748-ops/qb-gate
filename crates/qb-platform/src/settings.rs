@@ -75,6 +75,11 @@ pub struct Settings {
     /// 不启动任何进程**，也不读限流状态 —— README 合规边界那四条一条都没碰。
     pub gate_auto_rearm: bool,
 
+    /// IP 锁每轮检测结束后的等待秒数。默认 5，允许 1–30；CLI 与桌面端共用。
+    /// 只经 IP 锁面板的专用命令修改，保存后运行中的看门狗重新计算等待期限。
+    /// 上限为门禁判定缓存的 45 秒有效期留出探测时间；旧配置缺字段仍为 5 秒。
+    pub gate_check_interval_secs: u32,
+
     /// 面板托管安装的根目录（v0.9.0）。Claude Code 装在 `<它>\claude-code\`，
     /// Codex 装在 `<它>\codex\`。
     ///
@@ -210,6 +215,7 @@ impl Default for Settings {
             antigravity_outside_gate: false,
             antigravity_hub_quota: true,
             gate_auto_rearm: true,
+            gate_check_interval_secs: DEFAULT_GATE_CHECK_INTERVAL_SECS,
             managed_apps_dir: None,
             country_allowlist: Vec::new(),
             hook_enabled: false,
@@ -255,6 +261,15 @@ pub fn path() -> std::path::PathBuf {
 /// 文件没被外部改过），手改本来就不在支持范围内。重启面板即可。
 static CACHE: std::sync::OnceLock<std::sync::RwLock<Option<Settings>>> = std::sync::OnceLock::new();
 
+static CHANGES: std::sync::OnceLock<tokio::sync::watch::Sender<()>> = std::sync::OnceLock::new();
+
+/// 仅在设置成功落盘后通知。接收方重读设置，不能把通知本身当成新的配置。
+pub fn subscribe_changes() -> tokio::sync::watch::Receiver<()> {
+    CHANGES
+        .get_or_init(|| tokio::sync::watch::channel(()).0)
+        .subscribe()
+}
+
 fn cache() -> &'static std::sync::RwLock<Option<Settings>> {
     CACHE.get_or_init(Default::default)
 }
@@ -272,9 +287,9 @@ pub fn load() -> Settings {
     if let Some(s) = cache().read().unwrap().as_ref() {
         return s.clone();
     }
-    let fresh = read_from_disk();
-    *cache().write().unwrap() = Some(fresh.clone());
-    fresh
+    // 初始化也持写锁，避免一个旧读盘结果在保存方作废缓存之后才写进缓存。
+    let mut cached = cache().write().unwrap();
+    cached.get_or_insert_with(read_from_disk).clone()
 }
 
 fn read_from_disk() -> Settings {
@@ -303,13 +318,48 @@ pub fn load_checked() -> Result<Settings> {
 /// `pub`。护栏因此从「编译器」退成「名字」：一个叫
 /// `write_without_invalidating_the_gate_verdict` 的函数，不会有人顺手就调。
 pub fn write_without_invalidating_the_gate_verdict(s: &Settings) -> Result<()> {
+    validate_gate_check_interval(s.gate_check_interval_secs)?;
     load_checked()?;
     invalidate_cache();
     crate::config_io::commit(vec![crate::config_io::Edit::text(
         path(),
         serde_json::to_string_pretty(s)?,
     )?])?;
+    // 作废必须在提交之后再做一次：提交期间读到旧文件的调用不能留下旧缓存。
+    invalidate_cache();
+    if let Some(changes) = CHANGES.get() {
+        changes.send_replace(());
+    }
     Ok(())
+}
+
+pub const DEFAULT_GATE_CHECK_INTERVAL_SECS: u32 = 5;
+pub const MIN_GATE_CHECK_INTERVAL_SECS: u32 = 1;
+pub const MAX_GATE_CHECK_INTERVAL_SECS: u32 = 30;
+
+pub fn validate_gate_check_interval(seconds: u32) -> Result<()> {
+    if !(MIN_GATE_CHECK_INTERVAL_SECS..=MAX_GATE_CHECK_INTERVAL_SECS).contains(&seconds) {
+        return Err(crate::error::GateError::Other(format!(
+            "IP 锁检测间隔必须是 {MIN_GATE_CHECK_INTERVAL_SECS}–{MAX_GATE_CHECK_INTERVAL_SECS} 秒的整数"
+        )));
+    }
+    Ok(())
+}
+
+/// 手改配置中的越界值不允许让门禁长时间停止巡检。
+pub fn gate_check_interval() -> std::time::Duration {
+    gate_check_interval_in(&load())
+}
+
+pub fn gate_check_interval_in(settings: &Settings) -> std::time::Duration {
+    let seconds = settings.gate_check_interval_secs;
+    std::time::Duration::from_secs(u64::from(
+        if validate_gate_check_interval(seconds).is_ok() {
+            seconds
+        } else {
+            DEFAULT_GATE_CHECK_INTERVAL_SECS
+        },
+    ))
 }
 
 /// GPT（Codex）归不归门禁管。门禁那边每次枚举目标都要问一次，单独提出来省得到处 `load()`。
@@ -387,6 +437,39 @@ pub fn managed_app_dir(key: &str) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gate_check_interval_preserves_old_settings_and_round_trips_the_saved_value() {
+        let old: Settings = serde_json::from_str(r#"{"codex_outside_gate":true}"#).unwrap();
+        assert_eq!(gate_check_interval_in(&old).as_secs(), 5);
+        assert!(old.codex_outside_gate);
+        let edited = Settings {
+            gate_check_interval_secs: 30,
+            ..old
+        };
+        let restored: Settings =
+            serde_json::from_str(&serde_json::to_string(&edited).unwrap()).unwrap();
+        assert_eq!(gate_check_interval_in(&restored).as_secs(), 30);
+        assert!(restored.codex_outside_gate);
+    }
+
+    #[test]
+    fn gate_check_interval_rejects_zero_and_out_of_range_values() {
+        for seconds in [0, 31, u32::MAX] {
+            assert!(validate_gate_check_interval(seconds).is_err());
+            assert_eq!(
+                gate_check_interval_in(&Settings {
+                    gate_check_interval_secs: seconds,
+                    ..Default::default()
+                })
+                .as_secs(),
+                5
+            );
+        }
+        for seconds in [1, 4, 5, 15, 30] {
+            assert!(validate_gate_check_interval(seconds).is_ok());
+        }
+    }
 
     /// GPT 默认归门禁管（使用者 2026-09-20 定的，见字段说明）。
     #[test]

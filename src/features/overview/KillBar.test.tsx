@@ -70,3 +70,30 @@ it("closes only Claude clients and keeps the shared tavern and other providers r
     }),
   );
 });
+
+it("keeps a partial Claude shutdown failure visible instead of reporting success", async () => {
+  mock.call.mockImplementation(async (command: string) => {
+    if (command === "killswitch_preview") return report;
+    if (command === "killswitch_execute")
+      return { ...report, killed: [321], failed: [[123, "access denied"]] };
+    throw new Error(`unexpected command: ${command}`);
+  });
+  render(
+    <ToastProvider>
+      <KillBar />
+    </ToastProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "一键关闭所有 Claude" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "确认关闭 1 个进程" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getAllByText(/PID 123: access denied/).length,
+    ).toBeGreaterThan(0),
+  );
+  expect(
+    screen.getByRole("button", { name: "确认关闭 1 个进程" }),
+  ).toBeTruthy();
+  expect(screen.queryByText("关闭 1 个 Claude 进程")).toBeNull();
+});

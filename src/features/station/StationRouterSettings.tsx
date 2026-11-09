@@ -20,7 +20,7 @@
  * 不在前端自己拼 —— 拼出来的跟路由真认的对不上，使用者照着填就是一发 400。
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { Client } from "../../lib/generated/Client";
 import type { RouterStatus } from "../../lib/generated/RouterStatus";
@@ -40,6 +40,10 @@ import {
   admissionSettingsProblem,
   StationAdmissionSettings,
 } from "./StationAdmissionSettings";
+import { StationSessionRecoverySettings } from "./StationSessionRecoverySettings";
+
+// 明确点过保存的操作即使弹窗关闭也会完成；新弹窗先等旧写入，再读落盘值。
+const routerWriteQueue = { current: Promise.resolve() as Promise<void> };
 
 export default function StationRouterSettings({
   client,
@@ -47,6 +51,7 @@ export default function StationRouterSettings({
   status,
   label,
   onSaved,
+  scheduleEnabled,
 }: {
   client: Client;
   /** 这个软件的线（别的软件的不传进来）。 */
@@ -55,11 +60,16 @@ export default function StationRouterSettings({
   label: (route: Route) => string;
   /** 存好之后回调（右列的状态要读回来）。 */
   onSaved?: () => void;
+  scheduleEnabled?: boolean;
 }) {
   const toast = useToast();
+  const pageRevision = useRef(0);
+  const clientRef = useRef(client);
+  clientRef.current = client;
   const [settings, setSettings] = useState<RouterSettings | null>(null);
   // 调度开着时可修改允许名单，但顺序归调度排。
-  const [scheduled, setScheduled] = useState(false);
+  const [loadedScheduled, setScheduled] = useState(false);
+  const scheduled = scheduleEnabled ?? loadedScheduled;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // 聚合模型每条线「发布哪些模型」的输入框原文：边打边理会把刚打的逗号吃掉，存的时候才拆。
@@ -72,14 +82,18 @@ export default function StationRouterSettings({
     let dropped = false;
     setSettings(null);
     setError(null);
-    void Promise.all([
-      stationApi.routerSettings(client),
-      stationApi.schedules(),
-      stationApi.aggregateModels(client),
-      aggregateSupported(client)
-        ? stationApi.aggregateConfigProblem(client)
-        : Promise.resolve(null),
-    ])
+    setBusy(false);
+    void routerWriteQueue.current
+      .then(() =>
+        Promise.all([
+          stationApi.routerSettings(client),
+          stationApi.schedules(),
+          stationApi.aggregateModels(client),
+          aggregateSupported(client)
+            ? stationApi.aggregateConfigProblem(client)
+            : Promise.resolve(null),
+        ]),
+      )
       .then(([s, all, models, problem]) => {
         if (dropped) return;
         setConfigProblem(problem);
@@ -93,6 +107,7 @@ export default function StationRouterSettings({
       });
     return () => {
       dropped = true;
+      pageRevision.current++;
     };
   }, [client]);
 
@@ -162,6 +177,9 @@ export default function StationRouterSettings({
 
   const save = async () => {
     if (busy) return;
+    const revision = pageRevision.current;
+    const currentPage = () =>
+      revision === pageRevision.current && clientRef.current === client;
     const capacityProblem = admissionSettingsProblem(settings);
     if (capacityProblem) {
       setError(capacityProblem);
@@ -186,28 +204,41 @@ export default function StationRouterSettings({
         const list = parseModelList(modelText[id] ?? "");
         if (list.length > 0) models[id] = list;
       }
-      const saved = await stationApi.saveRouterSettings({
-        ...settings,
-        aggregate: { ...agg, models },
-      });
+      const write = routerWriteQueue.current.then(() =>
+        stationApi.saveRouterSettings({
+          ...settings,
+          aggregate: { ...agg, models },
+        }),
+      );
+      routerWriteQueue.current = write.then(
+        () => {},
+        () => {},
+      );
+      const saved = await write;
+      if (!currentPage()) return;
       setSettings(saved);
       if (saved.routing_mode === "selected") setScheduled(false);
       setModelText({ ...modelText, ...textOf(saved.aggregate.models) });
       toast.ok("路由设置已保存，下一发请求就按新的来");
       onSaved?.();
       try {
-        setPublished(await stationApi.aggregateModels(client));
-        if (aggregateSupported(client))
-          setConfigProblem(await stationApi.aggregateConfigProblem(client));
+        const models = await stationApi.aggregateModels(client);
+        if (!currentPage()) return;
+        setPublished(models);
+        if (aggregateSupported(client)) {
+          const problem = await stationApi.aggregateConfigProblem(client);
+          if (currentPage()) setConfigProblem(problem);
+        }
       } catch (e) {
+        if (!currentPage()) return;
         setError(
           `路由设置已保存，但模型列表刷新失败：${e instanceof Error ? e.message : String(e)}`,
         );
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (currentPage()) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (currentPage()) setBusy(false);
     }
   };
 
@@ -228,6 +259,9 @@ export default function StationRouterSettings({
   return (
     <div className="qb-st-form">
       <fieldset disabled={busy} className="qb-st-settings-fields">
+        {client === "codex" && (
+          <StationSessionRecoverySettings settings={settings} onChange={set} />
+        )}
         <h4 className="qb-st-sect">请求可以去哪些线路</h4>
         <div className="qb-st-routing-options">
           <label

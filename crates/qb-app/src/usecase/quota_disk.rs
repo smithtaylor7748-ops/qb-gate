@@ -26,30 +26,26 @@ struct Entry {
     value: Value,
 }
 
-/// 测试里换成临时目录。
-static ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
+// 每个测试使用自己的目录，避免并行测试互换全局路径。
+#[cfg(test)]
+thread_local! {
+    static TEST_ROOT: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
 static LOCK: Mutex<()> = Mutex::new(());
 
 fn path() -> PathBuf {
-    ROOT.lock()
-        .ok()
-        .and_then(|g| g.clone())
-        // 单测绝不碰真实的状态目录。
-        .unwrap_or_else(|| {
-            if cfg!(test) {
-                std::env::temp_dir().join("qb-quota-disk-default")
-            } else {
-                qb_foundation::paths::state_dir()
-            }
-        })
-        .join("quota-last.json")
+    #[cfg(test)]
+    let root = TEST_ROOT
+        .with(|g| g.borrow().clone())
+        .unwrap_or_else(|| std::env::temp_dir().join("qb-quota-disk-default"));
+    #[cfg(not(test))]
+    let root = qb_foundation::paths::state_dir();
+    root.join("quota-last.json")
 }
 
 #[cfg(test)]
 pub fn set_root_for_test(dir: &Path) {
-    if let Ok(mut g) = ROOT.lock() {
-        *g = Some(dir.to_path_buf());
-    }
+    TEST_ROOT.with(|g| *g.borrow_mut() = Some(dir.to_path_buf()));
 }
 
 fn load(p: &Path) -> File {

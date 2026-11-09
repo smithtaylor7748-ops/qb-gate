@@ -174,6 +174,7 @@ pub fn run() {
             commands::workspace::tool_files_hermes_save,
             commands::workspace::tool_files_hermes_web,
             commands::gate::gate_status,
+            commands::gate::gate_check_interval_save,
             commands::gate::gate_lock_all,
             commands::gate::gate_unlock_all,
             commands::gate::gate_reopen,
@@ -207,10 +208,9 @@ pub fn run() {
             commands::probe::purity_criteria,
             // 中转站（0.14.0）。启停本机路由、线路池、请求日志、健康度与排序。
             commands::station::station_router_status,
-            commands::station::station_turnstate_configure,
-            commands::station::station_turnstate_status,
-            commands::station::station_turnstate_enable,
             commands::station::station_turnstate_disable,
+            commands::quality_check::quality_check_run,
+            commands::quality_check::quality_check_cancel,
             commands::station::station_select_route,
             // 本机路由每个软件一份的设置与派单顺序（2026-10-24，中转站重构阶段 1）。
             commands::station::station_router_settings,
@@ -280,6 +280,7 @@ pub fn run() {
             commands::station::station_logs,
             commands::station::station_usage_report,
             commands::station::station_usage_totals,
+            commands::station::station_usage_overview,
             commands::session_manager::sessions_list,
             commands::session_manager::sessions_read,
             commands::session_manager::sessions_export,
@@ -615,10 +616,8 @@ pub fn run() {
                         &handle.state::<AppState>(),
                         Some(handle.clone()),
                     );
-                    // 识别（turn-state）**不是**落盘的承诺，正相反：上次没关干净留下的接管
-                    // marker 要在这里**自动关闭并恢复**。本机路由随面板消失，marker 留着就是
-                    // 让那个槽位的 Codex 对着一个死端口（503）；「默认关闭、只在手动开启后
-                    // 生效」这条硬约束也要求它不能跨重启自动续上。
+                    // 旧 turn-state 入口已停用。遗留接管 marker 在启动时自动恢复，
+                    // 避免该槽位继续连接上一次面板留下的失效端口；失败时保留手动恢复入口。
                     match usecase::turnstate_ops::disable() {
                         Ok(Some(t)) => audit::write(&format!(
                             "面板重启：上次的识别没有关闭，已自动关闭并恢复槽位「{}」的配置",
@@ -626,7 +625,7 @@ pub fn run() {
                         )),
                         Ok(None) => {}
                         Err(e) => audit::write(&format!(
-                            "面板重启：恢复上次识别接管的槽位配置失败，请到账户页「识别」弹窗手动关闭：{e}"
+                            "面板重启：恢复旧 turn-state 接管配置失败，请到账户页「质量检查」中手动恢复：{e}"
                         )),
                     }
                     // 0.30.0：反重力 IDE 有激活槽位时，它的调试端口文件在槽位目录里 ——

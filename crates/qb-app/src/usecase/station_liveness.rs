@@ -457,11 +457,16 @@ impl ProbeTarget {
             route_id: route.id.clone(),
             client: route.client,
             speaks: crate::local_router::speaks(route),
+            mapping: Upstream::relay(route, source.base_url.clone(), source.key.clone()),
             base_url: source.base_url,
             key: source.key,
-            mapping: Upstream::default().with_model_map(&route.model_map),
             cost,
         })
+    }
+
+    /// 测活实际使用的来源快照，排队后必须与运行期来源逐项一致。
+    pub fn source(&self) -> &Upstream {
+        &self.mapping
     }
 
     /// 测试用：直接给地址和 Key。
@@ -538,7 +543,10 @@ pub async fn run_authorized(
     now_ms: i64,
     allowed: impl Fn(&ProbeTarget) -> bool + Sync,
 ) -> Vec<ProbeAttempt> {
-    run_admitted(jobs, http, now_ms, |target| allowed(target).then_some(())).await
+    run_admitted(jobs, http, now_ms, |target, _| {
+        allowed(target).then_some(())
+    })
+    .await
 }
 
 /// 与用户请求共用名额的测活；名额覆盖发送与读完响应，拒绝时不写虚构探测结果。
@@ -546,13 +554,13 @@ pub async fn run_admitted<G: Send>(
     jobs: Vec<(ProbeTarget, ProbeKind, String)>,
     http: &reqwest::Client,
     now_ms: i64,
-    admit: impl Fn(&ProbeTarget) -> Option<G> + Sync,
+    admit: impl Fn(&ProbeTarget, ProbeKind) -> Option<G> + Sync,
 ) -> Vec<ProbeAttempt> {
     use futures_util::stream::{self, StreamExt};
     let admit = &admit;
     stream::iter(jobs)
         .map(|(target, kind, model)| async move {
-            let _permit = admit(&target)?;
+            let _permit = admit(&target, kind)?;
             Some(match kind {
                 ProbeKind::Free => free_probe(&target, http, now_ms).await,
                 ProbeKind::Paid => paid_probe(&target, &model, http, now_ms).await,

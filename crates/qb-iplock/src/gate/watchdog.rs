@@ -40,7 +40,7 @@ pub enum WatchMode {
 }
 
 impl WatchMode {
-    /// 巡检间隔。**两档都是 5 秒**，使用者要求 Claude Code 这一档跟桌面端一致。
+    /// 默认巡检间隔。**两档都是 5 秒**；实际节奏由 IP 锁面板的共用设置决定。
     ///
     /// 原来是 CLI 15 秒 / 桌面端 20 秒。分开的本意是给桌面端留点余量，但档位
     /// 一合并就失真了：`lease::Lease::grant_with_mode` 里只要有一个持有者是
@@ -86,6 +86,31 @@ impl WatchMode {
     pub fn unknown_grace(self) -> Option<Duration> {
         match self {
             WatchMode::Cli | WatchMode::Desktop => None,
+        }
+    }
+}
+
+/// 一轮完成后等待。设置变化重新计算同一个起点的期限，不重启检测任务，也不重叠探测。
+/// 返回 false 表示监督任务应退出；stop 的非终止唤醒沿用原行为，立即开始下一轮。
+pub async fn wait_for_next_check(
+    stop: &mut tokio::sync::watch::Receiver<bool>,
+    changes: &mut tokio::sync::watch::Receiver<()>,
+    interval: impl Fn() -> Duration,
+) -> bool {
+    let finished = tokio::time::Instant::now();
+    loop {
+        if *stop.borrow_and_update() {
+            return false;
+        }
+        let deadline = finished + interval();
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => return true,
+            changed = stop.changed() => return changed.is_ok() && !*stop.borrow_and_update(),
+            changed = changes.changed() => {
+                if changed.is_err() {
+                    return false;
+                }
+            }
         }
     }
 }
@@ -369,5 +394,68 @@ mod tests {
         // 两档都不给宽限 —— 这是使用者定的严格档。
         assert_eq!(WatchMode::Desktop.unknown_grace(), None);
         assert_eq!(WatchMode::Cli.unknown_grace(), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_running_wait_adopts_shorter_and_longer_intervals_without_restarting() {
+        use std::sync::{atomic::AtomicU64, atomic::Ordering, Arc};
+
+        for (original, edited, expected_total) in [(30, 5, 5), (5, 30, 30)] {
+            let (_stop, mut stop_rx) = tokio::sync::watch::channel(false);
+            let (changed, mut changes_rx) = tokio::sync::watch::channel(());
+            let seconds = Arc::new(AtomicU64::new(original));
+            let source = Arc::clone(&seconds);
+            let task = tokio::spawn(async move {
+                wait_for_next_check(&mut stop_rx, &mut changes_rx, || {
+                    Duration::from_secs(source.load(Ordering::Relaxed))
+                })
+                .await
+            });
+            tokio::task::yield_now().await;
+            tokio::time::advance(Duration::from_secs(2)).await;
+            seconds.store(edited, Ordering::Relaxed);
+            changed.send_replace(());
+            tokio::task::yield_now().await;
+            tokio::time::advance(Duration::from_secs(expected_total - 3)).await;
+            assert!(!task.is_finished(), "the edited interval must be respected");
+            tokio::time::advance(Duration::from_secs(1)).await;
+            tokio::task::yield_now().await;
+            assert!(
+                task.is_finished(),
+                "changing settings must not reset elapsed wait time"
+            );
+            assert!(task.await.unwrap());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn shortening_below_elapsed_time_wakes_now_and_stop_still_interrupts() {
+        use std::sync::{atomic::AtomicU64, atomic::Ordering, Arc};
+
+        let (stop, mut stop_rx) = tokio::sync::watch::channel(false);
+        let (changed, mut changes_rx) = tokio::sync::watch::channel(());
+        let seconds = Arc::new(AtomicU64::new(30));
+        let source = Arc::clone(&seconds);
+        let task = tokio::spawn(async move {
+            wait_for_next_check(&mut stop_rx, &mut changes_rx, || {
+                Duration::from_secs(source.load(Ordering::Relaxed))
+            })
+            .await
+        });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(10)).await;
+        seconds.store(5, Ordering::Relaxed);
+        changed.send_replace(());
+        tokio::task::yield_now().await;
+        assert!(task.await.unwrap());
+
+        let mut stop_rx = stop.subscribe();
+        let mut changes_rx = changed.subscribe();
+        let task = tokio::spawn(async move {
+            wait_for_next_check(&mut stop_rx, &mut changes_rx, || Duration::from_secs(30)).await
+        });
+        tokio::task::yield_now().await;
+        stop.send_replace(true);
+        assert!(!task.await.unwrap());
     }
 }

@@ -92,7 +92,7 @@ pub struct ClaudeQuota {
 }
 
 /// 「最近一次」问到的，按槽位标签存。**只存最近一次，没有 TTL。**
-static LAST: Last<ClaudeQuota> = Last::new();
+static LAST: Last<(Option<String>, ClaudeQuota)> = Last::new();
 
 /// 槽位删了之后调：额度和「登录已失效」那一笔都别再躺在内存里。
 pub fn forget(label: &str) {
@@ -302,20 +302,10 @@ pub async fn quota(label: &str, refresh: bool) -> Result<Option<ClaudeQuota>> {
     let dir = AccountRoots::current().slot_dir(label);
     let ident = account_identity(&dir);
     if !refresh {
-        if let Some(q) = LAST.get(label) {
-            return Ok(Some(q));
-        }
-        return Ok(super::quota_disk::get::<ClaudeQuota>(
-            &format!("claude:{label}"),
-            ident.as_deref(),
-        )
-        .map(|(mut q, at)| {
-            q.last_success = Some(at);
-            q
-        }));
+        return Ok(cached(label, ident.as_deref()));
     }
     let q = fetch_at(&dir, label, &client()?, USAGE_URL).await?;
-    LAST.put(label, q.clone());
+    LAST.put(label, (ident.clone(), q.clone()));
     super::quota_disk::put(
         &format!("claude:{label}"),
         ident.as_deref(),
@@ -326,6 +316,23 @@ pub async fn quota(label: &str, refresh: bool) -> Result<Option<ClaudeQuota>> {
         "问了一次 Claude 槽位「{label}」的额度（只读，不记内容）"
     ));
     Ok(Some(q))
+}
+
+/// 只读上次成功；令牌过期/联网失败不丢失时间，明确换了账户则作废。
+fn cached(label: &str, identity: Option<&str>) -> Option<ClaudeQuota> {
+    if let Some((asked, q)) = LAST.get(label) {
+        if !matches!((asked.as_deref(), identity), (Some(a), Some(b)) if !a.eq_ignore_ascii_case(b))
+        {
+            return Some(q);
+        }
+        LAST.forget(label);
+    }
+    super::quota_disk::get::<ClaudeQuota>(&format!("claude:{label}"), identity).map(
+        |(mut q, at)| {
+            q.last_success = Some(at);
+            q
+        },
+    )
 }
 
 /// 这个槽位登的是谁：`.claude.json` 里 `oauthAccount` 的 accountUuid / 邮箱。只读本机。
@@ -475,7 +482,10 @@ fn overlay_slots(slots: &mut [crate::accounts::Slot]) {
             }
             s.login_problem = Some(reason);
         }
-        if let Some(official) = LAST.get(&s.label).and_then(|q| as_slot_usage(&q, now)) {
+        let identity = account_identity(Path::new(&s.dir));
+        if let Some(official) =
+            cached(&s.label, identity.as_deref()).and_then(|q| as_slot_usage(&q, now))
+        {
             let newer = match &s.usage {
                 None => true,
                 Some(local) => {
@@ -511,6 +521,44 @@ mod tests {
         let d = std::env::temp_dir().join(format!("qb-claude-quota-{}", crate::config_io::id()));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn disk_success_restores_reset_time_without_requesting_or_renewing_quota() {
+        let dir = scratch();
+        super::super::quota_disk::set_root_for_test(&dir);
+        let label = format!("offline-quota-{}", crate::config_io::id());
+        let q = parse(
+            &json!({"five_hour":{"utilization":81,"resets_at":"2099-01-01T00:00:00Z"}}),
+            &label,
+        )
+        .unwrap();
+        super::super::quota_disk::put(&format!("claude:{label}"), Some("a"), None, &q);
+        let restored = cached(&label, Some("a")).unwrap();
+        assert!(restored.last_success.is_some());
+        assert_eq!(restored.windows, q.windows);
+        assert_eq!(
+            restored.fetched_at, q.fetched_at,
+            "缓存读取不能伪造新的获取时间"
+        );
+        let shown = as_slot_usage(&restored, chrono::Utc::now().timestamp_millis()).unwrap();
+        assert_eq!(
+            shown.five_hour.unwrap().resets_at.as_deref(),
+            Some("2099-01-01T00:00:00Z")
+        );
+        assert!(cached(&label, Some("another-account")).is_none());
+        forget(&label);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_success_does_not_cross_account_identity() {
+        let label = format!("memory-quota-{}", crate::config_io::id());
+        let q = parse(&json!({"five_hour":{"utilization":33}}), &label).unwrap();
+        LAST.put(&label, (Some("a".into()), q));
+        assert!(cached(&label, Some("A")).is_some());
+        assert!(cached(&label, Some("b")).is_none());
+        assert!(cached(&label, Some("a")).is_none());
     }
 
     fn write_cred(dir: &Path, token: &str, expires_at: i64) {

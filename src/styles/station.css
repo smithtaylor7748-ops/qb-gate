@@ -565,6 +565,15 @@
   font-size: 10.5px;
   color: var(--text-3);
 }
+.qb-st-usage-chart {
+  min-width: 0;
+}
+.qb-st-usage-chart .qb-st-legend {
+  margin-bottom: 5px;
+}
+.qb-st-usage-chart .qb-st-note {
+  margin: 4px 0 0;
+}
 
 /* ------------------------------------------- 右列：就三个按钮，别往里塞
    启动（主色实心）/ 智能调度（开着转绿）/ 调度设置，三个都是整块点的大按钮 ——

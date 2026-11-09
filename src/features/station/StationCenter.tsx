@@ -39,7 +39,6 @@ import {
   Plug,
   Play,
   Shuffle,
-  SlidersHorizontal,
   Square,
   Wrench,
   X,
@@ -53,7 +52,11 @@ import type { Client } from "../../lib/generated/Client";
 import type { Floors } from "../../lib/generated/Floors";
 import type { Provider } from "../../lib/generated/Provider";
 import type { Schedule } from "../../lib/generated/Schedule";
-import { StationUsageKpis } from "./StationUsageKpis";
+import { StationUsageKpiValues } from "./StationUsageKpis";
+import {
+  StationUsageChart,
+  useStationUsageOverview,
+} from "./StationUsageChart";
 import {
   RouteAttemptTrail,
   StationRouteBoundary,
@@ -77,7 +80,6 @@ import { useWorkspace, workspaceApi } from "../../lib/workspace";
 import { Button, Modal, useToast } from "../../ui";
 import { DeepLinkPasteButton } from "../DeepLinkImport";
 import {
-  Chart,
   dash,
   pct,
   RANGES,
@@ -91,7 +93,7 @@ import StationRouterSettings from "./StationRouterSettings";
 import StationSchedule from "./StationSchedule";
 import StationAudit from "./StationAudit";
 import StationLogs from "./StationLogs";
-import StationTurnState from "./StationTurnState";
+import StationQualityCheck from "./StationQualityCheck";
 import StationClaudeCodeExtras from "./StationClaudeCodeExtras";
 import StationCodexHistory from "./StationCodexHistory";
 import StationDesktopDirect from "./StationDesktopDirect";
@@ -184,6 +186,13 @@ function StationBoard({
   );
   const [range, setRange] = useState<RangeId>("24h");
   const [gran, setGran] = useState<GranId>("hour");
+  const usageGran =
+    range === "all"
+      ? "day"
+      : range === "7d" && gran === "minute"
+        ? "hour"
+        : gran;
+  const usage = useStationUsageOverview(client, range, usageGran);
 
   const [status, setStatus] = useState<RouterStatus | null>(null);
   const [routerSettings, setRouterSettings] = useState<RouterSettings | null>(
@@ -249,7 +258,6 @@ function StationBoard({
   const schedDescId = useId();
   const launchRipple = useRipple();
   const schedRipple = useRipple();
-  const cfgRipple = useRipple();
   /** 异步回来时判断「使用者还停在这个分页吗」。闭包里的 client 是点下去那一刻的。 */
   const clientRef = useRef(client);
   clientRef.current = client;
@@ -474,16 +482,20 @@ function StationBoard({
     [routes, client],
   );
 
-  const since = Date.now() - rangeOf(range).hours * 3600_000;
+  const since =
+    range === "all" ? -Infinity : Date.now() - rangeOf(range).hours * 3600_000;
   /** 本段之内、属于这个软件的日志。 */
   const mineLogs = useMemo(() => {
     const ids = new Set(mine.map((r) => r.id));
     return logs.filter((l) => ids.has(l.route_id) && Number(l.at_ms) >= since);
   }, [logs, mine, since]);
 
-  const logsOf = useCallback(
-    (id: string) => mineLogs.filter((l) => l.route_id === id),
-    [mineLogs],
+  const routeCounts = useMemo(
+    () =>
+      new Map(
+        usage.data?.by_route.map((r) => [r.key, r.totals.requests]) ?? [],
+      ),
+    [usage.data],
   );
 
   // ⛔ 「选中的上游」**只有这一个定义**：排队中的那条优先，没有才看已落定的。
@@ -534,7 +546,7 @@ function StationBoard({
     // 按空格启停之后 Tab 得从页首重新走一遍。
     if (toggling) return;
     if (!sched && !canSchedule) {
-      toast.info("请先在路由设置中勾选允许使用的线路并保存，再启动调度");
+      toast.info("请先在选线与分流中勾选允许使用的线路并保存，再启动自动选线");
       return;
     }
     setBusy(true);
@@ -673,9 +685,7 @@ function StationBoard({
   //
   // ⛔ 每一格只报它**真拿得到**的那个口径，而且把口径写在副标题上。
   //
-  // 请求数与平均耗时来自本机路由自己的日志，跟着时间范围走；
-  // Token、费用和请求数由 StationUsageKpis 读完整本机汇总；
-  // 耗时与图表仍只反映已加载的最近日志。
+  // 总量、线路计数和图表共享完整 SQL 聚合；平均耗时仍是最近日志样本，明确写出范围。
   const totals = mineLogs
     .map((l) => (l.total_ms == null ? null : Number(l.total_ms)))
     .filter((v): v is number => v != null);
@@ -802,14 +812,18 @@ function StationBoard({
           </div>
 
           <div className="qb-st-kpis">
-            <StationUsageKpis client={client} range={range} />
+            <StationUsageKpiValues
+              totals={usage.data?.totals ?? null}
+              error={usage.error != null}
+              range={range}
+            />
             <Kpi
-              k="平均耗时"
+              k="平均耗时（样本）"
               v={avgMs == null ? "—" : `${(avgMs / 1000).toFixed(2)} s`}
               s={
                 totals.length
                   ? `最近日志中取到耗时的 ${totals.length} 条`
-                  : "本段没有请求"
+                  : "最近日志样本未记到耗时"
               }
             />
           </div>
@@ -831,9 +845,13 @@ function StationBoard({
             <label htmlFor="qb-st-gran">粒度</label>
             <select
               id="qb-st-gran"
-              value={gran}
+              value={usageGran}
+              disabled={range === "all"}
               onChange={(e) => setGran(e.target.value as GranId)}
             >
+              {range !== "7d" && range !== "all" && (
+                <option value="minute">每 5 分钟</option>
+              )}
               <option value="hour">按小时</option>
               <option value="day">按天</option>
             </select>
@@ -846,23 +864,7 @@ function StationBoard({
             </Link>
           </div>
 
-          <Chart rows={mineLogs} range={range} gran={gran} />
-          <div className="qb-st-legend">
-            <span>
-              {rangeOf(range).name} ·{" "}
-              {gran === "hour" ? "每小时一格" : "每天一格"}
-            </span>
-            <span style={{ flex: 1 }} />
-            <span>
-              <i style={{ background: "var(--accent)" }} />
-              请求量
-            </span>
-            <span>
-              <i style={{ background: "var(--warn)" }} />
-              首字 P95
-            </span>
-            <span>各按自己的量程</span>
-          </div>
+          <StationUsageChart data={usage.data} error={usage.error} />
         </div>
 
         {/* 右列只有三个按钮。⛔ 不要往里塞别的（排序看板被删过）。
@@ -895,7 +897,7 @@ function StationBoard({
                         : ""
                     }${sched ? "。智能调度不受影响，照常挑线" : ""}`
                   : sched
-                    ? "智能调度还没排出可用的线路 —— 打开调度设置看赛道"
+                    ? "自动选线还没排出可用的线路 —— 打开选线与分流查看自动选线偏好"
                     : "先点下面任意一行选上游"
             }
           >
@@ -963,12 +965,12 @@ function StationBoard({
                   <Zap size={15} />
                 )}
               </span>
-              {sched ? "智能调度运行中" : "启动智能调度"}
+              {sched ? "自动选线运行中" : "开启自动选线"}
             </span>
             <span id={schedDescId} className="desc">
               <span className="sub">
                 {!sched && !canSchedule
-                  ? "先在路由设置中勾选允许使用的线路"
+                  ? "先在选线与分流中勾选允许使用的线路"
                   : schedWhat}
               </span>
               {sched && (
@@ -987,19 +989,6 @@ function StationBoard({
             </span>
           </button>
 
-          <button
-            type="button"
-            className="qb-st-schedcfg"
-            onPointerDown={cfgRipple.onPointerDown}
-            onClick={() => setSchedOpen(true)}
-          >
-            <span className="qb-st-sheen" aria-hidden="true" />
-            {cfgRipple.layer}
-            <SlidersHorizontal size={14} aria-hidden="true" />
-            调度设置
-            <ChevronRight size={14} className="chev" aria-hidden="true" />
-          </button>
-
           {/* 本机路由每个软件一份的设置：故障转移、派单顺序、超时、熔断、整流器。 */}
           <button
             type="button"
@@ -1008,7 +997,7 @@ function StationBoard({
           >
             <span className="qb-st-sheen" aria-hidden="true" />
             <Shuffle size={14} aria-hidden="true" />
-            路由设置 · 允许范围
+            选线与分流
             {(status?.breakers.length ?? 0) > 0 && (
               <span className="qb-st-pill qb-st-pill--danger">
                 {status?.breakers.length} 条熔断
@@ -1102,7 +1091,7 @@ function StationBoard({
             >
               <span className="qb-st-sheen" aria-hidden="true" />
               <Fingerprint size={14} aria-hidden="true" />
-              turn-state（实验）
+              GPT 质量检查
               <ChevronRight size={14} className="chev" aria-hidden="true" />
             </button>
           )}
@@ -1183,7 +1172,7 @@ function StationBoard({
                   key={r.id}
                   route={r}
                   health={health[r.id]}
-                  logs={logsOf(r.id)}
+                  requests={usage.data ? (routeCounts.get(r.id) ?? 0) : null}
                   range={range}
                   current={selectedId === r.id}
                   running={isRunning}
@@ -1243,64 +1232,94 @@ function StationBoard({
       />
 
       <Modal
-        open={schedOpen}
+        open={schedOpen || routerOpen}
         onClose={() => {
           setSchedOpen(false);
+          setRouterOpen(false);
           // 弹窗里「用这一条」会排队换线、改口径会改名次 —— 关掉时读回来一次，
           // 不然「正在路由」、行上的高亮和「最弱项」还停在打开弹窗之前。
           void refreshStatus();
           void refreshSched();
         }}
-        title={`调度设置 · ${clientName.name}`}
+        title={`选线与分流 · ${clientName.name}`}
         size="form"
         footer={
-          <div className="qb-st-schedule-footer">
-            <span className="qb-st-note qb-st-schedule-footnote">
-              换上游会让上游那边的 prompt 缓存作废，所以挑战者默认要领先现任
-              8%、连续 2 轮有新证据才换。调度<b>只在面板开着时</b>生效。
-            </span>
-            <Button variant="ghost" onClick={() => setSchedOpen(false)}>
-              关闭
-            </Button>
-            {/* ⛔ 启停也放一份在这里：弹窗开着的时候右列那个按钮被遮住了，
+          schedOpen ? (
+            <div className="qb-st-schedule-footer">
+              <span className="qb-st-note qb-st-schedule-footnote">
+                换上游会让上游那边的 prompt 缓存作废，所以挑战者默认要领先现任
+                8%、连续 2 轮有新证据才换。调度<b>只在面板开着时</b>生效。
+              </span>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setSchedOpen(false);
+                  setRouterOpen(false);
+                }}
+              >
+                关闭
+              </Button>
+              {/* ⛔ 启停也放一份在这里：弹窗开着的时候右列那个按钮被遮住了，
                 改完口径要关掉弹窗才能启动，那一步没有任何理由。 */}
-            <Button
-              variant={sched ? "ghost" : "primary"}
-              disabled={busy || (!sched && !canSchedule)}
-              onClick={() => void toggleSched()}
-            >
-              {sched ? "停止调度" : "按这套启动调度"}
-            </Button>
-          </div>
+              <Button
+                variant={sched ? "ghost" : "primary"}
+                disabled={busy || (!sched && !canSchedule)}
+                onClick={() => void toggleSched()}
+              >
+                {sched ? "停止调度" : "按这套启动调度"}
+              </Button>
+            </div>
+          ) : undefined
         }
       >
-        {/* 每存一次偏好就把卡上的口径换掉 —— 不等弹窗关掉。 */}
-        <StationSchedule
-          client={client}
-          onSaved={(s) => setSchedPrefs(s.prefs)}
-        />
-      </Modal>
-
-      <Modal
-        open={routerOpen}
-        onClose={() => {
-          setRouterOpen(false);
-          void refreshStatus();
-          void refreshSched();
-        }}
-        title={`路由设置 · ${clientName.name}`}
-        size="form"
-      >
-        <StationRouterSettings
-          client={client}
-          routes={mine}
-          status={status}
-          label={(r) => `${siteName(r.station_id)} · ${r.group || "默认分组"}`}
-          onSaved={() => {
-            void refreshStatus();
-            void refreshSched();
-          }}
-        />
+        <p className="qb-st-note">
+          先决定允许使用哪些站，再决定怎么排序。故障备用在请求失败时使用允许站；容量分流在首选满额时使用允许站；自动选线只定期调整优先顺序。需要固定一个站时选“仅所选线路”。
+        </p>
+        <div className="qb-st-tabs" role="tablist" aria-label="选线与分流设置">
+          <Button
+            role="tab"
+            aria-selected={!schedOpen}
+            variant={!schedOpen ? "primary" : "ghost"}
+            onClick={() => {
+              setRouterOpen(true);
+              setSchedOpen(false);
+            }}
+          >
+            允许范围、分流与故障备用
+          </Button>
+          <Button
+            role="tab"
+            aria-selected={schedOpen}
+            variant={schedOpen ? "primary" : "ghost"}
+            onClick={() => {
+              setRouterOpen(true);
+              setSchedOpen(true);
+            }}
+          >
+            自动选线偏好
+          </Button>
+        </div>
+        {schedOpen && (
+          <StationSchedule
+            client={client}
+            onSaved={(s) => setSchedPrefs(s.prefs)}
+          />
+        )}
+        <div hidden={schedOpen}>
+          <StationRouterSettings
+            client={client}
+            scheduleEnabled={sched}
+            routes={mine}
+            status={status}
+            label={(r) =>
+              `${siteName(r.station_id)} · ${r.group || "默认分组"}`
+            }
+            onSaved={() => {
+              void refreshStatus();
+              void refreshSched();
+            }}
+          />
+        </div>
       </Modal>
 
       <Modal
@@ -1341,10 +1360,15 @@ function StationBoard({
       <Modal
         open={turnOpen}
         onClose={() => setTurnOpen(false)}
-        title="官方 Codex · turn-state（实验）"
+        title="GPT 质量检查"
         size="huge"
       >
-        <StationTurnState />
+        {turnOpen && (
+          <StationQualityCheck
+            routeId={selectedId ?? undefined}
+            route={selectedId ? routeLabel(selectedId) : ""}
+          />
+        )}
       </Modal>
 
       <Modal
@@ -1396,7 +1420,7 @@ function StationBoard({
 function RouteRow({
   route,
   health,
-  logs,
+  requests,
   range,
   current,
   running,
@@ -1415,7 +1439,7 @@ function RouteRow({
 }: {
   route: Route;
   health?: RouteHealthView;
-  logs: RouterRequest[];
+  requests: number | null;
   range: RangeId;
   /** 这一条是选中的上游（排队中的也算）。 */
   current: boolean;
@@ -1530,7 +1554,7 @@ function RouteRow({
           <Button
             variant="ghost"
             onClick={stop(onLogs)}
-            title={logs.length ? "请求日志" : "本段没有请求记录"}
+            title={requests === 0 ? "本段没有最终归属此线路的请求" : "请求日志"}
           >
             ▤
           </Button>
@@ -1556,7 +1580,11 @@ function RouteRow({
             : `${(health.ttft_p95_ms / 1000).toFixed(2)} s`}
         </Cell>
         <Cell k="本段请求">
-          {logs.length ? logs.length.toLocaleString() : dash}
+          <span
+            title={`${rangeOf(range).name} · 本机完整记录，按请求最终归属线路统计`}
+          >
+            {requests == null ? dash : requests.toLocaleString()}
+          </span>
         </Cell>
         <Cell k="本段实扣">
           {/* 账单只有 24 小时窗 —— 别的档没有数，写「—」而不是拿 24h 顶上。 */}

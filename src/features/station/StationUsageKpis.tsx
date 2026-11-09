@@ -51,6 +51,19 @@ export function StationUsageKpis({
     };
   }, [client, range]);
 
+  return <StationUsageKpiValues totals={totals} error={error} range={range} />;
+}
+
+/** 首页与趋势共用一次查询的结果，避免刷新时总数和各条线路相互对不上。 */
+export function StationUsageKpiValues({
+  totals,
+  error,
+  range,
+}: {
+  totals: RelayUsageTotals | null;
+  error: boolean;
+  range: RangeId;
+}) {
   const categories = totals && [
     totals.input_tokens,
     totals.cache_read_tokens,

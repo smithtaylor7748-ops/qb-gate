@@ -60,6 +60,10 @@ const DEFAULT_PARAMS: DispatchParams = {
   confirm: 2,
 };
 
+// 自动保存必须跨弹窗挂载按序完成；测活设置为全局，防抖参数由请求中的 client 区分。
+const probeWriteQueue = { current: Promise.resolve() as Promise<void> };
+const dispatchWriteQueue = { current: Promise.resolve() as Promise<void> };
+
 export default function StationDispatch({ client }: { client: Client }) {
   const toast = useToast();
   const [view, setView] = useState<DispatchView | null>(null);
@@ -73,13 +77,29 @@ export default function StationDispatch({ client }: { client: Client }) {
   const clientRef = useRef(client);
   clientRef.current = client;
   const readSequence = useRef(0);
+  const probeWrites = probeWriteQueue;
+  const paramsWrites = dispatchWriteQueue;
+  const probeRevision = useRef(0);
+  const paramsRevision = useRef(0);
+  const probeDirty = useRef(false);
+  const probeDraft = useRef<ProbeSettings | null>(null);
+  const mounted = useRef(true);
+  const [probeError, setProbeError] = useState<string | null>(null);
+  const [paramsError, setParamsError] = useState<string | null>(null);
+  const [probeSaving, setProbeSaving] = useState(false);
+  const [paramsSaving, setParamsSaving] = useState(false);
+  const [paramsLoadedFor, setParamsLoadedFor] = useState<Client | null>(null);
+  const [paramsReload, setParamsReload] = useState(0);
   const [latestRequest, setLatestRequest] = useState<RouterRequest | null>(
     null,
   );
 
   const load = useCallback(async () => {
     const read = ++readSequence.current;
+    const probeRead = probeRevision.current;
+    const probeWasDirty = probeDirty.current;
     try {
+      if (!probeDirty.current) await probeWrites.current;
       const [nextView, nextRouter, nextPolicy, requests] = await Promise.all([
         stationApi.dispatchView(client),
         stationApi.routerStatus(client),
@@ -94,7 +114,14 @@ export default function StationDispatch({ client }: { client: Client }) {
         }),
       ]);
       if (clientRef.current !== client || read !== readSequence.current) return;
-      setView(nextView);
+      setView(
+        probeDraft.current &&
+          (probeDirty.current ||
+            probeWasDirty ||
+            probeRead !== probeRevision.current)
+          ? { ...nextView, settings: probeDraft.current }
+          : nextView,
+      );
       setRouter(nextRouter);
       setPolicy(nextPolicy);
       setLatestRequest(requests.items[0] ?? null);
@@ -113,23 +140,48 @@ export default function StationDispatch({ client }: { client: Client }) {
     setError(null);
     void load();
     const t = setInterval(() => void load(), REFRESH_MS);
-    return () => clearInterval(t);
+    return () => {
+      clearInterval(t);
+      readSequence.current++;
+    };
   }, [load]);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      probeRevision.current++;
+      paramsRevision.current++;
+    };
+  }, []);
 
   // 防抖参数存在这个软件的调度那一份里。
   useEffect(() => {
     let dropped = false;
-    void stationApi
-      .schedules()
+    setParamsLoadedFor(null);
+    setParamsError(null);
+    setParamsSaving(false);
+    void paramsWrites.current
+      .catch(() => {})
+      .then(() => stationApi.schedules())
       .then((all) => {
         const mine = all.find((s) => s.client === client);
-        if (!dropped && mine) setParams(mine.dispatch);
+        if (dropped) return;
+        if (!mine) throw new Error("未返回这个软件的防抖设置");
+        setParams(mine.dispatch);
+        setParamsLoadedFor(client);
       })
-      .catch(() => {});
+      .catch((e: unknown) => {
+        if (!dropped)
+          setParamsError(
+            `防抖设置读取失败：${e instanceof Error ? e.message : String(e)}`,
+          );
+      });
     return () => {
       dropped = true;
+      paramsRevision.current++;
     };
-  }, [client]);
+  }, [client, paramsReload]);
 
   const probeNow = async (routeId?: string) => {
     if (probing) return;
@@ -155,7 +207,8 @@ export default function StationDispatch({ client }: { client: Client }) {
       await stationApi.pin(client, routeId);
       toast.ok(
         routeId
-          ? policy?.pool_strategy === "least-loaded"
+          ? policy?.admission.overflow_to_pool &&
+            policy?.pool_strategy === "least-loaded"
             ? "已固定池内首选 4 小时；优先空闲线路模式下仅影响相同负载时的顺序"
             : "已固定池内首选 4 小时；首选不可用时仍允许名单内备用线路"
           : "已取消钉住，交回调度",
@@ -166,30 +219,62 @@ export default function StationDispatch({ client }: { client: Client }) {
     }
   };
 
-  // 先改界面再存（勾选框、数字框受控于这一份，等存完才变的话点了像没反应）；存失败就退回原来那份。
-  const saveSettings = async (next: ProbeSettings) => {
-    const before = view?.settings;
+  // 按编辑顺序写入；旧结果不覆盖新草稿，定时刷新也不盖掉未保存的设置。
+  const saveSettings = (next: ProbeSettings) => {
+    const revision = ++probeRevision.current;
+    // 测活设置是全局的，切换客户端后仍需展示这次编辑，不能回到旧落盘值。
+    const current = () => mounted.current && revision === probeRevision.current;
+    probeDirty.current = true;
+    probeDraft.current = next;
+    setProbeSaving(true);
+    setProbeError(null);
     setView((v) => (v ? { ...v, settings: next } : v));
-    try {
-      const saved = await stationApi.saveProbeSettings(next);
-      setView((v) => (v ? { ...v, settings: saved } : v));
-    } catch (e) {
-      if (before) setView((v) => (v ? { ...v, settings: before } : v));
-      toast.error(
-        `测活设置没存上：${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
+    probeWrites.current = probeWrites.current
+      .catch(() => {})
+      .then(async () => {
+        const saved = await stationApi.saveProbeSettings(next);
+        if (current()) {
+          probeDirty.current = false;
+          probeDraft.current = saved;
+          setView((v) => (v ? { ...v, settings: saved } : v));
+        }
+      })
+      .catch((e: unknown) => {
+        if (current())
+          setProbeError(
+            `测活设置未保存：${e instanceof Error ? e.message : String(e)}`,
+          );
+      })
+      .finally(() => {
+        if (current()) setProbeSaving(false);
+      });
   };
 
-  const saveParams = async (next: DispatchParams) => {
+  const saveParams = (next: DispatchParams) => {
+    if (paramsLoadedFor !== client) return;
+    const revision = ++paramsRevision.current;
+    const current = () =>
+      mounted.current &&
+      revision === paramsRevision.current &&
+      clientRef.current === client;
     setParams(next);
-    try {
-      await stationApi.scheduleSet(client, null, null, next);
-    } catch (e) {
-      toast.error(
-        `防抖设置没存上：${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
+    setParamsSaving(true);
+    setParamsError(null);
+    paramsWrites.current = paramsWrites.current
+      .catch(() => {})
+      .then(async () => {
+        const saved = await stationApi.scheduleSet(client, null, null, next);
+        if (current()) setParams(saved.dispatch);
+      })
+      .catch((e: unknown) => {
+        if (current())
+          setParamsError(
+            `防抖设置未保存：${e instanceof Error ? e.message : String(e)}`,
+          );
+      })
+      .finally(() => {
+        if (current()) setParamsSaving(false);
+      });
   };
 
   if (error && !view)
@@ -240,6 +325,7 @@ export default function StationDispatch({ client }: { client: Client }) {
         </div>
         <p className="qb-st-note">
           {policy?.routing_mode === "pool" &&
+          policy.admission.overflow_to_pool &&
           policy.pool_strategy === "least-loaded"
             ? "优先空闲线路已开启：每次请求按实时负载在允许名单内分配，所选线路正常时也可能使用其他站。下方队列提供候选顺序。"
             : view.enabled
@@ -312,7 +398,8 @@ export default function StationDispatch({ client }: { client: Client }) {
           <div className="qb-st-nudge qb-st-dq">
             已钉住「{routeLabelFromId(pinned.route_id)}」到{" "}
             {clock(Number(pinned.until_ms))}
-            {policy?.pool_strategy === "least-loaded"
+            {policy?.admission.overflow_to_pool &&
+            policy?.pool_strategy === "least-loaded"
               ? "。优先空闲线路模式下，固定首选只影响相同负载时的顺序；要固定每次请求，请改用仅所选线路。"
               : "，首选不可用时仍可使用名单内备用线路"}
             <button className="qb-st-iconbtn" onClick={() => void pin(null)}>
@@ -369,6 +456,19 @@ export default function StationDispatch({ client }: { client: Client }) {
       <div className="qb-st-deck">
         <div className="qb-card">
           <h3>测活</h3>
+          {probeSaving && (
+            <p className="qb-st-note" role="status">
+              正在保存测活设置…
+            </p>
+          )}
+          {probeError && (
+            <p className="qb-st-nudge" role="alert">
+              {probeError}
+              <Button variant="ghost" onClick={() => saveSettings(settings)}>
+                重试保存
+              </Button>
+            </p>
+          )}
           <p className="qb-st-note">
             免费的那种（调度开着时一直跑）发一个空请求，只证明「线通、Key
             认」，测不出快慢；最近走过真实流量的线不测 —— 真实流量本身就是证据。
@@ -443,6 +543,26 @@ export default function StationDispatch({ client }: { client: Client }) {
 
         <div className="qb-card">
           <h3>换第一条的防抖</h3>
+          {paramsSaving && (
+            <p className="qb-st-note" role="status">
+              正在保存防抖设置…
+            </p>
+          )}
+          {paramsError && (
+            <p className="qb-st-nudge" role="alert">
+              {paramsError}
+              <Button
+                variant="ghost"
+                onClick={() =>
+                  paramsLoadedFor === client
+                    ? saveParams(params)
+                    : setParamsReload((v) => v + 1)
+                }
+              >
+                重试
+              </Button>
+            </p>
+          )}
           <p className="qb-st-note">
             挑战者要同时满足这三条才把现任换下来；现任熔断了、判死了、没过底线，有合格的就立刻换，不谈防抖。
           </p>
@@ -458,6 +578,7 @@ export default function StationDispatch({ client }: { client: Client }) {
                   min={0}
                   max={100}
                   aria-label="领先现任至少多少（%）"
+                  disabled={paramsLoadedFor !== client}
                   value={Math.round(params.margin * 100)}
                   onChange={(e) =>
                     void saveParams({
@@ -479,6 +600,7 @@ export default function StationDispatch({ client }: { client: Client }) {
                   step={1}
                   min={1}
                   aria-label="挑战者至少几个样本"
+                  disabled={paramsLoadedFor !== client}
                   value={params.min_samples}
                   onChange={(e) =>
                     void saveParams({
@@ -500,6 +622,7 @@ export default function StationDispatch({ client }: { client: Client }) {
                   step={1}
                   min={1}
                   aria-label="连续几轮有新证据都领先"
+                  disabled={paramsLoadedFor !== client}
                   value={params.confirm}
                   onChange={(e) =>
                     void saveParams({

@@ -309,6 +309,7 @@ export type {
 export const api = {
   // 门禁
   gateStatus: () => call<GateStatus>("gate_status"),
+  gateCheckIntervalSave: (seconds: number) => call<Settings>("gate_check_interval_save", { seconds }),
   gateLockAll: () => call<number>("gate_lock_all"),
   gateUnlockAll: () => call<number>("gate_unlock_all"),
   /**

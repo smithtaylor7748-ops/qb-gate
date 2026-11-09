@@ -59,10 +59,12 @@ use std::sync::{Arc, Mutex};
 
 mod admission;
 mod aggregate;
+pub(crate) mod diagnostic;
 mod forward;
 mod log;
 mod official;
 mod server;
+mod session_recovery;
 
 fn same_quota_source(a: &Upstream, b: &Upstream) -> bool {
     a.base_url == b.base_url
@@ -353,6 +355,18 @@ impl RouterState {
     /// 不保留的话,使用者接进路由之后随手编辑一条中转线路,官方上游就被这次重装
     /// 悄悄冲掉了 —— Codex 下一发请求 503,而界面上完全看不出是被这一步冲的。
     pub fn replace_upstreams(&mut self, upstreams: Vec<Upstream>) {
+        let removed: Vec<_> = self
+            .upstreams
+            .values()
+            .filter(|old| {
+                !matches!(old.auth, UpstreamAuth::OAuthPassthrough)
+                    && !upstreams.iter().any(|u| u.route_id == old.route_id)
+            })
+            .map(|u| u.route_id.clone())
+            .collect();
+        for id in removed {
+            self.remove_upstream(&id);
+        }
         let sources_changed = upstreams.iter().any(|u| {
             self.upstreams
                 .get(&u.route_id)
@@ -566,8 +580,9 @@ impl RouterState {
         match settings.routing_mode {
             RoutingMode::Selected => selected.as_deref() == Some(route_id),
             RoutingMode::Pool => {
-                selected.is_some_and(|id| settings.allowed_routes.contains(&id))
-                    && settings.allowed_routes.iter().any(|id| id == route_id)
+                selected.is_some_and(|id| {
+                    self.upstreams.contains_key(&id) && settings.allowed_routes.contains(&id)
+                }) && settings.allowed_routes.iter().any(|id| id == route_id)
             }
         }
     }
@@ -575,6 +590,18 @@ impl RouterState {
     /// 删除提交后立即撤销运行期发送许可，避免等待完整上游重载期间仍用旧拷贝。
     pub fn remove_upstream(&mut self, route_id: &str) {
         self.upstreams.remove(route_id);
+        self.switch.forget_route(route_id);
+        for settings in self.settings.values_mut() {
+            settings.allowed_routes.retain(|id| id != route_id);
+            settings.admission.route_limits.remove(route_id);
+            settings.aggregate.members.retain(|id| id != route_id);
+            settings.aggregate.models.remove(route_id);
+        }
+        for queue in self.queue.values_mut() {
+            queue.retain(|id| id != route_id);
+        }
+        self.breakers.remove(route_id);
+        self.missing_models.retain(|(id, _), _| id != route_id);
         self.invalidate_quota();
     }
 

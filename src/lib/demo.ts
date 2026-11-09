@@ -55,6 +55,8 @@ import type { RelayRequestPage } from "./generated/RelayRequestPage";
 import type { SessionSummary } from "./generated/SessionSummary";
 import type { SessionDetail } from "./generated/SessionDetail";
 import type { TrashEntry } from "./generated/TrashEntry";
+import type { QualityCheckRequest } from "./generated/QualityCheckRequest";
+import type { QualityCheckResult } from "./generated/QualityCheckResult";
 /**
  * 演示数据 —— 只给截图和界面预览用。
  *
@@ -774,6 +776,7 @@ const settings: Settings = {
   antigravity_outside_gate: false,
   antigravity_hub_quota: true,
   gate_auto_rearm: true,
+  gate_check_interval_secs: 5,
   managed_apps_dir: null,
   country_allowlist: ["US"],
   hook_enabled: true,
@@ -2011,7 +2014,8 @@ const routerSettingsOf = (client: string): RouterSettings => {
     routing_mode: "selected",
     allowed_routes: [],
     pool_strategy: "priority",
-    admission: { route_limits: {}, max_wait_ms: 0, max_waiters: 0 },
+    session_recovery: { strip_item_ids: false, filter_encrypted_content: false },
+    admission: { overflow_to_pool: false, route_limits: {}, max_wait_ms: 0, max_waiters: 0 },
     max_attempts: codex ? 3 : 6,
     first_byte_timeout_secs: codex ? 60 : 90,
     idle_timeout_secs: codex ? 300 : 180,
@@ -3585,7 +3589,56 @@ const stationModels = [
   },
 ];
 
+const demoQualityCancelled = new Set<string>();
+const demoQualityPending = new Map<string, () => void>();
 const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
+  quality_check_run: async (args) => {
+    const request = args?.request as QualityCheckRequest;
+    const began = Date.now();
+    await new Promise<void>((resolve) => {
+      const finish = () => {
+        clearTimeout(timer);
+        demoQualityPending.delete(request.request_id);
+        resolve();
+      };
+      const timer = setTimeout(finish, 1000);
+      demoQualityPending.set(request.request_id, finish);
+      if (demoQualityCancelled.has(request.request_id)) finish();
+    });
+    const cancelled = demoQualityCancelled.delete(request.request_id);
+    const official = request.target.kind === "codex-account";
+    const result: QualityCheckResult = {
+      request_id: request.request_id,
+      target_id: request.target.id,
+      target_label: official
+        ? codexSlots.find((s) => s.id === request.target.id)?.label ?? request.target.id
+        : stationRoutes.find((r) => r.id === request.target.id)?.group ?? request.target.id,
+      target_kind: request.target.kind,
+      requested_model: request.model,
+      actual_model: cancelled ? null : request.model,
+      source_stamp: cancelled ? null : `demo-source-v1:${request.target.kind}:${request.target.id}`,
+      protocol: official ? "codex-cli" : "responses",
+      status: cancelled ? "cancelled" : "completed",
+      text: cancelled ? "" : '{"answer":21}',
+      input_tokens: cancelled ? null : 182,
+      output_tokens: cancelled ? null : 8,
+      cache_read_tokens: cancelled ? null : 0,
+      reasoning_tokens: cancelled ? null : 64,
+      elapsed_ms: Date.now() - began,
+      first_token_ms: cancelled ? null : 300,
+      error: null,
+      output_limit_enforced: !official,
+    };
+    return result;
+  },
+  quality_check_cancel: (args) => {
+    const id = String(args?.requestId ?? "");
+    demoQualityCancelled.add(id);
+    if (demoQualityCancelled.size > 128)
+      demoQualityCancelled.delete(demoQualityCancelled.values().next().value!);
+    demoQualityPending.get(id)?.();
+    return true;
+  },
   // ---------------------------------------------------------------- 中转站
   //
   // 三条线路，两个站点。**倍率那一格三种状态各来一个** ——
@@ -4266,50 +4319,13 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     }
     return false;
   },
-  // 官方 Codex turn-state（实验）。演示数据给一张采到的 292，好看清界面。
-  station_turnstate_configure: (args) => {
-    stationTurnstateEnabled = Boolean(args?.enabled);
-    stationTurnstateTeam = Boolean(args?.team);
-    return null;
-  },
-  // 开启识别：演示里挂上官方上游、把「接管的槽位」记成当前激活的那个 —— 跟真后端
-  // 一样只改槽位配置、不起进程；起 Codex 仍是账户页那颗按钮的事。
-  station_turnstate_enable: () => {
-    if (egressRunning)
-      throw new Error(
-        "出站插件（ccodex）正在运行。它和识别都要改同一个槽位的 Codex 配置，一次只能开一个：先到扩展中心停掉插件（会恢复 Codex 配置），再开启识别。",
-      );
-    const active = codexSlots.find((s) => s.active);
-    if (!active) throw new Error("没有激活的 Codex 账户槽位。");
-    if (!active.logged_in)
-      throw new Error(
-        `槽位「${active.label}」还没用 ChatGPT 登录。先在账户页打开它登录，再开启识别。`,
-      );
-    stationRouterUp = true;
-    stationTurnstateArmed = true;
-    stationTurnstateTakeover = active.label;
-    return FIXTURES.station_router_status({ client: "codex" });
-  },
+  // 仅保留旧接管的恢复；不再开启或注入。
   station_turnstate_disable: () => {
+    stationTurnstateEnabled = false;
     stationTurnstateArmed = false;
     stationTurnstateTakeover = null;
     return FIXTURES.station_router_status({ client: "codex" });
   },
-  station_turnstate_status: () => [
-    {
-      model: "gpt-5.6-sol",
-      status: {
-        usable: true,
-        version: 3n,
-        blocks: 10,
-        length: 292,
-        remaining_seconds: 3180n,
-        ready: true,
-        strikes: 0,
-        observations: 14n,
-      },
-    },
-  ],
   // 切哪个软件的上游，由**这条线自己的 client** 决定 —— 跟真后端同一条规矩。
   // 拿参数里的 client 当依据的话，演示就验不出那个 bug。
   station_select_route: (args) => {
@@ -4433,6 +4449,33 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     return totals;
   },
   station_usage_requests: (args) => demoRelayRequests(args),
+  station_usage_overview: (args) => {
+    const through = Date.now();
+    const client = String(args?.client);
+    const hours = args?.hours == null ? null : Number(args.hours);
+    const granularity = hours == null ? "day" : hours > 24 && args?.granularity === "minute" ? "hour" : String(args?.granularity ?? "hour");
+    const rows = demoUsageItems.filter(x => x.client === client && (!args?.routeId || x.route === args.routeId));
+    const timed = rows.map(x => ({...x, at:new Date(`${x.day}T${String(x.hour ?? 0).padStart(2,"0")}:00:00`).getTime()}));
+    const since = hours == null ? Math.min(through, ...timed.map(x=>x.at)) : through - hours*3_600_000;
+    const inRange = timed.filter(x=>x.at>=since && x.at<=through);
+    const totals = blankTotals();
+    for(const row of inRange) addTotals(totals,row.totals);
+    const width = granularity === "minute" ? 300_000 : 3_600_000;
+    const bucketStart = (at:number) => {
+      const date=new Date(at);
+      if(granularity === "day") {date.setHours(0,0,0,0);return date.getTime();}
+      return Math.floor(at/width)*width;
+    };
+    const buckets = new Map<number, {start_ms:number;end_ms:number;totals:RelayUsageTotals}>();
+    for(let at=bucketStart(since);at<=through;) {
+      const end=new Date(at);
+      if(granularity === "day") end.setDate(end.getDate()+1); else end.setTime(at+width);
+      buckets.set(at,{start_ms:at,end_ms:end.getTime(),totals:blankTotals()});
+      at=end.getTime();
+    }
+    for(const row of inRange) {const b=buckets.get(bucketStart(row.at));if(b) addTotals(b.totals,row.totals);}
+    return {since_ms:since,through_ms:through,granularity,totals,by_route:demoGroups(inRange,x=>[x.route,x.route]),buckets:[...buckets.values()]};
+  },
   sessions_list: (args) => demoSessionList(args),
   sessions_read: (args) => demoSessionRead(String(args?.id)),
   sessions_export: () => null,
@@ -4574,6 +4617,12 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
           problem: null,
         },
   gate_status: () => gate,
+  gate_check_interval_save: (args) => {
+    const seconds = Number(args?.seconds);
+    if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30) throw new Error("检查间隔须为1–30秒的整数");
+    settings.gate_check_interval_secs = seconds;
+    return { ...settings };
+  },
   hook_status: () => hook,
   country_presets: () => [
     ["只留美国", ["US"]],

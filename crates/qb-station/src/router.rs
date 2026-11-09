@@ -94,6 +94,16 @@ impl UpstreamSwitch {
         self.in_flight = self.in_flight.saturating_sub(1);
     }
 
+    /// 删除选择必须清除身份；同 ID 重建不能自动获得发送许可。
+    pub fn forget_route(&mut self, route_id: &str) {
+        if self.pending.as_deref() == Some(route_id) {
+            self.pending = None;
+            self.current = None;
+        } else if self.current.as_deref() == Some(route_id) {
+            self.current = None;
+        }
+    }
+
     /// 直接落定一条线,不排队。
     ///
     /// 只给「第一次选上游」和「使用者手动指定」用 —— 调度器**不许**走这里,
@@ -191,6 +201,12 @@ impl ClientRouter {
             s.end();
         }
     }
+
+    pub fn forget_route(&mut self, route_id: &str) {
+        for selection in self.per_client.values_mut() {
+            selection.forget_route(route_id);
+        }
+    }
 }
 
 /// 一个软件的本机路由设置（cc-switch 的 `AppProxyConfig`，每个 app 一行）。
@@ -220,8 +236,26 @@ pub struct RouterSettings {
     pub breaker: BreakerSettings,
     /// 整流器（cc-switch 的 `RectifierConfig`，默认全开）。
     pub rectifier: RectifierSwitches,
+    /// Codex Responses 请求历史修复；两个开关默认关闭，不修改本地会话文件。
+    pub session_recovery: SessionRecoverySettings,
     /// 聚合模型（中转站重构阶段 3）。老数据没有就是关着。
     pub aggregate: AggregateSettings,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(default)]
+pub struct SessionRecoverySettings {
+    /// 移除已知历史条目顶层的上游 id，保留 call_id、正文和业务字段。
+    pub strip_item_ids: bool,
+    /// 过滤已知 reasoning 的不透明状态；缺少可读压缩上下文时拒绝发送。
+    pub filter_encrypted_content: bool,
+}
+
+impl SessionRecoverySettings {
+    pub fn active(self) -> bool {
+        self.strip_item_ids || self.filter_encrypted_content
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -258,6 +292,8 @@ pub struct RouteLimits {
 #[ts(export)]
 #[serde(default)]
 pub struct AdmissionSettings {
+    /// 容量不足时向授权池分流；默认关闭。不开启时只在当前候选上有限等待或返回繁忙。
+    pub overflow_to_pool: bool,
     pub route_limits: std::collections::BTreeMap<String, RouteLimits>,
     /// 最多等候毫秒数；0 = 不排队。
     pub max_wait_ms: u32,
@@ -380,6 +416,7 @@ impl RouterSettings {
                 ..BreakerSettings::default()
             },
             rectifier: RectifierSwitches::default(),
+            session_recovery: SessionRecoverySettings::default(),
             aggregate: AggregateSettings::default(),
         }
     }

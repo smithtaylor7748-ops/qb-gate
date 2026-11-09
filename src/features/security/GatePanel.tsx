@@ -44,6 +44,7 @@ import {
 } from "../../ui";
 import { recordGate, useChecks } from "./useChecks";
 import LogBand from "../overview/LogBand";
+import GateCheckInterval from "./GateCheckInterval";
 
 /**
  * 一次门禁改动：跑动作 → 作废相关缓存 → 重读门禁 → 补记进度。
@@ -218,6 +219,10 @@ export function AllowlistPanel() {
       </Card>
 
       <GateRange />
+
+      <Card as="h3" title="检测间隔" className="mb-3">
+        <GateCheckInterval />
+      </Card>
 
       <CountryGate />
 
@@ -556,15 +561,16 @@ export function LockPanel() {
       )}
 
       <Card as="h3" title="看门狗" className="mb-3">
+        <GateCheckInterval />
         {/* 这两条是说明，不是数据 —— 旧界面把它们做成了跟真实数据行一模一样的
             两栏行，看起来像是在报告当前配置。 */}
         <div className="rounded-[var(--radius-md)] bg-[var(--surface-2)] px-3 py-2">
           <Bullet marker="·">
-            <strong>Claude Code / 桥接档</strong>：每 5 秒查一次。查不到 IP
+            <strong>Claude Code / 桥接档</strong>：按上面的间隔检测。查不到 IP
             时立即上锁并关闭受管进程，不提供宽限。
           </Bullet>
           <Bullet marker="·">
-            <strong>Claude 桌面端档</strong>：每 5 秒查一次。查不到 IP
+            <strong>Claude 桌面端档</strong>：共用相同检测间隔。查不到 IP
             <strong>立即关闭，不给宽限</strong>。
           </Bullet>
         </div>

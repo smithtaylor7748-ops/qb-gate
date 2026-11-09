@@ -2,8 +2,7 @@
 //! 导入链接（中转站重构阶段 5，cc-switch 的 X4 Deep Link）：`qbgate://v1/import?resource=…` → 一个导入请求。
 //!
 //! 链接格式照搬 cc-switch 的 v1（`ccswitch://v1/import?…`），所以中转站页面上给 CC Switch 的导入链接
-//! 粘贴进来也认。**系统里只注册 `qbgate://`**（安装包按 `tauri.conf.json` 的 `plugins.deep-link` 写进 HKCU）；
-//! `ccswitch://` 是 cc-switch 的，不抢。
+//! 粘贴进来也认。安装包只登记 `qbgate://`；`ccswitch://` 网页接收由使用者显式开启并可恢复原处理者。
 //!
 //! 这里只解析、只核对形状 —— 不碰文件、不联网、不写库。导入在 `qb-app::usecase::deeplink_ops`，
 //! 导入之前界面一律先让使用者确认，导入之后什么都不自动启用。
@@ -15,7 +14,7 @@
 //!   （那把 Key 在本机环境变量里，导进来就是把它发到链接给的地址去）；
 //! - 图标（`icon` / `iconUrl`）丢掉：QB Gate 没有站点图标，也不替链接去下载东西；
 //! - 链接要求「导入后直接用」（`enabled=true`）、带用量脚本（`usageScript` 一族）的，认出来但不照做，
-//!   记在 [`ProviderLink::ignored`] 里由界面照实列出来（用量脚本要到阶段 6 才有）。
+//!   记在 [`ProviderLink::ignored`] 里由界面照实列出来，用量脚本需要使用者手动配置。
 
 use crate::error::{GateError, Result};
 use base64::prelude::*;
@@ -24,7 +23,7 @@ use std::collections::HashMap;
 
 /// 系统里注册的协议名。
 pub const SCHEME: &str = "qbgate";
-/// cc-switch 的协议：格式相同，只认粘贴进来的（不在系统里注册）。
+/// cc-switch 的协议：可粘贴，或在显式开启网页兼容后由系统转入。
 pub const CC_SWITCH_SCHEME: &str = "ccswitch";
 
 /// 站点链接给哪个软件（QB Gate 能建线路的那几个）。
@@ -276,7 +275,7 @@ fn parse_provider(params: &HashMap<String, String>) -> Result<ProviderLink> {
     }
     if params.keys().any(|k| k.starts_with("usage")) {
         link.ignored
-            .push("用量查询脚本：QB Gate 的自定义用量脚本要到阶段 6 才有，这一部分没导入".into());
+            .push("用量查询脚本：本次没有自动导入，请在站点设置中手动配置并确认后启用".into());
     }
     Ok(link)
 }
@@ -726,6 +725,30 @@ mod tests {
             ),
             ("https://g.example.com", Some("g"), Some("gm"))
         );
+    }
+
+    #[test]
+    fn sub2api_codex_web_link_accepts_embedded_static_auth_without_enabling_scripts() {
+        let config = serde_json::json!({"config": r#"model_provider = "relay"
+model = "fixture-model"
+[model_providers.relay]
+name = "Fixture"
+base_url = "https://fixture.example"
+wire_api = "responses"
+requires_openai_auth = false
+experimental_bearer_token = "fixture+key"
+http_headers = { "x-openai-actor-authorization" = "local-image-extension" }
+"#});
+        let parsed = provider(&format!(
+            "ccswitch://v1/import?resource=provider&app=codex&name=Fixture&endpoint=https%3A%2F%2Ffixture.example&apiKey=fixture%2Bkey&model=fixture-model&configFormat=json&config={}&usageEnabled=true&usageScript={}&usageAutoInterval=30",
+            enc(&b64(&config.to_string())), enc(&b64("fixture script")),
+        ));
+        assert_eq!(parsed.app, Some(LinkApp::Codex));
+        assert_eq!(parsed.endpoints, ["https://fixture.example"]);
+        assert_eq!(parsed.api_key.as_deref(), Some("fixture+key"));
+        assert_eq!(parsed.model.as_deref(), Some("fixture-model"));
+        assert_eq!(parsed.ignored.len(), 1);
+        assert!(parsed.ignored[0].contains("没有自动导入"));
     }
 
     #[test]

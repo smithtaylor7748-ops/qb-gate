@@ -43,4 +43,20 @@ describe("BarChart", () => {
     expect(container.querySelector("svg")).toBeNull();
     expect(container.textContent).toContain("这一档没有记录。");
   });
+
+  it("请求计数轴只显示整数", () => {
+    const { container } = render(
+      <BarChart
+        label="请求数"
+        integerTicks
+        format={String}
+        data={[{ key: "a", axis: "09:00", title: "09:00–10:00", value: 9 }]}
+      />,
+    );
+    expect(
+      [...container.querySelectorAll(".qb-bars-tick")].map((e) =>
+        Number(e.textContent),
+      ),
+    ).toEqual([0, 5, 10]);
+  });
 });

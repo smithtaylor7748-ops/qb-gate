@@ -14,44 +14,68 @@ export function StationAdmissionSettings({
   onChange: (patch: Partial<RouterSettings>) => void;
 }) {
   const { admission } = settings;
+  const overflow =
+    settings.routing_mode === "pool" && admission.overflow_to_pool;
+  const useLoad = overflow && settings.pool_strategy === "least-loaded";
   const setAdmission = (patch: Partial<RouterSettings["admission"]>) =>
     onChange({ admission: { ...admission, ...patch } });
 
   return (
     <section className="qb-st-admission-settings" aria-label="请求容量设置">
+      <h4 className="qb-st-sect">同一对话的并行请求</h4>
+      <label className="qb-st-admission-check">
+        <input
+          type="checkbox"
+          aria-label="容量不足时分流到其他允许线路"
+          checked={overflow}
+          disabled={settings.routing_mode !== "pool"}
+          onChange={(event) =>
+            setAdmission({ overflow_to_pool: event.target.checked })
+          }
+        />
+        容量不足时分流到其他允许线路
+      </label>
+      <p className="qb-st-note">
+        默认关闭；先选择允许线路池并勾选备用站。使用“首选与备用”时，当前站并发上限设为
+        2，
+        两个请求仍在进行时，同一对话的新请求会尝试其他允许站；当前站空闲后新请求回到首选。
+        关闭后达到并发或每分钟上限会等待或返回繁忙。智能调度开关只控制定时排序。
+        分流按独立请求进行，不拆分一条回复；需要服务端会话状态的请求应固定线路。
+      </p>
       {settings.routing_mode === "pool" && (
         <>
           <h4 className="qb-st-sect">名单内如何分配请求</h4>
           <div className="qb-st-routing-options">
             <label
-              className={`qb-st-routing-option${settings.pool_strategy === "priority" ? " active" : ""}`}
+              className={`qb-st-routing-option${!useLoad ? " active" : ""}`}
             >
               <input
                 type="radio"
                 name={`pool-strategy-${settings.client}`}
-                checked={settings.pool_strategy === "priority"}
+                checked={!useLoad}
                 onChange={() => onChange({ pool_strategy: "priority" })}
               />
               <span>
                 <strong>首选与备用</strong>
                 <span>
-                  优先所选线路；不可用或达到容量限制时，再试允许名单中的备用。
+                  优先所选线路；失败时尝试备用，容量不足时是否分流由上方开关控制。
                 </span>
               </span>
             </label>
             <label
-              className={`qb-st-routing-option${settings.pool_strategy === "least-loaded" ? " active" : ""}`}
+              className={`qb-st-routing-option${useLoad ? " active" : ""}`}
             >
               <input
                 type="radio"
                 name={`pool-strategy-${settings.client}`}
-                checked={settings.pool_strategy === "least-loaded"}
+                disabled={!admission.overflow_to_pool}
+                checked={useLoad}
                 onChange={() => onChange({ pool_strategy: "least-loaded" })}
               />
               <span>
                 <strong>优先空闲线路</strong>
                 <span>
-                  每次请求在允许名单内比较负载。首选正常时也可能使用其他站，并消耗该站额度。
+                  开启分流后可用：每次请求在允许名单内比较负载，首选未满时也可能使用其他站并消耗其额度。
                 </span>
               </span>
             </label>
@@ -62,6 +86,7 @@ export function StationAdmissionSettings({
       <p className="qb-st-note">
         默认不限制。这里仅约束经过本机路由的 API
         中转请求，不限制官方账户；设置限额不会把线路加入允许名单。
+        同一线路的所有对话共用上限，流式回复结束或取消后释放名额。
         仅用所选线路时，达到限制也不会改用其他站。
         每分钟按实际发送次数计，重试与测活也计入；等待和本机拒绝不计入。
       </p>
@@ -138,8 +163,9 @@ export function StationAdmissionSettings({
         />
       </div>
       <p className="qb-st-note">
-        两项都大于 0 才会排队；任一为 0
-        时，容量不足就直接返回本机繁忙。队列满或超时也会结束等待，不会擅自扩大允许名单。
+        开启分流时先尝试名单内的可用线路，都忙才等待；关闭分流时只等当前候选。
+        两项都大于 0 才会排队；任一为 0 时，容量不足就返回本机繁忙。
+        队列满或超时也会结束等待，不会扩大允许名单。
       </p>
     </section>
   );

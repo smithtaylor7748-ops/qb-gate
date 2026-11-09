@@ -247,7 +247,12 @@ const port = 20000 + Math.floor(Math.random() * 20000);
 const origin = `http://localhost:${port}`;
 const server = await createServer({
   mode: "demo",
-  server: { port, strictPort: true },
+  server: {
+    port,
+    strictPort: true,
+    // Rust 构建缓存（含 junction）不参与前端回归，避免监听扫描拖慢模块转换。
+    watch: { ignored: ["**/target/**"] },
+  },
 });
 let browser;
 try {
@@ -563,6 +568,21 @@ try {
         }),
       );
       await page.waitForTimeout(200);
+      const gateInterval = page.getByRole("spinbutton", {
+        name: "IP 锁检测间隔（秒）",
+      });
+      if (await gateInterval.count()) {
+        await gateInterval.fill("1");
+        await page
+          .getByRole("button", { name: "保存间隔", exact: true })
+          .click();
+        await page.getByText("当前已保存：1 秒", { exact: true }).waitFor();
+        await gateInterval.fill("5");
+        await page
+          .getByRole("button", { name: "保存间隔", exact: true })
+          .click();
+        await page.getByText("当前已保存：5 秒", { exact: true }).waitFor();
+      }
       await assertNoOverflow(page, `小窗「${name}」 ${width}px`);
       report.push({
         route: `modal:${name}`,
@@ -971,6 +991,53 @@ try {
     .click();
   await assertNoOverflow(page, "Codex four-account desktop layout");
   await page.screenshot({ path: "docs/screenshots/codex-accounts-light.png" });
+  await page.getByTestId("codex-turnstate").click();
+  await page.getByLabel("自动检测模型", { exact: true }).fill("ui-test-model");
+  assert.match(
+    await page.getByRole("dialog").innerText(),
+    /官方 Codex 账户：个人账户/,
+  );
+  await page
+    .getByRole("button", { name: "开始自动检测（1 次请求）", exact: true })
+    .click();
+  await page.getByText("最终答案 21，单题通过。", { exact: true }).waitFor();
+  await page.getByText("批次完成", { exact: true }).first().waitFor();
+  const completedQuality = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("qb-quality-check-v2") || "[]"),
+  );
+  assert.equal(
+    completedQuality[0].conditions.targetId,
+    "codex-account:codex-demo-0",
+  );
+  assert.equal(completedQuality[0].samples[0].status, "completed");
+  assert.equal(completedQuality[0].results[0].verdict, "passed");
+  await page.getByLabel("检测轮数", { exact: true }).selectOption("3");
+  await page
+    .getByRole("button", { name: "开始自动检测（3 次请求）", exact: true })
+    .click();
+  await page.getByRole("button", { name: "取消本批次", exact: true }).click();
+  await page.getByText("批次已取消", { exact: true }).waitFor();
+  const cancelledQuality = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("qb-quality-check-v2") || "[]"),
+  );
+  assert.equal(cancelledQuality[0].state, "cancelled");
+  assert.equal(cancelledQuality[0].attemptedRequests, 1);
+  assert.equal(cancelledQuality[0].samples[0].status, "cancelled");
+  await page
+    .getByText("高级：原五题手动导入与历史记录", { exact: true })
+    .click();
+  await page.getByLabel("测试模型", { exact: true }).fill("ui-test-model");
+  await page
+    .getByLabel("测试结果", { exact: true })
+    .fill('{"q1":25,"q2":"B","q3":64,"q4":-10,"q5":4}');
+  await page.getByRole("button", { name: "检查并记录", exact: true }).click();
+  await page.getByText(/本次 5\/5/).waitFor();
+  await page.setViewportSize({ width: 680, height: 900 });
+  await assertNoOverflow(page, "GPT quality evidence 680");
+  await page.getByRole("button", { name: "清除测试记录", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  await page.setViewportSize({ width: 1320, height: 940 });
   // Closing requires confirmation and preserves the selected account and login.
   // 0.27.0：三个动作都是磁贴，按 testid 找 —— 磁贴的可访问名是「名字 + 副标题」，
   // 而副标题会随运行状态变，用名字精确匹配必然时红时绿。
@@ -1465,6 +1532,12 @@ try {
   // 汉化 / 自动审批 / 高危拦截：0.30.0 起收进启动卡标题栏那颗按钮打开的弹窗。
   // 入口按钮的文字如实跟着引擎状态变（「汉化」→「汉化：开」）。
   const entry = page.getByTestId("ag-engine-entry");
+  // 进程状态与引擎状态分别异步刷新；磁贴已变成「未运行」时，引擎查询还可能在途。
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-testid="ag-engine-entry"]')?.textContent ===
+      "汉化",
+  );
   assert.equal(await entry.innerText(), "汉化");
   await entry.click();
   const engine = page.getByTestId("ag-engine-toggle");
@@ -2113,12 +2186,12 @@ try {
   await schedToggle(false).focus();
   await schedToggle(false).press("Enter");
   await page
-    .getByText("请先在路由设置中勾选允许使用的线路并保存，再启动调度", {
+    .getByText("请先在选线与分流中勾选允许使用的线路并保存，再启动自动选线", {
       exact: true,
     })
     .waitFor();
   assert.equal(await schedToggle(true).count(), 0);
-  await page.getByRole("button", { name: /路由设置 · 允许范围/ }).click();
+  await page.getByRole("button", { name: /^选线与分流/ }).click();
   const routerDialog = page.getByRole("dialog");
   const strictMode = () =>
     page.getByRole("dialog").getByRole("radio", { name: /^仅所选线路/ });
@@ -2127,6 +2200,17 @@ try {
   await strictMode().waitFor();
   assert.equal(await strictMode().isChecked(), true, "默认不是仅用所选线路");
   await poolMode().check();
+  await routerDialog
+    .getByRole("tab", { name: "自动选线偏好", exact: true })
+    .click();
+  await routerDialog
+    .getByRole("tab", { name: "允许范围、分流与故障备用", exact: true })
+    .click();
+  assert.equal(
+    await poolMode().isChecked(),
+    true,
+    "切换设置分页丢失了未保存的允许范围草稿",
+  );
   await routerDialog.getByText("允许使用的线路", { exact: true }).waitFor();
   const allowedLines = routerDialog.getByRole("checkbox", {
     name: /^允许使用「/,
@@ -2166,7 +2250,7 @@ try {
   await page.keyboard.press("Escape");
   await routerDialog.waitFor({ state: "hidden" });
   // 存下的仅用模式读回仍有效，未通过校验的 pool 草稿不能改变生效范围。
-  await page.getByRole("button", { name: /路由设置 · 允许范围/ }).click();
+  await page.getByRole("button", { name: /^选线与分流/ }).click();
   await strictMode().waitFor();
   assert.equal(await strictMode().isChecked(), true, "保存后又回到了跨线模式");
   // 中转站重构阶段 3：聚合模型。勾一条线、写发布的模型、保存 —— 列出来的 id 是后端（演示后端）编的，前端不自己拼。
@@ -2245,7 +2329,7 @@ try {
 
   // 明确逐条批准后才允许跨线。先保存并读回，再启动调度。
   await page.goto(origin + "/#/relays");
-  await page.getByRole("button", { name: /路由设置 · 允许范围/ }).click();
+  await page.getByRole("button", { name: /^选线与分流/ }).click();
   await poolMode().check();
   const authorizedLabels = await allowedLines.evaluateAll((nodes) =>
     nodes.map((node) => node.getAttribute("aria-label")),
@@ -2257,7 +2341,7 @@ try {
   await page.getByText("路由设置已保存，下一发请求就按新的来").last().waitFor();
   await page.keyboard.press("Escape");
   await routerDialog.waitFor({ state: "hidden" });
-  await page.getByRole("button", { name: /路由设置 · 允许范围/ }).click();
+  await page.getByRole("button", { name: /^选线与分流/ }).click();
   await poolMode().waitFor();
   assert.equal(await poolMode().isChecked(), true, "授权池没有保存");
   for (const name of authorizedLabels) {
@@ -2278,7 +2362,8 @@ try {
   assert.equal(await schedToggle(false).getAttribute("aria-disabled"), "false");
   await schedToggle(false).click();
   await schedToggle(true).waitFor();
-  await page.getByRole("button", { name: "调度设置", exact: true }).click();
+  await page.getByRole("button", { name: /^选线与分流/ }).click();
+  await page.getByRole("tab", { name: "自动选线偏好", exact: true }).click();
   const schedDialog = page.getByRole("dialog");
   await schedDialog
     .getByRole("heading", { name: "派单队列", exact: true })
@@ -2331,7 +2416,7 @@ try {
   await page.keyboard.press("Escape");
   await schedDialog.waitFor({ state: "hidden" });
   // 调度只接管已批准池的排序，名单仍由用户决定。
-  await page.getByRole("button", { name: /路由设置 · 允许范围/ }).click();
+  await page.getByRole("button", { name: /^选线与分流/ }).click();
   await page.getByText(/智能调度开着：名单仍由你决定/).waitFor();
   assert.equal(await poolMode().isChecked(), true, "固定首选破坏了授权池模式");
   for (const button of await routerDialog
@@ -2355,7 +2440,7 @@ try {
     .locator('button[aria-label="智能调度"][aria-disabled="true"]')
     .waitFor();
   assert.equal(await schedToggle(false).getAttribute("aria-disabled"), "true");
-  await page.getByRole("button", { name: /路由设置 · 允许范围/ }).click();
+  await page.getByRole("button", { name: /^选线与分流/ }).click();
   await strictMode().waitFor();
   assert.equal(
     await strictMode().isChecked(),

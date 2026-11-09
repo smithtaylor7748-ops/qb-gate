@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -13,10 +14,14 @@ import DeepLinkHost, {
   showDeepLink,
 } from "./DeepLinkImport";
 import { ToastProvider } from "../ui";
-const mock = vi.hoisted(() => ({ call: vi.fn() }));
+import type { DeepLinkEntry } from "../lib/deeplink";
+const mock = vi.hoisted(() => ({ call: vi.fn(), event: () => {} }));
 vi.mock("../lib/ipc", () => ({ call: mock.call }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: async () => () => undefined,
+  listen: async (_channel: string, callback: () => void) => {
+    mock.event = callback;
+    return () => undefined;
+  },
 }));
 const provider = {
   id: 7,
@@ -171,6 +176,75 @@ it("dismissing clears it by id, and a broken link says why", async () => {
   await waitFor(() =>
     expect(mock.call).toHaveBeenCalledWith("deeplink_ack", { id: 3 }),
   );
+});
+
+it("keeps a newer received link visible when an earlier import completes", async () => {
+  pending = provider;
+  let complete: ((value: unknown) => void) | undefined;
+  mock.call.mockImplementation(async (command: string) => {
+    if (command === "deeplink_peek") return pending;
+    if (command === "deeplink_import")
+      return new Promise((resolve) => {
+        complete = resolve;
+      });
+    return null;
+  });
+  mount();
+  await screen.findByText("导入站点 · Claude Code");
+  fireEvent.change(screen.getByLabelText("API Key（链接里没带）"), {
+    target: { value: "typed-key" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "导入这条线路" }));
+  await waitFor(() => expect(complete).toBeDefined());
+  await act(async () =>
+    showDeepLink({
+      ...provider,
+      id: 8,
+      view: { ...provider.view, name: "New Relay" },
+    } as DeepLinkEntry),
+  );
+  await act(async () =>
+    complete?.({ message: "imported", client: null, skipped: [] }),
+  );
+  expect(screen.getByText("New Relay")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "导入这条线路" })).toBeTruthy();
+});
+
+it("ignores stale peeks after a newer link or dismissal", async () => {
+  pending = provider;
+  mount();
+  await screen.findByText("导入站点 · Claude Code");
+  const reads: ((value: unknown) => void)[] = [];
+  mock.call.mockImplementation(async (command: string) => {
+    if (command === "deeplink_peek")
+      return new Promise((resolve) => {
+        reads.push(resolve);
+      });
+    return null;
+  });
+  await act(async () => {
+    mock.event();
+    mock.event();
+  });
+  await act(async () =>
+    reads[1]({
+      ...provider,
+      id: 8,
+      view: { ...provider.view, name: "New Relay" },
+    }),
+  );
+  await act(async () => reads[0](provider));
+  expect(screen.getByText("New Relay")).toBeTruthy();
+  await act(async () => mock.event());
+  fireEvent.click(screen.getByRole("button", { name: "不导入" }));
+  await act(async () =>
+    reads[2]({
+      ...provider,
+      id: 8,
+      view: { ...provider.view, name: "New Relay" },
+    }),
+  );
+  expect(screen.queryByText("导入站点 · Claude Code")).toBeNull();
 });
 
 it("a pasted link goes through the same confirmation, and MCP that already exists is not offered again", async () => {

@@ -171,6 +171,12 @@ pub fn country_presets() -> Vec<(String, Vec<String>)> {
 }
 
 #[tauri::command]
+pub async fn gate_check_interval_save(seconds: u32) -> Result<settings::Settings> {
+    let _guard = operations::exclusive_soon().await?;
+    usecase::settings_ops::save_gate_check_interval(seconds)
+}
+
+#[tauri::command]
 pub fn watchdog_start(
     app: tauri::AppHandle,
     mode: gate::watchdog::WatchMode,
@@ -229,6 +235,15 @@ pub async fn killswitch_execute(
         rep.phase(1, "核验并停止 Claude 会话与桥接");
         let result = usecase::gate_ops::stop_claude(&state.gate).await;
         match &result {
+            Ok(report) if !report.failed.is_empty() => rep.fail(&format!(
+                "部分 Claude 进程未关闭：{}",
+                report
+                    .failed
+                    .iter()
+                    .map(|(pid, reason)| format!("PID {pid}: {reason}"))
+                    .collect::<Vec<_>>()
+                    .join("；")
+            )),
             Ok(_) => rep.done("Claude 已关闭"),
             Err(e) => rep.fail(&e.to_string()),
         }

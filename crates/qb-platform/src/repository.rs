@@ -240,6 +240,14 @@ pub struct UsageHourRow {
     pub official_cost: Option<f64>,
 }
 
+/// 完整用量按时间桶与最终归属线路聚合；bucket 为本地日期或桶起点毫秒。
+#[derive(Debug, Clone, Default)]
+pub struct UsageBucketRow {
+    pub bucket: String,
+    pub route_id: String,
+    pub totals: UsageHourRow,
+}
+
 /// 用量页「逐条日志」那一页的条件（[`Repository::router_request_page`]）。新的在前。
 #[derive(Debug, Clone, Default)]
 pub struct RouterRequestPage {
@@ -831,6 +839,63 @@ COMMIT;"
             None => stmt.query_map(params![since_day, since_ms], map),
         }
         .map_err(sql)?;
+        rows.map(|r| r.map_err(sql)).collect()
+    }
+
+    /// 总览的完整时间桶。短窗精确过滤 [since_ms, through_ms]，不取日志页；
+    /// 全部历史（since_ms=None）加入不重叠的日归档，此时仅允许按本地日分桶。
+    pub fn usage_overview_rows(
+        &self,
+        since_ms: Option<i64>,
+        through_ms: i64,
+        client: &str,
+        route_id: Option<&str>,
+        bucket_ms: Option<i64>,
+    ) -> Result<Vec<UsageBucketRow>> {
+        let bucket = if bucket_ms.is_some() && since_ms.is_some() {
+            "CAST(CAST(at_ms / ?5 AS INTEGER) * ?5 AS TEXT)"
+        } else {
+            "date(at_ms / 1000, 'unixepoch', 'localtime')"
+        };
+        let query = format!(
+            "SELECT {bucket}, route_id, {USAGE_SUMS}
+               FROM router_requests
+              WHERE (?1 IS NULL OR at_ms >= ?1) AND at_ms <= ?2
+                AND client = ?3 AND (?4 IS NULL OR route_id = ?4)
+                AND (?5 IS NULL OR ?5 > 0)
+              GROUP BY 1, 2
+             UNION ALL
+             SELECT day, route_id, requests, failed, input_tokens, output_tokens,
+                    cache_read_tokens, cache_write_tokens, station_cost, official_cost
+               FROM usage_daily
+              WHERE ?1 IS NULL AND day <= date(?2 / 1000, 'unixepoch', 'localtime')
+                AND client = ?3 AND (?4 IS NULL OR route_id = ?4)"
+        );
+        let mut stmt = self.conn.prepare(&query).map_err(sql)?;
+        let rows = stmt
+            .query_map(
+                params![since_ms, through_ms, client, route_id, bucket_ms],
+                |r| {
+                    Ok(UsageBucketRow {
+                        bucket: r.get(0)?,
+                        route_id: r.get(1)?,
+                        totals: UsageHourRow {
+                            requests: r.get::<_, i64>(2)?.max(0) as u64,
+                            failed: r.get::<_, i64>(3)?.max(0) as u64,
+                            input_tokens: r.get::<_, Option<i64>>(4)?.map(|v| v.max(0) as u64),
+                            output_tokens: r.get::<_, Option<i64>>(5)?.map(|v| v.max(0) as u64),
+                            cache_read_tokens: r.get::<_, Option<i64>>(6)?.map(|v| v.max(0) as u64),
+                            cache_write_tokens: r
+                                .get::<_, Option<i64>>(7)?
+                                .map(|v| v.max(0) as u64),
+                            station_cost: r.get(8)?,
+                            official_cost: r.get(9)?,
+                            ..Default::default()
+                        },
+                    })
+                },
+            )
+            .map_err(sql)?;
         rows.map(|r| r.map_err(sql)).collect()
     }
 
