@@ -29,7 +29,7 @@ pub enum Hive {
 }
 
 /// 一个值。只把这里用得到的几种读成内容，别的只记类型号。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Value {
     /// `REG_SZ`。
     Text(String),

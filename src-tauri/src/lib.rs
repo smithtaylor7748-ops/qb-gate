@@ -70,6 +70,16 @@ pub use app::AppState;
 // trait 不在作用域里就调不到。
 
 pub fn run() {
+    // 卸载还原协议处理者必须在日志、数据库和单实例插件之前完成。
+    if std::env::args().any(|a| a == qb_platform::url_protocol::RESTORE_ARG) {
+        std::process::exit(
+            if qb_platform::url_protocol::restore_for_uninstall().is_ok() {
+                0
+            } else {
+                1
+            },
+        );
+    }
     // 第一件事。晚一步就可能漏掉启动期的崩溃 —— 而启动期恰恰是最容易崩、
     // 也最难让使用者复现的阶段（恢复失败、配置坏了、权限不够都在这一段）。
     panic_hook::install();
@@ -232,8 +242,6 @@ pub fn run() {
             commands::station::station_desktop_direct_set,
             // 聚合模型写进客户端配置时出的问题（阶段 4）。
             commands::station::station_aggregate_config_problem,
-            commands::station::station_dispatch_queue,
-            commands::station::station_dispatch_queue_save,
             // 项目（中转站重构阶段 5，M4）：只换中转那一侧，不碰官方账户。
             commands::station::projects_list,
             commands::station::projects_create,
@@ -243,6 +251,8 @@ pub fn run() {
             commands::station::projects_clear,
             // 导入链接（阶段 5，X4）：qbgate:// 点开的、粘贴的 ccswitch:// 都走这四条。
             commands::import_links::deeplink_peek,
+            commands::import_links::deeplink_handler_status,
+            commands::import_links::deeplink_handler_set,
             commands::import_links::deeplink_ack,
             commands::import_links::deeplink_paste,
             commands::import_links::deeplink_import,
@@ -269,6 +279,7 @@ pub fn run() {
             commands::station::station_remove_route,
             commands::station::station_logs,
             commands::station::station_usage_report,
+            commands::station::station_usage_totals,
             commands::session_manager::sessions_list,
             commands::session_manager::sessions_read,
             commands::session_manager::sessions_export,
@@ -384,6 +395,12 @@ pub fn run() {
             commands::plugins::tavern_gpt_quota,
             commands::plugins::codex_quota,
             commands::plugins::tavern_gemini_status,
+            commands::antigravity_native::tavern_antigravity_status,
+            commands::antigravity_native::tavern_antigravity_save,
+            commands::antigravity_native::tavern_antigravity_models,
+            commands::antigravity_native::tavern_antigravity_token,
+            commands::antigravity_native::tavern_antigravity_start,
+            commands::antigravity_native::tavern_antigravity_stop,
             commands::plugins::tavern_gemini_token,
             commands::plugins::tavern_gemini_quota,
             commands::plugins::tavern_bridge_roleplay_test,

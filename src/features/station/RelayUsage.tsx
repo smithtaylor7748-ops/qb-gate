@@ -621,14 +621,23 @@ export default function RelayUsage() {
                         r.status != null &&
                         r.status >= 200 &&
                         r.status < 300;
+                      const permissionDenied =
+                        r.fault === "route-permission-denied";
+                      const capacityDenied =
+                        r.fault === "route-admission-denied";
+                      const routeText =
+                        (permissionDenied || capacityDenied) &&
+                        r.attempts.length === 0
+                          ? "未发往上游"
+                          : siteLabel(r.route_id);
                       return (
                         <tr key={r.id}>
                           <td>{stamp(Number(r.at_ms))}</td>
                           {!client && (
                             <td className="clip">{clientName(r.client)}</td>
                           )}
-                          <td className="clip" title={siteLabel(r.route_id)}>
-                            {siteLabel(r.route_id)}
+                          <td className="clip" title={routeText}>
+                            {routeText}
                           </td>
                           <td
                             className="clip"
@@ -644,7 +653,11 @@ export default function RelayUsage() {
                             className={`num${ok ? "" : " qb-tone-danger"}`}
                             title={r.error ?? r.fault ?? undefined}
                           >
-                            {r.status ?? "—"}
+                            {permissionDenied
+                              ? "本机拒绝 · 超出允许范围"
+                              : capacityDenied
+                                ? "本机繁忙 · 请求容量限制"
+                                : (r.status ?? "—")}
                             {r.attempts.length > 1
                               ? ` · 试了 ${r.attempts.length} 条`
                               : ""}

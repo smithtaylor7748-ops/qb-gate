@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 会话管理器（中转站重构阶段 6 · S1，cc-switch 的 `session_manager` 与 `providers/claude.rs` / `codex.rs`）：
 //! Claude Code 和 Codex 留在本机的会话记录 —— 列表、搜索、阅读、导出 Markdown、复制恢复命令、删除（先进面板的回收站）。
 //!

@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 站点余额与编程套餐额度的「问」那一半（中转站重构阶段 6 · U3）。认哪一家、怎么解析在
 //! `qb-station::station::site_quota`（纯函数）。
 //!
@@ -11,7 +11,7 @@
 //!
 //! 没有定时器。站点地址认不出是哪一家（绝大多数中转站）就**一个请求都不发**，直接回 `None`。
 //! Key 只发给它本来就配给的那一家（`site_quota` 模块头「只认主机名」）；不跟随跳转。
-//! 结果**只显示**：调度、排序、换线一概不读它。
+//! 已查询的明确可用性可交给用户启用的本机发送检查；未知余额不推导停用，不为检查新增查询。
 
 use super::station_billing;
 use super::station_ops;
@@ -88,11 +88,19 @@ fn prepare(route_id: &str) -> Result<Option<Ask>> {
         }
         How::Builtin(_) => String::new(),
     };
+    use std::hash::{Hash, Hasher};
+    let mut endpoint = std::collections::hash_map::DefaultHasher::new();
+    source.base_url.hash(&mut endpoint);
     Ok(Some(Ask {
         how,
         key: source.key,
         base_url: source.base_url,
-        cache_key: format!("{}#{}{script_mark}", credential.id, credential.revision),
+        cache_key: format!(
+            "{}#{}#endpoint-{:x}{script_mark}",
+            credential.id,
+            credential.revision,
+            endpoint.finish()
+        ),
         site: provider.name,
     }))
 }
@@ -104,8 +112,9 @@ pub async fn quota(route_id: &str, force: bool) -> Result<Option<SiteQuota>> {
     };
     let now = chrono::Utc::now().timestamp_millis();
     if !force {
-        if let Some((at, q)) = cached(&ask.cache_key) {
-            if now - at < FRESH_MS {
+        if let Some((at, mut q)) = cached(&ask.cache_key) {
+            if (0..FRESH_MS).contains(&(now - at)) {
+                q.route_id = route_id.to_owned();
                 return Ok(Some(q));
             }
         }
@@ -264,6 +273,7 @@ mod tests {
     #[test]
     fn a_fresh_answer_is_reused_and_a_new_key_revision_is_not() {
         let q = SiteQuota {
+            available: None,
             provider: "DeepSeek".into(),
             kind: site_quota::SiteQuotaKind::Balance,
             balances: vec![],

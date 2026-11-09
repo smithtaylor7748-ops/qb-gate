@@ -633,7 +633,7 @@ fn stored_token(source: &Source) -> Result<OAuthToken> {
 }
 
 /// 拿一张现在能用的访问令牌。`force_refresh` = 不管本机时钟怎么说，都换一张新的。
-async fn access_token(
+pub(crate) async fn access_token(
     client: &reqwest::Client,
     source: &Source,
     force_refresh: bool,
@@ -697,6 +697,14 @@ async fn access_token(
             SELF_REFRESH,
         )),
     }
+}
+
+/// Native bridge pins the IDE login selected at start. Never serialize this fingerprint.
+pub(crate) fn source_fingerprint(source: &Source) -> Result<String> {
+    let token = stored_token(source)?;
+    Ok(google_oauth::fingerprint(
+        token.refresh.as_ref().or(token.access.as_ref()),
+    ))
 }
 
 // ------------------------------------------------------------------ 解析（纯函数）

@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 保序补丁器：以现有文件为底，只改补丁点名的键，其余键、值和顺序不变。
 //!
 //! 每种格式各一个补丁类型，都实现 [`LivePatch`]：输入写前的字节（文件不存在为

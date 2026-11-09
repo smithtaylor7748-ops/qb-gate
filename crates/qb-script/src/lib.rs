@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 用量脚本的沙箱（中转站重构阶段 6 · U4，cc-switch 的 `usage_script.rs`）。
 //!
 //! 使用者给某个站点写一小段 JS，求值得到一个对象：

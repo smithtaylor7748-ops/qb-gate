@@ -868,6 +868,33 @@ COMMIT;"
         rows.map(|r| r.map_err(sql)).collect()
     }
 
+    /// 滚动时间窗里的本机路由用量。上下界都包含；不按小时桶取整。
+    pub fn usage_window_totals(
+        &self,
+        since_ms: i64,
+        through_ms: i64,
+        client: &str,
+    ) -> Result<UsageHourRow> {
+        let query = format!(
+            "SELECT {USAGE_SUMS} FROM router_requests WHERE at_ms >= ?1 AND at_ms <= ?2 AND client = ?3"
+        );
+        self.conn
+            .query_row(&query, params![since_ms, through_ms, client], |r| {
+                Ok(UsageHourRow {
+                    hour: 0,
+                    requests: r.get::<_, i64>(0)?.max(0) as u64,
+                    failed: r.get::<_, Option<i64>>(1)?.unwrap_or(0).max(0) as u64,
+                    input_tokens: r.get::<_, Option<i64>>(2)?.map(|v| v.max(0) as u64),
+                    output_tokens: r.get::<_, Option<i64>>(3)?.map(|v| v.max(0) as u64),
+                    cache_read_tokens: r.get::<_, Option<i64>>(4)?.map(|v| v.max(0) as u64),
+                    cache_write_tokens: r.get::<_, Option<i64>>(5)?.map(|v| v.max(0) as u64),
+                    station_cost: r.get(6)?,
+                    official_cost: r.get(7)?,
+                })
+            })
+            .map_err(sql)
+    }
+
     /// 汇总表里最早的那一天（没有就是 `None`）。界面上说「最早能看到哪天」。
     pub fn usage_first_day(&self) -> Result<Option<String>> {
         let rolled: Option<String> = self

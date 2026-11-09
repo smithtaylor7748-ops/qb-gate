@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 原生 Responses 透传（官方以外的上游）：补齐迟到的函数调用参数。
 //!
 //! MiniMax 的 `/v1/responses` 在长历史下（整段参数一次吐出时）会乱序：先发

@@ -23,7 +23,7 @@ pub fn catalog_in(db: &Repository) -> Result<Vec<ExtensionManifest>> {
         if let Some(existing) = list.iter_mut().find(|m| m.id == custom.id) {
             // 精选条目的**来源与版本以内置目录为准**，数据库行盖不掉。
             //
-            // 那两个字段就是 ATTRIBUTION.md 里按哈希写死、核对过许可证的那一版。
+            // 那两个字段固定在已核对许可证的版本，回归测试同时钉住提交哈希。
             // 只靠 `check_updates` 自觉不去写是不够的 —— 旧版本的「检查来源更新」
             // 真的写过这样的行，而 `catalog_in` 一合并，使用者装到的就不再是
             // 被核过的那一版，许可证声明也跟着不准。放在这里是结构性的：
@@ -969,7 +969,7 @@ fn short(version: &str) -> String {
 /// # 精选目录里的版本**不会**被自动改掉
 ///
 /// 内置目录里 `skill-creator` / `webapp-testing` 的 `version` 就是
-/// ATTRIBUTION.md 里按哈希写死、核对过许可证的那个提交。原来这里对所有
+/// 已按哈希固定、核对过许可证的那个提交。原来这里对所有
 /// Skill 一律取 `main` 最新 SHA 并写进 `catalog` 表 —— 而 `catalog_in`
 /// 里 DB 行会盖住内置行。于是使用者点一次「检查来源更新」，
 /// 签字画押的那句话就不准了：别人装到的根本不是被核过的那一版。
@@ -1199,22 +1199,19 @@ mod tests {
         }
     }
 
-    /// 精选目录里的版本就是 ATTRIBUTION.md 按哈希写死、核对过许可证的那一版。
+    /// 精选目录里的版本固定在已核对许可证的提交。
     /// 「检查来源更新」不许把它们冲掉 —— 冲掉之后别人装到的就不是被核过的版本。
     #[test]
-    fn curated_pins_are_the_ones_attribution_signed_for() {
+    fn curated_pins_match_reviewed_versions() {
         let pinned = builtin_ids().unwrap();
-        // 用 CARGO_MANIFEST_DIR 而不是裸相对路径：`cargo test` 的工作目录
-        // 随「从哪儿跑」而变，而这个 crate 从 `src-tauri/` 搬到
-        // `crates/qb-extensions/` 之后，`../ATTRIBUTION.md` 指到了 `crates/` 里。
-        let attribution =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../ATTRIBUTION.md"))
-                .unwrap();
-        for id in ["skill-creator", "webapp-testing"] {
+        for (id, reviewed_version) in [
+            ("skill-creator", "34040c9c568585f6929bedeaad110ad08f079624"),
+            ("webapp-testing", "34040c9c568585f6929bedeaad110ad08f079624"),
+        ] {
             let version = pinned.get(id).expect(id);
-            assert!(
-                attribution.contains(version.as_str()),
-                "{id} 固定在 {version}，但 ATTRIBUTION.md 里没有这个哈希"
+            assert_eq!(
+                version, reviewed_version,
+                "{id} 必须保留已核对许可证的固定版本"
             );
         }
     }

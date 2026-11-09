@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 站点的用量脚本（中转站重构阶段 6 · U4，cc-switch 的 `usage_script.rs` 外面那一层）。沙箱在 `qb-script`（只算，不联网、不碰文件）。
 //!
 //! # 怎么用
@@ -152,6 +152,7 @@ fn to_quota(v: &Value) -> std::result::Result<SiteQuota, String> {
         .find(|x| x.get("isValid").and_then(Value::as_bool) == Some(false))
         .map(|x| text(x, "invalidMessage").unwrap_or_else(|| "脚本说这把 Key 现在不可用".into()));
     Ok(SiteQuota {
+        available: None,
         provider: "用量脚本".into(),
         kind: SiteQuotaKind::Balance,
         balances,

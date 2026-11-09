@@ -90,6 +90,9 @@ struct Running {
     effort: String,
     system_prompt: String,
     persist: bool,
+    /// 新版官方 CLI 支持时，跳过槽位里的用户配置，避免 MCP / sandbox / provider
+    /// 覆盖桥接的无交互约束；旧版没有这个旗标时保留兼容路径。
+    ignore_user_config: bool,
     stop: tokio::sync::watch::Sender<bool>,
     /// 一次只跑一个 `codex exec`。
     turn: tokio::sync::Mutex<()>,
@@ -241,6 +244,7 @@ pub async fn start() -> Result<GptBridgeStatus> {
 
     let (stop, mut stopped) = tokio::sync::watch::channel(false);
     let job = crate::process::KillOnCloseJob::new()?;
+    let ignore_user_config = supports_ignore_user_config(&exe).await;
     let running = Arc::new(Running {
         port,
         slot_label: slot_label.clone(),
@@ -252,6 +256,7 @@ pub async fn start() -> Result<GptBridgeStatus> {
         effort: cfg.gpt_effort.trim().to_string(),
         system_prompt: cfg.gpt_system_prompt.trim().to_string(),
         persist: cfg.gpt_persist_sessions,
+        ignore_user_config,
         stop,
         turn: tokio::sync::Mutex::new(()),
         job,
@@ -506,6 +511,33 @@ pub fn frame_with_prompt(messages: &[ChatMessage], extra_prompt: &str) -> String
 
 // ------------------------------------------------------------------ codex exec
 
+pub fn help_supports_ignore_user_config(help: &str) -> bool {
+    help.split_whitespace().any(|s| s == "--ignore-user-config")
+}
+
+async fn supports_ignore_user_config(exe: &Path) -> bool {
+    let mut cmd = tokio::process::Command::new(exe);
+    cmd.args(["exec", "--help"])
+        .env_clear()
+        .envs(crate::sessions::sanitized_environment(
+            std::env::vars(),
+            vec![],
+        ))
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        crate::process::hidden_tokio(cmd).output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) if output.status.success() => {
+            help_supports_ignore_user_config(&String::from_utf8_lossy(&output.stdout))
+        }
+        _ => false,
+    }
+}
+
 /// 一次 `codex exec` 的结局。
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ExecOutcome {
@@ -572,6 +604,18 @@ pub fn parse_events(stdout: &str) -> ExecOutcome {
 
 /// 交给 `codex exec` 的参数。纯函数，单测钉着五条硬约束里能钉的那几条。
 pub fn exec_args(runtime: &Path, model: &str, effort: &str, persist: bool) -> Vec<String> {
+    exec_args_isolated(runtime, model, effort, persist, false)
+}
+
+/// 拼接一次 `codex exec` 的参数。`ignore_user_config` 由启动时读取 `exec --help`
+/// 的结果决定，不能写死在所有版本上：旧版不认识这个旗标时走兼容路径。
+pub fn exec_args_isolated(
+    runtime: &Path,
+    model: &str,
+    effort: &str,
+    persist: bool,
+    ignore_user_config: bool,
+) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "exec".into(),
         "--json".into(),
@@ -589,6 +633,9 @@ pub fn exec_args(runtime: &Path, model: &str, effort: &str, persist: bool) -> Ve
         "-c".into(),
         "cli_auth_credentials_store=\"file\"".into(),
     ];
+    if ignore_user_config {
+        args.push("--ignore-user-config".into());
+    }
     if !effort.is_empty() {
         args.push("-c".into());
         args.push(format!("model_reasoning_effort=\"{effort}\""));
@@ -608,7 +655,13 @@ pub fn exec_args(runtime: &Path, model: &str, effort: &str, persist: bool) -> Ve
 
 /// 起一次 `codex exec`，喂提示词，等它跑完。
 async fn run_exec(r: &Running, model: &str, prompt: String) -> Result<ExecOutcome> {
-    let args = exec_args(&r.runtime, model, &r.effort, r.persist);
+    let args = exec_args_isolated(
+        &r.runtime,
+        model,
+        &r.effort,
+        r.persist,
+        r.ignore_user_config,
+    );
     let env = crate::sessions::sanitized_environment(
         std::env::vars(),
         vec![("CODEX_HOME".into(), r.home.display().to_string())],
@@ -844,6 +897,26 @@ not json at all
         assert!(args
             .windows(2)
             .any(|w| w == ["-c", "model_reasoning_effort=\"high\""]));
+    }
+
+    #[test]
+    fn user_configuration_is_ignored_only_when_the_cli_advertises_the_option() {
+        for (help, supported) in [
+            (
+                "Options:\n --ignore-user-config  Ignore user configuration",
+                true,
+            ),
+            ("Options:\n --ephemeral --json", false),
+            ("", false),
+        ] {
+            assert_eq!(help_supports_ignore_user_config(help), supported);
+            let args = exec_args_isolated(Path::new("runtime"), "", "", false, supported);
+            assert_eq!(args.iter().any(|a| a == "--ignore-user-config"), supported);
+            assert!(args
+                .windows(2)
+                .any(|w| w == ["-c", "model_provider=\"openai\""]));
+            assert!(args.windows(2).any(|w| w == ["-s", "read-only"]));
+        }
     }
 
     /// 框架：系统段在前、对话是 JSON、图片段落被丢掉、明说不要动工具。

@@ -26,6 +26,7 @@ use ts_rs::TS;
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct RouterStatus {
+    pub admission: Vec<qb_station::router::RouteAdmissionView>,
     pub running: bool,
     /// 客户端该把 base_url 指到哪。`None` = 还没启动。
     pub base_url: Option<String>,
@@ -117,6 +118,10 @@ fn status_of(state: &AppState, client: Client) -> RouterStatus {
         })
         .unwrap_or_default();
     RouterStatus {
+        admission: s
+            .as_ref()
+            .map(|s| s.admission_views(client, now))
+            .unwrap_or_default(),
         breakers,
         running: addr.is_some(),
         base_url: addr.map(|a| format!("http://127.0.0.1:{}", a.port())),
@@ -172,6 +177,11 @@ fn client_key(c: Client) -> &'static str {
 ///
 /// **明文 Key 在这里取,取完就留在后端。**
 pub(crate) fn load_upstreams(state: &AppState) -> Result<usize> {
+    // 读取与替换同锁：删除后不允许另一个早已读完的刷新把旧线路装回来。
+    let mut router = state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
     let db = crate::repository::Repository::open()?;
     let routes: Vec<Route> = db.list("station_routes")?;
     let providers: Vec<qb_contract::domain::Provider> = db.list("providers")?;
@@ -199,11 +209,7 @@ pub(crate) fn load_upstreams(state: &AppState) -> Result<usize> {
         })
         .collect();
     let n = upstreams.len();
-    state
-        .station
-        .lock()
-        .map_err(|_| GateError::Other("中转站状态损坏".into()))?
-        .replace_upstreams(upstreams);
+    router.replace_upstreams(upstreams);
     Ok(n)
 }
 
@@ -387,10 +393,18 @@ pub async fn station_turnstate_enable(
     }
     // 路由先起：官方上游挂上并选中（load_upstreams 会保住它）。
     {
+        let db = crate::repository::Repository::open()?;
         let mut s = state
             .station
             .lock()
             .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
+        let settings = station_ops::select_exclusively(
+            &db,
+            client,
+            local_router::OFFICIAL_CODEX_ROUTE_ID,
+            chrono::Utc::now().timestamp_millis(),
+        )?;
+        s.set_settings(settings);
         s.arm_official_codex();
     }
     load_upstreams(&state)?;
@@ -461,29 +475,18 @@ fn select_route_in(
     route: &Route,
     immediate: bool,
 ) -> Result<()> {
-    {
-        let mut s = state
-            .station
-            .lock()
-            .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
-        if immediate {
-            s.set_now(route.client, route.id.clone());
-        } else {
-            s.request_switch(route.client, route.id.clone());
-        }
-    }
+    // 手动选线明确退出线路池；持锁先事务落盘，再改变内存，后台不能覆盖这次选择。
+    let mut s = state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
     let now = chrono::Utc::now().timestamp_millis();
-    // 记下来：面板重启后接着用这一条（原来只在内存里，重启后客户端收到 503「还没选上游」）。
-    // 写不进去不挡这一次切换 —— 切换已经生效了，只是重启后不记得；记进审计日志。
-    if let Err(e) = station_ops::remember_current(db, route.client, &route.id, now) {
-        crate::audit::write(&format!(
-            "中转站：已切到「{}」，但没记下来（面板重启后不会接着用它）：{e}",
-            route.id
-        ));
-    }
-    // 调度开着时手动选的线钉住 4 小时（除非它挂了），不然下一跳调度就把它换回去了。
-    if station_ops::load_schedule(db, route.client).is_ok_and(|s| s.enabled) {
-        pin_route(db, route.client, Some(&route.id), now)?;
+    let settings = station_ops::select_exclusively(db, route.client, &route.id, now)?;
+    s.set_settings(settings);
+    if immediate {
+        s.set_now(route.client, route.id.clone());
+    } else {
+        s.request_switch(route.client, route.id.clone());
     }
     Ok(())
 }
@@ -536,12 +539,22 @@ pub fn station_router_settings_save(
         settings.aggregate.enabled,
     )?;
     // 存下的那份可能跟传来的不一样：聚合模型的 key 由后端分、只增不减（`station_ops::settle_aggregate`）。
-    let settings = station_ops::save_router_settings(&db, &settings)?;
-    state
+    let mut router = state
         .station
         .lock()
-        .map_err(|_| GateError::Other("中转站状态损坏".into()))?
-        .set_settings(settings.clone());
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
+    if settings.routing_mode == qb_station::router::RoutingMode::Pool
+        && !router
+            .pending(settings.client)
+            .or_else(|| router.current(settings.client))
+            .is_some_and(|id| settings.allowed_routes.contains(&id))
+    {
+        return Err(GateError::Other("当前或待用线路必须包含在授权池中".into()));
+    }
+    let settings = station_ops::save_router_settings(&db, &settings)?;
+    router.set_queue(settings.client, settings.allowed_routes.clone());
+    router.set_settings(settings.clone());
+    drop(router);
     sync_aggregate_config(&state, settings.client)?;
     Ok(settings)
 }
@@ -831,24 +844,6 @@ pub fn station_desktop_direct_set(
     )
 }
 
-/// 一个软件的派单队列：上次选中的那条 + 手动排的顺序。
-#[tauri::command]
-pub fn station_dispatch_queue(client: Client) -> Result<qb_station::router::DispatchQueue> {
-    let db = crate::repository::Repository::open()?;
-    station_ops::load_dispatch_queue(&db, client)
-}
-
-/// 存派单顺序：当前那条失败时依次改用谁。只收这个软件自己的线。
-#[tauri::command]
-pub fn station_dispatch_queue_save(
-    state: State<'_, AppState>,
-    client: Client,
-    order: Vec<String>,
-) -> Result<qb_station::router::DispatchQueue> {
-    let db = crate::repository::Repository::open()?;
-    save_queue_in(&state, &db, client, order)
-}
-
 /// 存派单顺序的实际动作（手排、换项目共用）。调度开着时拒收：顺序归调度排。
 fn save_queue_in(
     state: &AppState,
@@ -936,7 +931,7 @@ pub fn projects_delete(id: String) -> Result<qb_app::usecase::project_ops::Proje
 
 /// 换到一个项目（只这个软件那一组）。尽力而为：哪一样没落成记成提醒，别的照落。
 ///
-/// 线路走手动选线那条路（排队、下一发生效；调度开着时跟手动选一样钉住 4 小时）；
+/// 线路走手动选线那条路（排队、下一发生效；同一条线也退出线路池并关闭调度）；
 /// 派单顺序只收这个软件还在的线，调度开着时不落（顺序归调度排），记一条提醒。
 #[tauri::command]
 pub fn projects_apply(
@@ -951,7 +946,7 @@ pub fn projects_apply(
     let mut warnings = applied.warnings;
     let routes: Vec<Route> = db.list("station_routes")?;
     let mine = |rid: &str| routes.iter().find(|r| r.id == rid && r.client == client);
-    if let Some(rid) = applied.route.filter(|r| router.route.as_deref() != Some(r)) {
+    if let Some(rid) = applied.route {
         match mine(&rid) {
             Some(route) => {
                 if let Err(e) = select_route_in(&state, &db, route, false) {
@@ -1224,21 +1219,8 @@ pub async fn station_launch(
                 "这条线路不属于这个软件，不能拿它启动".into(),
             ));
         }
-        state
-            .station
-            .lock()
-            .map_err(|_| GateError::Other("中转站状态损坏".into()))?
-            .set_now(route.client, id.clone());
-        // 行上「指定这一条再启动」也是手动选：记下来（面板重启后接着用），调度开着时钉住 4 小时 ——
-        // 跟 `station_select_route` 同一条规矩，不然下一跳调度就把刚指定的那条换走了。
         let db = crate::repository::Repository::open()?;
-        let now = chrono::Utc::now().timestamp_millis();
-        if let Err(e) = station_ops::remember_current(&db, route.client, &id, now) {
-            tracing::warn!("启动：已切到 {id}，但没记下来：{e}");
-        }
-        if station_ops::load_schedule(&db, route.client).is_ok_and(|s| s.enabled) {
-            pin_route(&db, route.client, Some(&id), now)?;
-        }
+        select_route_in(&state, &db, &route, true)?;
     }
     let selected_id = {
         let router = state
@@ -1517,6 +1499,11 @@ pub fn station_put_route(
     let rewrite_desktop =
         qb_app::usecase::desktop_direct_ops::guard_route_save(&db, &route, previous_id.as_deref())?;
     let renamed_from = previous_id.filter(|id| id != &route.id);
+    let state = app.state::<AppState>();
+    let mut router = state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
     db.transaction(|| {
         db.put("station_routes", &route.id, &route)?;
         if let Some(old) = &renamed_from {
@@ -1524,30 +1511,27 @@ pub fn station_put_route(
             if prior.client != route.client {
                 return Err(GateError::Other("不能更换线路所属的软件".into()));
             }
-            db.remove("station_routes", old)?;
+            station_ops::remove_route_in_transaction(&db, old)?;
         }
         Ok(())
     })?;
+    if let Some(old) = &renamed_from {
+        router.remove_upstream(old);
+        router.set_settings(station_ops::load_router_settings(&db, route.client)?);
+        router.set_queue(
+            route.client,
+            station_ops::load_dispatch_queue(&db, route.client)?.order,
+        );
+    }
+    drop(router);
     if rewrite_desktop {
         qb_app::usecase::desktop_direct_ops::reapply()?;
     }
     // 线路变了,上游表要跟着重装 —— 否则新加的线路转发时找不到 base_url。
-    let state = app.state::<AppState>();
     load_upstreams(&state)?;
     // 聚合名单里的线改了模型映射 / 名字，客户端配置里列的聚合模型跟着变。
     sync_aggregate_config(&state, route.client)?;
-    if let Some(old) = renamed_from {
-        let mut router = state
-            .station
-            .lock()
-            .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
-        let pending = router.pending(route.client);
-        if pending.as_deref() == Some(&old)
-            || (pending.is_none() && router.current(route.client).as_deref() == Some(&old))
-        {
-            router.request_switch(route.client, &route.id);
-        }
-    }
+    // 重命名改变线路身份：旧授权清除，当前指向安全失效，用户显式选新线路后再继续。
     station_routes()
 }
 
@@ -1557,12 +1541,21 @@ pub fn station_remove_route(app: tauri::AppHandle, id: String) -> Result<Vec<Rou
     let db = crate::repository::Repository::open()?;
     // 删的是桌面端直连那条：先把桌面端换回本机路由，免得它指着一条不存在的线。
     qb_app::usecase::desktop_direct_ops::before_route_removed(&db, &id)?;
-    let client = db
-        .get::<Route>("station_routes", &id)
-        .ok()
-        .map(|r| r.client);
-    db.remove("station_routes", &id)?;
-    load_upstreams(&app.state::<AppState>())?;
+    let state = app.state::<AppState>();
+    let client = {
+        let mut router = state
+            .station
+            .lock()
+            .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
+        let client = station_ops::remove_route(&db, &id)?;
+        router.remove_upstream(&id);
+        if let Some(client) = client {
+            router.set_settings(station_ops::load_router_settings(&db, client)?);
+            router.set_queue(client, station_ops::load_dispatch_queue(&db, client)?.order);
+        }
+        client
+    };
+    load_upstreams(&state)?;
     if let Some(client) = client {
         sync_aggregate_config(&app.state::<AppState>(), client)?;
     }
@@ -1613,6 +1606,17 @@ pub fn station_usage_report(
 ) -> Result<qb_app::usecase::relay_usage_ops::RelayUsageReport> {
     let db = flushed_logs(&state)?;
     qb_app::usecase::relay_usage_ops::report(&db, client.map(client_key), days)
+}
+
+/// 首页总量：按客户端汇总本机完整记录，短窗按小时滚动，None 包含归档。
+#[tauri::command]
+pub fn station_usage_totals(
+    state: State<'_, AppState>,
+    client: Client,
+    hours: Option<u32>,
+) -> Result<qb_app::usecase::relay_usage_ops::RelayUsageTotals> {
+    let db = flushed_logs(&state)?;
+    qb_app::usecase::relay_usage_ops::totals(&db, client_key(client), hours)
 }
 
 /// 中转用量页的逐条日志：按软件 / 线路 / 模型 / 只看失败筛，分页（明细只留 30 天）。
@@ -1911,10 +1915,20 @@ pub async fn station_billing_refresh(station_id: String) -> Result<StationBillin
 /// 认不出是哪一家就是 `None`、不联网；`force = false` 时 5 分钟内问过的不再问（`usecase::site_quota_ops`）。
 #[tauri::command]
 pub async fn station_site_quota(
+    state: State<'_, AppState>,
     route_id: String,
     force: bool,
 ) -> Result<Option<qb_station::station::site_quota::SiteQuota>> {
-    qb_app::usecase::site_quota_ops::quota(&route_id, force).await
+    let generation = state.station.lock().ok().map(|s| s.quota_generation());
+    let quota = qb_app::usecase::site_quota_ops::quota(&route_id, force).await?;
+    if let (Some(generation), Some(q)) = (generation, quota.as_ref()) {
+        if let Ok(at) = chrono::DateTime::parse_from_rfc3339(&q.fetched_at) {
+            if let Ok(mut router) = state.station.lock() {
+                router.publish_quota(generation, &route_id, at.timestamp_millis(), q.available);
+            }
+        }
+    }
+    Ok(quota)
 }
 
 /// 站点的用量脚本（中转站重构阶段 6 · U4）。没存过就是关着的空脚本。
@@ -1928,16 +1942,21 @@ pub fn station_usage_script_get(
 /// 存站点的用量脚本。开着的话站点卡表头那一格就用它问余额（`site_quota_ops` 脚本优先）。
 #[tauri::command]
 pub fn station_usage_script_save(
+    state: State<'_, AppState>,
     station_id: String,
     enabled: bool,
     code: String,
 ) -> Result<qb_app::usecase::usage_script_ops::UsageScript> {
-    qb_app::usecase::usage_script_ops::save(
+    let saved = qb_app::usecase::usage_script_ops::save(
         &crate::repository::Repository::open()?,
         &station_id,
         enabled,
         &code,
-    )
+    )?;
+    if let Ok(mut router) = state.station.lock() {
+        router.clear_quota_evidence();
+    }
+    Ok(saved)
 }
 
 /// 用这条线路的 Key 把（还没存的）脚本试跑一遍。地址必须跟站点同源、https，跟正式跑一样。
@@ -2268,6 +2287,12 @@ pub fn station_schedule_set(
     dispatch: Option<qb_station::schedule::DispatchParams>,
 ) -> Result<Schedule> {
     use tauri::Manager;
+    let state = app.state::<AppState>();
+    // 与后台提交同一把锁；只包本机读写，不持锁等待网络或循环。
+    let guard = state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
     let db = crate::repository::Repository::open()?;
     let mut s = station_ops::load_schedule(&db, client)?;
     if let Some(d) = dispatch {
@@ -2286,6 +2311,7 @@ pub fn station_schedule_set(
         s.prefs = p;
     }
     station_ops::save_schedule(&db, &s)?;
+    drop(guard);
     if s.enabled {
         start_scheduler(&app.state::<AppState>(), Some(app.clone()));
     } else if station_schedules()?.iter().all(|s| !s.enabled) {
@@ -2384,10 +2410,12 @@ pub fn station_dispatch_view(client: Client) -> Result<DispatchView> {
 /// 免费的那种一律测；花钱的那种只在使用者打开了花钱测活、今天的预算还够时才测（跟调度那一跳同一条规矩）。
 #[tauri::command]
 pub async fn station_probe_now(
+    state: State<'_, AppState>,
     client: Client,
     route_id: Option<String>,
 ) -> Result<Vec<qb_station::schedule::liveness::ProbeAttempt>> {
     use qb_app::usecase::station_liveness::{self, ProbeKind, ProbeTarget};
+    load_upstreams(&state)?;
     use qb_station::schedule::liveness;
     let now = chrono::Utc::now().timestamp_millis();
     // 读库、挑线在这个块里做完：await 不能揣着 `&Repository`（它不是 Send）。
@@ -2454,7 +2482,15 @@ pub async fn station_probe_now(
             });
         (jobs, http)
     };
-    let attempts = station_liveness::run(jobs, &http, now).await;
+    let attempts = station_liveness::run_admitted(jobs, &http, now, |target| {
+        local_router::RouterState::admit_probe(
+            &state.station,
+            target.client,
+            &target.route_id,
+            false,
+        )
+    })
+    .await;
     let db = crate::repository::Repository::open()?;
     station_liveness::persist(&db, &attempts, now)?;
     Ok(attempts)
@@ -2470,19 +2506,28 @@ pub fn station_pin(
 ) -> Result<qb_station::router::DispatchQueue> {
     let db = crate::repository::Repository::open()?;
     let now = chrono::Utc::now().timestamp_millis();
+    let mut router = state
+        .station
+        .lock()
+        .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
     if let Some(id) = &route_id {
         let route: Route = db.get("station_routes", id)?;
         if route.client != client {
             return Err(GateError::Other("钉住的线不是这个软件的".into()));
         }
-        state
-            .station
-            .lock()
-            .map_err(|_| GateError::Other("中转站状态损坏".into()))?
-            .request_switch(client, id.clone());
-        if let Err(e) = station_ops::remember_current(&db, client, id, now) {
-            tracing::warn!("钉住：已换到 {id}，但没记下来：{e}");
+        if router.settings(client).routing_mode != qb_station::router::RoutingMode::Pool
+            || !router.route_allowed(client, id)
+        {
+            return Err(GateError::Other(
+                "只能钉住授权池中的线路；使用当前线模式请直接选线".into(),
+            ));
         }
+        db.transaction(|| {
+            station_ops::remember_current(&db, client, id, now)?;
+            pin_route(&db, client, Some(id), now)
+        })?;
+        router.request_switch(client, id.clone());
+        return station_ops::load_dispatch_queue(&db, client);
     }
     pin_route(&db, client, route_id.as_deref(), now)
 }
@@ -2545,20 +2590,27 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
         if !sched.enabled {
             continue;
         }
+        let Ok(routing) = station_ops::load_router_settings(&db, client) else {
+            continue;
+        };
         let routes: Vec<Route> = all
             .iter()
-            .filter(|r| r.client == client && station_ops::source(&db, r).is_ok())
+            .filter(|r| {
+                r.client == client
+                    && routing.allowed_routes.contains(&r.id)
+                    && station_ops::source(&db, r).is_ok()
+            })
             .cloned()
             .collect();
         if routes.is_empty() {
             sched.last_note = "没有已配置可用 API Key 的线路，请添加或编辑线路".into();
-            keep_schedule(&db, &sched);
+            keep_schedule(state, &db, &sched);
             out.push(sched);
             continue;
         }
         let Ok(http) = &http else {
             sched.last_note = "无法建立账单连接，请检查本机网络配置".into();
-            keep_schedule(&db, &sched);
+            keep_schedule(state, &db, &sched);
             out.push(sched);
             continue;
         };
@@ -2585,7 +2637,8 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
         let (incumbent, breakers) = {
             let s = state.station.lock().ok();
             (
-                s.as_ref().and_then(|s| s.current(client)),
+                s.as_ref()
+                    .and_then(|s| s.pending(client).or_else(|| s.current(client))),
                 s.as_ref().map(|s| s.breaker_state(now)).unwrap_or_default(),
             )
         };
@@ -2593,7 +2646,7 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
             Ok(q) => q,
             Err(e) => {
                 sched.last_note = format!("读不出派单队列，这一跳没排：{e}");
-                keep_schedule(&db, &sched);
+                keep_schedule(state, &db, &sched);
                 out.push(sched);
                 continue;
             }
@@ -2638,16 +2691,26 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
             &evidence,
             now,
         );
-        apply_round(
+        if !apply_round(
             state,
             &db,
             client,
             &mut sched,
+            &routing,
             &queue,
             incumbent.as_deref(),
             &round.dispatch,
             now,
-        );
+        ) {
+            // 读账单期间用户已经停了调度、改了设置或选了别的线。这份计划作废，
+            // 也不拿它发起测活；下一跳重新读新的选择。
+            if let Ok(latest) = station_ops::load_schedule(&db, client) {
+                if latest.enabled {
+                    out.push(latest);
+                }
+            }
+            continue;
+        }
         let last_burst = station_ops::scheduler_actions(&db, Some(client), usize::MAX)
             .unwrap_or_default()
             .into_iter()
@@ -2666,7 +2729,6 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
             now,
         ));
         probed_routes.extend(routes);
-        keep_schedule(&db, &sched);
         out.push(sched);
     }
     if let Some((jobs, http)) = prepare_probes(
@@ -2678,7 +2740,31 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
         &topup,
         now,
     ) {
-        let attempts = station_liveness::run(jobs, &http, now).await;
+        let attempts = station_liveness::run_admitted(jobs, &http, now, |target| {
+            // 每个并发槽真正开始探测前现读许可；排队等待期间关调度、撤销或删除都立即生效。
+            let Ok(router) = state.station.lock() else {
+                return None;
+            };
+            if router.settings(target.client).routing_mode != qb_station::router::RoutingMode::Pool
+                || !router.route_allowed(target.client, &target.route_id)
+            {
+                return None;
+            }
+            let Ok(db) = crate::repository::Repository::open() else {
+                return None;
+            };
+            if !station_ops::load_schedule(&db, target.client).is_ok_and(|s| s.enabled) {
+                return None;
+            }
+            drop(router);
+            local_router::RouterState::admit_probe(
+                &state.station,
+                target.client,
+                &target.route_id,
+                true,
+            )
+        })
+        .await;
         if let Err(e) = station_liveness::persist(&db, &attempts, now) {
             tracing::warn!("测活：{} 条结果没写进库：{e}", attempts.len());
         }
@@ -2739,19 +2825,44 @@ fn apply_round(
     db: &crate::repository::Repository,
     client: Client,
     sched: &mut Schedule,
+    routing: &qb_station::router::RouterSettings,
     previous: &qb_station::router::DispatchQueue,
     incumbent: Option<&str>,
     dispatch: &qb_station::schedule::Dispatch,
     now: i64,
-) {
-    let next = station_ops::next_upstream(dispatch, incumbent);
-    if let Ok(mut s) = state.station.lock() {
-        if let Some(next) = &next {
-            s.request_switch(client, next.clone());
-        }
-        // 第一条在不在里面都行：路由自己去重（`RouterState::candidates`）。
-        s.set_queue(client, dispatch.order.clone());
+) -> bool {
+    let Ok(mut router) = state.station.lock() else {
+        return false;
+    };
+    let Ok(latest) = station_ops::load_schedule(db, client) else {
+        return false;
+    };
+    let Ok(queue) = station_ops::load_dispatch_queue(db, client) else {
+        return false;
+    };
+    let selected = router.pending(client).or_else(|| router.current(client));
+    let policy = router.settings(client);
+    if !same_schedule_policy(&latest, sched)
+        || !latest.enabled
+        || policy.routing_mode != qb_station::router::RoutingMode::Pool
+        || policy.routing_mode != routing.routing_mode
+        || policy.allowed_routes != routing.allowed_routes
+        || dispatch
+            .order
+            .iter()
+            .any(|id| !router.route_allowed(client, id))
+        || queue.current != previous.current
+        || queue.pin != previous.pin
+        || selected.as_deref() != incumbent
+    {
+        return false;
     }
+    let next = station_ops::next_upstream(dispatch, incumbent);
+    if let Some(next) = &next {
+        router.request_switch(client, next.clone());
+    }
+    // 第一条在不在里面都行：路由自己去重（`RouterState::candidates`）。
+    router.set_queue(client, dispatch.order.clone());
     if let Some(next) = &next {
         // 调度换过去的也记下来，面板重启后接着用。
         if let Err(e) = station_ops::remember_current(db, client, next, now) {
@@ -2772,6 +2883,10 @@ fn apply_round(
         Err(e) => tracing::warn!("智能调度：动作日志没写进库：{e}"),
     }
     sched.last_note = dispatch.note.clone();
+    if let Err(e) = station_ops::save_schedule(db, sched) {
+        tracing::warn!("智能调度：这一跳的结论没写进库：{e}");
+    }
+    true
 }
 
 /// 测活要的这个软件那一份：队列顺序、每条线最近的测活、最近一次真实流量、测哪个模型、一次多少钱、
@@ -2917,8 +3032,23 @@ fn prepare_probes(
 ///
 /// 是函数不是闭包：闭包会把 `&Repository` 一路揣过 `route_health(..).await`，
 /// 而 `Repository` 不是 `Sync`，调度循环的 future 就不能再交给 `spawn`。
-fn keep_schedule(db: &crate::repository::Repository, sched: &Schedule) {
-    if let Err(e) = station_ops::save_schedule(db, sched) {
+fn same_schedule_policy(a: &Schedule, b: &Schedule) -> bool {
+    a.enabled == b.enabled && a.prefs == b.prefs && a.dispatch == b.dispatch
+}
+
+fn keep_schedule(state: &AppState, db: &crate::repository::Repository, sched: &Schedule) {
+    let Ok(_guard) = state.station.lock() else {
+        return;
+    };
+    let Ok(mut latest) = station_ops::load_schedule(db, sched.client) else {
+        return;
+    };
+    if !same_schedule_policy(&latest, sched) {
+        return;
+    }
+    // 后台只能更新运行结论，不能把 await 之前的开关/偏好整份盖回去。
+    latest.last_note = sched.last_note.clone();
+    if let Err(e) = station_ops::save_schedule(db, &latest) {
         tracing::warn!(
             "智能调度：{} 这一跳的结论没写进库：{e}",
             client_key(sched.client)
@@ -2930,6 +3060,286 @@ fn keep_schedule(db: &crate::repository::Repository, sched: &Schedule) {
 mod tests {
     use super::*;
     use qb_station::station::model::Protocols;
+
+    fn allow_pool(
+        state: &AppState,
+        db: &crate::repository::Repository,
+        routes: &[&Route],
+    ) -> qb_station::router::RouterSettings {
+        let client = routes[0].client;
+        let mut router = state.station.lock().unwrap();
+        for route in routes {
+            db.put("station_routes", &route.id, route).unwrap();
+            router.put_upstream(local_router::Upstream {
+                route_id: route.id.clone(),
+                ..Default::default()
+            });
+        }
+        router.set_now(client, routes[0].id.clone());
+        station_ops::remember_current(db, client, &routes[0].id, 1).unwrap();
+        let mut settings = router.settings(client);
+        settings.routing_mode = qb_station::router::RoutingMode::Pool;
+        settings.allowed_routes = routes.iter().map(|r| r.id.clone()).collect();
+        let settings = station_ops::save_router_settings(db, &settings).unwrap();
+        router.set_settings(settings.clone());
+        settings
+    }
+
+    fn switch_plan(first: &str, second: &str) -> qb_station::schedule::Dispatch {
+        qb_station::schedule::Dispatch {
+            order: vec![first.into(), second.into()],
+            rows: Vec::new(),
+            memory: Default::default(),
+            alerts: Vec::new(),
+            note: "计划换线".into(),
+            switched: true,
+        }
+    }
+
+    #[test]
+    fn a_schedule_snapshot_cannot_replace_a_new_manual_selection() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let db = crate::repository::Repository::open_in(&root).unwrap();
+        let state = AppState::default();
+        let a = Route::new(Client::Codex, "fixture", "a");
+        let b = Route::new(Client::Codex, "fixture", "b");
+        let mut schedule = Schedule::new(Client::Codex);
+        schedule.enabled = true;
+        select_route_in(&state, &db, &a, true).unwrap();
+        let routing = allow_pool(&state, &db, &[&a, &b]);
+        station_ops::save_schedule(&db, &schedule).unwrap();
+        let snapshot = station_ops::load_dispatch_queue(&db, Client::Codex).unwrap();
+
+        // 模拟计划算完、等待落地期间，用户点击 B。旧计划仍想把 A 放第一。
+        select_route_in(&state, &db, &b, false).unwrap();
+        assert!(!apply_round(
+            &state,
+            &db,
+            Client::Codex,
+            &mut schedule,
+            &routing,
+            &snapshot,
+            Some(&a.id),
+            &switch_plan(&a.id, &b.id),
+            10,
+        ));
+        let router = state.station.lock().unwrap();
+        assert_eq!(router.current(Client::Codex), Some(a.id.clone()));
+        assert_eq!(router.pending(Client::Codex), Some(b.id.clone()));
+        drop(router);
+        let queue = station_ops::load_dispatch_queue(&db, Client::Codex).unwrap();
+        assert_eq!(queue.current, Some(b.id.clone()));
+        assert!(queue.pin.is_none());
+        assert!(
+            !station_ops::load_schedule(&db, Client::Codex)
+                .unwrap()
+                .enabled
+        );
+        assert_eq!(
+            station_ops::load_router_settings(&db, Client::Codex)
+                .unwrap()
+                .routing_mode,
+            qb_station::router::RoutingMode::Selected
+        );
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scheduler_cannot_select_an_outsider_or_commit_an_old_pool_snapshot() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let db = crate::repository::Repository::open_in(&root).unwrap();
+        let state = AppState::default();
+        let a = Route::new(Client::Codex, "fixture", "a");
+        let b = Route::new(Client::Codex, "fixture", "b");
+        let outside = Route::new(Client::Codex, "fixture", "c");
+        let routing = allow_pool(&state, &db, &[&a, &b]);
+        state
+            .station
+            .lock()
+            .unwrap()
+            .put_upstream(local_router::Upstream {
+                route_id: outside.id.clone(),
+                ..Default::default()
+            });
+        let mut schedule = Schedule::new(Client::Codex);
+        schedule.enabled = true;
+        station_ops::save_schedule(&db, &schedule).unwrap();
+        let queue = station_ops::load_dispatch_queue(&db, Client::Codex).unwrap();
+        assert!(!apply_round(
+            &state,
+            &db,
+            Client::Codex,
+            &mut schedule,
+            &routing,
+            &queue,
+            Some(&a.id),
+            &switch_plan(&outside.id, &a.id),
+            10
+        ));
+        let mut reduced = routing.clone();
+        reduced.allowed_routes = vec![a.id.clone()];
+        let reduced = station_ops::save_router_settings(&db, &reduced).unwrap();
+        state.station.lock().unwrap().set_settings(reduced);
+        let queue = station_ops::load_dispatch_queue(&db, Client::Codex).unwrap();
+        assert!(!apply_round(
+            &state,
+            &db,
+            Client::Codex,
+            &mut schedule,
+            &routing,
+            &queue,
+            Some(&a.id),
+            &switch_plan(&a.id, &a.id),
+            10
+        ));
+        assert_eq!(state.station.lock().unwrap().pending(Client::Codex), None);
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn explicitly_selecting_the_same_route_still_leaves_the_pool() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let db = crate::repository::Repository::open_in(&root).unwrap();
+        let state = AppState::default();
+        let a = Route::new(Client::Codex, "fixture", "a");
+        let b = Route::new(Client::Codex, "fixture", "b");
+        allow_pool(&state, &db, &[&a, &b]);
+        let mut schedule = Schedule::new(Client::Codex);
+        schedule.enabled = true;
+        station_ops::save_schedule(&db, &schedule).unwrap();
+        select_route_in(&state, &db, &a, false).unwrap();
+        assert_eq!(
+            state
+                .station
+                .lock()
+                .unwrap()
+                .settings(Client::Codex)
+                .routing_mode,
+            qb_station::router::RoutingMode::Selected
+        );
+        assert!(!state
+            .station
+            .lock()
+            .unwrap()
+            .route_allowed(Client::Codex, &b.id));
+        assert!(
+            !station_ops::load_schedule(&db, Client::Codex)
+                .unwrap()
+                .enabled
+        );
+        assert_eq!(
+            station_ops::load_dispatch_queue(&db, Client::Codex)
+                .unwrap()
+                .current,
+            Some(a.id)
+        );
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_schedule_snapshot_cannot_restore_disabled_or_edited_policy() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let db = crate::repository::Repository::open_in(&root).unwrap();
+        let state = AppState::default();
+        let a = Route::new(Client::Codex, "fixture", "a");
+        let b = Route::new(Client::Codex, "fixture", "b");
+        let routing = allow_pool(&state, &db, &[&a, &b]);
+        let mut snapshot = Schedule::new(Client::Codex);
+        snapshot.enabled = true;
+        state
+            .station
+            .lock()
+            .unwrap()
+            .set_now(Client::Codex, a.id.clone());
+        let queue = station_ops::load_dispatch_queue(&db, Client::Codex).unwrap();
+        for stop in [false, true] {
+            let mut edited = snapshot.clone();
+            edited.enabled = !stop;
+            edited.prefs = Prefs::batch();
+            station_ops::save_schedule(&db, &edited).unwrap();
+            // 账单 await 前拿到的快照，此时已过期；排队和报错结论都不能盖回去。
+            assert!(!apply_round(
+                &state,
+                &db,
+                Client::Codex,
+                &mut snapshot,
+                &routing,
+                &queue,
+                Some(&a.id),
+                &switch_plan(&b.id, &a.id),
+                10,
+            ));
+            snapshot.last_note = "旧结果".into();
+            keep_schedule(&state, &db, &snapshot);
+            assert_eq!(
+                station_ops::load_schedule(&db, Client::Codex).unwrap(),
+                edited
+            );
+            assert_eq!(state.station.lock().unwrap().pending(Client::Codex), None);
+        }
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_fresh_schedule_switch_is_queued_and_not_repeated_before_traffic() {
+        let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        let db = crate::repository::Repository::open_in(&root).unwrap();
+        let state = AppState::default();
+        let a = Route::new(Client::Codex, "fixture", "a");
+        let b = Route::new(Client::Codex, "fixture", "b");
+        let routing = allow_pool(&state, &db, &[&a, &b]);
+        let mut schedule = Schedule::new(Client::Codex);
+        schedule.enabled = true;
+        station_ops::save_schedule(&db, &schedule).unwrap();
+        state
+            .station
+            .lock()
+            .unwrap()
+            .set_now(Client::Codex, a.id.clone());
+        station_ops::remember_current(&db, Client::Codex, &a.id, 1).unwrap();
+        let before = station_ops::load_dispatch_queue(&db, Client::Codex).unwrap();
+        let plan = switch_plan(&b.id, &a.id);
+        assert!(apply_round(
+            &state,
+            &db,
+            Client::Codex,
+            &mut schedule,
+            &routing,
+            &before,
+            Some(&a.id),
+            &plan,
+            10,
+        ));
+        let after = station_ops::load_dispatch_queue(&db, Client::Codex).unwrap();
+        assert!(apply_round(
+            &state,
+            &db,
+            Client::Codex,
+            &mut schedule,
+            &routing,
+            &after,
+            Some(&b.id),
+            &plan,
+            20,
+        ));
+        assert_eq!(schedule.last_switch_ms, Some(10));
+        assert_eq!(
+            station_ops::scheduler_actions(&db, Some(Client::Codex), 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            state.station.lock().unwrap().pending(Client::Codex),
+            Some(b.id)
+        );
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn the_bill_is_reused_for_a_minute_and_local_logs_win() {

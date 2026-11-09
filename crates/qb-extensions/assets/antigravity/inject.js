@@ -13,7 +13,7 @@
 // 注入幂等。日志走 console（[EA_AA] 放行 / [EA_ALERT] 拦截 / [EA_OPT] 选项），
 // 由 Rust 侧从 Runtime.consoleAPICalled 收回来。
 //
-// ⛔ 改这份文件要同步改 ATTRIBUTION.md 里「EasyAntigravity」那一节；
+// ⛔ 修改这份文件时必须保留原版权与许可头；
 // 架构测试 the_injected_engine_keeps_its_placeholders 钉着六个占位符都在。
 (() => {
     window.__ea_config = Object.assign(window.__ea_config || {}, {

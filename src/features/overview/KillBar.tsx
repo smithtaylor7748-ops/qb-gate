@@ -1,11 +1,7 @@
 /**
  * 一键关闭所有 Claude。
  *
- * v0.7.0 从 `AccountBand.tsx` 里抽出来，理由是位置变了：
- * 总览分成 Claude / GPT 两个页签之后，这个按钮**不能待在任一页签里** ——
- * 它按双重证据收进程，Claude 侧和 GPT 侧的都收。
- * 摆在 Claude 页签里会让人以为它只关 Claude，摆两份则会有人点两次。
- * 所以它通栏摆在页签面板下面，跟页签选了哪一边无关。
+ * Claude 页的操作按客户端收窄；全局停用由 IP 锁入口处理。
  *
  * 判定逻辑一个字没动，仍然全在 Rust 侧（`killswitch.rs`）：
  * 只收满足双重证据的进程，绝不按进程名杀，面板自己祖先链上的一律放过。
@@ -34,11 +30,7 @@ import {
  *
  * 使用者要「原来的这种按钮，四个，把一键关闭所有 claude 也放进去」——
  * 起和收本来就是同一件事的两头，四块一格 2×2 也正好把右栏填满。
- * 判定、确认框、收完重新上锁那一套一个字没动，换的只是这一个入口的外观。
- *
- * ⚠ 名字必须一直是「一键关闭所有 Claude」。它收的是**两边**的进程
- * （判据是双重证据，桌面端、Claude Code 会话、酒馆桥接都在内），
- * 不许因为这块贴现在长在 Claude 那一侧就改成「关闭本页」之类。
+ * 桌面端、Claude Code（含中转）与 Claude 桥接都在内。
  */
 export default function KillBar({
   variant = "bar",
@@ -73,7 +65,7 @@ export default function KillBar({
     // 挡住后面每一次扫描的进度与结果，直到再执行一次（2026-09-25）。
     resetTask("killswitch-execute");
     try {
-      setKill(await api.killswitchPreview());
+      setKill(await api.killswitchPreview(true));
       endTask("killswitch-preview");
     } catch (e) {
       // 枚举失败要报出来，**不能显示成「0 个进程」** —— 档案 §7.17：
@@ -90,10 +82,10 @@ export default function KillBar({
     setKilling(true);
     resetTask("killswitch-execute");
     try {
-      const r = await api.killswitchExecute();
+      const r = await api.killswitchExecute(true);
       endTask("killswitch-execute");
       toast.ok(
-        `收掉 ${r.killed.length} 个进程，重新上锁 ${r.relocked} 个可执行文件` +
+        `关闭 ${r.killed.length} 个 Claude 进程` +
           (r.failed.length ? `，${r.failed.length} 个没收掉` : ""),
       );
       setKill(null);
@@ -113,7 +105,7 @@ export default function KillBar({
         <Tile
           icon={<Square size={18} />}
           name="一键关闭所有 Claude"
-          note="只收双重证据的进程 · 连本会话一起收"
+          note="Claude 桌面端、CLI 与桥接 · 含 Claude 中转会话"
           task={killing ? { ...executeTask, running: true } : shown}
           disabled={working}
           onClick={previewKill}
@@ -136,8 +128,7 @@ export default function KillBar({
           <p className="notice notice--danger text-center">
             只收满足双重证据的进程，绝不按进程名杀。
             <strong>会连这个面板正在服务的 Claude Code 会话一起收掉。</strong>
-            收完会重新上锁、<strong>收回租约</strong>
-            ，之后再启动要重新验出口 IP。
+            收回已关闭 Claude 会话的租约。
             {shown.error && ` ${shown.error}`}
           </p>
         </>
@@ -151,7 +142,7 @@ export default function KillBar({
         confirmLabel={
           kill?.targets.length
             ? `确认关闭 ${kill.targets.length} 个进程`
-            : "照样停掉会话并上锁"
+            : "停止 Claude 托管会话与桥接"
         }
         loading={killing}
         danger
@@ -160,7 +151,7 @@ export default function KillBar({
           <>
             <p>
               下面这些进程会被收掉（{describeTargets(kill)}
-              ），收完自动重新上锁：
+              ）：
             </p>
             <div className="mt-2">
               {kill.targets.map((t) => (
@@ -190,13 +181,10 @@ export default function KillBar({
           <p>没有扫到要按证据收的进程。</p>
         )}
 
-        {/* ⛔ 不管扫到几个，确认之后这些都会发生（`gate_ops::stop_managed(true)`）。原来一个进程都没扫到时
-            这里写「什么都不会动」，点下去酒馆、桥接、面板起的会话全停，门也关上了（2026-09-25）。 */}
         <p className="notice notice--danger mt-3">
-          确认之后还会：停掉酒馆和两条内置桥接（GPT /
-          Gemini）、停掉面板起的全部会话（包括中转的）、
-          把可执行文件重新上锁并收回租约 —— 之后再启动任何一个都要重新验出口
-          IP。
+          会停止面板起的 Claude 桌面端、Claude Code（包括 Claude 中转会话）和
+          Claude
+          酒馆桥接，并收回这些会话的租约。GPT、Gemini、反重力以及共用的酒馆页面继续运行。
         </p>
 
         {!!kill?.spared.length && (

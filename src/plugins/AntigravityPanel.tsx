@@ -219,7 +219,7 @@ export default function AntigravityPanel() {
         <p className="notice mt-3">
           改开关立即生效（引擎每 2 秒把最新设置带进页面）。脚本、字典、规则取自
           EasyAntigravity（MIT，Astwarp）；本面板不做它的「免 TUN 代理」——
-          那要往 Google 的安装目录丢一个来源不明的 DLL，见 ATTRIBUTION.md。
+          那要往 Google 的安装目录丢一个来源不明的 DLL。
         </p>
       </Card>
 

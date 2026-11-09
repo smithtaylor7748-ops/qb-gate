@@ -53,7 +53,7 @@ export default function Overview({
               <span className="mono text-xs">127.0.0.1:{s.st_port}</span>
             </p>
             <p className="notice mt-1">
-              面板起的这一份。要停它：账户页「酒馆」磁贴右上角的桥接设置最下面「停止酒馆」（三条桥一起停）。
+              面板起的这一份。要停它：账户页「酒馆」磁贴右上角的桥接设置最下面「停止酒馆」（所有桥接一起停）。
             </p>
           </>
         ) : s.foreign_running ? (
@@ -74,7 +74,7 @@ export default function Overview({
             </p>
             <p className="notice mt-1">
               起酒馆点账户页的「酒馆」磁贴 ——
-              一份酒馆、三条桥，按你在哪个账户页点的起那一家的桥。
+              按你在哪个账户页点的起那一家的桥。反重力原生桥在反重力桥接设置内单独启动。
             </p>
             {tavernBodyMissing(tavern?.checks) && (
               <p className="notice notice--warn mt-1">
@@ -105,10 +105,10 @@ export default function Overview({
 
       <section className="tv-block" aria-labelledby="tv-bridges">
         <h3 id="tv-bridges" className="tv-block-title">
-          三条桥
+          酒馆桥接
         </h3>
         <p className="notice">
-          Claude 走你自己的 bridge.py，GPT / Gemini
+          Claude 走你自己的 bridge.py，GPT / Gemini CLI 和反重力原生桥
           是面板内置的。每条桥的设置在它那个账户页「酒馆」磁贴右上角： Claude →{" "}
           {BRIDGE_PAGE.claude}，GPT → {BRIDGE_PAGE.gpt}，Gemini →{" "}
           {BRIDGE_PAGE.gemini}。

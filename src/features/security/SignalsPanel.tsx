@@ -388,7 +388,7 @@ export function SignalsWhy() {
           <ExternalLink href="https://github.com/LinXiaoTao/FuckClaude">
             FuckClaude
           </ExternalLink>
-          （MIT），逐条说明见仓库根目录的 ATTRIBUTION.md。
+          （MIT），许可原文见仓库根目录的 THIRD_PARTY_NOTICES.txt。
         </p>
         <p className="notice mt-2">
           另有一种说法称 Claude Code 会把系统时区用 Unicode 隐写术藏进 system

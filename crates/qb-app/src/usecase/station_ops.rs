@@ -25,7 +25,7 @@ use crate::repository::Repository;
 use qb_platform::repository::RouterRequestQuery;
 use qb_station::health::{self, Windows};
 use qb_station::router::{
-    DispatchQueue, ListenScope, RouterNetwork, RouterRequest, RouterSettings,
+    DispatchQueue, ListenScope, RouterNetwork, RouterRequest, RouterSettings, RoutingMode,
 };
 use qb_station::schedule::liveness::{self, ProbeAttempt, ProbeState, SchedulerAction};
 use qb_station::schedule::{
@@ -261,7 +261,12 @@ pub fn router_usage_rows(requests: &[RouterRequest]) -> HashMap<String, Vec<Usag
             {
                 continue;
             }
-            let final_one = i == last && att.route_id == req.route_id;
+            let final_one = i == last
+                && att.route_id == req.route_id
+                && !matches!(
+                    req.fault.as_deref(),
+                    Some("route-permission-denied" | "route-admission-denied")
+                );
             let fault = if final_one {
                 req.fault.as_deref()
             } else {
@@ -1206,14 +1211,38 @@ fn schedule_key(client: Client) -> Result<String> {
 /// 0.16.0–0.25.6 这里是 `get(..).unwrap_or_else(|_| Schedule::new(c))`：
 /// 那张表从没建过，每一次读都失败、都被吞成「关着」，而界面上看起来只是「没开」。
 pub fn load_schedule(db: &Repository, client: Client) -> Result<Schedule> {
-    Ok(db
+    let mut schedule: Schedule = db
         .find(SCHEDULE_TABLE, &schedule_key(client)?)?
-        .unwrap_or_else(|| Schedule::new(client)))
+        .unwrap_or_else(|| Schedule::new(client));
+    schedule.client = client;
+    // 旧版 enabled=true 不代表同意跨站；只用当前线时后台始终视为关闭。
+    if !pool_ready(db, client)? {
+        schedule.enabled = false;
+        schedule.last_note.clear();
+    }
+    Ok(schedule)
 }
 
 /// 存一个软件的智能调度（主键取 `schedule.client`）。
 pub fn save_schedule(db: &Repository, schedule: &Schedule) -> Result<()> {
+    if schedule.enabled && !pool_ready(db, schedule.client)? {
+        return Err(GateError::Other(
+            "先选择当前线路，并将它加入明确授权的线路池，才能开启智能调度".into(),
+        ));
+    }
     db.put(SCHEDULE_TABLE, &schedule_key(schedule.client)?, schedule)
+}
+
+fn pool_ready(db: &Repository, client: Client) -> Result<bool> {
+    let settings = load_router_settings(db, client)?;
+    let selected = load_dispatch_queue(db, client)?.current;
+    Ok(settings.routing_mode == RoutingMode::Pool
+        && selected.is_some_and(|id| {
+            settings.allowed_routes.contains(&id)
+                && db
+                    .find::<Route>("station_routes", &id)
+                    .is_ok_and(|r| r.is_some())
+        }))
 }
 
 // ------------------------------------------------------------ 本机路由的设置与派单队列
@@ -1249,13 +1278,129 @@ pub fn load_router_settings(db: &Repository, client: Client) -> Result<RouterSet
 pub fn save_router_settings(db: &Repository, settings: &RouterSettings) -> Result<RouterSettings> {
     let mut settings = settings.clone();
     settle_aggregate(db, &mut settings)?;
+    let mut allowed = Vec::new();
+    for id in &settings.allowed_routes {
+        let id = id.trim();
+        if id.is_empty() || allowed.iter().any(|v| v == id) {
+            continue;
+        }
+        let route: Route = db
+            .find("station_routes", id)?
+            .ok_or_else(|| GateError::Other("授权池中的线路不存在，请重新选择".into()))?;
+        if route.client != settings.client || id == crate::local_router::OFFICIAL_CODEX_ROUTE_ID {
+            return Err(GateError::Other(
+                "授权池只能包含当前软件的中转线路，不能包含官方账户".into(),
+            ));
+        }
+        allowed.push(id.to_string());
+    }
+    settings.allowed_routes = allowed;
+    for id in settings.admission.route_limits.keys() {
+        let route: Route = db
+            .find("station_routes", id)?
+            .ok_or_else(|| GateError::Other("发送限制中的线路不存在，请重新选择".into()))?;
+        if route.client != settings.client || id == crate::local_router::OFFICIAL_CODEX_ROUTE_ID {
+            return Err(GateError::Other(
+                "发送限制只能应用于当前软件的中转线路".into(),
+            ));
+        }
+    }
     settings.validate().map_err(GateError::Other)?;
-    db.put(
-        ROUTER_SETTINGS_TABLE,
-        &schedule_key(settings.client)?,
-        &settings,
-    )?;
+    let key = schedule_key(settings.client)?;
+    let mut queue = load_dispatch_queue(db, settings.client)?;
+    if settings.routing_mode == RoutingMode::Pool
+        && !queue
+            .current
+            .as_ref()
+            .is_some_and(|id| settings.allowed_routes.contains(id))
+    {
+        return Err(GateError::Other(
+            "当前线路必须在授权池中；请先选择线路，再保存线路池".into(),
+        ));
+    }
+    queue.order = settings.allowed_routes.clone();
+    if queue
+        .pin
+        .as_ref()
+        .is_some_and(|p| !settings.allowed_routes.contains(&p.route_id))
+    {
+        queue.pin = None;
+    }
+    // 在写入新模式之前读取有效状态，不能让旧库被屏蔽的 enabled=true 随 pool 保存复活。
+    let mut schedule = load_schedule(db, settings.client)?;
+    if settings.routing_mode == RoutingMode::Selected {
+        schedule.enabled = false;
+        schedule.last_note.clear();
+        queue.pin = None;
+    }
+    db.transaction(|| {
+        db.put(ROUTER_SETTINGS_TABLE, &key, &settings)?;
+        db.put(DISPATCH_TABLE, &key, &queue)?;
+        db.put(SCHEDULE_TABLE, &key, &schedule)
+    })?;
     Ok(settings)
+}
+
+/// 普通选线只授权所选线路，关闭调度并清除钉住；三项同时落盘后调用方再改内存。
+pub fn select_exclusively(
+    db: &Repository,
+    client: Client,
+    route_id: &str,
+    now_ms: i64,
+) -> Result<RouterSettings> {
+    let mut settings = load_router_settings(db, client)?;
+    settings.routing_mode = RoutingMode::Selected;
+    let mut queue = load_dispatch_queue(db, client)?;
+    queue.current = Some(route_id.to_string());
+    queue.pin = None;
+    queue.updated_ms = now_ms;
+    let mut schedule = load_schedule(db, client)?;
+    schedule.enabled = false;
+    schedule.last_note.clear();
+    let key = schedule_key(client)?;
+    db.transaction(|| {
+        db.put(ROUTER_SETTINGS_TABLE, &key, &settings)?;
+        db.put(DISPATCH_TABLE, &key, &queue)?;
+        db.put(SCHEDULE_TABLE, &key, &schedule)
+    })?;
+    Ok(settings)
+}
+
+/// 删除线路同时撤销跨线授权。保留 current 的失效指向，绝不自动选择另一条。
+pub fn remove_route(db: &Repository, id: &str) -> Result<Option<Client>> {
+    db.transaction(|| remove_route_in_transaction(db, id))
+}
+
+/// 供线路重命名复用；调用者必须已开启数据库事务并持有运行期路由锁。
+pub fn remove_route_in_transaction(db: &Repository, id: &str) -> Result<Option<Client>> {
+    let Some(route) = db.find::<Route>("station_routes", id)? else {
+        return Ok(None);
+    };
+    let client = route.client;
+    let key = schedule_key(client)?;
+    let mut settings = load_router_settings(db, client)?;
+    settings.allowed_routes.retain(|r| r != id);
+    settings.admission.route_limits.remove(id);
+    settings.aggregate.members.retain(|r| r != id);
+    settings.aggregate.models.remove(id);
+    let mut queue = load_dispatch_queue(db, client)?;
+    queue.order.retain(|r| r != id);
+    if queue.pin.as_ref().is_some_and(|p| p.route_id == id) {
+        queue.pin = None;
+    }
+    let stop = settings.allowed_routes.is_empty() || queue.current.as_deref() == Some(id);
+    if stop {
+        settings.routing_mode = RoutingMode::Selected;
+    }
+    db.remove("station_routes", id)?;
+    db.put(ROUTER_SETTINGS_TABLE, &key, &settings)?;
+    db.put(DISPATCH_TABLE, &key, &queue)?;
+    if stop {
+        let mut schedule = load_schedule(db, client)?;
+        schedule.enabled = false;
+        db.put(SCHEDULE_TABLE, &key, &schedule)?;
+    }
+    Ok(Some(client))
 }
 
 /// 聚合名单（中转站重构阶段 3）存之前理一遍：
@@ -1529,7 +1674,7 @@ pub fn restore_router(db: &Repository, state: &mut RouterState) -> Result<()> {
         state.set_settings(load_router_settings(db, client)?);
         let q = load_dispatch_queue(db, client)?;
         state.set_queue(client, q.order);
-        if state.current(client).is_none() {
+        if state.current(client).is_none() && state.pending(client).is_none() {
             if let Some(id) = q.current {
                 state.set_now(client, id);
             }
@@ -1954,7 +2099,7 @@ mod tests {
                 RouterSettings::for_client(Client::Codex),
                 "没存过 = 默认那份"
             );
-            s.auto_failover = false;
+            s.routing_mode = RoutingMode::Selected;
             s.max_attempts = 2;
             save_router_settings(&db, &s).unwrap();
             save_dispatch_order(&db, Client::Codex, vec![b.clone(), a.clone(), b.clone()], 7)
@@ -1964,20 +2109,137 @@ mod tests {
         let db = Repository::open_in(&root).unwrap();
         let mut state = RouterState::default();
         restore_router(&db, &mut state).unwrap();
-        assert!(!state.settings(Client::Codex).auto_failover);
+        assert_eq!(
+            state.settings(Client::Codex).routing_mode,
+            RoutingMode::Selected
+        );
         assert_eq!(state.settings(Client::Codex).max_attempts, 2);
         assert_eq!(state.current(Client::Codex).as_deref(), Some(a.as_str()));
         let q = load_dispatch_queue(&db, Client::Codex).unwrap();
         assert_eq!(q.order, [b.clone(), a.clone()], "重复的那条没去掉");
         // 别的软件不受影响。
         assert_eq!(state.current(Client::ClaudeCode), None);
-        assert!(state.settings(Client::ClaudeCode).auto_failover);
+        assert_eq!(
+            state.settings(Client::ClaudeCode).routing_mode,
+            RoutingMode::Selected
+        );
 
         // 面板开着期间刚选过的，不被库里那份旧的盖掉。
         let mut busy = RouterState::default();
         busy.set_now(Client::Codex, b.clone());
         restore_router(&db, &mut busy).unwrap();
         assert_eq!(busy.current(Client::Codex).as_deref(), Some(b.as_str()));
+        // 首次请求还没来时只有 pending，也已经是用户作出的选择。
+        let mut pending = RouterState::default();
+        pending.request_switch(Client::Codex, b.clone());
+        restore_router(&db, &mut pending).unwrap();
+        assert_eq!(pending.current(Client::Codex), None);
+        assert_eq!(pending.pending(Client::Codex).as_deref(), Some(b.as_str()));
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_failover_and_schedule_flags_do_not_grant_cross_route_permission() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        db.put(
+            ROUTER_SETTINGS_TABLE,
+            "codex",
+            &serde_json::json!({"client":"codex","auto_failover":true}),
+        )
+        .unwrap();
+        let mut schedule = Schedule::new(Client::Codex);
+        schedule.enabled = true;
+        db.put(SCHEDULE_TABLE, "codex", &schedule).unwrap();
+        assert_eq!(
+            load_router_settings(&db, Client::Codex)
+                .unwrap()
+                .routing_mode,
+            RoutingMode::Selected
+        );
+        assert!(!load_schedule(&db, Client::Codex).unwrap().enabled);
+        assert!(save_schedule(&db, &schedule).is_err());
+        let route = Route::new(Client::Codex, "fixture", "a");
+        db.put("station_routes", &route.id, &route).unwrap();
+        remember_current(&db, Client::Codex, &route.id, 1).unwrap();
+        let mut routing = load_router_settings(&db, Client::Codex).unwrap();
+        routing.routing_mode = RoutingMode::Pool;
+        routing.allowed_routes = vec![route.id];
+        save_router_settings(&db, &routing).unwrap();
+        assert!(
+            !load_schedule(&db, Client::Codex).unwrap().enabled,
+            "授权池不能恢复旧版调度开关"
+        );
+        assert!(!db.get::<Schedule>(SCHEDULE_TABLE, "codex").unwrap().enabled);
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pool_save_requires_current_and_valid_members_and_deletion_revokes_recreated_ids() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        let a = Route::new(Client::Codex, "s", "a");
+        let b = Route::new(Client::Codex, "s", "b");
+        let c = Route::new(Client::ClaudeCode, "s", "c");
+        for r in [&a, &b, &c] {
+            db.put("station_routes", &r.id, r).unwrap();
+        }
+        let mut settings = RouterSettings::for_client(Client::Codex);
+        settings.routing_mode = RoutingMode::Pool;
+        settings.allowed_routes = vec![a.id.clone(), b.id.clone()];
+        assert!(
+            save_router_settings(&db, &settings).is_err(),
+            "没有当前线不能保存池"
+        );
+        remember_current(&db, Client::Codex, &a.id, 1).unwrap();
+        save_router_settings(&db, &settings).unwrap();
+        let good_queue = load_dispatch_queue(&db, Client::Codex).unwrap();
+        assert_eq!(good_queue.order, settings.allowed_routes);
+        for denied in [
+            vec![b.id.clone()],
+            vec![a.id.clone(), c.id.clone()],
+            vec![a.id.clone(), "missing".into()],
+            vec![
+                a.id.clone(),
+                crate::local_router::OFFICIAL_CODEX_ROUTE_ID.into(),
+            ],
+        ] {
+            let mut bad = settings.clone();
+            bad.allowed_routes = denied;
+            assert!(save_router_settings(&db, &bad).is_err());
+            assert_eq!(load_dispatch_queue(&db, Client::Codex).unwrap(), good_queue);
+            assert_eq!(load_router_settings(&db, Client::Codex).unwrap(), settings);
+        }
+        let mut schedule = Schedule::new(Client::Codex);
+        schedule.enabled = true;
+        save_schedule(&db, &schedule).unwrap();
+        select_exclusively(&db, Client::Codex, &a.id, 3).unwrap();
+        assert!(!load_schedule(&db, Client::Codex).unwrap().enabled);
+        assert_eq!(
+            load_router_settings(&db, Client::Codex)
+                .unwrap()
+                .routing_mode,
+            RoutingMode::Selected
+        );
+        save_router_settings(&db, &settings).unwrap();
+        remove_route(&db, &b.id).unwrap();
+        db.put("station_routes", &b.id, &b).unwrap();
+        assert!(!load_router_settings(&db, Client::Codex)
+            .unwrap()
+            .allowed_routes
+            .contains(&b.id));
+        assert!(!load_dispatch_queue(&db, Client::Codex)
+            .unwrap()
+            .order
+            .contains(&b.id));
+        remove_route(&db, &a.id).unwrap();
+        assert_eq!(
+            load_dispatch_queue(&db, Client::Codex).unwrap().current,
+            Some(a.id)
+        );
+        assert!(!load_schedule(&db, Client::Codex).unwrap().enabled);
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -2341,6 +2603,29 @@ mod tests {
     }
 
     #[test]
+    fn permission_denials_never_fabricate_health_or_usage_for_unsent_routes() {
+        let mut denied = RouterRequest {
+            route_id: "a".into(),
+            status: Some(403),
+            fault: Some("route-permission-denied".into()),
+            ..Default::default()
+        };
+        assert!(router_usage_rows(&[denied.clone()]).is_empty());
+        denied.attempts = vec![tried("a", Some(404), Some("model-missing"))];
+        assert!(
+            router_usage_rows(&[denied.clone()]).is_empty(),
+            "A的中性错误不能变成权限拒绝故障"
+        );
+        denied.attempts = vec![tried("a", Some(502), Some("upstream-down"))];
+        let rows = router_usage_rows(&[denied]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows["a"].len(), 1);
+        assert!(!rows["a"][0].ok);
+        assert_eq!(rows["a"][0].cost, None);
+        assert_eq!(rows["a"][0].output, None);
+    }
+
+    #[test]
     fn ranking_evidence_comes_from_the_router_s_own_log_where_there_is_one() {
         let root = std::env::temp_dir().join(crate::config_io::id());
         let db = Repository::open_in(&root).unwrap();
@@ -2649,6 +2934,13 @@ mod tests {
                 load_schedule(&db, Client::Codex).unwrap(),
                 Schedule::new(Client::Codex)
             );
+            let route = Route::new(Client::Codex, "fixture", "a");
+            db.put("station_routes", &route.id, &route).unwrap();
+            remember_current(&db, Client::Codex, &route.id, 1).unwrap();
+            let mut routing = RouterSettings::for_client(Client::Codex);
+            routing.routing_mode = RoutingMode::Pool;
+            routing.allowed_routes = vec![route.id];
+            save_router_settings(&db, &routing).unwrap();
             let mut s = load_schedule(&db, Client::Codex).unwrap();
             s.enabled = true;
             s.prefs = Prefs::batch();

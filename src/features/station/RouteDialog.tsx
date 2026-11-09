@@ -3,7 +3,7 @@
  *
  * **一条线路 = 软件 + 站点 + 分组。一个分组一把 key，没有第三层。**
  *
- * 形态参考 cc-switch（MIT，见 ATTRIBUTION.md）的 `ProviderForm`：预设胶囊 +
+ * 形态参考 cc-switch（MIT，见 THIRD_PARTY_NOTICES.txt）的 `ProviderForm`：预设胶囊 +
  * 大图标 + 两列基本信息 +「接入」分节 + 收起的高级选项。数据模型是我们自己的。
  *
  * # ⛔ 预设里一个第三方中转站都没有

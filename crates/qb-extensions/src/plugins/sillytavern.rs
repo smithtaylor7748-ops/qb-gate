@@ -611,7 +611,7 @@ pub fn find_official_codex() -> Result<PathBuf> {
 }
 
 pub fn status() -> PluginStatus {
-    status_with(None, None)
+    status_with(None, None, false)
 }
 
 /// 同 [`status`]，外加内置 GPT 桥接的真实状态。
@@ -619,7 +619,11 @@ pub fn status() -> PluginStatus {
 /// 桥接活在面板进程里（`qb-app::gpt_bridge`），这一层（L2）看不见它；命令层拿得到
 /// 就传进来，传 `None` 时退回「端口占没占」这个近似值 —— 那只回答「有人在听」，
 /// 不回答「是不是我们」。
-pub fn status_with(gpt_running: Option<bool>, gemini_running: Option<bool>) -> PluginStatus {
+pub fn status_with(
+    gpt_running: Option<bool>,
+    gemini_running: Option<bool>,
+    native_running: bool,
+) -> PluginStatus {
     let cfg = load_config();
     let dd = bridge_data_dir();
     let mut checks = Vec::new();
@@ -751,6 +755,15 @@ pub fn status_with(gpt_running: Option<bool>, gemini_running: Option<bool>) -> P
         true,
         if st_up { "在监听" } else { "空闲" },
     ));
+    checks.push(DependencyCheck::new(
+        "反重力原生桥接",
+        true,
+        if native_running {
+            "面板内置桥接正在运行（显式 IDE 账户）"
+        } else {
+            "未启动（在反重力桥接设置中选择 IDE 账户）"
+        },
+    ));
 
     let tavern_deps_ok = checks
         .iter()
@@ -762,13 +775,15 @@ pub fn status_with(gpt_running: Option<bool>, gemini_running: Option<bool>) -> P
     let unset_gpt = unset_paths(&cfg, TavernBackend::Gpt);
     let claude_owned = bridge_up && owned_running("bridge").unwrap_or(false);
     let st_owned = st_up && owned_running("sillytavern").unwrap_or(false);
-    let any_builtin_up = gpt_up || gemini_up;
+    let any_builtin_up = gpt_up || gemini_up || native_running;
     let (state, detail) = if !unset_gpt.is_empty() {
         // 酒馆本身的路径都没填：两条桥谁也起不了。「还没配」排在「依赖不齐」前面：
         // 路径空着时后者那句「展开看缺哪一项」会把人引去查 Python 和 Claude，
         // 而真正缺的是他自己还没填的路径。
         (PluginState::Missing, setup_hint(&unset_gpt))
-    } else if !tavern_deps_ok || (!claude_deps_ok && !gpt_deps_ok && !gemini_deps_ok) {
+    } else if !tavern_deps_ok
+        || (!claude_deps_ok && !gpt_deps_ok && !gemini_deps_ok && !native_running)
+    {
         (PluginState::Missing, "依赖不齐，展开看缺哪一项".to_string())
     } else if st_owned && (claude_owned || any_builtin_up) {
         let mut backends = Vec::new();
@@ -781,6 +796,9 @@ pub fn status_with(gpt_running: Option<bool>, gemini_running: Option<bool>) -> P
         if gemini_up {
             backends.push("Gemini 桥接");
         }
+        if native_running {
+            backends.push("反重力原生桥接");
+        }
         (
             PluginState::Running,
             format!("酒馆正在运行，后端：{}", backends.join("与")),
@@ -789,10 +807,11 @@ pub fn status_with(gpt_running: Option<bool>, gemini_running: Option<bool>) -> P
         (
             PluginState::Broken,
             format!(
-                "只起来了一半：Claude 桥接 {}，GPT 桥接 {}，Gemini 桥接 {}，酒馆 {}",
+                "只起来了一半：Claude 桥接 {}，GPT 桥接 {}，Gemini 桥接 {}，原生桥接 {}，酒馆 {}",
                 if bridge_up { "在" } else { "不在" },
                 if gpt_up { "在" } else { "不在" },
                 if gemini_up { "在" } else { "不在" },
+                if native_running { "在" } else { "不在" },
                 if st_up { "在" } else { "不在" }
             ),
         )
@@ -1308,6 +1327,11 @@ pub async fn stop() -> Result<Vec<String>> {
         return Err(GateError::Other(failures.join("；")));
     }
     Ok(done)
+}
+
+/// Claude 专用关闭保留共享的酒馆页面；其它两条内置桥可以继续使用它。
+pub fn stop_claude_bridge() -> Result<()> {
+    stop_owned("bridge")
 }
 
 #[cfg(test)]

@@ -27,7 +27,7 @@
 //! # ⛔ clean-room
 //!
 //! 信封外形与状态机口径参照 ccodex-sleep-state(GPL-3.0)公开的 README / SECURITY 描述,
-//! **用 Rust 逐行自己写**,未复制其源码,未引入 Mihomo 或任何代理出口。见 `ATTRIBUTION.md`。
+//! **用 Rust 逐行自己写**,未复制其源码,未引入 Mihomo 或任何代理出口。
 
 use serde::Serialize;
 use ts_rs::TS;

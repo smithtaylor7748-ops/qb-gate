@@ -5,7 +5,7 @@
 //!
 //! 调用方是 `qb_app::workspace::configuration_files` —— 写的是每个中转环境自己的隔离目录，
 //! 不是 `~\.codex` / `~\.claude`。形态参考 cc-switch（MIT，https://github.com/farion1231/cc-switch），
-//! 实现是自己写的，见 `ATTRIBUTION.md`。
+//! 实现是自己写的。
 //!
 //! # 原来这里还有什么（2026-09-27 删了）
 //!

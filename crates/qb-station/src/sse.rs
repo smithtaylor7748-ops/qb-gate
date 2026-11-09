@@ -23,7 +23,6 @@
 //!
 //! 分类口径参照 ccodex-sleep-state(GPL-3.0)README 里公开描述的官方 Codex SSE
 //! 行为与本仓库既有的 `diagnostics::validate_stream_bytes`,**逐行自己写**,未复制其源码。
-//! 见 `ATTRIBUTION.md`。
 
 use crate::schedule::Outcome;
 

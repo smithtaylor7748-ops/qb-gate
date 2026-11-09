@@ -39,4 +39,5 @@ pub mod tool_manager;
 pub mod workspace;
 
 pub mod antigravity;
+pub mod antigravity_native;
 pub mod codex_commands;

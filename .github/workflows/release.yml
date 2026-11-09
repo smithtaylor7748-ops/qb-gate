@@ -49,7 +49,7 @@ jobs:
             '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
           }
           $releaseLines | Set-Content dist-installers/SHA256SUMS.txt -Encoding ascii
-          Copy-Item LICENSE,LICENSE-ADDITIONAL-TERMS.md,LICENSE-COMMERCIAL.md,ATTRIBUTION.md,THIRD_PARTY_NOTICES.txt -Destination dist-installers
+          Copy-Item LICENSE,LICENSE-ADDITIONAL-TERMS.md,LICENSE-COMMERCIAL.md,THIRD_PARTY_NOTICES.txt -Destination dist-installers
           Copy-Item docs/dependencies.json -Destination dist-installers
       # 0.25.3 起：面板的「发现新版本」弹窗读 update.json（版本号 + 中文说明），
       # Release 正文也从同一份 .github/release-notes.md 生成。update.json 不进 SHA256SUMS ——

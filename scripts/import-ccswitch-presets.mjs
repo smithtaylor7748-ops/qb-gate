@@ -421,7 +421,7 @@ for (const [file, arrayName, out, map] of FILES) {
   }
   const body = {
     source: `cc-switch v4.0.14 src/config/${file}（提交 ${COMMIT}）`,
-    license: "MIT, Copyright (c) 2025 Jason Young — 见 ATTRIBUTION.md",
+    license: "MIT, Copyright (c) 2025 Jason Young — 见 THIRD_PARTY_NOTICES.txt",
     generated_by: "scripts/import-ccswitch-presets.mjs（静态解析，不执行源码）",
     filter:
       "只要 official / cn_official / cloud_provider / local；不要合作伙伴、隐藏、OAuth、没有固定地址的；网址剥掉推广参数",

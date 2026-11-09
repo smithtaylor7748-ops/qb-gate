@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 共存型工具（中转站重构阶段 4，cc-switch 的 C3 / C4）：把一条线路写进 OpenCode、MiniMax Code、OpenClaw、Hermes、Pi
 //! 各自的配置文件，跟使用者自己配的供应商**并排共存**，在工具里选。
 //!

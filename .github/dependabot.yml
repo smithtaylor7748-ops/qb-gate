@@ -25,7 +25,7 @@ updates:
       patch:
         update-types: [patch]
     ignore:
-      # rmcp 的版本是 ATTRIBUTION.md 里核对过许可证的那一版，
+      # rmcp 的版本固定为已核对许可证的版本，
       # 升级要连带重新核对，不走自动 PR。
       - dependency-name: rmcp
 

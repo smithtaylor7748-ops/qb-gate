@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! Skills 面板（中转站重构阶段 5，cc-switch 的 M2）：装一次，勾上哪些目标就复制到哪些 `skills\` 目录。
 //!
 //! 照 cc-switch：Skill 本体只放一份（面板自己的 `skills\<名字>`，cc-switch 的 SSOT），各客户端的 `skills\` 里是**复制**过去的

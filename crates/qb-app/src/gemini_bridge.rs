@@ -401,19 +401,39 @@ pub fn cli_args(entry: &Path, model: &str) -> Vec<String> {
     args
 }
 
+/// 只信任面板创建的空运行目录；清掉调用面板的终端遗留的 API / Vertex 配置，
+/// 让 Gemini CLI 使用槽位自己的 Google 登录。
+fn cli_environment(
+    inherited: impl IntoIterator<Item = (String, String)>,
+    account_home: &Path,
+) -> Vec<(String, String)> {
+    let inherited = inherited.into_iter().filter(|(key, _)| {
+        !matches!(
+            key.to_ascii_uppercase().as_str(),
+            "GEMINI_API_KEY"
+                | "GOOGLE_API_KEY"
+                | "GOOGLE_GEMINI_BASE_URL"
+                | "GOOGLE_GENAI_USE_VERTEXAI"
+                | "GOOGLE_GENAI_USE_GCA"
+                | "GOOGLE_CLOUD_PROJECT"
+                | "GOOGLE_CLOUD_LOCATION"
+                | "GOOGLE_APPLICATION_CREDENTIALS"
+        )
+    });
+    crate::sessions::sanitized_environment(
+        inherited,
+        vec![
+            ("GEMINI_CLI_HOME".into(), account_home.display().to_string()),
+            ("GEMINI_CLI_TRUST_WORKSPACE".into(), "true".into()),
+            ("NO_BROWSER".into(), "true".into()),
+        ],
+    )
+}
+
 /// 起一次 Gemini CLI，喂提示词，等它跑完。
 async fn run_cli(r: &Running, model: &str, prompt: String) -> Result<ExecOutcome> {
     let args = cli_args(&r.entry, model);
-    let env = crate::sessions::sanitized_environment(
-        std::env::vars(),
-        vec![
-            // 硬约束 2：身份靠这一个变量交给 CLI 自己。
-            ("GEMINI_CLI_HOME".into(), r.home.display().to_string()),
-            // 凭据过期时别弹浏览器（那会挂到超时）；CLI 会把授权链接打到输出里，
-            // 我们当成错误报给酒馆，使用者去反重力页重新登录。
-            ("NO_BROWSER".into(), "true".into()),
-        ],
-    );
+    let env = cli_environment(std::env::vars(), &r.home);
     let mut cmd = tokio::process::Command::new(&r.node);
     cmd.args(&args)
         .current_dir(&r.runtime)
@@ -500,10 +520,7 @@ async fn chat(body: &Bytes, r: &Arc<Running>) -> Response<Body> {
             "酒馆 Gemini 桥接：一次请求没拿到回复（{}）",
             outcome.errors.join("；")
         ));
-        return error_response(
-            StatusCode::BAD_GATEWAY,
-            format!("Gemini CLI 没有回复：{}", outcome.errors.join("；")),
-        );
+        return error_response(StatusCode::BAD_GATEWAY, bridge_error(&outcome.errors));
     };
     let shown_model = if model.is_empty() {
         DEFAULT_MODEL_LABEL.to_string()
@@ -546,9 +563,50 @@ async fn chat(body: &Bytes, r: &Arc<Running>) -> Response<Body> {
     )
 }
 
+fn bridge_error(errors: &[String]) -> String {
+    let detail = errors.join("；");
+    if detail.contains("UNSUPPORTED_CLIENT") || detail.contains("client is no longer supported") {
+        return format!(
+            "Google 已拒绝这个账户通过 Gemini CLI 使用个人 Code Assist；重登不能解除上游限制。\
+             可在桥接设置的「中转连接」里复制本机路由连接，使用已配置的中转线路聊天。原始错误：{detail}"
+        );
+    }
+    format!("Gemini CLI 没有回复：{detail}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bridge_environment_uses_the_slot_and_trusts_only_its_runtime_invocation() {
+        let env = cli_environment(
+            [
+                ("GEMINI_API_KEY".into(), "foreign-key".into()),
+                ("google_genai_use_vertexai".into(), "true".into()),
+                ("GEMINI_CLI_HOME".into(), "other-slot".into()),
+                ("HTTP_PROXY".into(), "http://proxy.test".into()),
+            ],
+            Path::new("slot-home"),
+        );
+        let env: std::collections::BTreeMap<_, _> = env.into_iter().collect();
+        assert!(!env.contains_key("GEMINI_API_KEY"));
+        assert!(!env.contains_key("google_genai_use_vertexai"));
+        assert_eq!(env["GEMINI_CLI_HOME"], "slot-home");
+        assert_eq!(env["GEMINI_CLI_TRUST_WORKSPACE"], "true");
+        assert_eq!(env["HTTP_PROXY"], "http://proxy.test");
+    }
+
+    #[test]
+    fn unsupported_google_clients_get_an_actionable_alternative() {
+        let message = bridge_error(&["UNSUPPORTED_CLIENT".into()]);
+        assert!(message.contains("重登不能"));
+        assert!(message.contains("中转连接"));
+        assert_eq!(
+            bridge_error(&["rate limited".into()]),
+            "Gemini CLI 没有回复：rate limited"
+        );
+    }
 
     /// 公开文档里 JSON 输出的形状：`response` + `stats`。
     #[test]

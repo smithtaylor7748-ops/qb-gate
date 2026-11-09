@@ -15,6 +15,7 @@ vi.mock("../../lib/ipc", () => ({ call: mock.call }));
 
 const plan: SiteQuota = {
   provider: "Kimi For Coding",
+  available: null,
   kind: "plan",
   balances: [],
   windows: [

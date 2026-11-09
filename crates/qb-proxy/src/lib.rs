@@ -23,8 +23,8 @@
 //! # 来源
 //!
 //! 除 `classify` / `envelope` 的拼装以外，多数文件搬自 cc-switch v4.0.14
-//! （`src-tauri/src/proxy/`，MIT，提交 `5de6feb4`），文件头各有一行出处；改了什么写在
-//! 各文件头和 `ATTRIBUTION.md`。**文件名照它的原样**，以后跟上游时好逐个对着挑 ——
+//! （`src-tauri/src/proxy/`，MIT，提交 `5de6feb4`），文件头各有一行出处；许可原文见
+//! `THIRD_PARTY_NOTICES.txt`。**文件名照它的原样**，以后跟上游时好逐个对着挑 ——
 //! 只有两个例外：`error.rs` → `proxy_error.rs`、`sse.rs` → `sse_text.rs`。workspace 里的模块名
 //! 必须全局唯一（`architecture.rs` 把同名模块合成一个点，环就查不出来了），而
 //! `qb-foundation::error`、`qb-station::sse` 先占了这两个名字。

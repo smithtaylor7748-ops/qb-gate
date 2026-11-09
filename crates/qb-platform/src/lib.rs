@@ -58,3 +58,4 @@ pub mod secret;
 pub mod sessions;
 pub mod settings;
 pub mod signature;
+pub mod url_protocol;

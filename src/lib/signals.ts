@@ -6,7 +6,7 @@
  *    https://github.com/LinXiaoTao/FuckClaude
  *    Copyright (c) 2026 LinXiaoTao
  *  权重表、评分函数与字体/UA 名单基本保持原样，只做了本地化注释与类型微调。
- *  完整许可与致谢见仓库根目录 ATTRIBUTION.md。
+ *  完整许可原文见仓库根目录 THIRD_PARTY_NOTICES.txt。
  * ─────────────────────────────────────────────────────────────────────
  *
  * 两条容易被改错的判定，动手前先读：
@@ -586,9 +586,7 @@ export interface ScanResult {
    * 在哪量的（2026-09-24）。没有 = 面板内置的 WebView2（老数据也是这一档）；
    * `browser` = 用默认浏览器实测的（`lib/browserProbe.ts`）。
    */
-  source?:
-    | { kind: "panel" }
-    | { kind: "browser"; browser: string; at: string };
+  source?: { kind: "panel" } | { kind: "browser"; browser: string; at: string };
 }
 
 /**

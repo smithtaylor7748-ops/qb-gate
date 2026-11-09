@@ -5,6 +5,10 @@
 实现层面的「为什么这么写」在 [docs/DESIGN-NOTES.zh-CN.md](docs/DESIGN-NOTES.zh-CN.md)，
 修不掉的缺口在 [docs/KNOWN-ISSUES.zh-CN.md](docs/KNOWN-ISSUES.zh-CN.md)。
 
+2026-11-09 核对：仓库基线是 `2eac5b3` / `v0.25.11`，GitHub 已发布该版本；下一次出包的版本号必须高于已发布版本（当前至少高于 `0.25.11`），仍由使用者决定。本轮修复写入 `CHANGELOG` 的 `## 未发布`，不提前改版本文件。
+
+2026-11-09 依赖漏洞修复：源码构建最低 Rust 为 **1.89**（`rusqlite` 0.41.1 的要求），本机核查工具链 1.98.1，CI 使用 stable。这项构建要求不等于产品发版；`rmcp` / SQLite 依赖更新仍在未发布段。
+
 ---
 
 ## ⛔ 一轮需求做完了，先问，别自己去出安装包
@@ -205,22 +209,25 @@ cargo deny check
 operations，是跨域编排而不是门禁自己的事。留在 `gate` 里正是 `gate` 变成
 「伪装成底层的编排器」的原因。判定与执行仍在 `gate`。）
 
-### ⛔ 三种关停，三个范围（2026-09-25）
+### ⛔ 四种关停，四个范围（2026-11-09）
 
-`killswitch::Scope` 三档，筛法是纯函数 `in_scope`，**别合并成两档**：
+`killswitch::Scope` 四档，筛法是纯函数 `in_scope`，**按调用方保留范围**：
 
 | 调用方                           | 范围                                         | 入口                                            |
 | -------------------------------- | -------------------------------------------- | ----------------------------------------------- |
-| 使用者点「一键关闭」             | `Everything`：全收（含中转、含反重力），重锁 | `execute()`                                     |
+| 全局紧急关闭                     | `Everything`：全收（含中转、含反重力），重锁 | `execute()`                                     |
+| Claude 页「一键关闭所有 Claude」 | `Claude`：Claude Desktop / Code / Bridge，含 Claude 中转会话；保留 GPT / Gemini、反重力及共享酒馆 | `stop_claude()` / `preview_in(Scope::Claude)` |
 | 门禁驱动的关停（`stop_managed`） | `Gate`：剔中转；反重力只在归门禁时收         | `execute_official()`                            |
 | 切 Claude 账户之前的清场         | `AccountSwitch`：剔中转、剔反重力            | `execute_for_switch()` / `preview_for_switch()` |
 
-原来只有前两档，切账户借用了「官方」那一档 —— 反重力是按安装目录认的，于是切 Claude 账户把 IDE 连同没保存的东西
+原来只有全局与门禁两档，切账户借用了「官方」那一档 —— 反重力是按安装目录认的，于是切 Claude 账户把 IDE 连同没保存的东西
 一起关了，确认框却只数 Claude 的三类（只有反重力开着时写「会关掉：。」）；门禁那一档也不看 `antigravity_under_gate()`。
 反重力是 Google 账户，跟 Claude 槽位无关，跟 `needs_clearing` 同一条。
 
 **确认框扫的必须是真去关的那个范围**：切换框走 `official_switch_preview` → `preview_for_switch`，清场执行与清场后的
 「剩没剩」复查也是 `AccountSwitch`。三处任何一处换了范围，报的数就跟做的事对不上。
+
+Claude 页曾仍调用全局 `stop_managed(true)`，2026-11-09 改为 `claudeOnly` 专用编排；会话按客户端正向识别，进程按 Claude 三种角色正向识别。只收回已关闭 Claude 会话的租约，不暂停共享门禁或停掉其它桥。新范围单测通过，未在正在工作的真实会话上执行关停。
 
 ## ⛔ 这是个开源项目：别人的机器跟你的不一样
 
@@ -286,7 +293,7 @@ operations，是跨域编排而不是门禁自己的事。留在 `gate` 里正�
 `wham/usage`（窗口缩到托盘也照问），而文档写的是「只在打开或点刷新时」—— 那段代码已经删了。
 要改成别的节奏先问使用者，别自己加定时器。
 
-仍然是硬约束的，动任何一条同步改 [DISCLAIMER.md](DISCLAIMER.md) §6 / §7 与 [ATTRIBUTION.md](ATTRIBUTION.md)：
+仍然是硬约束的，动任何一条同步改 [DISCLAIMER.md](DISCLAIMER.md) §6 / §7：
 
 1. **只读，只问自己的账户。** 只发上表那几个只读调用。⛔ **不发 `onboardUser`**：cockpit-tools 在
    没有 project 时会发它，而它会把账户登记到某个档位上、改账户状态。没有 project 就发 `{}`。
@@ -566,7 +573,7 @@ cargo run -p qb-install --example self-update-check -- --as <上一版> --downlo
 `crates/qb-station/src/sse.rs`（SSE 终止事件分类，纯函数）、
 `crates/qb-app/src/local_router/official.rs`（`UpstreamAuth::OAuthPassthrough` 官方模式 + 采集/注入）。
 
-六条硬约束，动了任何一条就要同步改 [DISCLAIMER.md](DISCLAIMER.md) §5.3 与 [ATTRIBUTION.md](ATTRIBUTION.md)：
+六条硬约束，动了任何一条就要同步改 [DISCLAIMER.md](DISCLAIMER.md) §5.3：
 
 1. **只对 `Client::Codex`。** Claude Code / 桌面端一律不进官方模式、不注入、不采集 ——
    turn-state 是 OpenAI 的请求头，Anthropic 协议里没有对应物。有测试
@@ -633,6 +640,18 @@ GPL 聚合而非衍生，商业档才不受影响。它接管的是**当前激�
 3. **只绑 `127.0.0.1`**，Bearer token 面板生成、只给本机酒馆；**没有 API Key 回退**。
 4. **`-c model_provider="openai"` 强制官方**：槽位开着识别时 `config.toml` 指向本机路由，桥接不受牵连。
 5. **默认 `--ephemeral`**，对话不落槽位会话历史；插件面板里「记入槽位用量」打开才写。
+
+2026-11-09 的「复制中转连接」是独立的 SillyTavern 原生连接，不是官方 CLI 桥接的凭据回退。地址由实际本机路由生成：GPT 复制 `/codex/v1`，Google 复制 `/gemini` 并提示口令填 `Proxy Password`（SillyTavern 自己追加 `/v1beta`）。必须匹配有 Key、协议兼容的真实中转 `Route`，官方 Codex 识别路径不能充当中转就绪状态。复制不改酒馆设置、不起进程；本机 HTTP 模拟测试不等于真人账户端到端验证。
+
+2026-11-09 未发布新增「反重力原生桥接」：代码在 `crates/qb-app/src/usecase/antigravity_native_bridge.rs` 与其 `protocol.rs`，界面在反重力的 Gemini 桥接设置内独立展示。它与上面的 Gemini CLI 桥是两条实现，不能把 CLI「桥接不读凭据」的说明套给原生桥。
+
+- **默认不选账户、不选模型、不启动。** 打开界面或切换选择只读本机；点「读取此账户模型」或「启动原生桥与酒馆」才查询明确选择的一个 IDE 槽位。不能遍历账户查询，不能因账户页激活项变化偷偷改来源。
+- **只支持反重力 IDE 登录来源。** Hub 和 Gemini CLI 不因同邮箱视为兼容。复用本机 IDE 状态库令牌与现有 Google 内存刷新，不写回 IDE，不把官方令牌或 OAuth 客户端标识放进配置、前端、日志。刷新标识仍从本机官方客户端读取。
+- **固定官方生产端点 `https://cloudcode-pa.googleapis.com`。** `loadCodeAssist` 读项目，`fetchAvailableModels` 读真实模型，`streamGenerateContent?alt=sse` 生成。模型发现与生成在同一端点；缺项目要求先在官方 IDE 初始化，不自动 `onboardUser`，不跨 daily/sandbox 探测，不接中转兜底。
+- **一个 IDE 登录、一种已发现模型、一次请求。** 启动后改配置须先停止；每次生成核对槽位登录指纹，变化即拒绝。401 仅允许同一来源内存刷新后再试一次；429、403、生成失败不换号、不换模型、不换中转。归档或合并正在用的槽位须先停桥。
+- **只绑定 `127.0.0.1`**，包括健康检查在内都需本机随机 Bearer；默认端口 5004，配置与本机密钥在 `plugins/antigravity-native-bridge/`。禁止 HTTP 重定向带走官方身份；流式断连/停止取消任务，错误只显示状态与允许列表内的机器代号，不回显上游原文。
+- **只接文本角色卡与多轮对话**，支持增量 SSE、非流式汇总和上游 token 用量；图片、音频、工具调用和未知内容明确拒绝。模型列表只来自官方返回的文本模型，不捏造默认模型。实际账户的项目/模型权限和内部接口兼容性仍需使用者显式验证，mock 通过不得写成真人端到端成功。
+- 启动受 `LaunchTarget::Antigravity.gated()` 控制；全局停止收掉原生桥，门禁失败只在反重力纳入门禁时收掉它。「关闭 Claude」不能停止它或释放它独立的 `antigravity-native-bridge` 租约；「停止酒馆」收全部桥。保留现有 Gemini CLI 路径。
 
 配套三条：子进程一律挂进 `KillOnCloseJob`（面板退出 / `stop()` 不留孤儿 `codex.exe`）；
 `gate_ops::stop_managed` 收酒馆时一并 `gpt_bridge::stop()`（IP 不合格时它跟酒馆一样归门禁收）；
@@ -745,7 +764,7 @@ HTML 页（`GET /settings` 与 `GET /monitor`），由他本机那份 SillyTaver
 | `crates/qb-install/src/install/sillytavern_setup.rs`                                                 | 取最新版、下载、解压、导入、npm、就位与回滚、卸载（纯函数都有单测）                                                                                                                                                                              |
 | 扩展中心                                                                                             | **没有酒馆了**。目录条目删了；老库里那行 `application-sillytavern`（原来「接入已配置的本地安装」写的）行不删、不列出来（`extensions::RETIRED`），「接入」那条命令连同按钮删了                                                                    |
 
-九条要守住的，动任何一条同步改 [DISCLAIMER.md](DISCLAIMER.md) 第 1 / 6 / 7 / 8 节与 [ATTRIBUTION.md](ATTRIBUTION.md) 的 SillyTavern 那一节：
+九条要守住的，动任何一条同步改 [DISCLAIMER.md](DISCLAIMER.md) 第 1 / 6 / 7 / 8 节：
 
 1. **只从 SillyTavern 官方 GitHub 取。** 最新版读 `github.com/SillyTavern/SillyTavern/releases/latest` 的 302 跳转
    （**不走 `api.github.com`**，同「应用自己的更新」的理由）；那个标签的 `package.json` 从 `raw.githubusercontent.com` 读
@@ -786,8 +805,7 @@ cargo run -p qb-install --example sillytavern-release -- download --to <一个�
 ### 酒馆卡的控制台、角色卡 / 世界书 / 扩展、回收站、指定版本与换回（2026-09-29 第二轮，使用者选的）
 
 使用者：「这次我们来优化他，前端请你进行完全重构，并且搜索 GitHub 上的开源项目，优化他的功能」；位置不变（「直接做这个基础上改」），
-问他时选了三组：实时控制台日志、角色卡 / 世界书 / 扩展管理、版本回退与指定版本。对照过的项目与许可在 ATTRIBUTION（MIT 的只借思路，
-AGPL 的只看思路，SillyTavern 源码只核事实）。代码：`plugins::tavern_console`、`plugins::tavern_library`、`sillytavern_setup::{releases, release,
+问他时选了三组：实时控制台日志、角色卡 / 世界书 / 扩展管理、版本回退与指定版本。代码：`plugins::tavern_console`、`plugins::tavern_library`、`sillytavern_setup::{releases, release,
 check_switch, swap_with_previous}`、`qb-platform::sessions::OwnedProgram::launch_logged`、`qb-platform::process::decode_console_bytes`。
 
 **控制台**（动了同步改 DISCLAIMER 的本机数据那一节）：
@@ -830,7 +848,7 @@ cargo run -p qb-install --example sillytavern-release -- releases
 
 使用者要把 `DSDS-CMHL/EasyAntigravity`（MIT）融进来：反重力做官方账户、进软件页、被 IP 锁保护、
 保留它的汉化 / 自动审批 / 高危拦截；接酒馆。2026-09-20 读它的 `app.asar` 与语言服务器二进制之后
-定下的边界，**动任何一条同步改 [DISCLAIMER.md](DISCLAIMER.md) §6 / §8 与 [ATTRIBUTION.md](ATTRIBUTION.md)**：
+定下的边界，**动任何一条同步改 [DISCLAIMER.md](DISCLAIMER.md) §6 / §8**：
 
 1. **没有中转路径。** Hub 把 `--api_server_url` / `--cloud_code_endpoint` 写死在 `dist/languageServer.js`
    里、只认 Google 登录。`Client::Antigravity` / `AntigravityIde` 在中转侧的每个入口**显式拒绝**
@@ -926,7 +944,7 @@ cargo run -p qb-install --example sillytavern-release -- releases
 
 6. **不做「免 TUN 代理」。** EasyAG 那个 `version.dll` 是来源许可不明的第三方代理核心，注入
    `language_server.exe`，每次更新回写 —— 撞「抄代码先看 license」与「不改官方二进制」。使用者决定不做，
-   也不提供环境变量之类的替代实现。以后有人想加，先看 ATTRIBUTION 那一节。
+   也不提供环境变量之类的替代实现。以后有人想加，先核实二进制的来源与许可。
 7. **酒馆接的是 Gemini CLI，不是反重力本体。** Hub 没有公开的无交互模式（`--headless` 走语言服务器
    未公开的 stdin 协议）。`gemini_bridge.rs` 照 `gpt_bridge.rs` 的五条约束改写：只驱动未修改的官方 CLI 的
    公开无交互模式（stdin + `--output-format json`）、桥接路径对 `oauth_creds.json` 零接触、只绑 127.0.0.1；
@@ -1339,11 +1357,8 @@ Gemini CLI 的 `GEMINI.md`、Hermes 的 `SOUL.md`。**写进哪一份由使用�
 （只解析、只核对），编排在 `usecase::deeplink_ops`，Tauri 那一层在 `commands/import_links.rs`（模块名不叫 `deeplink`：
 workspace 里模块名要全局唯一），全局只挂一份的确认框是 `DeepLinkImport.tsx`，中转站页头部有「从链接导入」。
 
-- **系统里只注册 `qbgate://`，而且是安装包注册的**：`tauri.conf.json` 的 `plugins.deep-link.desktop.schemes` 是给打包用的配置，
-  Tauri CLI 内嵌的 NSIS 模板按它写 `HKCU\Software\Classes\qbgate`，卸载时只删指向这份安装的那一条（2026-10-26 在
-  `@tauri-apps/cli` 2.11.4 的二进制里核过模板原文）。⛔ **运行时不注册、不引 `tauri-plugin-deep-link`**：Windows 上它多出来的
-  只有运行时写注册表（开发版一跑就把装好的面板的协议抢过去，cc-switch 开发版正是这么做的）和解析启动参数（冷启动看
-  `std::env::args()`，面板开着时单实例插件的回调本来就拿得到参数）。`ccswitch://` 是 cc-switch 的，**只认粘贴进来的**。
+- **安装包自动登记的仍只有 `qbgate://`**。`ccswitch://` 可在使用者明确开启「由 QB Gate 接收 CC Switch 导入」后接收网页链接；启动不自动接管、开发版拒绝接管、不引 `tauri-plugin-deep-link`。平台模块备份被改的原注册值；迁移安装目录时保留最初处理者备份，接管失败恢复操作前状态。取消或卸载时，仅在处理者仍是本程序且备份归本程序时恢复，不能覆盖后来接管的程序。Windows `UserChoice` 覆盖普通登记时如实提示。
+- 冷启动参数与单实例转发都接受两种协议，仍进入同一确认框；不因网页链接自动启用线路。卸载仅在备份存在时通过 `--restore-ccswitch-handler` 恢复，在打开库/窗口/单实例 IPC 前处理；NSIS hook 明确检测恢复进程启动失败并中止卸载。配置与模板已静态核验，真实注册表、升级和卸载尚未实测。
 - **链接放在后端、只在内存里、只留最新一条**（`AppState::deeplinks`）：冷启动时它比界面先到，事件
   （`workspace://deeplink`）只是「去看一眼」；读不清除，显示过 / 点了「不导入」按编号清。⛔ 不落盘 —— 站点链接带着 Key
   （迁移 9 建的 `deeplink_pending` 表因此没用上，留着不删：迁移只许追加）。审计日志只记「收到一条」，不记链接本身。
@@ -1421,7 +1436,7 @@ MiniMax 国内 / 国际、OpenCode Go）。认哪一家、怎么解析在 `qb-st
 本机路由五个软件（Claude Code、桌面端、Codex、Gemini CLI、Grok Build）的请求：概览、按天 / 今天按小时的趋势（`ui/BarChart`，
 站内花费 / 官方价折算 / Token / 请求数四选一，一张图一个量）、全年热力图（`ui/YearHeatmap`）、按软件 / 站点 / 模型三张表、
 逐条日志（按模型、只看失败筛，分页）。从中转站页总览那一格的「用量明细」进来（带着当前软件），不进侧栏；能滚动。
-后端 `usecase::relay_usage_ops`，命令 `station_usage_report` / `station_usage_requests`（读之前先把内存里没落库的那批写掉）。
+后端 `usecase::relay_usage_ops`，命令 `station_usage_report` / `station_usage_requests`（读之前先把内存里没落库的那批写掉）。首页 KPI 另用 `station_usage_totals` 读完整本机记录：1 / 24 / 168 小时按精确滚动窗口汇总，全部历史含归档，不拿日志分页当总量。缺失 Token / 价格保持未知；USD 站内额度估算只合计已知价格部分。
 
 - **按天汇总表 `usage_daily`（迁移 10）**：`router_requests` 只留 30 天，裁之前在**同一个事务**里先按「本地日期 + 软件 + 线路 +
   模型 + 上游模型」加进汇总（`Repository::prune_router_requests`）。汇总和明细永远不重叠，相加就是全部 ——
@@ -1622,6 +1637,11 @@ Claude Code 和 Codex 留在本机的会话记录：列表（按来源筛、搜�
 
 相应地：
 
+- **后台快照不能覆盖较新的用户操作**（2026-11-09）：提交派单前，在同一路由状态锁内重读开关、偏好、队列、固定线路和内存 current / pending；期间有变化就丢弃这轮结果。手动选择、落盘与钉住在同一状态锁内完成；恢复旧线路时已有 pending 也算已选。设置页读取失败不得回写默认值，写入排队且失败显错；当前 / 下一发 / 最近请求实际线路分开显示。
+- **请求允许范围先于排序**（2026-11-09，未发布）：`RouterSettings.routing_mode` 是唯一跨线授权来源。默认 `selected` 只用当前 / 待用所选线路，旧 JSON 即使带 `auto_failover:true` 也不迁成许可池；`pool` 只能访问明确保存的 `allowed_routes`。普通选线、指定线路启动及项目选线收回为 `selected` 并停止调度；“固定池内首选”才保留池内备用。关闭智能调度只停止排序，不退出用户已明确批准的池，界面必须说清这一点。池、队列、当前线与调度状态在同一锁 / 事务中协调；新增线路不自动授权。
+- **发送前读最新许可，不信旧候选拷贝**：聚合发现 / 固定前缀、等待请求体后的首发、官方线及每次重试（含整流与同线路备用地址）均受当前范围限制。删除或撤销阻止尚未准入的发送，已准入在途请求不承诺撤回；不持状态锁等待网络。被拒绝而未发包不伪造 attempt、不计站点健康错误、不写成“最近实际访问了该站”。不凭价格或站名推断免费；明确名单是授权边界，预算硬上限仍未实现。
+- **可选发送准入不得扩大许可**（2026-11-09，未发布）：每线路并发 / RPM / 额度检查、有限等待默认关闭；`least-loaded` 只在显式许可池生效。每次真实发送（含重试与测活）原子领取容量并计 RPM，并发名额随响应流结束 / 取消释放；本机排队 / 拒绝不伪造上游消费或健康失败。一个请求共用等待期限，延长设置不延长既有等待，关闭 / 收紧立即按新上限处理；池先查全部即时可用候选，都忙才占一个等候位置。
+- **额度证据不得猜**：当前只消费内置 DeepSeek `is_available` 的明确机器可用性；逐线路开启且 5 分钟内明确不可用才拒绝。未知、过期、余额 0 均不自行推断，请求路径不主动刷新，来源改动作废旧证据。官方 OAuth 身份不参与 API 线路容量池，消费预算仍须另行实现。
 - **界面上必须写明「面板关掉即停」**。循环活在面板进程里，关掉面板调度
   就不再换上游了，而客户端还在照着上一次选的那条线跑 —— 可能是几天前
   那条已经涨价的。这不是缺陷，是这个软件的定位（它是个面板，不是后台服务），
@@ -1656,7 +1676,7 @@ Claude Code 和 Codex 留在本机的会话记录：列表（按来源筛、搜�
 
 ## ⛔ 抄代码之前先看 license
 
-上游的许可状况逐条记在 [ATTRIBUTION.md](ATTRIBUTION.md)。三条铁律：
+实际随软件分发的第三方版权与许可原文保留在 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) 及对应许可证文件中。三条铁律：
 
 1. **MIT 可以抄**，保留版权声明即可（与本项目的 AGPL-3.0 相容；MIT 允许再许可，
    所以商业授权那一档也过得去 —— 但**原版权声明必须一路带着**）；
@@ -1669,8 +1689,7 @@ Claude Code 和 Codex 留在本机的会话记录：列表（按来源筛、搜�
    `jlcodes/cockpit-tools`；
 3. **CC BY-NC-SA 不能抄**：SA 会把本项目拖成同一个协议，NC 会禁止商业使用。
 
-抄了什么、没抄什么、为什么没抄，都要写进 ATTRIBUTION.md —— 这不是礼貌，
-是社区开源推广申明里承诺过的事。
+按使用者 2026-11-09 要求，不再新增来源说明、研究报告或进度文档；现有必要的行为与限制记录按任务维护。实际使用的第三方代码仍保留依法要求的原版权和许可文本，不以研究叙述替代。
 
 ### 本项目自己的许可是 AGPL-3.0-only **+ 第 7 节附加条款**（0.24.8，使用者定的）
 
@@ -1923,6 +1942,8 @@ DOMContentLoaded 上(文档 commit 了、`readyState` 停在 `interactive`,
 
 `scripts/ui-regression.mjs` 现在等的是「模块真的服务得出来」而不是「首页回 200」。
 **新克隆的仓库第一次跑必然撞上这个**,别把那个等待去掉。
+
+2026-11-09 复核：`fetch().ok` 只证明响应头已到，不能证明模块响应体已完整返回；入口读完也不代表 Shell、CSS 和预打包 chunk 全部处理完。脚本改用 Vite 官方 API 启动独立 demo 服务，消费 `/@vite/client` / `/src/main.tsx` 完整响应后，等 `waitForRequestsIdle()` 完成静态依赖树（60 秒上限），最终在 `finally` 关闭服务。本机独立 Vite 实测首页完整读取 22.6 秒、客户端模块 1.33 秒，热身完成后浏览器 DOMContentLoaded 380ms。浏览器导航仍限 30 秒，热身请求也有 30 秒取消上限；失败时输出未完成的请求，先找具体阻塞项，不靠反复启动或无限延时掩盖。
 
 顺带:别在 `test:ui` 跑着的时候手动开 `npx vite` —— 两个 dev server 对着同一个
 `node_modules/.vite` 互相重写,症状一模一样。而且 `npx` 被杀掉时不会带走

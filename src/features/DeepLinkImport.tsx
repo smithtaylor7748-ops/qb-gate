@@ -399,10 +399,11 @@ export function DeepLinkPasteButton() {
         }
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <DeepLinkWebImport />
           <p className="qb-st-note">
-            中转站页面上「导入 CC Switch」那种链接（<code>ccswitch://…</code>
-            ）和 <code>qbgate://…</code>{" "}
-            都认。先给你看里面是什么，确认了才导入，导入后什么都不自动启用。
+            已经复制了导入链接也可以粘贴在下面。支持 <code>ccswitch://…</code>和{" "}
+            <code>qbgate://…</code>；普通站点首页地址不包含账号或
+            Key，不能直接导入。 先预览、确认后才添加线路。
           </p>
           <textarea
             className="input"
@@ -411,7 +412,7 @@ export function DeepLinkPasteButton() {
             value={url}
             disabled={busy}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="qbgate://v1/import?resource=provider&…"
+            placeholder="ccswitch://v1/import?resource=provider&…"
           />
           {error && (
             <p className="qb-st-note" role="alert">
@@ -421,5 +422,86 @@ export function DeepLinkPasteButton() {
         </div>
       </Modal>
     </>
+  );
+}
+
+function DeepLinkWebImport() {
+  const [status, setStatus] = useState<Awaited<
+    ReturnType<typeof deeplinkApi.handlerStatus>
+  > | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let dropped = false;
+    void deeplinkApi
+      .handlerStatus()
+      .then((next) => {
+        if (!dropped) setStatus(next);
+      })
+      .catch((e) => {
+        if (!dropped) setError(message(e));
+      });
+    return () => {
+      dropped = true;
+    };
+  }, []);
+  const change = async (enabled: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setStatus(await deeplinkApi.setHandler(enabled));
+    } catch (e) {
+      setError(message(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="qb-st-note">
+      <strong>从 New API / Sub2API 网页导入</strong>
+      <p>
+        在站点的 API Key / 令牌列表点「导入到 CC
+        Switch」，选择软件。开启下面的接收方式后，网页按钮会把链接送到 QB
+        Gate，仍需确认才导入。
+      </p>
+      {status && (
+        <>
+          <p>
+            {status.enabled
+              ? "当前由 QB Gate 接收网页导入。"
+              : status.registered
+                ? "QB Gate 已登记，但 Windows 当前仍由其它默认应用接收。"
+                : status.handler
+                  ? `当前接收程序：${status.handler}`
+                  : "当前没有可用的接收程序。"}
+          </p>
+          {!status.registered && (
+            <p>
+              开启后将把 CC Switch 导入交给 QB
+              Gate；原接收方式会保存，关闭时可以还原。
+            </p>
+          )}
+          {status.dev_build && (
+            <p>开发版不改系统接收方式；请在安装版开启，或在下方粘贴链接。</p>
+          )}
+          {status.user_choice && (
+            <p>
+              Windows 已指定其它默认应用。请在 Windows「默认应用」中把 CCSWITCH
+              协议改为 QB Gate 后，网页链接才能由 QB Gate 接收。
+            </p>
+          )}
+          <Button
+            disabled={busy || status.dev_build}
+            loading={busy}
+            onClick={() => void change(!status.registered)}
+          >
+            {status.registered
+              ? "还原原来的接收方式"
+              : "由 QB Gate 接收 CC Switch 导入"}
+          </Button>
+        </>
+      )}
+      {error && <p role="alert">{error}</p>}
+    </div>
   );
 }

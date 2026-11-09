@@ -1307,6 +1307,23 @@ const antigravityRules: DangerRules = {
  * 2. 只有 IDE 那一半的（从旧清单升上来的形状）—— 它会显示「并入…」；
  * 3. 只有 CLI 那一半且还没登的。
  */
+let nativeBridgeConfig: import("./generated/AntigravityBridgeConfig").AntigravityBridgeConfig = {
+  account_id: "", port: 5004, model: "", system_prompt: "",
+};
+let nativeBridgeRunning = false;
+const nativeBridgeModels = new Map<string, import("./generated/AntigravityBridgeModel").AntigravityBridgeModel[]>();
+function nativeBridgeStatus(): import("./generated/AntigravityBridgeStatus").AntigravityBridgeStatus {
+  return {
+    running: nativeBridgeRunning,
+    config: { ...nativeBridgeConfig },
+    url: `http://127.0.0.1:${nativeBridgeConfig.port}/v1`,
+    account_label: agAccounts.find((a) => a.id === nativeBridgeConfig.account_id)?.label ?? null,
+    accounts: agAccounts.filter((a) => a.ide_dir).map((a) => ({ id: a.id, label: a.label, logged_in: a.ide_logged_in })),
+    models: nativeBridgeModels.get(nativeBridgeConfig.account_id) ?? [],
+    detail: nativeBridgeRunning ? "演示：正在使用所选 IDE 账户与模型" : "未运行；手动读取模型后启动，仅使用所选 IDE 账户。",
+  };
+}
+
 const agAccounts: AntigravityAccount[] = [
   {
     id: "ag-demo-0",
@@ -1991,7 +2008,10 @@ const routerSettingsOf = (client: string): RouterSettings => {
   const codex = client === "codex" || client === "grok-build";
   return {
     client: client as RouterSettings["client"],
-    auto_failover: true,
+    routing_mode: "selected",
+    allowed_routes: [],
+    pool_strategy: "priority",
+    admission: { route_limits: {}, max_wait_ms: 0, max_waiters: 0 },
     max_attempts: codex ? 3 : 6,
     first_byte_timeout_secs: codex ? 60 : 90,
     idle_timeout_secs: codex ? 300 : 180,
@@ -2427,7 +2447,8 @@ function demoAction(
  * 低价组演示成「没过底线、兜底」：那一档在截图里要看得见，而它恰好是成功率最差的那条。
  */
 function demoDispatchOf(who: string) {
-  const routes = stationRoutes.filter((r) => r.client === who);
+  const policy = stationRouterSettings[who] ?? routerSettingsOf(who);
+  const routes = stationRoutes.filter((r) => r.client === who && policy.routing_mode === "pool" && policy.allowed_routes.includes(r.id));
   const open = new Set(
     (stationBreakers[who] ?? [])
       .filter((b) => b.state === "open")
@@ -2460,9 +2481,9 @@ function demoDispatchOf(who: string) {
     (a, b) =>
       rank[tierOf(a.id)] - rank[tierOf(b.id)] || a.id.localeCompare(b.id),
   );
-  if (!sched?.enabled) {
+  if (!sched?.enabled || policy.routing_mode !== "pool") {
     return {
-      order: [...(stationDispatch[who] ?? [])],
+      order: policy.routing_mode === "pool" ? [...(stationDispatch[who] ?? policy.allowed_routes)].filter((id) => policy.allowed_routes.includes(id)) : [],
       rows: [] as DispatchRow[],
       alerts: [] as string[],
       pin,
@@ -2985,6 +3006,7 @@ const demoUsageScripts = new Map<string, UsageScript>();
 function demoScriptQuota(routeId: string): SiteQuota {
   return {
     provider: "用量脚本",
+    available: null,
     kind: "balance",
     balances: [{ remaining: 23.4, total: null, used: null, unit: "USD" }],
     windows: [],
@@ -3611,6 +3633,7 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     const now = Date.now();
     return {
       provider: "演示编程套餐",
+      available: null,
       kind: "plan",
       balances: [],
       windows: [
@@ -3675,6 +3698,18 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     breakers: [
       ...(stationBreakers[String(args?.client ?? "claude-code")] ?? []),
     ],
+    admission: stationRoutes
+      .filter((route) => route.client === String(args?.client ?? "claude-code"))
+      .map((route) => ({
+        route_id: route.id,
+        active: 0,
+        waiting: 0,
+        rpm_used: 0,
+        retry_at_ms: null,
+        reason: null,
+        quota_checked_at_ms: null,
+        quota_state: stationRouterSettings[route.client]?.admission.route_limits[route.id]?.check_quota ? "unknown" : "disabled",
+      })),
   }),
   station_router_settings: (args) => {
     const who = String(args?.client ?? "claude-code");
@@ -3682,6 +3717,15 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   },
   station_router_settings_save: (args) => {
     const s = args?.settings as RouterSettings;
+    const capacityValues = [s.admission.max_wait_ms, s.admission.max_waiters,
+      ...Object.values(s.admission.route_limits).flatMap((limit) => limit ? [limit.max_concurrent, limit.rpm] : [])];
+    if (capacityValues.some((value) => !Number.isSafeInteger(value) || value < 0))
+      throw new Error("请求容量与等待设置必须是大于或等于 0 的整数。");
+    const current = stationPending[s.client] ?? stationCurrent[s.client];
+    if (s.routing_mode === "pool" && (!current || !s.allowed_routes.includes(current)))
+      throw new Error("请将当前所选线路加入允许名单，再保存");
+    if (s.allowed_routes.some((id) => !stationRoutes.some((r) => r.id === id && r.client === s.client && r.credential_id)))
+      throw new Error("允许名单含有不可用或其他软件的线路");
     // 跟真后端一样：聚合 key 的登记簿只增不减、界面传来的不认；名单里没 key 的按站点 id 分一个。
     const before =
       stationRouterSettings[s.client] ?? routerSettingsOf(s.client);
@@ -3695,6 +3739,12 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     }
     const saved = { ...s, aggregate: { ...s.aggregate, keys } };
     stationRouterSettings[s.client] = saved;
+    stationDispatch[s.client] = s.routing_mode === "pool" ? [...s.allowed_routes] : [];
+    if (s.routing_mode === "selected") {
+      const schedule = stationSchedules.find((x) => x.client === s.client);
+      if (schedule) schedule.enabled = false;
+      delete stationPins[s.client];
+    }
     return { ...saved };
   },
   // 站点的备用地址（阶段 4，多端点）。演示里按站点各记一份，测速给固定的假耗时（真后端才联网）。
@@ -4056,7 +4106,7 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
         "这个项目还没存过这个软件的设置：记成当前项目，什么都没动（换走时会自动存下）",
       );
     else {
-      if (slot.route && slot.route !== stationCurrent[who]) {
+      if (slot.route) {
         if (stationRoutes.some((r) => r.id === slot.route && r.client === who))
           FIXTURES.station_select_route({
             routeId: slot.route,
@@ -4081,18 +4131,6 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     if (cur) cur.slots = { ...cur.slots, [who]: demoProjectSnapshot(who) };
     delete demoProjectCurrent[who];
     return { view: demoProjectsView(), warnings: [] };
-  },
-  station_dispatch_queue: (args) =>
-    demoQueueOf(String(args?.client ?? "claude-code")),
-  station_dispatch_queue_save: (args) => {
-    const who = String(args?.client ?? "claude-code");
-    // 跟真后端一样：调度开着时顺序归调度排。
-    if (stationSchedules.find((x) => x.client === who)?.enabled)
-      throw new Error(
-        "智能调度开着时热备顺序由调度排（下一跳就会盖掉手排的）；要自己排先停调度，或者钉住一条",
-      );
-    stationDispatch[who] = [...((args?.order as string[]) ?? [])];
-    return demoQueueOf(who);
   },
   // 派单队列与测活（阶段 2）。全是演示夹具里的状态，跟真后端一样有状态。
   station_dispatch_view: (args) => {
@@ -4163,12 +4201,15 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     const who = String(args?.client ?? "claude-code");
     const id = (args?.routeId as string | null | undefined) ?? null;
     if (id) {
+      const policy = stationRouterSettings[who] ?? routerSettingsOf(who);
+      if (policy.routing_mode !== "pool" || !policy.allowed_routes.includes(id))
+        throw new Error("只能固定允许名单内的线路");
       stationPins[who] = {
         route_id: id,
         until_ms: BigInt(Date.now() + DEMO_PIN_MS),
       };
       if (stationCurrent[who] !== id) stationPending[who] = id;
-      demoAction(who, "pin", id, "你手动选的，钉住 4 小时（它挂了就不算）");
+      demoAction(who, "pin", id, "固定池内首选 4 小时，仍允许名单内备用");
     } else {
       delete stationPins[who];
       demoAction(who, "unpin", null, "取消钉住，交回调度");
@@ -4277,18 +4318,11 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     );
     if (route) {
       const who = route.client;
-      if (stationSchedules.find((x) => x.client === who)?.enabled) {
-        stationPins[who] = {
-          route_id: route.id,
-          until_ms: BigInt(Date.now() + DEMO_PIN_MS),
-        };
-        demoAction(
-          who,
-          "pin",
-          route.id,
-          "你手动选的，钉住 4 小时（它挂了就不算）",
-        );
-      }
+      stationRouterSettings[who] = { ...(stationRouterSettings[who] ?? routerSettingsOf(who)), routing_mode: "selected" };
+      const schedule = stationSchedules.find((x) => x.client === who);
+      if (schedule) schedule.enabled = false;
+      delete stationPins[who];
+      stationDispatch[who] = [];
       if (args?.immediate) {
         // `set_now`：直接落定，顺手撤掉排队。
         if (stationCurrent[who] !== route.id) stationSwitches += 1;
@@ -4359,6 +4393,9 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   // 点完「启动智能调度」按钮弹回去，看起来像按钮坏了。
   station_schedule_set: (args) => {
     const who = String(args?.client ?? "claude-code");
+    const policy = stationRouterSettings[who] ?? routerSettingsOf(who);
+    if (args?.enabled && (policy.routing_mode !== "pool" || !policy.allowed_routes.length))
+      throw new Error("先在路由设置中勾选允许使用的线路并保存");
     const s =
       stationSchedules.find((x) => x.client === who) ?? stationSchedules[0];
     if (args?.enabled != null) {
@@ -4371,11 +4408,30 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     return { ...s };
   },
   station_logs: () => stationLogs,
+  deeplink_handler_status: () => ({ enabled: false, registered: false, can_restore: false, dev_build: false, handler: null, user_choice: false }),
+  deeplink_handler_set: (args) => ({ enabled: Boolean(args?.enabled), registered: Boolean(args?.enabled), can_restore: Boolean(args?.enabled), dev_build: false, handler: args?.enabled ? "QB Gate" : null, user_choice: false }),
   station_usage_report: (args) =>
     demoRelayUsage(
       (args?.client as string | null | undefined) ?? null,
       Number(args?.days ?? 7),
     ),
+  station_usage_totals: (args) => {
+    if (args?.hours == null) return demoRelayUsage(String(args?.client), 0).totals;
+    const totals = blankTotals();
+    const since = Date.now() - Number(args.hours) * 3_600_000;
+    for (const row of stationLogs) {
+      if (row.client !== args.client || Number(row.at_ms) < since) continue;
+      addTotals(totals, {
+        requests: 1, failed: row.fault == null && row.status != null && row.status < 300 ? 0 : 1,
+        input_tokens: row.input_tokens == null ? null : Number(row.input_tokens),
+        output_tokens: row.output_tokens == null ? null : Number(row.output_tokens),
+        cache_read_tokens: row.cache_read_tokens == null ? null : Number(row.cache_read_tokens),
+        cache_write_tokens: row.cache_write_tokens == null ? null : Number(row.cache_write_tokens),
+        station_cost: row.station_cost, official_cost: row.official_cost,
+      });
+    }
+    return totals;
+  },
   station_usage_requests: (args) => demoRelayRequests(args),
   sessions_list: (args) => demoSessionList(args),
   sessions_read: (args) => demoSessionRead(String(args?.id)),
@@ -4744,7 +4800,21 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       "演示模式不会真的下载或安装：装好的面板里，这一步会从 GitHub 下载安装包、核对 SHA-256，然后退出并安装。",
     );
   },
-  killswitch_preview: () => kill,
+  killswitch_preview: (args) => ({
+    ...kill,
+    targets: args?.claudeOnly
+      ? kill.targets.filter((t) => t.role !== "antigravity")
+      : kill.targets,
+  }),
+  killswitch_execute: (args) => ({
+    ...kill,
+    targets: args?.claudeOnly
+      ? kill.targets.filter((t) => t.role !== "antigravity")
+      : kill.targets,
+    killed: args?.claudeOnly
+      ? kill.targets.filter((t) => t.role !== "antigravity").map((t) => t.pid)
+      : kill.killed,
+  }),
   // 切 Claude 账户的确认框：只报 Claude 那几类（中转与反重力不碰），跟真去关的是同一个范围。
   official_switch_preview: () => ({
     ...kill,
@@ -4759,6 +4829,25 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       gptQuotaFixture("demo@example.test"),
     ),
   tavern_gemini_status: () => geminiBridge,
+  tavern_antigravity_status: () => nativeBridgeStatus(),
+  tavern_antigravity_save: (args) => {
+    if (nativeBridgeRunning) throw new Error("先停止原生桥接再修改配置");
+    nativeBridgeConfig = { ...(args?.config as typeof nativeBridgeConfig) };
+  },
+  tavern_antigravity_models: (args) => {
+    const id = String(args?.accountId ?? "");
+    if (!agAccounts.some((a) => a.id === id && a.ide_logged_in)) throw new Error("请选择已登录的 IDE 账户");
+    const models = [{ id: "gemini-demo-text", name: "Gemini 文本模型（演示）" }, { id: "claude-demo-text", name: "Claude 文本模型（演示）" }];
+    nativeBridgeModels.set(id, models);
+    return models;
+  },
+  tavern_antigravity_token: () => "demo-native-token-not-a-real-secret",
+  tavern_antigravity_start: () => {
+    if (!nativeBridgeModels.get(nativeBridgeConfig.account_id)?.some((m) => m.id === nativeBridgeConfig.model)) throw new Error("先读取并选择这个账户的模型");
+    nativeBridgeRunning = true;
+    return nativeBridgeStatus();
+  },
+  tavern_antigravity_stop: () => { nativeBridgeRunning = false; },
   tavern_gemini_token: () => "demo-token-not-a-real-secret",
   tavern_gemini_quota: (args) =>
     askedOnly("gemini:active", args?.refresh, () => ({

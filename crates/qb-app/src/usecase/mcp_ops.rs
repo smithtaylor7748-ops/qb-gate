@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! MCP 面板（中转站重构阶段 5，cc-switch 的 M1）：一条服务器勾上哪些「目标」，就写进哪些配置。
 //!
 //! cc-switch 一个客户端一个开关（`enabled_claude`……），写进那个客户端唯一的一份配置。QB Gate 的 Claude Code / Codex /

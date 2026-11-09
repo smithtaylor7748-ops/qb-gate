@@ -1,7 +1,37 @@
 {
   "schema": 1,
-  "scope": "Installed npm packages (including development dependencies) and Cargo lockfile dependency graph. Catalog extensions are separately documented in ATTRIBUTION.md.",
+  "scope": "Installed npm packages (including development dependencies), Cargo lockfile dependency graph, and bundled third-party assets.",
   "packages": [
+    {
+      "ecosystem": "bundled",
+      "name": "codex-windows-cn",
+      "version": "unversioned",
+      "source": "https://github.com/chrichuang218/codex-windows-cn",
+      "license": "MIT",
+      "licenseFiles": [
+        "https://raw.githubusercontent.com/chrichuang218/codex-windows-cn/cc253750fdfd99dab9b9c77f50a2eff9ca2bc939/LICENSE"
+      ]
+    },
+    {
+      "ecosystem": "bundled",
+      "name": "EasyAntigravity",
+      "version": "1.1.4",
+      "source": "https://github.com/DSDS-CMHL/EasyAntigravity",
+      "license": "MIT",
+      "licenseFiles": [
+        "LICENSE.EasyAntigravity"
+      ]
+    },
+    {
+      "ecosystem": "bundled",
+      "name": "FuckClaude",
+      "version": "unversioned",
+      "source": "https://github.com/LinXiaoTao/FuckClaude",
+      "license": "MIT",
+      "licenseFiles": [
+        "https://raw.githubusercontent.com/LinXiaoTao/FuckClaude/95a26b2a85176bd058e3b6f9def39eae76be4212/LICENSE"
+      ]
+    },
     {
       "ecosystem": "cargo",
       "name": "adler2",
@@ -2427,7 +2457,7 @@
     {
       "ecosystem": "cargo",
       "name": "libsqlite3-sys",
-      "version": "0.38.2",
+      "version": "0.39.1",
       "license": "MIT",
       "source": "https://github.com/rusqlite/rusqlite",
       "licenseFiles": [
@@ -3295,89 +3325,89 @@
     {
       "ecosystem": "cargo",
       "name": "qb-accounts",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-accounts/0.25.8",
+      "source": "https://crates.io/crates/qb-accounts/0.25.11",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-app",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-app/0.25.8",
+      "source": "https://crates.io/crates/qb-app/0.25.11",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-contract",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-contract/0.25.8",
+      "source": "https://crates.io/crates/qb-contract/0.25.11",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-extensions",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-extensions/0.25.8",
+      "source": "https://crates.io/crates/qb-extensions/0.25.11",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-foundation",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-foundation/0.25.8",
+      "source": "https://crates.io/crates/qb-foundation/0.25.11",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-install",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-install/0.25.8",
+      "source": "https://crates.io/crates/qb-install/0.25.11",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-iplock",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-iplock/0.25.8",
+      "source": "https://crates.io/crates/qb-iplock/0.25.11",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-launch",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-launch/0.25.8",
+      "source": "https://crates.io/crates/qb-launch/0.25.11",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-platform",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-platform/0.25.8",
+      "source": "https://crates.io/crates/qb-platform/0.25.11",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-probe",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-probe/0.25.8",
+      "source": "https://crates.io/crates/qb-probe/0.25.11",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-proxy",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-proxy/0.25.8",
+      "source": "https://crates.io/crates/qb-proxy/0.25.11",
       "licenseFiles": [
         "LICENSE-cc-switch"
       ]
@@ -3385,33 +3415,33 @@
     {
       "ecosystem": "cargo",
       "name": "qb-relay",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-relay/0.25.8",
+      "source": "https://crates.io/crates/qb-relay/0.25.11",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-script",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-script/0.25.8",
+      "source": "https://crates.io/crates/qb-script/0.25.11",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-station",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-station/0.25.8",
+      "source": "https://crates.io/crates/qb-station/0.25.11",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-sysenv",
-      "version": "0.25.8",
+      "version": "0.25.11",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-sysenv/0.25.8",
+      "source": "https://crates.io/crates/qb-sysenv/0.25.11",
       "licenseFiles": []
     },
     {
@@ -3664,11 +3694,11 @@
     {
       "ecosystem": "cargo",
       "name": "rmcp",
-      "version": "3.3.0",
+      "version": "3.9.0",
       "license": "Apache-2.0",
       "source": "https://github.com/modelcontextprotocol/rust-sdk/",
       "licenseFiles": [
-        "https://raw.githubusercontent.com/modelcontextprotocol/rust-sdk/3e636cab26c013eca5131103c03d20237f12c4df/LICENSE"
+        "LICENSE"
       ]
     },
     {
@@ -3715,7 +3745,7 @@
     {
       "ecosystem": "cargo",
       "name": "rusqlite",
-      "version": "0.40.2",
+      "version": "0.41.1",
       "license": "MIT",
       "source": "https://github.com/rusqlite/rusqlite",
       "licenseFiles": [
@@ -4148,6 +4178,17 @@
       "ecosystem": "cargo",
       "name": "sha2",
       "version": "0.10.9",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/RustCrypto/hashes",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "sha2",
+      "version": "0.11.1",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/RustCrypto/hashes",
       "licenseFiles": [

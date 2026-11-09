@@ -53,7 +53,7 @@ AGPL 就够了，不需要来买授权。**
 
 - **第三方依赖与并入的第三方代码**，各自保留原许可证。
   清单见 [docs/dependencies.json](docs/dependencies.json)、
-  [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) 与 [ATTRIBUTION.md](ATTRIBUTION.md)。
+  [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)。
   其中并入的 MIT 代码允许再许可，但**原版权声明必须随之保留**；
   MPL-2.0 组件按文件级 copyleft，对应文件的源码仍须可取得。
 - **外部应用。** SillyTavern 等由使用者自行安装的 AGPL-3.0 应用是独立程序，
@@ -109,7 +109,7 @@ A commercial license covers copyright in QB Gate's own code only, and is granted
 the copyright holder, **smithtaylor7748-ops**. Third-party
 dependencies and incorporated third-party code keep their own licenses — see
 [docs/dependencies.json](docs/dependencies.json),
-[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) and [ATTRIBUTION.md](ATTRIBUTION.md).
+[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
 It does not alter [DISCLAIMER.md](DISCLAIMER.md): this remains an unofficial
 project that makes no promises about account status.
 

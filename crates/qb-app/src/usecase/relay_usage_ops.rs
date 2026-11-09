@@ -12,7 +12,7 @@
 //!   （同样的 token 按官方 API 价；订阅不按这个收费）。没记到的 token / 花费是「没记」，不是 0。
 
 use crate::domain::Provider;
-use crate::error::Result;
+use crate::error::{GateError, Result};
 use crate::repository::Repository;
 use chrono::{Duration, Local, NaiveDate, TimeZone};
 use qb_platform::repository::{RouterRequestPage, UsageDayRow, UsageHourRow};
@@ -62,6 +62,17 @@ fn add_f(a: Option<f64>, b: Option<f64>) -> Option<f64> {
 }
 
 impl RelayUsageTotals {
+    fn merge(&mut self, other: &Self) {
+        self.requests += other.requests;
+        self.failed += other.failed;
+        self.input_tokens = add_u(self.input_tokens, other.input_tokens);
+        self.output_tokens = add_u(self.output_tokens, other.output_tokens);
+        self.cache_read_tokens = add_u(self.cache_read_tokens, other.cache_read_tokens);
+        self.cache_write_tokens = add_u(self.cache_write_tokens, other.cache_write_tokens);
+        self.station_cost = add_f(self.station_cost, other.station_cost);
+        self.official_cost = add_f(self.official_cost, other.official_cost);
+    }
+
     fn add(&mut self, r: &UsageDayRow) {
         self.requests += r.requests;
         self.failed += r.failed;
@@ -85,6 +96,39 @@ impl RelayUsageTotals {
             official_cost: h.official_cost,
         }
     }
+}
+
+/// 首页总量：短窗精确到毫秒；全部包含已归档的日汇总，不受日志分页上限影响。
+/// 短窗最多 7 天，落在 30 天明细保留期内；只读本机库。
+pub fn totals(db: &Repository, client: &str, hours: Option<u32>) -> Result<RelayUsageTotals> {
+    totals_at(db, client, hours, Local::now().timestamp_millis())
+}
+
+fn totals_at(
+    db: &Repository,
+    client: &str,
+    hours: Option<u32>,
+    now_ms: i64,
+) -> Result<RelayUsageTotals> {
+    let mut total = RelayUsageTotals::default();
+    match hours {
+        Some(hours @ (1 | 24 | 168)) => {
+            let row =
+                db.usage_window_totals(now_ms - i64::from(hours) * 3_600_000, now_ms, client)?;
+            total.merge(&RelayUsageTotals::from_hour(&row));
+        }
+        None => {
+            for row in db.usage_days("1970-01-01", 0, Some(client))? {
+                total.add(&row);
+            }
+        }
+        Some(_) => {
+            return Err(GateError::Other(
+                "用量时间范围只支持 1、24、168 小时或全部".into(),
+            ))
+        }
+    }
+    Ok(total)
 }
 
 /// 一天（只列有请求的那几天；没请求的那天前端画空、写「—」）。
@@ -306,6 +350,8 @@ pub fn requests(db: &Repository, page: &RouterRequestPage) -> Result<RelayReques
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::repository::Repository;
+    use std::path::PathBuf;
 
     fn row(
         day: &str,
@@ -365,5 +411,43 @@ mod tests {
         }
         let keys: Vec<String> = sorted(g).into_iter().map(|x| x.key).collect();
         assert_eq!(keys, ["b", "c", "a"]);
+    }
+
+    fn database() -> (PathBuf, Repository) {
+        let path = std::env::temp_dir().join(format!("qb-usage-total-{}", uuid::Uuid::new_v4()));
+        (path.clone(), Repository::open_in(&path).unwrap())
+    }
+
+    #[test]
+    fn home_totals_use_exact_rolling_windows_and_include_archived_rows_for_all() {
+        let (path, db) = database();
+        let now = 1_783_500_000_000_i64;
+        let one_hour_ago = now - 3_600_000;
+        let day_ago = now - 86_400_000;
+        let old = now - 40 * 86_400_000;
+        let rows = [
+            serde_json::json!({"id":"a","at_ms":one_hour_ago+1,"client":"codex","route_id":"c\u{1f}s\u{1f}g","model":"m","status":200,"fault":null,"input_tokens":10,"output_tokens":4,"cache_read_tokens":null,"cache_write_tokens":null,"station_cost":0.5,"official_cost":1.0}),
+            serde_json::json!({"id":"b","at_ms":day_ago,"client":"codex","route_id":"c\u{1f}s\u{1f}g","model":"m","status":200,"fault":null,"input_tokens":20,"output_tokens":null,"cache_read_tokens":null,"cache_write_tokens":null,"station_cost":null,"official_cost":null}),
+            serde_json::json!({"id":"c","at_ms":old,"client":"codex","route_id":"c\u{1f}s\u{1f}g","model":"m","status":200,"fault":null,"input_tokens":5,"output_tokens":2,"cache_read_tokens":null,"cache_write_tokens":null,"station_cost":0.2,"official_cost":0.4}),
+            serde_json::json!({"id":"d","at_ms":now,"client":"claude-code","route_id":"x","model":"m","status":200,"fault":null,"input_tokens":100,"output_tokens":100,"station_cost":100.0}),
+        ];
+        db.insert_router_requests(&rows).unwrap();
+        db.prune_router_requests(now - 30 * 86_400_000).unwrap();
+
+        let hour = totals_at(&db, "codex", Some(1), now).unwrap();
+        assert_eq!(
+            (hour.requests, hour.input_tokens, hour.station_cost),
+            (1, Some(10), Some(0.5))
+        );
+        let day = totals_at(&db, "codex", Some(24), now).unwrap();
+        assert_eq!((day.requests, day.input_tokens), (2, Some(30)));
+        assert_eq!(day.station_cost, Some(0.5), "未知消费不能冒充 0");
+        let all = totals_at(&db, "codex", None, now).unwrap();
+        assert_eq!(
+            (all.requests, all.input_tokens, all.station_cost),
+            (3, Some(35), Some(0.7))
+        );
+        drop(db);
+        std::fs::remove_dir_all(path).unwrap();
     }
 }

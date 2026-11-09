@@ -14,11 +14,15 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { ClipboardList, Copy } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { api } from "../../../lib/api";
 import type { GeminiBridgeStatus } from "../../../lib/generated/GeminiBridgeStatus";
 import type { GptBridgeStatus } from "../../../lib/generated/GptBridgeStatus";
 import { R } from "../../../lib/resources";
+import { routeLabelFromId, stationApi } from "../../../lib/station";
+import type { Route } from "../../../lib/generated/Route";
+import type { RouterStatus } from "../../../lib/generated/RouterStatus";
 import { useResource } from "../../../lib/store";
 import { bridgeBlockers } from "../../../lib/tavernReady";
 import {
@@ -38,6 +42,8 @@ import { META, type CliProvider } from "./cli/meta";
 import Quota from "./cli/Quota";
 import RoleplayTest from "./cli/RoleplayTest";
 import SectionNav from "./SectionNav";
+import { relayConnection } from "./relayConnection";
+import AntigravityNativeBridge from "./AntigravityNativeBridge";
 
 type Status = GptBridgeStatus | GeminiBridgeStatus;
 
@@ -49,7 +55,12 @@ export default function CliBridge({ provider }: { provider: CliProvider }) {
   const [draft, setDraft] = useState<TavernPatch>({});
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<Status | null>(null);
+  const [router, setRouter] = useState<RouterStatus | null>(null);
+  const [routes, setRoutes] = useState<Route[]>([]);
+  const [routerError, setRouterError] = useState("");
+  const [routerBusy, setRouterBusy] = useState(false);
   const [busy, setBusy] = useState("");
+  const routerClient = provider === "gpt" ? "codex" : "gemini-cli";
   const ids = {
     setup: `bridge-${provider}-setup`,
     quota: `bridge-${provider}-quota`,
@@ -72,6 +83,28 @@ export default function CliBridge({ provider }: { provider: CliProvider }) {
     void refreshStatus();
   }, [refreshStatus]);
 
+  const refreshRouter = useCallback(async () => {
+    setRouterBusy(true);
+    setRouterError("");
+    try {
+      const [nextRouter, nextRoutes] = await Promise.all([
+        stationApi.routerStatus(routerClient),
+        stationApi.routes(),
+      ]);
+      setRouter(nextRouter);
+      setRoutes(nextRoutes);
+    } catch (e) {
+      setRouter(null);
+      setRoutes([]);
+      setRouterError(errorText(e));
+    } finally {
+      setRouterBusy(false);
+    }
+  }, [routerClient]);
+  useEffect(() => {
+    void refreshRouter();
+  }, [refreshRouter]);
+
   const dirty = Object.keys(draft).length > 0;
   const port = pick(draft, cfg, meta.portKey) ?? meta.defaultPort;
   const model = pick(draft, cfg, meta.modelKey) ?? "";
@@ -83,6 +116,9 @@ export default function CliBridge({ provider }: { provider: CliProvider }) {
         ? status.codex_exe
         : status.gemini_cli;
   const url = status?.url || `http://127.0.0.1:${port}/v1`;
+  const relay = relayConnection(provider, router, routes);
+  const relayUrl = relay.url;
+  const relayReady = relayUrl !== null && !routerError && !routerBusy;
   const tavernPathsUnset = !!cfg && (!cfg.sillytavern_root || !cfg.st_launcher);
   const blockers = status
     ? bridgeBlockers({
@@ -137,8 +173,26 @@ export default function CliBridge({ provider }: { provider: CliProvider }) {
     }
   }
 
+  async function copyRelayConnection() {
+    if (!relayReady || !relayUrl) return;
+    setBusy("relay");
+    try {
+      const instructions =
+        provider === "gpt"
+          ? `SillyTavern · Chat Completion · Custom (OpenAI-compatible)\nBase URL：${relayUrl}\nAPI Key：qb-gate-local-router\nModel：填写当前 Codex 线路支持的模型`
+          : `SillyTavern · Google AI Studio\nReverse Proxy：${relayUrl}\nProxy Password：qb-gate-local-router\nModel：填写当前 Gemini 原生线路支持的模型`;
+      await navigator.clipboard.writeText(instructions);
+      toast.ok("本机路由连接信息已复制；这不会修改酒馆设置或启动桥接");
+    } catch (e) {
+      toast.error(errorText(e));
+    } finally {
+      setBusy("");
+    }
+  }
+
   return (
     <div className="bridgelist" data-provider={provider}>
+      {provider === "gemini" && <AntigravityNativeBridge />}
       <section
         className={`bridge-provider bridge-provider--${provider}${status?.running ? " is-up" : ""}`}
       >
@@ -336,6 +390,47 @@ export default function CliBridge({ provider }: { provider: CliProvider }) {
                 的条款由你自行判断，见免责声明第 8 节。
               </p>
             )}
+            <div className="notice mt-2">
+              <strong>使用中转线路</strong>
+              <p className="mt-1">
+                此连接由 SillyTavern 直接访问本机路由，不使用 GPT / Google
+                官方账户，也不启动上面的官方 CLI 桥。 先在
+                <Link to="/relays">中转站</Link>
+                让对应软件接入本机路由，并选择兼容线路；
+                接着把复制的信息手动填进酒馆的连接设置。API Key
+                是本机占位值，路由不会把它转发给站点。
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  icon={<Copy size={12} />}
+                  loading={busy === "relay"}
+                  disabled={!relayReady || routerBusy}
+                  onClick={() => void copyRelayConnection()}
+                >
+                  复制中转连接
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  loading={routerBusy}
+                  onClick={() => void refreshRouter()}
+                >
+                  刷新路由状态
+                </Button>
+                <span className="notice">
+                  {routerError ||
+                    (routerBusy
+                      ? "正在读取本机路由"
+                      : relay.problem ||
+                        `当前或待生效线路：${routeLabelFromId(relay.route!.id)}`)}
+                </span>
+              </div>
+              <p className="notice mt-1">
+                GPT 使用 OpenAI Chat 线路；Gemini 使用 Gemini
+                原生线路。选择不兼容的协议或模型会由线路返回错误。
+              </p>
+            </div>
           </Collapsible>
         </div>
       </section>

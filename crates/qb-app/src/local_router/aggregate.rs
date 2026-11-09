@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 聚合模型在本机路由里的那一半（中转站重构阶段 3）：名单 → 发布哪些模型，请求里的 id → 打哪条线。
 //!
 //! id 的编解码与报错的话在 `qb_proxy::aggregate`（照搬 cc-switch `mode/stack.rs`），名单存在这个软件的
@@ -262,6 +262,9 @@ pub(super) fn decide(
                     return Decision::Pass;
                 }
                 published(caller, &settings, &s.upstreams)
+                    .into_iter()
+                    .filter(|p| s.route_allowed(caller, &p.route_id))
+                    .collect::<Vec<_>>()
             }
             Err(_) => return Decision::Pass,
         };
@@ -299,6 +302,12 @@ pub(super) fn decide(
             line,
             upstream_model,
         } => {
+            if !state.lock().is_ok_and(|s| s.route_allowed(caller, &line.route_id)) {
+                let denied = refuse(caller, record,
+                    "这个聚合模型指定的线路不在当前允许范围内；请使用所选线路的模型，或明确批准该线路");
+                record.log.fault = Some("route-permission-denied".into());
+                return denied;
+            }
             let outgoing = outgoing_model(caller, &line, &upstream_model);
             let mut body = match serde_json::from_slice::<Value>(&inbound.body) {
                 Ok(v) if v.is_object() => v,

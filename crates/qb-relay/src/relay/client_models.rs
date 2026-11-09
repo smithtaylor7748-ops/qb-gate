@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 聚合模型写进客户端配置（中转站重构阶段 4，补阶段 3 留下的那件）：让 `/model`、模型选择器里直接列出聚合的模型，
 //! 不用再手填 id。三个软件各一种写法（照 cc-switch v4.0.14 的聚合模式）：
 //!

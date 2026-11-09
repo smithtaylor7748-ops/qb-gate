@@ -194,10 +194,18 @@ pub fn watchdog_stop(state: tauri::State<'_, AppState>) -> Result<()> {
 /// `KillReport`，枚举一出错就退化成一份空报告，界面照样显示
 /// 「发现 0 个可关闭进程」，跟真的没有进程长得一模一样。
 #[tauri::command]
-pub async fn killswitch_preview(app: tauri::AppHandle) -> Result<killswitch::KillReport> {
+pub async fn killswitch_preview(
+    app: tauri::AppHandle,
+    claude_only: Option<bool>,
+) -> Result<killswitch::KillReport> {
     let rep = Reporter::new(app, events::TASK_KILL_PREVIEW, 2);
     rep.phase(1, "扫描 Claude 相关进程并核对证据");
-    match killswitch::preview().await {
+    let scope = if claude_only.unwrap_or(false) {
+        killswitch::Scope::Claude
+    } else {
+        killswitch::Scope::Everything
+    };
+    match killswitch::preview_in(scope).await {
         Ok(r) => {
             rep.done(&format!("扫描完成，发现 {} 个可关闭进程", r.targets.len()));
             Ok(r)
@@ -213,7 +221,21 @@ pub async fn killswitch_preview(app: tauri::AppHandle) -> Result<killswitch::Kil
 pub async fn killswitch_execute(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
+    claude_only: Option<bool>,
 ) -> Result<killswitch::KillReport> {
+    if claude_only.unwrap_or(false) {
+        let _guard = operations::exclusive().await?;
+        let rep = Reporter::new(app.clone(), events::TASK_KILL_EXECUTE, 3);
+        rep.phase(1, "核验并停止 Claude 会话与桥接");
+        let result = usecase::gate_ops::stop_claude(&state.gate).await;
+        match &result {
+            Ok(_) => rep.done("Claude 已关闭"),
+            Err(e) => rep.fail(&e.to_string()),
+        }
+        operations::changed(&events::ui(&app), "session", "");
+        tray::refresh(&app);
+        return result;
+    }
     let paused = gate::pause(&state.gate);
     let _guard = operations::exclusive().await?;
     let rep = Reporter::new(app.clone(), events::TASK_KILL_EXECUTE, 3);

@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 站点的备用地址（中转站重构阶段 4，cc-switch 的 P3 多端点：`services/provider/endpoints.rs` + `speedtest.rs`）。
 //!
 //! 同一个站点常有几个地址（国内 / 海外、主站 / 镜像）。存在 `station_endpoints` 表里，一个站点一行；

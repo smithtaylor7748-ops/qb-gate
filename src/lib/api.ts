@@ -590,8 +590,10 @@ export const api = {
 
   // 一键关闭
   officialSwitchPreview: () => call<KillReport>("official_switch_preview"),
-  killswitchPreview: () => call<KillReport>("killswitch_preview"),
-  killswitchExecute: () => call<KillReport>("killswitch_execute"),
+  killswitchPreview: (claudeOnly = false) =>
+    call<KillReport>("killswitch_preview", { claudeOnly }),
+  killswitchExecute: (claudeOnly = false) =>
+    call<KillReport>("killswitch_execute", { claudeOnly }),
 
   // 出站锁 / 系统代理 / 浏览器隐私面（0.19.0，「两个口子」）
   //
@@ -661,6 +663,24 @@ export const api = {
     call<TavernGptQuota | null>("tavern_gpt_quota", { refresh }),
   /** 内置 Gemini 桥接的状态（不含密钥）。驱动的是官方 Gemini CLI，不是反重力本体。 */
   tavernGeminiStatus: () => call<GeminiBridgeStatus>("tavern_gemini_status"),
+  /** Native IDE bridge. Status is local-only; discovery requires an explicit click. */
+  tavernAntigravityStatus: () =>
+    call<import("./generated/AntigravityBridgeStatus").AntigravityBridgeStatus>(
+      "tavern_antigravity_status",
+    ),
+  tavernAntigravitySave: (
+    config: import("./generated/AntigravityBridgeConfig").AntigravityBridgeConfig,
+  ) => call<void>("tavern_antigravity_save", { config }),
+  tavernAntigravityModels: (accountId: string) =>
+    call<import("./generated/AntigravityBridgeModel").AntigravityBridgeModel[]>(
+      "tavern_antigravity_models", { accountId },
+    ),
+  tavernAntigravityToken: () => call<string>("tavern_antigravity_token"),
+  tavernAntigravityStart: () =>
+    call<import("./generated/AntigravityBridgeStatus").AntigravityBridgeStatus>(
+      "tavern_antigravity_start",
+    ),
+  tavernAntigravityStop: () => call<void>("tavern_antigravity_stop"),
   // Claude 桥自己那两个网页搬进面板（0.32.0）。
   //
   // 调的是使用者自己那份 `bridge.py` 的 HTTP 接口（只绑回环）。

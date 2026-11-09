@@ -7,13 +7,14 @@ const supplements = JSON.parse(
 const inventory = [];
 const notices = [];
 function add(item, dir) {
-  const names = existsSync(dir)
-    ? readdirSync(dir).filter((n) =>
-        /^(?:licen[cs]e|copying|copyright|notice|unlicen[cs]e)(?:$|[._-])/i.test(
-          n,
-        ),
-      )
-    : [];
+  const names =
+    dir && existsSync(dir)
+      ? readdirSync(dir).filter((n) =>
+          /^(?:licen[cs]e|copying|copyright|notice|unlicen[cs]e)(?:$|[._-])/i.test(
+            n,
+          ),
+        )
+      : [];
   const texts = [];
   for (const name of names) {
     try {
@@ -78,6 +79,22 @@ for (const p of metadata.packages) {
     dirname(p.manifest_path),
   );
 }
+for (const [name, version, source, dir] of [
+  [
+    "EasyAntigravity",
+    "1.1.4",
+    "https://github.com/DSDS-CMHL/EasyAntigravity",
+    "crates/qb-extensions/assets/antigravity",
+  ],
+  ["FuckClaude", "unversioned", "https://github.com/LinXiaoTao/FuckClaude"],
+  [
+    "codex-windows-cn",
+    "unversioned",
+    "https://github.com/chrichuang218/codex-windows-cn",
+  ],
+]) {
+  add({ ecosystem: "bundled", name, version, source, license: "MIT" }, dir);
+}
 inventory.sort((a, b) =>
   `${a.ecosystem}/${a.name}/${a.version}`.localeCompare(
     `${b.ecosystem}/${b.name}/${b.version}`,
@@ -89,7 +106,7 @@ writeFileSync(
     {
       schema: 1,
       scope:
-        "Installed npm packages (including development dependencies) and Cargo lockfile dependency graph. Catalog extensions are separately documented in ATTRIBUTION.md.",
+        "Installed npm packages (including development dependencies), Cargo lockfile dependency graph, and bundled third-party assets.",
       packages: inventory,
     },
     null,
@@ -98,7 +115,7 @@ writeFileSync(
 );
 writeFileSync(
   "THIRD_PARTY_NOTICES.txt",
-  "QB Gate third-party dependency notices\nGenerated from package-lock.json and Cargo.lock. Includes build and test dependencies as well as runtime dependencies.\nThe project license is AGPL-3.0-only with the section 7 additional terms in LICENSE-ADDITIONAL-TERMS.md; each dependency retains its own license.\n\n" +
+  "QB Gate third-party dependency notices\nGenerated from package-lock.json, Cargo.lock, and bundled asset licenses. Includes build and test dependencies as well as runtime dependencies.\nThe project license is AGPL-3.0-only with the section 7 additional terms in LICENSE-ADDITIONAL-TERMS.md; each dependency retains its own license.\n\n" +
     notices.sort().join("\n\n" + "=".repeat(72) + "\n\n"),
 );
 console.log(

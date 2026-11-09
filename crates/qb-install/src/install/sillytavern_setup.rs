@@ -4,13 +4,13 @@
 //! 问他时定了：安装 + 检查新版 / 更新 + 卸载；装托管版时把他现有那份的数据**复制**过来（原来那份不动）；
 //! 没有 Node.js 时确认框里给「先用 winget 装 Node.js LTS」的勾选。位置表在 [`super::sillytavern`]。
 //!
-//! # ⛔ 边界（动任何一条同步改 DISCLAIMER 与 ATTRIBUTION 的 SillyTavern 那一节）
+//! # ⛔ 边界（动任何一条同步改 DISCLAIMER 的 SillyTavern 那一节）
 //!
 //! 1. **只从 SillyTavern 官方 GitHub 取**：最新版读 `releases/latest` 的跳转（**不走 `api.github.com`**，
 //!    同 `self_update` 的理由：共用出口的人会撞上未登录 60 次 / 小时的限额），源码包是那个标签的
 //!    `archive/refs/tags/<tag>.zip`。只收 https，跳转只许落在 [`allowed_url`] 那三个域名。
 //! 2. **不打包、不镜像、不改包。** 解出来的就是官方那个标签的源码，原样放着，用使用者本机的 Node.js 跑。
-//!    SillyTavern 是 AGPL-3.0，面板只把它当独立进程启动（ATTRIBUTION 里那一节）。
+//!    SillyTavern 是 AGPL-3.0，面板只把它当独立进程启动。
 //! 3. **官方不公布源码包的哈希**：边下边算的 SHA-256 **只记日志、写进标记**，不作判据 ——
 //!    没有可信的对照值时拿它当判据就是自己跟自己比（同 `antigravity_setup` 那条）。
 //! 4. **更新与卸载只碰带标记的那份**（[`super::sillytavern::is_managed`]）。使用者自己的酒馆一个字不改。

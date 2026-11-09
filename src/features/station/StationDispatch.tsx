@@ -8,20 +8,27 @@
  * 自动花钱的事必须让人一眼看得见花了多少。
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Client } from "../../lib/generated/Client";
 import type { DispatchParams } from "../../lib/generated/DispatchParams";
 import type { DispatchTier } from "../../lib/generated/DispatchTier";
 import type { LineLiveness } from "../../lib/generated/LineLiveness";
 import type { ProbeState } from "../../lib/generated/ProbeState";
+import type { RouterRequest } from "../../lib/generated/RouterRequest";
 import {
   routeLabelFromId,
   stationApi,
   type DispatchView,
   type ProbeSettings,
+  type RouterSettings,
 } from "../../lib/station";
 import { Button, useToast } from "../../ui";
+import { StationAdmissionStatus } from "./StationAdmissionStatus";
+import {
+  RouteAttemptTrail,
+  StationRouteBoundary,
+} from "./StationRouteBoundary";
 
 const TIER: Record<DispatchTier, { label: string; pill: string }> = {
   pinned: { label: "钉住", pill: "qb-st-pill--accent" },
@@ -56,20 +63,54 @@ const DEFAULT_PARAMS: DispatchParams = {
 export default function StationDispatch({ client }: { client: Client }) {
   const toast = useToast();
   const [view, setView] = useState<DispatchView | null>(null);
+  const [router, setRouter] = useState<Awaited<
+    ReturnType<typeof stationApi.routerStatus>
+  > | null>(null);
   const [params, setParams] = useState<DispatchParams>(DEFAULT_PARAMS);
   const [error, setError] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
+  const [policy, setPolicy] = useState<RouterSettings | null>(null);
+  const clientRef = useRef(client);
+  clientRef.current = client;
+  const readSequence = useRef(0);
+  const [latestRequest, setLatestRequest] = useState<RouterRequest | null>(
+    null,
+  );
 
   const load = useCallback(async () => {
+    const read = ++readSequence.current;
     try {
-      setView(await stationApi.dispatchView(client));
+      const [nextView, nextRouter, nextPolicy, requests] = await Promise.all([
+        stationApi.dispatchView(client),
+        stationApi.routerStatus(client),
+        stationApi.routerSettings(client),
+        stationApi.usageRequests({
+          client,
+          routeId: null,
+          model: null,
+          failedOnly: false,
+          offset: 0,
+          limit: 1,
+        }),
+      ]);
+      if (clientRef.current !== client || read !== readSequence.current) return;
+      setView(nextView);
+      setRouter(nextRouter);
+      setPolicy(nextPolicy);
+      setLatestRequest(requests.items[0] ?? null);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (clientRef.current === client && read === readSequence.current)
+        setError(e instanceof Error ? e.message : String(e));
     }
   }, [client]);
 
   useEffect(() => {
+    setView(null);
+    setRouter(null);
+    setPolicy(null);
+    setLatestRequest(null);
+    setError(null);
     void load();
     const t = setInterval(() => void load(), REFRESH_MS);
     return () => clearInterval(t);
@@ -114,7 +155,9 @@ export default function StationDispatch({ client }: { client: Client }) {
       await stationApi.pin(client, routeId);
       toast.ok(
         routeId
-          ? "已钉住 4 小时：下一发请求就走它，这期间调度不换走它（它挂了就不算）"
+          ? policy?.pool_strategy === "least-loaded"
+            ? "已固定池内首选 4 小时；优先空闲线路模式下仅影响相同负载时的顺序"
+            : "已固定池内首选 4 小时；首选不可用时仍允许名单内备用线路"
           : "已取消钉住，交回调度",
       );
       await load();
@@ -155,12 +198,32 @@ export default function StationDispatch({ client }: { client: Client }) {
 
   const { queue, settings } = view;
   const now = Date.now();
+  const runtimeCurrent = router?.current_route ?? null;
+  const runtimePending = router?.pending_route ?? null;
+  const effectiveCurrent = runtimePending ?? runtimeCurrent;
+  const persistedDiffers =
+    queue.current != null &&
+    effectiveCurrent != null &&
+    queue.current !== effectiveCurrent;
   const pinned =
     queue.pin && Number(queue.pin.until_ms) > now ? queue.pin : null;
   const rowOf = new Map(queue.rows.map((r) => [r.route_id, r]));
 
   return (
     <>
+      <StationRouteBoundary
+        settings={policy}
+        selected={effectiveCurrent}
+        routeLabel={routeLabelFromId}
+        error={error}
+      />
+      <StationAdmissionStatus
+        settings={policy}
+        status={router}
+        routeLabel={routeLabelFromId}
+        error={error}
+        onRefresh={() => void load()}
+      />
       <div className="qb-card">
         <div
           className="qb-st-inline"
@@ -176,10 +239,68 @@ export default function StationDispatch({ client }: { client: Client }) {
           </Button>
         </div>
         <p className="qb-st-note">
-          {view.enabled
-            ? "第一条是当前上游，后面依次是它失败时改用的热备。调度每 30 秒排一次：熔断中或测活判死的排最后，没过底线的兜底 —— 这两档永远不会被换上来当第一。"
-            : "调度关着：这是你在「路由设置」里排的替补顺序，档位那一列空着。测活只在调度开着时自动跑，「立刻测」随时可以点。"}
+          {policy?.routing_mode === "pool" &&
+          policy.pool_strategy === "least-loaded"
+            ? "优先空闲线路已开启：每次请求按实时负载在允许名单内分配，所选线路正常时也可能使用其他站。下方队列提供候选顺序。"
+            : view.enabled
+              ? "调度只在允许名单内排序，首选失败时可依次使用名单内备用线路。切换只影响尚未发出的请求。"
+              : policy?.routing_mode === "pool"
+                ? "调度关着：仅允许使用已勾选线路，首选失败时按名单顺序尝试备用。"
+                : "仅用所选线路：失败直接报错。其他线路仅供查看，调度不会把请求转给它们。"}
         </p>
+
+        <div className="qb-st-dispatch-runtime" aria-live="polite">
+          <span className="qb-st-runtime-chip">
+            <span className="dot" />
+            当前选线：
+            {runtimeCurrent ? routeLabelFromId(runtimeCurrent) : "尚未选线"}
+          </span>
+          {runtimePending && runtimePending !== runtimeCurrent && (
+            <span className="qb-st-runtime-chip pending">
+              下一发：{routeLabelFromId(runtimePending)}
+            </span>
+          )}
+          {router?.running === false && (
+            <span className="qb-st-runtime-chip warn">本机路由未启动</span>
+          )}
+          {persistedDiffers && (
+            <span className="qb-st-runtime-note">
+              落盘记录是「{routeLabelFromId(queue.current!)}
+              」；已以正在运行的选择为准，避免旧快照覆盖新操作。
+            </span>
+          )}
+          <span className="qb-st-runtime-note">
+            {latestRequest ? (
+              <>
+                最近请求 · {ago(Number(latestRequest.at_ms), now)}
+                {latestRequest.attempts.length > 0 &&
+                  ` · 实际尝试 ${latestRequest.attempts.length} 条线路，路径见下方`}
+                {latestRequest.fault === "route-permission-denied"
+                  ? latestRequest.attempts.length === 0
+                    ? " · 未发往上游：线路超出允许范围"
+                    : " · 后续线路超出允许范围，已阻止"
+                  : latestRequest.fault === "route-admission-denied"
+                    ? latestRequest.attempts.length === 0
+                      ? " · 未发往上游：本机请求容量限制"
+                      : " · 后续尝试受本机请求容量限制"
+                    : latestRequest.fault && " · 这次请求有错误"}
+                {latestRequest.model.startsWith("qbg") ||
+                latestRequest.model.startsWith("claude-fable-qbg")
+                  ? " · 客户端指定了聚合模型；同样受允许范围限制"
+                  : ""}
+              </>
+            ) : (
+              "尚无请求记录；开始一次新请求后可在这里核对实际去向。"
+            )}
+          </span>
+        </div>
+
+        {latestRequest && (
+          <RouteAttemptTrail
+            request={latestRequest}
+            routeLabel={routeLabelFromId}
+          />
+        )}
 
         {queue.alerts.map((a) => (
           <div key={a} className="qb-st-nudge">
@@ -190,7 +311,10 @@ export default function StationDispatch({ client }: { client: Client }) {
         {pinned && (
           <div className="qb-st-nudge qb-st-dq">
             已钉住「{routeLabelFromId(pinned.route_id)}」到{" "}
-            {clock(Number(pinned.until_ms))}（它挂了就不算）
+            {clock(Number(pinned.until_ms))}
+            {policy?.pool_strategy === "least-loaded"
+              ? "。优先空闲线路模式下，固定首选只影响相同负载时的顺序；要固定每次请求，请改用仅所选线路。"
+              : "，首选不可用时仍可使用名单内备用线路"}
             <button className="qb-st-iconbtn" onClick={() => void pin(null)}>
               取消钉住
             </button>
@@ -223,9 +347,13 @@ export default function StationDispatch({ client }: { client: Client }) {
                     key={line.route_id}
                     line={line}
                     row={rowOf.get(line.route_id)}
-                    current={queue.current === line.route_id}
+                    current={runtimeCurrent === line.route_id}
                     pinned={pinned?.route_id === line.route_id}
-                    scheduled={view.enabled}
+                    scheduled={
+                      view.enabled &&
+                      policy?.routing_mode === "pool" &&
+                      policy.allowed_routes.includes(line.route_id)
+                    }
                     now={now}
                     onPin={(id) => void pin(id)}
                     onProbe={(id) => void probeNow(id)}
@@ -506,10 +634,10 @@ function Line({
             ) : (
               <button
                 className="qb-st-iconbtn"
-                title="下一发请求就走它，4 小时内调度不换走它（它挂了就不算）"
+                title="固定名单内首选 4 小时；仍允许使用名单内备用线路"
                 onClick={() => onPin(line.route_id)}
               >
-                钉住
+                固定池内首选
               </button>
             ))}
         </span>

@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 提示词库（中转站重构阶段 5，cc-switch 的 M3）：一库提示词，每个目标挑一条写进它的提示词文件。
 //!
 //! cc-switch 一个客户端一个文件（`CLAUDE.md`、`AGENTS.md`、`GEMINI.md`、Hermes 的 `SOUL.md`），启用一条 = 整份写进去、同一客户端互斥。

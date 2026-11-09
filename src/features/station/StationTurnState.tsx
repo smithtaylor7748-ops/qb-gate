@@ -6,8 +6,7 @@
  * 0.24.7 起「开启识别」**直接作用于当前激活的 Codex 账户槽位**：临时把它的 `config.toml`
  * 指向本机路由（备份 + 增量改，`auth.json` 不碰），不另起 Codex、不复制 OAuth ——
  * 起 Codex 仍是账户页那颗按钮的事。**长度只是经验筛选口径，不是质量或额度指标** ——
- * 界面照这个口径写，不承诺「拿到 292」。详见 DISCLAIMER §5.3 与 ATTRIBUTION 的
- * ccodex-sleep-state 一节。
+ * 界面照这个口径写，不承诺「拿到 292」。详见 DISCLAIMER §5.3。
  */
 
 import { useCallback, useEffect, useState } from "react";

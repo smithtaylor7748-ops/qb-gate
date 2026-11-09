@@ -31,6 +31,7 @@ import type { ProbeResult } from "./generated/ProbeResult";
 import type { SiteQuota } from "./generated/SiteQuota";
 import type { UsageScript } from "./generated/UsageScript";
 import type { RelayUsageReport } from "./generated/RelayUsageReport";
+import type { RelayUsageTotals } from "./generated/RelayUsageTotals";
 import type { RelayRequestPage } from "./generated/RelayRequestPage";
 import type { TurnStateModelStatus } from "./generated/TurnStateModelStatus";
 import type { Schedule } from "./generated/Schedule";
@@ -113,7 +114,8 @@ export const stationApi = {
    * 站点卡表头的余额 / 编程套餐额度（中转站重构阶段 6 · U3），用这条线路那把 Key 问。
    *
    * 认不出是哪一家（大部分中转站）就是 `null`，后端一个请求都不发。`force: false`（打开页面）
-   * 这把 Key 5 分钟内问过的直接给那一份；`force: true`（点刷新图标）问一次。只显示，调度不读它。
+   * 这把 Key 5 分钟内问过的直接给那一份；`force: true`（点刷新图标）问一次。
+   * 开启线路额度检查后，路由仅采信缓存中上游明确的可用性；未知余额与过期缓存不拦截，不自动刷新。
    */
   siteQuota: (routeId: string, force: boolean) =>
     call<SiteQuota | null>("station_site_quota", { routeId, force }),
@@ -138,6 +140,10 @@ export const stationApi = {
    */
   usageReport: (client: Client | null, days: number) =>
     call<RelayUsageReport>("station_usage_report", { client, days }),
+
+  /** 首页按滚动时间窗统计全部本机记录；null 包含已归档用量。 */
+  usageTotals: (client: Client, hours: number | null) =>
+    call<RelayUsageTotals>("station_usage_totals", { client, hours }),
 
   /** 中转用量页的逐条日志（新的在前；明细只留 30 天，更早的只剩按天汇总）。 */
   usageRequests: (q: {
@@ -277,13 +283,6 @@ export const stationApi = {
   /** ⛔ 给线路 = 直连（桌面端配置里写那条线的真 Key）；`null` = 改回经本机路由。重开桌面端才生效。 */
   setDesktopDirect: (routeId: string | null) =>
     call<DesktopDirectView>("station_desktop_direct_set", { routeId }),
-  /** 派单队列：上次选中的那条 + 手动排的顺序（当前那条失败时依次改用谁）。 */
-  dispatchQueue: (client: Client) =>
-    call<DispatchQueue>("station_dispatch_queue", { client }),
-  /** 只收这个软件自己的线；混进别的软件的线整份拒绝。 */
-  saveDispatchQueue: (client: Client, order: string[]) =>
-    call<DispatchQueue>("station_dispatch_queue_save", { client, order }),
-
   // 项目（阶段 5，cc-switch 的 M4）：只换中转那一侧（线路、派单顺序、中转环境里的 MCP / Skills / 提示词），
   // ⛔ 不碰官方账户和槽位。项目列表各软件共用，「当前项目」每个软件各记各的。
   /** 项目列表和每个软件的当前项目。 */

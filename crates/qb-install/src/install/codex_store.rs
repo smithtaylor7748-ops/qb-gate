@@ -17,7 +17,7 @@
 //!
 //! 三份 SOAP 信封模板（`codex_store/*.xml`）改自 chrichuang218/codex-windows-cn
 //! （MIT，Copyright (c) 2026 vaportail），它又改自 StoreDev/StoreLib（MIT）；
-//! 匿名 MSA 设备票据同源。解析与流程是自己写的，逐条记在 ATTRIBUTION.md。
+//! 匿名 MSA 设备票据同源。解析与流程是自己写的，许可原文见 THIRD_PARTY_NOTICES.txt。
 //! **不采用**它们「解压 `app/` 子树、未打包运行」与「`versions/` + junction 多版本」两套做法：
 //! 那会丢包身份（`codex://`、自动更新），而面板启动的本来就是正规安装的那份。
 //!

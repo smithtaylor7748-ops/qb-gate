@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 配置写入引擎（中转站重构阶段 4，cc-switch 的 P2，`src-tauri/src/live/`）：只改客户端配置里点名的键，其余字节不碰。
 //!
 //! - [`patch`]：按格式保序改写（JSON、TOML、`.env`），**解析不了就停，绝不退回空文档**；

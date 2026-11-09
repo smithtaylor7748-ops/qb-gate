@@ -1,7 +1,6 @@
 import { chromium } from "@playwright/test";
-import { spawn } from "node:child_process";
+import { createServer } from "vite";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
 import assert from "node:assert/strict";
 // 五个入口加几条详情页。`""` 是根路径（官方账户，同时是仪表盘）。
 // 前五条必须跟 src/lib/routes.ts 的 NAV 对得上，否则 CI 直接红。
@@ -246,26 +245,24 @@ async function assertFixedAccounts(page, scope) {
 }
 const port = 20000 + Math.floor(Math.random() * 20000);
 const origin = `http://localhost:${port}`;
-const server = spawn(
-  process.execPath,
-  [
-    "node_modules/vite/bin/vite.js",
-    "--mode",
-    "demo",
-    "--port",
-    String(port),
-    "--strictPort",
-  ],
-  { cwd: resolve("."), windowsHide: true, stdio: "ignore" },
-);
+const server = await createServer({
+  mode: "demo",
+  server: { port, strictPort: true },
+});
 let browser;
 try {
+  await server.listen();
   const waitFor = async (path, tries, what) => {
     for (let i = 0; i < tries; i++) {
-      if (server.exitCode !== null)
+      if (!server.httpServer?.listening)
         throw new Error("Demo server failed to start on its own port");
       try {
-        if ((await fetch(origin + path)).ok) return;
+        const response = await fetch(origin + path, {
+          signal: AbortSignal.timeout(30000),
+        });
+        // headers 到达不等于转换后的模块已完整可读；冷启动时还可能在等响应体。
+        await response.text();
+        if (response.ok) return;
       } catch {}
       await new Promise((r) => setTimeout(r, 250));
     }
@@ -285,7 +282,23 @@ try {
   // 那个报错**看起来像浏览器坏了**:服务器 curl 得通、单独开个浏览器也打得开
   // (因为那时缓存已经热了)。实际只是还没热身完。**新克隆的仓库第一次跑
   // `npm run test:ui` 必然撞上这个**,所以这里等的是「模块真的服务得出来」。
+  await waitFor("/@vite/client", 600, "Vite 客户端模块");
   await waitFor("/src/main.tsx", 600, "依赖预打包");
+  // 入口返回后，CSS / Shell / 预打包 chunk 仍可能在转换；等 Vite 完成静态依赖树。
+  let warmupTimer;
+  try {
+    await Promise.race([
+      server.waitForRequestsIdle(),
+      new Promise((_, reject) => {
+        warmupTimer = setTimeout(
+          () => reject(new Error("Vite 静态依赖热身在 60 秒内没有完成")),
+          60000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(warmupTimer);
+  }
   const executablePath =
     process.env.QB_SHOT_BROWSER ||
     [
@@ -312,7 +325,22 @@ try {
   const report = [];
   mkdirSync("docs/screenshots", { recursive: true });
   for (const theme of ["light", "dark"]) {
-    await page.goto(origin, { waitUntil: "domcontentloaded" });
+    const pending = new Set();
+    const requestStarted = (request) => pending.add(request.url());
+    const requestFinished = (request) => pending.delete(request.url());
+    page.on("request", requestStarted);
+    page.on("requestfinished", requestFinished);
+    page.on("requestfailed", requestFinished);
+    try {
+      await page.goto(origin, { waitUntil: "domcontentloaded" });
+    } catch (error) {
+      console.error("首次页面加载尚未完成的请求：", [...pending]);
+      throw error;
+    } finally {
+      page.off("request", requestStarted);
+      page.off("requestfinished", requestFinished);
+      page.off("requestfailed", requestFinished);
+    }
     await page.evaluate(
       (theme) => localStorage.setItem("qb-theme", theme),
       theme,
@@ -2076,12 +2104,45 @@ try {
   }
   await panel2.getByRole("tab", { name: "概览", exact: true }).click();
 
-  // 中转站重构阶段 1：路由设置弹窗（故障转移、派单顺序、超时、熔断、整流器）。
-  // 演示里 Claude Code 的高倍组熔断着：「立刻重测」之后要转成半开，按钮上的「N 条熔断」跟着变。
+  // 选线边界：旧队列不构成跨站许可，默认仅用所选线路，也不能直接开启调度。
   await page.goto(origin + "/#/relays");
-  await page.getByRole("button", { name: /路由设置 · 故障转移/ }).click();
+  const schedToggle = (pressed) =>
+    page.getByRole("button", { name: "智能调度", exact: true, pressed });
+  assert.equal(await schedToggle(false).getAttribute("aria-disabled"), "true");
+  // aria-disabled 保留键盘焦点，Enter 仍要经过动作护栏，不能偷偷启动。
+  await schedToggle(false).focus();
+  await schedToggle(false).press("Enter");
+  await page
+    .getByText("请先在路由设置中勾选允许使用的线路并保存，再启动调度", {
+      exact: true,
+    })
+    .waitFor();
+  assert.equal(await schedToggle(true).count(), 0);
+  await page.getByRole("button", { name: /路由设置 · 允许范围/ }).click();
   const routerDialog = page.getByRole("dialog");
-  await routerDialog.getByText("派单顺序（替补）", { exact: true }).waitFor();
+  const strictMode = () =>
+    page.getByRole("dialog").getByRole("radio", { name: /^仅所选线路/ });
+  const poolMode = () =>
+    page.getByRole("dialog").getByRole("radio", { name: /^允许所勾选线路/ });
+  await strictMode().waitFor();
+  assert.equal(await strictMode().isChecked(), true, "默认不是仅用所选线路");
+  await poolMode().check();
+  await routerDialog.getByText("允许使用的线路", { exact: true }).waitFor();
+  const allowedLines = routerDialog.getByRole("checkbox", {
+    name: /^允许使用「/,
+  });
+  assert.equal(await allowedLines.count(), 3);
+  for (const checkbox of await allowedLines.all()) {
+    assert.equal(
+      await checkbox.isChecked(),
+      false,
+      "旧队列中的线路被自动批准了",
+    );
+  }
+  await routerDialog.getByRole("button", { name: "保存", exact: true }).click();
+  await routerDialog
+    .getByText("请把当前所选线路勾入允许名单，再保存。", { exact: true })
+    .waitFor();
   for (const width of [1320, 680]) {
     await page.setViewportSize({ width, height: 940 });
     await assertNoOverflow(page, `router settings ${width}`);
@@ -2098,24 +2159,16 @@ try {
     0,
     "重测之后那条线还显示着「立刻重测」",
   );
-  await routerDialog
-    .getByLabel("当前那条线在交出回复之前失败时，这一发改用下面排的下一条")
-    .uncheck();
+  // 演示里的高倍组熔断着：重测只将它转成半开，不授予它请求许可。
+  await strictMode().check();
   await routerDialog.getByRole("button", { name: "保存", exact: true }).click();
-  await page.getByText("路由设置已保存，下一发请求就按新的来").waitFor();
+  await page.getByText("路由设置已保存，下一发请求就按新的来").last().waitFor();
   await page.keyboard.press("Escape");
   await routerDialog.waitFor({ state: "hidden" });
-  // 存进去的那一份读回来还是关着（演示后端跟真后端一样有状态）。
-  await page.getByRole("button", { name: /路由设置 · 故障转移/ }).click();
-  await page.getByText("派单顺序（替补）", { exact: true }).waitFor();
-  assert.equal(
-    await page
-      .getByRole("dialog")
-      .getByLabel("当前那条线在交出回复之前失败时，这一发改用下面排的下一条")
-      .isChecked(),
-    false,
-    "关掉的故障转移读回来又开着",
-  );
+  // 存下的仅用模式读回仍有效，未通过校验的 pool 草稿不能改变生效范围。
+  await page.getByRole("button", { name: /路由设置 · 允许范围/ }).click();
+  await strictMode().waitFor();
+  assert.equal(await strictMode().isChecked(), true, "保存后又回到了跨线模式");
   // 中转站重构阶段 3：聚合模型。勾一条线、写发布的模型、保存 —— 列出来的 id 是后端（演示后端）编的，前端不自己拼。
   const aggDialog = page.getByRole("dialog");
   assert.equal(
@@ -2127,7 +2180,7 @@ try {
   );
   await aggDialog
     .getByLabel(
-      "把勾上的几条线的模型一起列给这个软件：选哪个模型，那一发就直达那条线",
+      "把勾上的几条线的模型一起列给这个软件：选哪个模型，就请求对应线路；仍受上方允许范围限制，范围外的线路会拒绝访问",
     )
     .check();
   await aggDialog
@@ -2190,13 +2243,39 @@ try {
     .waitFor({ state: "hidden" });
   await page.keyboard.press("Escape");
 
-  // 中转站重构阶段 2：调度设置里的派单队列与测活。先把 Claude Code 的调度打开 ——
-  // 关着时档位那一列是空的、也没有「钉住」。演示里低价组没过底线、在兜底档。
-  // ⚠ 高倍组本来熔断着（故障档），但上面路由设置那一段已经把它「立刻重测」成半开了，这里不等「故障」。
+  // 明确逐条批准后才允许跨线。先保存并读回，再启动调度。
   await page.goto(origin + "/#/relays");
-  // 那颗按钮的名字就叫「智能调度」，开没开看 aria-pressed。
-  const schedToggle = (pressed) =>
-    page.getByRole("button", { name: "智能调度", exact: true, pressed });
+  await page.getByRole("button", { name: /路由设置 · 允许范围/ }).click();
+  await poolMode().check();
+  const authorizedLabels = await allowedLines.evaluateAll((nodes) =>
+    nodes.map((node) => node.getAttribute("aria-label")),
+  );
+  for (const name of authorizedLabels) {
+    await routerDialog.getByRole("checkbox", { name, exact: true }).check();
+  }
+  await routerDialog.getByRole("button", { name: "保存", exact: true }).click();
+  await page.getByText("路由设置已保存，下一发请求就按新的来").last().waitFor();
+  await page.keyboard.press("Escape");
+  await routerDialog.waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: /路由设置 · 允许范围/ }).click();
+  await poolMode().waitFor();
+  assert.equal(await poolMode().isChecked(), true, "授权池没有保存");
+  for (const name of authorizedLabels) {
+    assert.equal(
+      await routerDialog
+        .getByRole("checkbox", { name, exact: true })
+        .isChecked(),
+      true,
+      "明确批准的线路没有读回",
+    );
+  }
+  await page.keyboard.press("Escape");
+  await routerDialog.waitFor({ state: "hidden" });
+  // 关窗会重新读取后端状态；等待生效范围读回再检查调度是否可启用。
+  await page
+    .locator('button[aria-label="智能调度"][aria-disabled="false"]')
+    .waitFor();
+  assert.equal(await schedToggle(false).getAttribute("aria-disabled"), "false");
   await schedToggle(false).click();
   await schedToggle(true).waitFor();
   await page.getByRole("button", { name: "调度设置", exact: true }).click();
@@ -2232,9 +2311,9 @@ try {
     .getByText(/今天测活约 ¥0\.0000～¥0\.0000/)
     .waitFor({ state: "hidden" });
   await paidProbe.uncheck();
-  // 钉住一条：横幅出现、动作日志多一条；取消之后横幅消失。
+  // 池内首选与普通选线分开：这里固定首选仍保留许可池，取消后交回调度。
   await schedDialog
-    .getByRole("button", { name: "钉住", exact: true })
+    .getByRole("button", { name: "固定池内首选", exact: true })
     .first()
     .click();
   await schedDialog.getByText(/^已钉住「/).waitFor();
@@ -2251,12 +2330,40 @@ try {
   await schedDialog.getByText(/^已钉住「/).waitFor({ state: "hidden" });
   await page.keyboard.press("Escape");
   await schedDialog.waitFor({ state: "hidden" });
-  // 调度开着时路由设置里的替补顺序只读（顺序归调度排）。
-  await page.getByRole("button", { name: /路由设置 · 故障转移/ }).click();
-  await page.getByText(/智能调度开着：替补顺序由调度按档位排/).waitFor();
+  // 调度只接管已批准池的排序，名单仍由用户决定。
+  await page.getByRole("button", { name: /路由设置 · 允许范围/ }).click();
+  await page.getByText(/智能调度开着：名单仍由你决定/).waitFor();
+  assert.equal(await poolMode().isChecked(), true, "固定首选破坏了授权池模式");
+  for (const button of await routerDialog
+    .getByRole("button", { name: /往[前后]挪/ })
+    .all()) {
+    assert.equal(await button.isDisabled(), true, "调度运行时仍允许手排顺序");
+  }
   await page.keyboard.press("Escape");
   await schedToggle(true).click();
   await schedToggle(false).waitFor();
+  await schedToggle(false).click();
+  await schedToggle(true).waitFor();
+  // 普通选线必须立即收回跨线许可，并停止智能调度。
+  await page.getByRole("radio").filter({ hasText: "DS 低价组" }).click();
+  await page
+    .getByText("已设为仅用这条线路，智能调度已停止", { exact: true })
+    .last()
+    .waitFor();
+  await schedToggle(false).waitFor();
+  await page
+    .locator('button[aria-label="智能调度"][aria-disabled="true"]')
+    .waitFor();
+  assert.equal(await schedToggle(false).getAttribute("aria-disabled"), "true");
+  await page.getByRole("button", { name: /路由设置 · 允许范围/ }).click();
+  await strictMode().waitFor();
+  assert.equal(
+    await strictMode().isChecked(),
+    true,
+    "普通选线仍留在授权池模式",
+  );
+  await page.keyboard.press("Escape");
+  await page.getByRole("radio").filter({ hasText: "DS 专线" }).click();
 
   // 中转站重构阶段 5：项目、导入链接、工具文件。
   // 项目：头部按钮写着当前项目（演示里 Claude Code 正用着「日常开发」），弹窗里说清楚只换中转那一侧。
@@ -2491,8 +2598,8 @@ try {
     "SillyTavern card: seven tabs, arrow keys switch; versions tab: release list, downgrade names itself and still gates on Node, swap back to the kept copy",
     "SillyTavern card console tab: a failed start is recognized with a hint, colors are rendered not printed, the previous run is one click away",
     "SillyTavern card library tabs: character detail, to trash with its chats and back, world entries whose Esc closes only the entry dialog, extension check then update, every tab without overflow at 680px",
-    "relay router settings: dispatch queue and breaker pills without overflow at two widths, retest turns a tripped line half-open, failover switch saved and read back off; network section shows the key only when open to all interfaces, scan fills the proxy, the proxy box is not prefilled after saving",
-    "relay schedule dispatch: tiers and liveness without overflow at two widths, paid probing off by default and spends nothing, switched on it shows a cost, pin shows a banner and an action, unpin clears it, the manual standby order is read-only while scheduling",
+    "relay router settings: selected mode by default refuses scheduling, legacy queue grants no permission, empty pool cannot save, retest only changes breaker state, strict mode saves and reads back, authorized pool requires explicit per-line checks and reads them back; aggregate and network controls preserve permissions and fit two widths",
+    "relay schedule dispatch: explicit pool permits scheduling, tiers and liveness fit two widths, paid probing defaults off and records enabled cost, pool pin preserves fallback permission, unpin clears it, scheduler owns pool ordering, ordinary route selection returns to selected mode and stops scheduling",
     "stage 5: the project dialog says it only touches the relay side and creates from the current state, a pasted ccswitch link shows only a masked key and imports after confirming onto the relay page, the tool files tab switches between OpenClaw / Hermes / Pi without overflow and saves an edit; stage 6: the sessions tab filters by source, reads a session with its resume command, deletes only after confirming and restores from the trash without overflow",
     "stage 7: the three background switches in settings start unchecked; other CLI tools check for a new version and hold back the update when Node is too old, an uninstalled Hermes offers only its official script; the environment-variable cleanup ticks nothing and offers only current-user variables; no overflow at 680px",
   ];
@@ -2506,5 +2613,5 @@ try {
   );
 } finally {
   if (browser) await browser.close();
-  server.kill();
+  await server.close();
 }

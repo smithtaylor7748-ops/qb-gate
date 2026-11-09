@@ -528,15 +528,38 @@ pub async fn run(
     http: &reqwest::Client,
     now_ms: i64,
 ) -> Vec<ProbeAttempt> {
+    run_authorized(jobs, http, now_ms, |_| true).await
+}
+
+/// 后台探测在并发槽可用、准备发送时重新核验授权，撤销后的排队任务不会发包。
+pub async fn run_authorized(
+    jobs: Vec<(ProbeTarget, ProbeKind, String)>,
+    http: &reqwest::Client,
+    now_ms: i64,
+    allowed: impl Fn(&ProbeTarget) -> bool + Sync,
+) -> Vec<ProbeAttempt> {
+    run_admitted(jobs, http, now_ms, |target| allowed(target).then_some(())).await
+}
+
+/// 与用户请求共用名额的测活；名额覆盖发送与读完响应，拒绝时不写虚构探测结果。
+pub async fn run_admitted<G: Send>(
+    jobs: Vec<(ProbeTarget, ProbeKind, String)>,
+    http: &reqwest::Client,
+    now_ms: i64,
+    admit: impl Fn(&ProbeTarget) -> Option<G> + Sync,
+) -> Vec<ProbeAttempt> {
     use futures_util::stream::{self, StreamExt};
+    let admit = &admit;
     stream::iter(jobs)
         .map(|(target, kind, model)| async move {
-            match kind {
+            let _permit = admit(&target)?;
+            Some(match kind {
                 ProbeKind::Free => free_probe(&target, http, now_ms).await,
                 ProbeKind::Paid => paid_probe(&target, &model, http, now_ms).await,
-            }
+            })
         })
         .buffer_unordered(PROBE_CONCURRENCY)
+        .filter_map(|attempt| async move { attempt })
         .collect()
         .await
 }
@@ -1284,6 +1307,24 @@ mod tests {
             .collect();
         got.sort();
         assert_eq!(got, ["r0", "r1", "r2", "r3", "r4"]);
+    }
+
+    #[tokio::test]
+    async fn revoked_probe_jobs_never_send_free_or_paid_requests() {
+        let (base, seen) = stub(400, "application/json", "{}").await;
+        let jobs = [ProbeKind::Free, ProbeKind::Paid]
+            .into_iter()
+            .map(|kind| {
+                (
+                    ProbeTarget::new("revoked", Client::ClaudeCode, &base, "k"),
+                    kind,
+                    "m".into(),
+                )
+            })
+            .collect();
+        let attempts = run_authorized(jobs, &reqwest::Client::new(), NOW, |_| false).await;
+        assert!(attempts.is_empty());
+        assert!(seen.lock().unwrap().is_empty());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 命令行工具管理的版本号那一半（2026-10-27，中转站重构阶段 7 · X3）：比版本、从 npm 的 dist-tags /
 //! GitHub 的发布 / PyPI 里挑出「最新」、判断本机 Node 满不满足新版要求的 `engines.node`。
 //!

@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 聚合模型的 id 怎么编、怎么解（中转站重构阶段 3，cc-switch `src-tauri/src/mode/stack.rs` 的 Stack 模式）。
 //!
 //! 名单里每条线的模型以**带前缀的 id** 发布给客户端，选中后请求直达那一条线；不带前缀的照旧走派单队列。

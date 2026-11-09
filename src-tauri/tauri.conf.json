@@ -28,22 +28,18 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "nsis"
-    ],
-    "icon": [
-      "icons/icon.ico"
-    ],
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerHooks": "installer-hooks.nsh"
       }
     },
     "resources": {
       "../LICENSE": "licenses/LICENSE",
       "../LICENSE-ADDITIONAL-TERMS.md": "licenses/LICENSE-ADDITIONAL-TERMS.md",
       "../LICENSE-COMMERCIAL.md": "licenses/LICENSE-COMMERCIAL.md",
-      "../ATTRIBUTION.md": "licenses/ATTRIBUTION.md",
       "../THIRD_PARTY_NOTICES.txt": "licenses/THIRD_PARTY_NOTICES.txt",
       "../docs/dependencies.json": "licenses/dependencies.json"
     },
@@ -56,9 +52,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": [
-          "qbgate"
-        ]
+        "schemes": ["qbgate"]
       }
     }
   }

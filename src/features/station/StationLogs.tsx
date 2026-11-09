@@ -80,6 +80,8 @@ const FAULT_LABEL: Record<string, string> = {
   "not-served": "这条线不接",
   "client-request": "请求本身的问题",
   "client-abort": "客户端断开",
+  "route-permission-denied": "线路超出允许范围",
+  "route-admission-denied": "本机请求容量限制",
   "rectify-media": "图片降级后重试",
   "rectify-opaque-state": "去掉别家状态后重试",
   "rectify-thinking-signature": "thinking 签名整流后重试",
@@ -525,6 +527,12 @@ function Kpi({
 /** 这一发依次试过的线。只试了一条、就是这条线的，不占地方。 */
 function Attempts({ log, here }: { log: RouterRequest; here: string }) {
   const tries = log.attempts;
+  if (
+    (log.fault === "route-permission-denied" ||
+      log.fault === "route-admission-denied") &&
+    tries.length === 0
+  )
+    return <span className="qb-st-pill qb-st-pill--unknown">未发往上游</span>;
   if (tries.length <= 1 && log.route_id === here) return <>{dash}</>;
   const title = tries
     .map(
@@ -556,6 +564,10 @@ function tokenTitle(r: RouterRequest): string | undefined {
 
 function StatusPill({ log }: { log: RouterRequest }) {
   const s = log.status;
+  if (log.fault === "route-permission-denied")
+    return <span className="pill pill--warn">本机拒绝 · 超出允许范围</span>;
+  if (log.fault === "route-admission-denied")
+    return <span className="pill pill--warn">本机繁忙 · 请求容量限制</span>;
   // 状态码是 2xx 但流里报了失败 / 半路断了：按故障说，不显示成绿色的 200。
   if (log.fault && s != null && s >= 200 && s < 300)
     return (

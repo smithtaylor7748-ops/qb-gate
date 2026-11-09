@@ -50,19 +50,28 @@ use hyper::body::Bytes;
 use hyper::{Response, StatusCode};
 use qb_contract::domain::Client;
 use qb_proxy::model_mapper::ModelMapping;
-use qb_station::router::{ClientRouter, RouterRequest, RouterSettings};
+use qb_station::router::{ClientRouter, RouterRequest, RouterSettings, RoutingMode};
 use qb_station::schedule::{Outcome, RouteBreaker};
 use qb_station::turnstate::{self, AccountKind, Injection, Policy, Store};
 use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
 
+mod admission;
 mod aggregate;
 mod forward;
 mod log;
 mod official;
 mod server;
 
+fn same_quota_source(a: &Upstream, b: &Upstream) -> bool {
+    a.base_url == b.base_url
+        && a.auth == b.auth
+        && a.format == b.format
+        && a.alternates == b.alternates
+}
+
+pub use admission::AdmissionPermit;
 pub use log::{spawn_log_writer, LogSink};
 pub use server::serve;
 
@@ -286,6 +295,8 @@ impl From<TurnKind> for AccountKind {
 /// 路由器的可变状态。
 #[derive(Default)]
 pub struct RouterState {
+    admissions: HashMap<String, admission::Admission>,
+    quota_generation: u64,
     /// **按软件分**。三个软件连的是同一个路由，但各走各的上游。
     switch: ClientRouter,
     upstreams: HashMap<String, Upstream>,
@@ -342,6 +353,14 @@ impl RouterState {
     /// 不保留的话,使用者接进路由之后随手编辑一条中转线路,官方上游就被这次重装
     /// 悄悄冲掉了 —— Codex 下一发请求 503,而界面上完全看不出是被这一步冲的。
     pub fn replace_upstreams(&mut self, upstreams: Vec<Upstream>) {
+        let sources_changed = upstreams.iter().any(|u| {
+            self.upstreams
+                .get(&u.route_id)
+                .is_none_or(|old| !same_quota_source(old, u))
+        }) || self.upstreams.values().any(|old| {
+            !matches!(old.auth, UpstreamAuth::OAuthPassthrough)
+                && !upstreams.iter().any(|u| u.route_id == old.route_id)
+        });
         let official: Vec<Upstream> = self
             .upstreams
             .values()
@@ -355,11 +374,21 @@ impl RouterState {
         for u in official {
             self.upstreams.insert(u.route_id.clone(), u);
         }
+        if sources_changed {
+            self.invalidate_quota();
+        }
     }
 
     /// 登记/更新一条线路。
     pub fn put_upstream(&mut self, u: Upstream) {
+        let changed = self
+            .upstreams
+            .get(&u.route_id)
+            .is_none_or(|old| !same_quota_source(old, &u));
         self.upstreams.insert(u.route_id.clone(), u);
+        if changed {
+            self.invalidate_quota();
+        }
     }
 
     /// 挂上官方 Codex 的 turn-state 上游并选中它。**只对 Codex。**
@@ -371,6 +400,9 @@ impl RouterState {
     /// route_id 用固定常量 [`OFFICIAL_CODEX_ROUTE_ID`] —— 一台机器只有一条官方线,
     /// 固定下来才认得出、才好在 [`replace_upstreams`](Self::replace_upstreams) 里保住它。
     pub fn arm_official_codex(&mut self) {
+        let mut settings = self.settings(Client::Codex);
+        settings.routing_mode = RoutingMode::Selected;
+        self.set_settings(settings);
         self.put_upstream(Upstream {
             route_id: OFFICIAL_CODEX_ROUTE_ID.to_string(),
             base_url: OFFICIAL_CODEX_BASE.to_string(),
@@ -523,6 +555,29 @@ impl RouterState {
         self.settings.insert(client, settings);
     }
 
+    /// 所有发包路径共用的线路授权。当前/待用线路的选择不等于许可其它线路。
+    /// 读最新状态，撤销授权或删除线路会阻止尚未开始的重试；已发出的请求不会被撤回。
+    pub fn route_allowed(&self, client: Client, route_id: &str) -> bool {
+        if !self.upstreams.contains_key(route_id) {
+            return false;
+        }
+        let selected = self.pending(client).or_else(|| self.current(client));
+        let settings = self.settings(client);
+        match settings.routing_mode {
+            RoutingMode::Selected => selected.as_deref() == Some(route_id),
+            RoutingMode::Pool => {
+                selected.is_some_and(|id| settings.allowed_routes.contains(&id))
+                    && settings.allowed_routes.iter().any(|id| id == route_id)
+            }
+        }
+    }
+
+    /// 删除提交后立即撤销运行期发送许可，避免等待完整上游重载期间仍用旧拷贝。
+    pub fn remove_upstream(&mut self, route_id: &str) {
+        self.upstreams.remove(route_id);
+        self.invalidate_quota();
+    }
+
     /// 这个软件的聚合模型此刻发布哪些 —— 模型发现由本机路由自己答的就是这一份，设置弹窗的预览也读它。
     /// 没开聚合时是空的。
     pub fn aggregate_models(&self, client: Client) -> Vec<qb_station::router::AggregateModel> {
@@ -532,6 +587,7 @@ impl RouterState {
         }
         aggregate::published(client, &settings, &self.upstreams)
             .into_iter()
+            .filter(|p| self.route_allowed(client, &p.route_id))
             .map(|p| qb_station::router::AggregateModel {
                 route_id: p.route_id,
                 id: p.id,
@@ -566,9 +622,21 @@ impl RouterState {
     /// **不按 `max_attempts` 截断**：熔断着、被跳过的线不占次数，次数由重试循环自己数
     /// （cc-switch 同样如此）。
     pub(crate) fn candidates(&self, client: Client, first: &Upstream) -> Vec<Upstream> {
+        if !self.route_allowed(client, &first.route_id) {
+            return Vec::new();
+        }
         let mut lines = vec![first.clone()];
-        if self.settings(client).auto_failover {
-            for id in self.queue(client) {
+        let settings = self.settings(client);
+        if settings.routing_mode == RoutingMode::Pool {
+            // 定时队列只提供排序，不提供授权；明确许可但尚未排序的线接在后面。
+            for id in self
+                .queue(client)
+                .into_iter()
+                .chain(settings.allowed_routes)
+            {
+                if !self.route_allowed(client, &id) {
+                    continue;
+                }
                 let Some(u) = self.upstreams.get(&id) else {
                     continue;
                 };
@@ -581,6 +649,7 @@ impl RouterState {
                 }
             }
         }
+        self.order_by_load(client, &mut lines);
         lines
     }
 

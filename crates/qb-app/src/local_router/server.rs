@@ -208,6 +208,15 @@ async fn handle(
     // 官方 Codex turn-state 模式:保留客户端自带的 OAuth,不剥不换、不进重试。见 `UpstreamAuth`。
     // 聚合选中的线永远是中转线路（`aggregate::relayable`），到不了这一支。
     let response = if matches!(upstream.auth, UpstreamAuth::OAuthPassthrough) {
+        if !state
+            .lock()
+            .is_ok_and(|s| s.route_allowed(caller, &upstream.route_id))
+        {
+            record.log.status = Some(403);
+            record.log.fault = Some("route-permission-denied".into());
+            record.log.error = Some("所选线路已变更，未向原官方线路发送请求".into());
+            return Ok(text(StatusCode::FORBIDDEN, "所选线路已变更，请重试新请求"));
+        }
         // ⛔ 官方线只给本机用（`admit` 的第三条）。口令对了也不行。
         if let Err((status, why)) = admit(peer, &inbound.headers, key.as_deref(), true) {
             record.log.fault = Some(qb_proxy::classify::Fault::ClientRequest.key().to_string());

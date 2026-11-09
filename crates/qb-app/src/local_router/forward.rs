@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 中转线路：一发请求的重试循环。
 //!
 //! 照 cc-switch v4.0.14 `src-tauri/src/proxy/forwarder.rs` 的 `forward_with_retry_inner`
@@ -27,7 +27,7 @@
 //!
 //! - 只有一条线时它不碰熔断；这里**照样记**（QB Gate 原来就记，排序要用）。
 //! - 所有线都在熔断时它回 503；这里**仍打当前那一条**：原来就是这样，不凭空制造死局。
-//! - 自动故障转移默认开（使用者定的）；关掉就只打当前那一条。
+//! - 默认只用当前线路；只有显式授权的线路池允许跨线重试。
 //! - 转给中转线路的请求一律 `accept-encoding: identity`：要从响应里读用量、认出 2xx 里的错，
 //!   而 reqwest 没开解压（⛔ 不许开 `gzip`，开了它会悄悄改写流）。cc-switch 只在 SSE 路径这么做。
 //! - 404 / 409 / 451 换线但不伤熔断（`Fault::NotServedHere`）；cc-switch 是可重试且记失败。
@@ -110,6 +110,8 @@ impl Outgoing {
 enum Attempt {
     Done(Success),
     Failed(Failure),
+    Denied,
+    Limited(admission::Rejection),
 }
 
 struct Success {
@@ -200,6 +202,15 @@ pub(super) async fn relay(
         Ok(s) => (s.settings(caller), vec![first.clone()]),
         Err(_) => return text(StatusCode::INTERNAL_SERVER_ERROR, "本机路由内部状态损坏"),
     };
+    if lines.is_empty() {
+        record.log.status = Some(403);
+        record.log.fault = Some("route-permission-denied".into());
+        record.log.error = Some("所选线路已变更或不在允许范围内，请重试新请求".into());
+        return text(
+            StatusCode::FORBIDDEN,
+            "所选线路已变更或不在允许范围内，请重试新请求",
+        );
+    }
     // 缺模型的线 6 小时内跳过；全都缺就一条不跳 —— 宁可让它自己报错，也不凭空制造死局。
     if let (true, Ok(s)) = (routed, state.lock()) {
         let kept: Vec<Upstream> = lines
@@ -240,6 +251,7 @@ pub(super) async fn relay(
         Err(_) => return text(StatusCode::INTERNAL_SERVER_ERROR, "本机路由内部状态损坏"),
     };
     let ctx = LineCtx {
+        state,
         http,
         inbound: &inbound,
         original: json.as_ref(),
@@ -247,6 +259,8 @@ pub(super) async fn relay(
         stores: &stores,
         settings: &settings,
         streaming,
+        admission_started: Instant::now(),
+        may_wait: true,
     };
     let rectifier = rectifier_config(settings.rectifier);
 
@@ -255,6 +269,10 @@ pub(super) async fn relay(
     let max_attempts = settings.max_attempts.max(1) as usize;
     let mut attempted = 0usize;
     let mut last: Option<(Failure, Fault)> = None;
+    let mut last_admission = None;
+    let pool_wait = routed && settings.routing_mode == RoutingMode::Pool && lines.len() > 1;
+    let mut deferred = Vec::new();
+    let mut pool_waiter = None;
 
     let mut queue: Vec<(Upstream, Permit)> = Vec::new();
     for line in lines.iter() {
@@ -283,7 +301,60 @@ pub(super) async fn relay(
         .position(|u| u.route_id == queue[0].0.route_id)
         .map_or(lines.len(), |i| i + 1);
 
-    while let Some((line, permit)) = queue.pop() {
+    loop {
+        let Some((line, permit)) = queue.pop() else {
+            if !pool_wait || deferred.is_empty() || attempted >= max_attempts {
+                break;
+            }
+            if state.lock().is_ok_and(|s| {
+                let a = s.settings(caller).admission;
+                a.max_wait_ms == 0 || a.max_waiters == 0
+            }) {
+                break;
+            }
+            // 所有候选都忙才等。一个请求只占一个等候位置，每次醒来重看整池中尚未发送的候选。
+            if let Err(rejection) = admission::pause_pool(
+                state,
+                caller,
+                &first.route_id,
+                ctx.admission_started,
+                &mut pool_waiter,
+            )
+            .await
+            {
+                if rejection.reason == "permission" {
+                    record.log.status = Some(403);
+                    record.log.fault = Some("route-permission-denied".into());
+                    record.log.error = Some("等候期间线路许可已改变，没有发送请求".into());
+                    return text(
+                        StatusCode::FORBIDDEN,
+                        "等候期间线路许可已改变，没有发送请求",
+                    );
+                }
+                last_admission = Some(rejection);
+                break;
+            }
+            lines = std::mem::take(&mut deferred);
+            if let Ok(s) = state.lock() {
+                s.order_by_load(caller, &mut lines);
+            }
+            next_index = 0;
+            while next_index < lines.len() {
+                let candidate = lines[next_index].clone();
+                next_index += 1;
+                let permit = match state.lock() {
+                    Ok(mut s) => s
+                        .breaker_mut(&candidate.route_id, caller)
+                        .allow(chrono::Utc::now().timestamp_millis()),
+                    Err(_) => FREE,
+                };
+                if permit.allowed {
+                    queue.push((candidate, permit));
+                    break;
+                }
+            }
+            continue;
+        };
         if attempted >= max_attempts {
             if let (true, Ok(mut s)) = (routed, state.lock()) {
                 s.breaker_mut(&line.route_id, caller).release(permit);
@@ -292,6 +363,7 @@ pub(super) async fn relay(
         }
         attempted += 1;
         record.log.route_id = line.route_id.clone();
+        let previous_upstream_model = record.log.upstream_model.clone();
 
         let (mut body, upstream_model) =
             line_body(json.as_ref(), &inbound.body, &line, &rectifier, routed);
@@ -300,7 +372,13 @@ pub(super) async fn relay(
         }
 
         let tried = Instant::now();
-        let mut result = try_line(&ctx, &line, &body).await;
+        let attempts_before = record.log.attempts.len();
+        // 池内先尝试所有即时可用容量；都忙时上方统一有界等待。
+        let line_ctx = LineCtx {
+            may_wait: !pool_wait,
+            ..ctx
+        };
+        let mut result = try_line(&line_ctx, &line, &body).await;
 
         // 整流：改一下请求再打同一条线一次。不换线、不伤熔断；每条线最多一次。
         // 整流改的是客户端那一侧的请求（转换之前的），改完重新转换。
@@ -320,11 +398,80 @@ pub(super) async fn relay(
                     ms: tried.elapsed().as_millis() as u64,
                 });
                 body = fixed;
-                result = try_line(&ctx, &line, &body).await;
+                let retried = try_line(&line_ctx, &line, &body).await;
+                // If the corrective retry is denied locally, keep the first real upstream
+                // result. It must not re-enter the pool and resend the original body.
+                if !matches!(retried, Attempt::Limited(_) | Attempt::Denied) {
+                    result = retried;
+                }
             }
         }
 
+        let candidate_had_actual = record.log.attempts.len() > attempts_before;
         match result {
+            Attempt::Limited(rejection) => {
+                if let Ok(mut s) = state.lock() {
+                    s.breaker_mut(&line.route_id, caller).release(permit);
+                }
+                // 本机等候/拒绝没有上游请求，不占重试数、不写健康/用量。
+                if !candidate_had_actual {
+                    attempted = attempted.saturating_sub(1);
+                }
+                if let Some(sent) = record.log.attempts.last() {
+                    record.log.route_id = sent.route_id.clone();
+                }
+                if record
+                    .log
+                    .attempts
+                    .last()
+                    .is_none_or(|sent| sent.route_id != line.route_id)
+                {
+                    record.log.upstream_model = previous_upstream_model;
+                }
+                if !candidate_had_actual && pool_wait && rejection.reason != "quota-exhausted" {
+                    deferred.push(line.clone());
+                }
+                last_admission = Some(rejection);
+                if routed && settings.routing_mode == RoutingMode::Pool {
+                    while next_index < lines.len() {
+                        let candidate = lines[next_index].clone();
+                        next_index += 1;
+                        let permit = match state.lock() {
+                            Ok(mut s) => s
+                                .breaker_mut(&candidate.route_id, caller)
+                                .allow(chrono::Utc::now().timestamp_millis()),
+                            Err(_) => FREE,
+                        };
+                        if permit.allowed {
+                            queue.push((candidate, permit));
+                            break;
+                        }
+                    }
+                }
+            }
+            Attempt::Denied => {
+                if let Ok(mut s) = state.lock() {
+                    s.breaker_mut(&line.route_id, caller).release(permit);
+                }
+                // 没有发送就不伪造 RouteAttempt；有早先真实尝试时保留最后真实线路。
+                if let Some(sent) = record.log.attempts.last() {
+                    record.log.route_id = sent.route_id.clone();
+                }
+                if record
+                    .log
+                    .attempts
+                    .last()
+                    .is_none_or(|sent| sent.route_id != line.route_id)
+                {
+                    record.log.upstream_model = previous_upstream_model;
+                }
+                let message =
+                    "线路已被删除、取消授权或已切换为仅使用另一条线；没有向该线路发送请求";
+                record.log.status = Some(403);
+                record.log.fault = Some("route-permission-denied".into());
+                record.log.error = Some(message.into());
+                return text(StatusCode::FORBIDDEN, message);
+            }
             Attempt::Done(ok) => {
                 record.log.attempts.push(RouteAttempt {
                     route_id: line.route_id.clone(),
@@ -361,7 +508,8 @@ pub(super) async fn relay(
                     class.fault.label(),
                     failure.error
                 );
-                let go_on = class.retry_next && settings.auto_failover && routed;
+                let go_on =
+                    class.retry_next && settings.routing_mode == RoutingMode::Pool && routed;
                 last = Some((failure, class.fault));
                 if !go_on {
                     break;
@@ -386,6 +534,26 @@ pub(super) async fn relay(
     }
 
     let Some((failure, fault)) = last else {
+        if let Some(rejected) = last_admission {
+            let message = format!("本机发送限制：{}；没有向受限线路发送请求", rejected.reason);
+            record.log.status = Some(429);
+            record.log.fault = Some("route-admission-denied".into());
+            record.log.error = Some(message.clone());
+            record.log.retry_after_ms = rejected
+                .retry_at_ms
+                .map(|at| (at - chrono::Utc::now().timestamp_millis()).max(0));
+            let mut response = text(StatusCode::TOO_MANY_REQUESTS, &message);
+            if let Some(ms) = record.log.retry_after_ms {
+                if let Ok(value) =
+                    hyper::header::HeaderValue::from_str(&((ms + 999) / 1000).to_string())
+                {
+                    response
+                        .headers_mut()
+                        .insert(hyper::header::RETRY_AFTER, value);
+                }
+            }
+            return response;
+        }
         return text(
             StatusCode::SERVICE_UNAVAILABLE,
             "本机路由没能把这一发转出去：这个软件的线路都试过了。",
@@ -410,7 +578,9 @@ struct Stores {
 }
 
 /// 一发请求里每条线都一样的那些东西。
+#[derive(Clone, Copy)]
 struct LineCtx<'a> {
+    state: &'a Arc<Mutex<RouterState>>,
     http: &'a reqwest::Client,
     inbound: &'a Inbound,
     /// 客户端发来的那份请求体（模型映射、转换之前的）。
@@ -419,6 +589,8 @@ struct LineCtx<'a> {
     stores: &'a Stores,
     settings: &'a RouterSettings,
     streaming: bool,
+    admission_started: Instant,
+    may_wait: bool,
 }
 
 /// 这条线这一发：选了哪种转换、发什么、打哪儿、响应怎么换回去。
@@ -452,7 +624,12 @@ async fn try_line(ctx: &LineCtx<'_>, line: &Upstream, body: &Outgoing) -> Attemp
             base_url: alternate.clone(),
             ..line.clone()
         };
-        result = try_address(ctx, &moved, body).await;
+        let prior = std::mem::replace(&mut result, Attempt::Denied);
+        let moved_result = try_address(ctx, &moved, body).await;
+        result = match moved_result {
+            Attempt::Limited(_) | Attempt::Denied => prior,
+            other => other,
+        };
     }
     result
 }
@@ -849,6 +1026,48 @@ fn secs(n: u32) -> Option<Duration> {
 
 /// 打一条线一次。
 async fn attempt(ctx: &LineCtx<'_>, line: &Upstream, plan: &LinePlan) -> Attempt {
+    let permit = match admission::acquire_from(
+        ctx.state,
+        ctx.inbound.caller,
+        &line.route_id,
+        ctx.admission_started,
+        ctx.may_wait,
+        Some(line),
+    )
+    .await
+    {
+        Ok(permit) => permit,
+        Err(rejection) if rejection.reason == "permission" => return Attempt::Denied,
+        Err(rejection) => return Attempt::Limited(rejection),
+    };
+    let mut result = attempt_admitted(ctx, line, plan).await;
+    if let Attempt::Failed(failure) = &result {
+        if let BreakerVerdict::RateLimited { retry_after_ms } =
+            classify::classify(&failure.error, failure.retry_after_ms).breaker
+        {
+            if let Ok(mut s) = ctx.state.lock() {
+                s.remember_rate_limit(&line.route_id, retry_after_ms);
+            }
+        }
+    }
+    if let Attempt::Done(ok) = &mut result {
+        if let SuccessBody::Stream { rest, .. } = &mut ok.body {
+            let stream = std::mem::replace(rest, Box::pin(futures_util::stream::empty()));
+            *rest = Box::pin(futures_util::stream::unfold(
+                (stream, permit),
+                |(mut stream, permit)| async move {
+                    stream.next().await.map(|item| (item, (stream, permit)))
+                },
+            ));
+            return result;
+        }
+    }
+    drop(permit);
+    result
+}
+
+async fn attempt_admitted(ctx: &LineCtx<'_>, line: &Upstream, plan: &LinePlan) -> Attempt {
+    // acquire 已在最后一个等待点之后原子核验权限并计发送次数；此处直接发送，不再 await 其它工作。
     let (inbound, settings, streaming) = (ctx.inbound, ctx.settings, ctx.streaming);
     let mut request = ctx
         .http
@@ -1722,6 +1941,8 @@ mod tests {
         {
             let mut s = state.lock().unwrap();
             let mut settings = RouterSettings::for_client(client);
+            settings.routing_mode = RoutingMode::Pool;
+            settings.allowed_routes = vec![a.route_id.clone(), b.route_id.clone()];
             tune(&mut settings);
             s.set_settings(settings);
             s.set_queue(client, vec![a.route_id.clone(), b.route_id.clone()]);
@@ -1758,6 +1979,191 @@ mod tests {
     }
 
     const CLAUDE_OK: &str = r#"{"id":"msg_1","type":"message","content":[],"usage":{"input_tokens":3,"output_tokens":4}}"#;
+
+    #[tokio::test]
+    async fn admission_stream_slot_survives_headers_and_is_released_on_client_abort() {
+        let mut script = Script::sse(vec![
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\"}}\n\n",
+        ]);
+        script.stall_ms = 5000;
+        let (a, a_hits) = stub(script).await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
+            s.routing_mode = RoutingMode::Selected;
+            s.admission.route_limits.insert(
+                "a".into(),
+                qb_station::router::RouteLimits {
+                    max_concurrent: 1,
+                    ..Default::default()
+                },
+            );
+        })
+        .await;
+        let first = reqwest::Client::new()
+            .post(format!("{}/v1/messages", h.base_url()))
+            .body(r#"{"model":"m","stream":true}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(first.status(), 200);
+        assert_eq!(post(&h, "/v1/messages", r#"{"model":"m"}"#).await.0, 429);
+        assert_eq!(a_hits.lock().unwrap().len(), 1);
+        assert!(b_hits.lock().unwrap().is_empty());
+        let rejected = last_log(&h).await;
+        assert_eq!(rejected.fault.as_deref(), Some("route-admission-denied"));
+        assert!(rejected.attempts.is_empty());
+        drop(first);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if h.state.lock().unwrap().admissions["a"].active == 0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn admission_least_loaded_uses_only_authorized_pool_and_rpm_rejections_do_not_send() {
+        let (a, a_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
+            s.pool_strategy = qb_station::router::PoolStrategy::LeastLoaded;
+            s.admission.route_limits.insert(
+                "a".into(),
+                qb_station::router::RouteLimits {
+                    rpm: 1,
+                    ..Default::default()
+                },
+            );
+        })
+        .await;
+        assert_eq!(post(&h, "/v1/messages", r#"{"model":"m"}"#).await.0, 200);
+        assert_eq!(post(&h, "/v1/messages", r#"{"model":"m"}"#).await.0, 200);
+        assert_eq!(a_hits.lock().unwrap().len(), 1);
+        assert_eq!(b_hits.lock().unwrap().len(), 1);
+        {
+            let mut s = h.state.lock().unwrap();
+            let mut config = s.settings(Client::ClaudeCode);
+            config.allowed_routes = vec!["a".into()];
+            s.set_settings(config);
+        }
+        assert_eq!(post(&h, "/v1/messages", r#"{"model":"m"}"#).await.0, 429);
+        assert_eq!(b_hits.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn admission_pool_wait_checks_the_first_line_again_when_it_frees() {
+        let (a, a_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
+            s.admission.max_wait_ms = 1000;
+            s.admission.max_waiters = 1;
+            for id in ["a", "b"] {
+                s.admission.route_limits.insert(
+                    id.into(),
+                    qb_station::router::RouteLimits {
+                        max_concurrent: 1,
+                        ..Default::default()
+                    },
+                );
+            }
+        })
+        .await;
+        let held_a = RouterState::admit_probe(&h.state, Client::ClaudeCode, "a", false).unwrap();
+        let held_b = RouterState::admit_probe(&h.state, Client::ClaudeCode, "b", false).unwrap();
+        let url = format!("{}/v1/messages", h.base_url());
+        let pending = tokio::spawn(async move {
+            reqwest::Client::new()
+                .post(url)
+                .body(r#"{"model":"m"}"#)
+                .send()
+                .await
+                .unwrap()
+                .status()
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if h.state.lock().unwrap().admissions["a"].waiting > 0 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        drop(held_a);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_millis(500), pending)
+                .await
+                .unwrap()
+                .unwrap(),
+            200
+        );
+        assert_eq!(a_hits.lock().unwrap().len(), 1);
+        assert!(b_hits.lock().unwrap().is_empty());
+        drop(held_b);
+    }
+
+    #[tokio::test]
+    async fn admission_local_denial_after_upstream_failure_preserves_actual_route() {
+        let (a, a_hits) = stub(Script::json(502, r#"{"error":"upstream failed"}"#)).await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
+            s.admission.route_limits.insert(
+                "b".into(),
+                qb_station::router::RouteLimits {
+                    max_concurrent: 1,
+                    ..Default::default()
+                },
+            );
+        })
+        .await;
+        let held = RouterState::admit_probe(&h.state, Client::ClaudeCode, "b", false).unwrap();
+        assert_eq!(post(&h, "/v1/messages", r#"{"model":"m"}"#).await.0, 502);
+        let log = last_log(&h).await;
+        assert_eq!(log.route_id, "a");
+        assert_eq!(log.attempts.len(), 1);
+        assert_eq!(a_hits.lock().unwrap().len(), 1);
+        assert!(b_hits.lock().unwrap().is_empty());
+        drop(held);
+    }
+
+    #[tokio::test]
+    async fn admission_rectifier_rpm_denial_keeps_original_failure_without_requeue() {
+        let (a, a_hits) = stub(Script::json(
+            400,
+            r#"{"error":{"message":"invalid signature in thinking block"}}"#,
+        ))
+        .await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
+            s.max_attempts = 1;
+            s.admission.max_wait_ms = 100;
+            s.admission.max_waiters = 1;
+            s.admission.route_limits.insert(
+                "a".into(),
+                qb_station::router::RouteLimits {
+                    rpm: 1,
+                    ..Default::default()
+                },
+            );
+        })
+        .await;
+        let body = r#"{"model":"m","messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"analysis","signature":"invalid"},{"type":"text","text":"hello"}]}]}"#;
+        let result =
+            tokio::time::timeout(Duration::from_millis(500), post(&h, "/v1/messages", body))
+                .await
+                .unwrap();
+        assert_eq!(result.0, 400);
+        assert_eq!(a_hits.lock().unwrap().len(), 1);
+        assert!(b_hits.lock().unwrap().is_empty());
+        let log = last_log(&h).await;
+        assert_eq!(log.route_id, "a");
+        assert_eq!(log.fault.as_deref(), Some("client-request"));
+    }
 
     #[tokio::test]
     async fn a_5xx_before_the_first_byte_moves_on_to_the_next_line() {
@@ -2090,17 +2496,200 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn with_failover_off_only_the_current_line_is_tried() {
+    async fn selected_mode_only_tries_the_current_line() {
         let (a, _) = stub(Script::json(502, r#"{"error":{"message":"bad gateway"}}"#)).await;
         let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
         let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
-            s.auto_failover = false;
+            s.routing_mode = RoutingMode::Selected;
         })
         .await;
 
         let (status, _) = post(&h, "/v1/messages", r#"{"model":"m"}"#).await;
         assert_eq!(status, 502, "关了故障转移，失败要照实回给客户端");
         assert!(b_hits.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn selected_mode_never_escapes_on_rate_limit_missing_model_or_open_breaker() {
+        for status in [429, 404, 503] {
+            let (a, _) = stub(Script::json(
+                status,
+                r#"{"error":{"message":"model not found"}}"#,
+            ))
+            .await;
+            let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+            let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
+                s.routing_mode = RoutingMode::Selected
+            })
+            .await;
+            if status == 503 {
+                let mut router = h.state.lock().unwrap();
+                let now = chrono::Utc::now().timestamp_millis();
+                for _ in 0..10 {
+                    router
+                        .breaker_mut("a", Client::ClaudeCode)
+                        .record(Outcome::ServerError, now);
+                }
+            }
+            assert_ne!(post(&h, "/v1/messages", r#"{"model":"m"}"#).await.0, 200);
+            assert!(
+                b_hits.lock().unwrap().is_empty(),
+                "未授权备用线收到请求：{status}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn pool_ignores_an_unapproved_route_in_the_old_queue() {
+        let (a, _) = stub(Script::json(502, "bad gateway")).await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let (c, c_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |_| {}).await;
+        {
+            let mut router = h.state.lock().unwrap();
+            router.put_upstream(line("c", c));
+            router.set_queue(Client::ClaudeCode, vec!["c".into(), "b".into()]);
+        }
+        assert_eq!(post(&h, "/v1/messages", r#"{"model":"m"}"#).await.0, 200);
+        assert_eq!(b_hits.lock().unwrap().len(), 1);
+        assert!(c_hits.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn revocation_deletion_and_manual_selection_stop_a_waiting_retry() {
+        for change in ["revoke", "delete", "select"] {
+            let mut delayed = Script::json(502, "bad gateway");
+            delayed.delay_ms = 500;
+            let (a, a_hits) = stub(delayed).await;
+            let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+            let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |_| {}).await;
+            let url = format!("{}/v1/messages", h.base_url());
+            let pending = tokio::spawn(async move {
+                reqwest::Client::new()
+                    .post(url)
+                    .header("content-type", "application/json")
+                    .body(r#"{"model":"m"}"#)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status()
+            });
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while a_hits.lock().unwrap().is_empty() {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+            {
+                let mut router = h.state.lock().unwrap();
+                let mut settings = router.settings(Client::ClaudeCode);
+                match change {
+                    "delete" => router.remove_upstream("b"),
+                    "select" => {
+                        settings.routing_mode = RoutingMode::Selected;
+                        router.request_switch(Client::ClaudeCode, "a");
+                    }
+                    _ => settings.allowed_routes.retain(|id| id != "b"),
+                }
+                router.set_settings(settings);
+            }
+            assert!(!pending.await.unwrap().is_success(), "{change}");
+            assert!(
+                b_hits.lock().unwrap().is_empty(),
+                "已撤销的线路仍收到请求：{change}"
+            );
+            let log = last_log(&h).await;
+            assert_eq!(log.route_id, "a");
+            assert_eq!(log.attempts.len(), 1);
+            assert_eq!(log.attempts[0].route_id, "a");
+            assert_eq!(log.fault.as_deref(), Some("route-permission-denied"));
+        }
+    }
+
+    #[tokio::test]
+    async fn switching_while_the_body_arrives_never_sends_the_previously_bound_route() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for official in [false, true] {
+            let (a, a_hits) = stub(Script::json(200, RESPONSES_OK)).await;
+            let (b, b_hits) = stub(Script::json(200, RESPONSES_OK)).await;
+            let mut first = line(
+                if official {
+                    OFFICIAL_CODEX_ROUTE_ID
+                } else {
+                    "a"
+                },
+                a,
+            );
+            if official {
+                first.auth = UpstreamAuth::OAuthPassthrough;
+            }
+            let h = two_lines(Client::Codex, first, line("b", b), |s| {
+                s.routing_mode = RoutingMode::Selected
+            })
+            .await;
+            let mut stream = tokio::net::TcpStream::connect(h.addr).await.unwrap();
+            stream.write_all(b"POST /codex/v1/responses HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 13\r\nConnection: close\r\n\r\n{\"model\":").await.unwrap();
+            tokio::time::timeout(Duration::from_secs(3), async {
+                while h.state.lock().unwrap().switch.in_flight() == 0 {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+            h.state.lock().unwrap().request_switch(Client::Codex, "b");
+            stream.write_all(b"\"m\"}").await.unwrap();
+            let mut reply = Vec::new();
+            tokio::time::timeout(Duration::from_secs(3), stream.read_to_end(&mut reply))
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(String::from_utf8_lossy(&reply).starts_with("HTTP/1.1 403"));
+            assert!(a_hits.lock().unwrap().is_empty() && b_hits.lock().unwrap().is_empty());
+            let log = last_log(&h).await;
+            assert!(log.attempts.is_empty());
+            assert_eq!(log.fault.as_deref(), Some("route-permission-denied"));
+        }
+    }
+
+    #[tokio::test]
+    async fn aggregate_models_cannot_bypass_selected_or_pool_permissions() {
+        for mode in [RoutingMode::Selected, RoutingMode::Pool] {
+            let (a, a_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+            let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+            let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
+                aggregate_on(s);
+                s.routing_mode = mode;
+                s.allowed_routes = vec!["a".into()];
+            })
+            .await;
+            assert_eq!(
+                post(&h, "/v1/messages", r#"{"model":"qbg-claude-zhipu--glm-5"}"#)
+                    .await
+                    .0,
+                400
+            );
+            let denied = last_log(&h).await;
+            assert_eq!(denied.fault.as_deref(), Some("route-permission-denied"));
+            assert!(denied.attempts.is_empty());
+            let discovery: Value = reqwest::Client::new()
+                .get(format!("{}/v1/models", h.base_url()))
+                .header("anthropic-version", "2023-06-01")
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            assert_eq!(discovery["data"], serde_json::json!([]));
+            assert!(h
+                .state
+                .lock()
+                .unwrap()
+                .aggregate_models(Client::ClaudeCode)
+                .is_empty());
+            assert!(a_hits.lock().unwrap().is_empty() && b_hits.lock().unwrap().is_empty());
+        }
     }
 
     #[tokio::test]

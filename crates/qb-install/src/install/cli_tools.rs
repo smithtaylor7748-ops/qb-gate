@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 其余六个命令行工具 —— OpenCode、Grok Build、OpenClaw、Hermes、Pi、MiniMax Code —— 装在哪、是什么版本、
 //! 升级和卸载该交给谁（2026-10-27，中转站重构阶段 7 · X3，照 cc-switch v4.0.14 `commands/misc.rs` 的工具管理）。
 //!

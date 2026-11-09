@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 项目（中转站重构阶段 5，cc-switch 的 M4 Profile）：把中转那一侧的一整套设置存成一个名字，一键换过去。
 //!
 //! 一个项目按软件分组（cc-switch 的 `ProfileScope`）存快照：这个软件选的线路、派单顺序、中转环境里勾着的 MCP / Skills、

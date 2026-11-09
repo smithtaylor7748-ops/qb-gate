@@ -52,8 +52,8 @@ required by clause 1 is permitted.
 
 These terms apply only to material of which smithtaylor7748-ops is the
 copyright holder. Third-party dependencies and incorporated third-party code
-remain under their own licences (see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)
-and [ATTRIBUTION.md](ATTRIBUTION.md)) and are not affected. These terms do not
+remain under their own licences (see [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt))
+and are not affected. These terms do not
 diminish any right granted by the AGPL-3.0 and do not add any restriction
 beyond those permitted by its section 7. In case of conflict, the AGPL-3.0
 ([LICENSE](LICENSE)) prevails. The Chinese text below is a translation
@@ -99,7 +99,6 @@ QB Gate（下称「本程序」）按 GNU Affero 通用公共许可证第 3 版�
 ## 四、适用范围
 
 本条款仅适用于 smithtaylor7748-ops 持有版权的材料。第三方依赖与并入的第三方代码各自保留
-原有许可证（见 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) 与
-[ATTRIBUTION.md](ATTRIBUTION.md)），不受本条款影响。本条款不减少 AGPL-3.0 授予的任何权利，
+原有许可证（见 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)），不受本条款影响。本条款不减少 AGPL-3.0 授予的任何权利，
 也不在其第 7 节允许的范围之外增加任何限制。如有冲突，以 AGPL-3.0（[LICENSE](LICENSE)）为准。
 本中文文本为方便阅读而提供的译文；以上英文文本为准。

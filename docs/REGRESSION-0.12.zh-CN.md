@@ -38,7 +38,7 @@ v0.12.1 的前端重排：总览恢复 v0.11.0 的综合评分版式（权重堆
 | 三张历史表只增不减，且每次操作后全量回前端                                             | `history_is_capped_but_live_sessions_are_never_dropped`：受保护的会话不占额度也不删                                           |
 | 恢复记录（内含配置全文密文）永不清理                                                   | `retention_spares_unsettled_referenced_and_fresh_records`：未结清、被环境回滚指着、未到期的都不删                             |
 | Skills 可以「装」到不读 `skills/` 的 Codex，还显示已安装                               | `skills_are_never_offered_or_installed_for_codex`：含目录 JSON 的声明                                                         |
-| 「检查来源更新」会冲掉 ATTRIBUTION 里核对过的固定提交                                  | `curated_pins_are_the_ones_attribution_signed_for`：目录里的哈希必须能在 ATTRIBUTION.md 里找到                                |
+| 「检查来源更新」会冲掉已核对的固定提交                                  | `curated_pins_match_reviewed_versions`：目录条目与核对过的固定版本必须一致                                |
 | 中转会话被门禁按官方口径关停                                                           | `relay_sessions_still_unlock_but_are_never_stopped_by_the_gate`：解锁与关停是两个判断                                         |
 | 数据库里的目录行能把精选条目重新指到别的仓库和版本                                     | `a_database_row_cannot_repoint_a_curated_entry`：合并时来源与版本一律以内置目录为准                                           |
 

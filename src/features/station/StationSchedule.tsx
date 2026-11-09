@@ -93,9 +93,17 @@ export default function StationSchedule({
   const [view, setView] = useState<DecisionView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState<"status" | "prefs">("status");
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const saveRevision = useRef(0);
+  const loadedPrefs = useRef<Prefs | null>(null);
   // 从库里读回来那一份之前不要往回存 —— 否则默认偏好会把使用者存过的
   // 那套盖掉，而他只是打开弹窗看了一眼。
-  const [loaded, setLoaded] = useState(false);
+  const [loadedFor, setLoadedFor] = useState<Client | null>(null);
+  const loaded = loadedFor === client;
 
   const run = useCallback(
     async (p: Prefs) => {
@@ -115,22 +123,29 @@ export default function StationSchedule({
   // 存着的那一份偏好读回来 —— 这个弹窗显示的必须是驻留循环正在用的那套。
   useEffect(() => {
     let dropped = false;
-    setLoaded(false);
+    setSettingsError(null);
     void stationApi
       .schedules()
       .then((all) => {
         if (dropped) return;
         const mine = all.find((s) => s.client === client);
-        if (mine) setPrefs(mine.prefs);
-        setLoaded(true);
+        if (!mine) throw new Error("未返回这个软件的调度设置");
+        loadedPrefs.current = mine.prefs;
+        setPrefs(mine.prefs);
+        setSettingsError(null);
+        setLoadedFor(client);
       })
-      .catch(() => {
-        if (!dropped) setLoaded(true);
+      .catch((e: unknown) => {
+        if (!dropped) {
+          setSettingsError(
+            `调度设置读取失败：${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
       });
     return () => {
       dropped = true;
     };
-  }, [client]);
+  }, [client, reload]);
 
   useEffect(() => {
     void run(prefs);
@@ -143,14 +158,30 @@ export default function StationSchedule({
     onSavedRef.current = onSaved;
   });
 
-  // 改一项存一项。`enabled` 传 null = 只存偏好，别顺手把调度打开。
-  // 存失败不弹错：赛道照样看得见，下次开调度时会再存一遍。
+  // 改一项存一项。排队写入，避免快速连续点击时旧值最后落盘。
   useEffect(() => {
-    if (!loaded) return;
-    void stationApi
-      .scheduleSet(client, null, prefs)
-      .then((saved) => onSavedRef.current?.(saved))
-      .catch(() => {});
+    if (!loaded || prefs === loadedPrefs.current) return;
+    const revision = ++saveRevision.current;
+    setSaving(true);
+    saveQueue.current = saveQueue.current
+      .catch(() => {})
+      .then(async () => {
+        const saved = await stationApi.scheduleSet(client, null, prefs);
+        if (revision === saveRevision.current) {
+          setSettingsError(null);
+          onSavedRef.current?.(saved);
+        }
+      })
+      .catch((e: unknown) => {
+        if (revision === saveRevision.current) {
+          setSettingsError(
+            `调度偏好未保存：${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      })
+      .finally(() => {
+        if (revision === saveRevision.current) setSaving(false);
+      });
   }, [loaded, prefs, client]);
 
   const toggle = (a: Axis) => {
@@ -165,8 +196,35 @@ export default function StationSchedule({
   const ranking = view?.ranking;
   const winner = ranking?.winner ?? null;
 
+  if (!loaded) {
+    return (
+      <div className="qb-card qb-st-settings-load">
+        {settingsError ? (
+          <>
+            <strong>{settingsError}</strong>
+            <Button variant="ghost" onClick={() => setReload((v) => v + 1)}>
+              重试
+            </Button>
+          </>
+        ) : (
+          <span className="qb-st-note">读取调度设置…</span>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <>
+    <div className="qb-st-schedule-workspace">
+      <div className="qb-st-schedule-intro">
+        <div>
+          <span className="qb-st-eyebrow">调度结果</span>
+          <h3>线路排名与偏好</h3>
+          <p>本地请求记录、站点价目与测活结果共同提供排序依据。</p>
+        </div>
+        <span className="qb-st-schedule-cadence">
+          30 秒一轮 · 退出面板后停止
+        </span>
+      </div>
       <div className="qb-st-verdict">
         {/* 排名第一的不一定就是当前上游：换第一条还要过派单那一道防抖与分档（下面「派单队列」）。 */}
         <span className="lead">按这套排第一</span>
@@ -178,7 +236,13 @@ export default function StationSchedule({
           <Button
             variant="ghost"
             disabled={busy}
-            onClick={() => void stationApi.selectRoute(winner, false)}
+            onClick={() => {
+              void stationApi.selectRoute(winner, false).catch((e: unknown) => {
+                setError(
+                  `选线失败：${e instanceof Error ? e.message : String(e)}`,
+                );
+              });
+            }}
           >
             用这一条（下次请求生效）
           </Button>
@@ -186,169 +250,213 @@ export default function StationSchedule({
       </div>
 
       {error && <div className="qb-st-nudge">排序失败：{error}</div>}
-
-      <div className="qb-st-deck">
-        <div className="qb-card">
-          <h3>按什么挑</h3>
-          <div className="qb-st-goals">
-            {AXES.map((a) => {
-              const on = prefs.axes.includes(a);
-              const flat = ranking?.indistinguishable.includes(a);
-              return (
-                <label key={a} className={`qb-st-goal${on ? " on" : ""}`}>
-                  <input
-                    type="checkbox"
-                    checked={on}
-                    onChange={() => toggle(a)}
-                  />
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span className="gn">{AX[a].label}</span>
-                    <span className="gd">
-                      {AX[a].desc}
-                      {on && flat && " · 本页线路在这一项上分不出高下，已忽略"}
-                    </span>
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-
-          <p className="qb-st-note">
-            勾的几项里，<b>最弱的那一项最好</b>的那条赢。勾得越多，越不会拿到
-            「某一项特别烂」的线路；一项都不勾就是「随便，别乱换」。
-          </p>
-
-          <h3 style={{ marginTop: 12 }}>底线（可以不设）</h3>
-          <p className="qb-st-note">先筛掉，不参与排序。</p>
-          <div className="qb-st-floors">
-            <Floor
-              label="成功率不低于"
-              suffix="%"
-              value={
-                prefs.floors.min_success_rate == null
-                  ? null
-                  : prefs.floors.min_success_rate * 100
-              }
-              fallback={99}
-              step={0.1}
-              onChange={(v) =>
-                setPrefs({
-                  ...prefs,
-                  floors: {
-                    ...prefs.floors,
-                    min_success_rate: v == null ? null : v / 100,
-                  },
-                })
-              }
-            />
-            <Floor
-              label="首字 P95 不超过"
-              suffix="秒"
-              value={
-                prefs.floors.max_ttft_p95_ms == null
-                  ? null
-                  : Number(prefs.floors.max_ttft_p95_ms) / 1000
-              }
-              fallback={3}
-              step={0.1}
-              onChange={(v) =>
-                setPrefs({
-                  ...prefs,
-                  floors: {
-                    ...prefs.floors,
-                    max_ttft_p95_ms:
-                      v == null ? null : BigInt(Math.round(v * 1000)),
-                  },
-                })
-              }
-            />
-            <Floor
-              label="倍率不超过 ×"
-              suffix=""
-              note="按实测倍率比，没检验过的按标称；充值比例不是 1 元 = 1 美元额度的站，先乘上它（每 $1 牌价付几元）"
-              value={prefs.floors.max_rate}
-              fallback={0.5}
-              step={0.01}
-              onChange={(v) =>
-                setPrefs({ ...prefs, floors: { ...prefs.floors, max_rate: v } })
-              }
-            />
-          </div>
-
-          <div
-            style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12 }}
-          >
-            {PRESETS.map((p) => (
-              <Button
-                key={p.name}
-                variant="ghost"
-                onClick={() => setPrefs(p.prefs)}
-              >
-                {p.name}
-              </Button>
-            ))}
-            <Button variant="ghost" onClick={() => setPrefs(DEFAULT_PREFS)}>
-              默认
-            </Button>
-          </div>
+      {settingsError && <div className="qb-st-nudge">{settingsError}</div>}
+      {saving && (
+        <div className="qb-st-save-state" role="status">
+          正在保存调度偏好…
         </div>
+      )}
 
-        <div className="qb-card">
-          <h3>赛道</h3>
-          <p className="qb-st-note">
-            {ranking?.rows.length
-              ? `每根条 = 跟本页最好那条的比值，1.00 最好${
-                  view?.basis === "cost-per-token"
-                    ? "。「便宜」用的是 24h 实扣 ÷ 实际 token（算进了缓存命中）"
-                    : view?.basis === "blended-ratio"
-                      ? "。「便宜」按这条线实际的输入输出比，把四类的「站点单价 ÷ 官方单价」加权 —— 把输出另外加了价的站，输出多就会被算贵"
-                      : view?.basis === "real-rate"
-                        ? "。「便宜」用的是真实倍率 —— 连 token 结构都拿不到，整池退回这个粗口径"
-                        : ""
-                }${
-                  view?.basis && view.basis !== "unavailable"
-                    ? "；不同站点先按各自的充值比例（1 美元额度付几元）折成同一种钱再比"
-                    : ""
-                }`
-              : "还没有可排的线路"}
-          </p>
-          <div className="qb-st-lanes">
-            {ranking?.rows.map((row, i) => (
-              <Lane key={row.route_id} row={row} index={i} />
-            ))}
+      <div
+        className="qb-st-schedule-tabs"
+        role="group"
+        aria-label="调度设置内容"
+      >
+        <button
+          type="button"
+          aria-pressed={tab === "status"}
+          onClick={() => setTab("status")}
+        >
+          运行状态
+        </button>
+        <button
+          type="button"
+          aria-pressed={tab === "prefs"}
+          onClick={() => setTab("prefs")}
+        >
+          选择偏好
+        </button>
+      </div>
+
+      <div hidden={tab !== "status"} className="qb-st-schedule-panel">
+        <StationDispatch client={client} />
+      </div>
+
+      <div hidden={tab !== "prefs"} className="qb-st-schedule-panel">
+        <div className="qb-st-deck">
+          <div className="qb-card">
+            <h3>按什么挑</h3>
+            <div className="qb-st-goals">
+              {AXES.map((a) => {
+                const on = prefs.axes.includes(a);
+                const flat = ranking?.indistinguishable.includes(a);
+                return (
+                  <label key={a} className={`qb-st-goal${on ? " on" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => toggle(a)}
+                    />
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span className="gn">{AX[a].label}</span>
+                      <span className="gd">
+                        {AX[a].desc}
+                        {on &&
+                          flat &&
+                          " · 本页线路在这一项上分不出高下，已忽略"}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+
+            <p className="qb-st-note">
+              勾的几项里，<b>最弱的那一项最好</b>的那条赢。勾得越多，越不会拿到
+              「某一项特别烂」的线路；一项都不勾就是「随便，别乱换」。
+            </p>
+
+            <h3 style={{ marginTop: 12 }}>底线（可以不设）</h3>
+            <p className="qb-st-note">先筛掉，不参与排序。</p>
+            <div className="qb-st-floors">
+              <Floor
+                label="成功率不低于"
+                suffix="%"
+                value={
+                  prefs.floors.min_success_rate == null
+                    ? null
+                    : prefs.floors.min_success_rate * 100
+                }
+                fallback={99}
+                step={0.1}
+                onChange={(v) =>
+                  setPrefs({
+                    ...prefs,
+                    floors: {
+                      ...prefs.floors,
+                      min_success_rate: v == null ? null : v / 100,
+                    },
+                  })
+                }
+              />
+              <Floor
+                label="首字 P95 不超过"
+                suffix="秒"
+                value={
+                  prefs.floors.max_ttft_p95_ms == null
+                    ? null
+                    : Number(prefs.floors.max_ttft_p95_ms) / 1000
+                }
+                fallback={3}
+                step={0.1}
+                onChange={(v) =>
+                  setPrefs({
+                    ...prefs,
+                    floors: {
+                      ...prefs.floors,
+                      max_ttft_p95_ms:
+                        v == null ? null : BigInt(Math.round(v * 1000)),
+                    },
+                  })
+                }
+              />
+              <Floor
+                label="倍率不超过 ×"
+                suffix=""
+                note="按实测倍率比，没检验过的按标称；充值比例不是 1 元 = 1 美元额度的站，先乘上它（每 $1 牌价付几元）"
+                value={prefs.floors.max_rate}
+                fallback={0.5}
+                step={0.01}
+                onChange={(v) =>
+                  setPrefs({
+                    ...prefs,
+                    floors: { ...prefs.floors, max_rate: v },
+                  })
+                }
+              />
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: 6,
+                flexWrap: "wrap",
+                marginTop: 12,
+              }}
+            >
+              {PRESETS.map((p) => (
+                <Button
+                  key={p.name}
+                  variant="ghost"
+                  onClick={() => setPrefs(p.prefs)}
+                >
+                  {p.name}
+                </Button>
+              ))}
+              <Button variant="ghost" onClick={() => setPrefs(DEFAULT_PREFS)}>
+                默认
+              </Button>
+            </div>
           </div>
-          <p className="qb-st-note" style={{ marginTop: 10 }}>
-            {ranking?.floors_relaxed && (
-              <>
-                ⚠ 你设的底线现在一条线路都满足不了 ——
-                仍然照常走，但下面这些都是没过线的，别当成合格。
-                <br />
-              </>
-            )}
-            {ranking?.breakers_relaxed && (
-              <>
-                ⚠ 所有线路都在熔断中 —— 仍然留一条给你用，如实报错，不制造死局。
-                <br />
-              </>
-            )}
-            {ranking && ranking.indistinguishable.length > 0 && (
-              <>
-                「
-                {ranking.indistinguishable.map((a) => AX[a].label).join("」「")}
-                」在本页线路上差距太小，分不出高下，没有参与排序。
-                <br />
-              </>
-            )}
-            这里只是这一轮的排名；真要换第一条还得过「换第一条的防抖」（领先多少、几个样本、连续几轮），
-            熔断中或没过底线的线永远不会被换上来当第一。
-          </p>
+
+          <div className="qb-card">
+            <h3>赛道</h3>
+            <p className="qb-st-note">
+              {ranking?.rows.length
+                ? `每根条 = 跟本页最好那条的比值，1.00 最好${
+                    view?.basis === "cost-per-token"
+                      ? "。「便宜」用的是 24h 实扣 ÷ 实际 token（算进了缓存命中）"
+                      : view?.basis === "blended-ratio"
+                        ? "。「便宜」按这条线实际的输入输出比，把四类的「站点单价 ÷ 官方单价」加权 —— 把输出另外加了价的站，输出多就会被算贵"
+                        : view?.basis === "real-rate"
+                          ? "。「便宜」用的是真实倍率 —— 连 token 结构都拿不到，整池退回这个粗口径"
+                          : ""
+                  }${
+                    view?.basis && view.basis !== "unavailable"
+                      ? "；不同站点先按各自的充值比例（1 美元额度付几元）折成同一种钱再比"
+                      : ""
+                  }`
+                : "还没有可排的线路"}
+            </p>
+            <div className="qb-st-lanes">
+              {ranking?.rows.map((row, i) => (
+                <Lane key={row.route_id} row={row} index={i} />
+              ))}
+            </div>
+            <p className="qb-st-note" style={{ marginTop: 10 }}>
+              {ranking?.floors_relaxed && (
+                <>
+                  ⚠ 你设的底线现在一条线路都满足不了 ——
+                  仍然照常走，但下面这些都是没过线的，别当成合格。
+                  <br />
+                </>
+              )}
+              {ranking?.breakers_relaxed && (
+                <>
+                  ⚠ 所有线路都在熔断中 ——
+                  仍然留一条给你用，如实报错，不制造死局。
+                  <br />
+                </>
+              )}
+              {ranking && ranking.indistinguishable.length > 0 && (
+                <>
+                  「
+                  {ranking.indistinguishable
+                    .map((a) => AX[a].label)
+                    .join("」「")}
+                  」在本页线路上差距太小，分不出高下，没有参与排序。
+                  <br />
+                </>
+              )}
+              这里只是这一轮的排名；真要换第一条还得过「换第一条的防抖」（领先多少、几个样本、连续几轮），
+              熔断中或没过底线的线永远不会被换上来当第一。
+            </p>
+          </div>
         </div>
       </div>
 
-      <StationDispatch client={client} />
-
-      <div className="qb-card">
-        <h3>熔断</h3>
+      <details className="qb-card qb-st-schedule-explainer">
+        <summary>故障处理规则</summary>
         <p className="qb-st-note">三档分开，合并成一档必然误伤。</p>
         <div className="qb-st-brks">
           <div className="qb-st-brk warn">
@@ -390,8 +498,8 @@ export default function StationSchedule({
             <span className="set">不打断进行中的那一条</span>
           </div>
         </div>
-      </div>
-    </>
+      </details>
+    </div>
   );
 }
 

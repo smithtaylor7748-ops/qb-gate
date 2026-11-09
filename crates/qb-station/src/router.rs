@@ -201,9 +201,14 @@ impl ClientRouter {
 #[serde(default)]
 pub struct RouterSettings {
     pub client: Client,
-    /// 自动故障转移：这条线失败了改用队列里的下一条。**默认开**（使用者定的）；
-    /// 关掉就只打当前那一条、失败照实回给客户端（cc-switch 的默认是关）。
-    pub auto_failover: bool,
+    /// 唯一的跨线路授权开关。旧配置没有此字段时只用当前线路；旧 auto_failover 不构成授权。
+    pub routing_mode: RoutingMode,
+    /// 使用者明确允许的线路，顺序也是未启用智能排序时的备用顺序。新增线路不会自动加入。
+    pub allowed_routes: Vec<String>,
+    /// 授权池内优先/备用，或按当前并发占用分摊；仅 pool 生效。
+    pub pool_strategy: PoolStrategy,
+    /// 可选的本机发送限制。旧配置保持不限并发、不限 RPM、不等候。
+    pub admission: AdmissionSettings,
     /// 一发请求最多试几条线（含第一条）。
     pub max_attempts: u32,
     /// 流式请求：响应头回来之后多久没等到第一块数据就算超时（秒，0 = 不限）。
@@ -217,6 +222,71 @@ pub struct RouterSettings {
     pub rectifier: RectifierSwitches,
     /// 聚合模型（中转站重构阶段 3）。老数据没有就是关着。
     pub aggregate: AggregateSettings,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub enum RoutingMode {
+    #[default]
+    Selected,
+    Pool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub enum PoolStrategy {
+    #[default]
+    Priority,
+    LeastLoaded,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(default)]
+pub struct RouteLimits {
+    /// 0 = 不限制。
+    pub max_concurrent: u32,
+    /// 滚动 60 秒内实际发送次数；0 = 不限制。
+    pub rpm: u32,
+    /// 只采信已查询且仍新鲜的明确不可用证据，不主动拉额度。
+    pub check_quota: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(default)]
+pub struct AdmissionSettings {
+    pub route_limits: std::collections::BTreeMap<String, RouteLimits>,
+    /// 最多等候毫秒数；0 = 不排队。
+    pub max_wait_ms: u32,
+    /// 每条线路最多等候人数；0 = 不排队。
+    pub max_waiters: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RouteAdmissionView {
+    pub route_id: String,
+    pub active: u32,
+    pub waiting: u32,
+    pub rpm_used: u32,
+    pub retry_at_ms: Option<i64>,
+    pub reason: Option<String>,
+    pub quota_checked_at_ms: Option<i64>,
+    pub quota_state: QuotaAdmissionState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub enum QuotaAdmissionState {
+    Disabled,
+    Unknown,
+    Stale,
+    Available,
+    Exhausted,
 }
 
 /// 聚合模型（cc-switch 的 Stack 模式，只搬了本机路由那一半，见 `qb_proxy::aggregate`）：名单里每条线的模型以
@@ -296,7 +366,10 @@ impl RouterSettings {
         let codex = matches!(client, Client::Codex | Client::GrokBuild);
         Self {
             client,
-            auto_failover: true,
+            routing_mode: RoutingMode::Selected,
+            allowed_routes: Vec::new(),
+            pool_strategy: PoolStrategy::Priority,
+            admission: AdmissionSettings::default(),
             max_attempts: if codex { 3 } else { 6 },
             first_byte_timeout_secs: if codex { 60 } else { 90 },
             idle_timeout_secs: if codex { 300 } else { 180 },
@@ -318,6 +391,24 @@ impl RouterSettings {
     pub fn validate(&self) -> std::result::Result<(), String> {
         const MAX_TIMEOUT_SECS: u32 = 3600;
         let mut problems = Vec::new();
+        if self.admission.max_wait_ms > 60_000 || self.admission.max_waiters > 1024 {
+            problems.push("本机等候最多 60000 毫秒、每条线路最多 1024 人".to_string());
+        }
+        if self.admission.route_limits.len() > 256 {
+            problems.push("最多为 256 条线路设置发送限制".to_string());
+        }
+        for limits in self.admission.route_limits.values() {
+            if limits.max_concurrent > 1024 || limits.rpm > 60_000 {
+                problems.push("每条线路并发最多 1024、RPM 最多 60000；0 表示不限制".to_string());
+                break;
+            }
+        }
+        if self.routing_mode == RoutingMode::Pool && self.allowed_routes.is_empty() {
+            problems.push("请明确勾选允许使用的线路，空名单不能启用自动选线".to_string());
+        }
+        if self.allowed_routes.len() > 64 {
+            problems.push("允许使用的线路最多 64 条".to_string());
+        }
         if !(1..=20).contains(&self.max_attempts) {
             problems.push(format!(
                 "一发最多试几条线要在 1 到 20 之间（填的是 {}）",
@@ -471,7 +562,7 @@ pub fn mask_proxy_url(url: &str) -> String {
 
 /// 一个软件的派单队列（落盘的那一份，存在 `dispatch_queue` 表里，一个软件一行）。
 ///
-/// 当前那条失败时按 `order` 往下试（自动故障转移，见 [`RouterSettings::auto_failover`]）。
+/// 在允许线路池内，当前那条失败时按 `order` 往下试（见 [`RouterSettings::routing_mode`]）。
 /// 调度关着时 `order` 是使用者在「路由设置」里手动排的；**调度开着时由调度排**
 /// （`schedule::dispatch`，中转站重构阶段 2），连同钉住、防抖记忆和这一轮的结论一起存在这里。
 ///
@@ -783,9 +874,10 @@ mod tests {
     }
 
     #[test]
-    fn router_settings_default_to_cc_switch_s_per_app_table_with_failover_on() {
+    fn router_settings_default_to_selected_and_old_failover_does_not_grant_permission() {
         let claude = RouterSettings::for_client(Client::ClaudeCode);
-        assert!(claude.auto_failover, "自动故障转移默认开（使用者定的）");
+        assert_eq!(claude.routing_mode, RoutingMode::Selected);
+        assert!(claude.allowed_routes.is_empty());
         assert_eq!(
             (
                 claude.max_attempts,
@@ -813,9 +905,11 @@ mod tests {
         assert!(claude.rectifier.enabled && claude.rectifier.thinking_signature);
         // 存下来的缺字段按默认补。
         let parsed: RouterSettings =
-            serde_json::from_str(r#"{"client":"codex","max_attempts":2}"#).unwrap();
+            serde_json::from_str(r#"{"client":"codex","max_attempts":2,"auto_failover":true}"#)
+                .unwrap();
         assert_eq!(parsed.max_attempts, 2);
-        assert!(parsed.auto_failover);
+        assert_eq!(parsed.routing_mode, RoutingMode::Selected);
+        assert!(parsed.allowed_routes.is_empty());
     }
 
     #[test]
@@ -860,6 +954,37 @@ mod tests {
         assert!(why.contains("聚合名单最多"), "{why}");
         assert!(why.contains("一条线最多发布"), "{why}");
         assert!(why.contains("控制字符"), "{why}");
+    }
+
+    #[test]
+    fn admission_limits_are_opt_in_and_invalid_bounds_are_rejected() {
+        let old: RouterSettings =
+            serde_json::from_str(r#"{"client":"codex","auto_failover":true}"#).unwrap();
+        assert_eq!(old.pool_strategy, PoolStrategy::Priority);
+        assert_eq!(old.admission, AdmissionSettings::default());
+        let mut cfg = old;
+        cfg.admission.max_wait_ms = 60_001;
+        cfg.admission.max_waiters = 1025;
+        cfg.admission.route_limits.insert(
+            "a".into(),
+            RouteLimits {
+                max_concurrent: 1025,
+                rpm: 60_001,
+                check_quota: true,
+            },
+        );
+        assert!(cfg.validate().is_err());
+        cfg.admission.max_wait_ms = 60_000;
+        cfg.admission.max_waiters = 1024;
+        cfg.admission.route_limits.insert(
+            "a".into(),
+            RouteLimits {
+                max_concurrent: 1024,
+                rpm: 60_000,
+                check_quota: true,
+            },
+        );
+        assert!(cfg.validate().is_ok());
     }
 
     #[test]

@@ -72,6 +72,16 @@ pub(super) async fn relay(
 
     let tried = Instant::now();
     let url = join_url(&upstream.base_url, &path);
+    if !state
+        .lock()
+        .is_ok_and(|s| s.route_allowed(caller, &route_id))
+    {
+        let message = "当前线路已经切换；没有向原官方线路发送请求";
+        record.log.status = Some(403);
+        record.log.fault = Some("route-permission-denied".into());
+        record.log.error = Some(message.into());
+        return text(StatusCode::FORBIDDEN, message);
+    }
     let sent = http
         .request(method, &url)
         .headers(headers)

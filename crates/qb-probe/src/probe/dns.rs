@@ -7,7 +7,7 @@
 //!   `1..10.<id>.bash.ws`，bash.ws 的权威域名服务器会记录**是谁来查的**，再拉
 //!   `https://bash.ws/dnsleak/test/<id>?json` 把解析器清单读回来。
 //!   这是 dnsleaktest.com 那一套的公开接口，不需要自建服务器。
-//!   调用时序照 ygbull/DNSLeakTester 校准（代码没抄，见 ATTRIBUTION）。
+//!   调用时序照 ygbull/DNSLeakTester 校准（代码没抄）。
 //!
 //!   ⛔ **回显的形状不假设**（2026-09-25）：有使用者那边整份回的是一个 JSON 对象，原来的
 //!   `from_str::<Vec<_>>` 报「JSON 解析失败: invalid type: map, expected a sequence」，整次检测作废 ——

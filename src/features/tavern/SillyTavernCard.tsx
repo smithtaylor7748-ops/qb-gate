@@ -132,7 +132,7 @@ export default function SillyTavernCard() {
         <p className="notice mb-2 break-words">
           从 SillyTavern 官方 GitHub
           取正式版，原样解压、装依赖，三个账户页的酒馆共用这一份；
-          三条桥的设置在各自账户页「酒馆」磁贴右上角。
+          各条桥接的设置在对应账户页「酒馆」磁贴右上角，反重力页另含原生桥接。
           {s?.root && (
             <>
               {" "}

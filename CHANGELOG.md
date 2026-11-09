@@ -1,5 +1,20 @@
 # Changelog
 
+## 未发布
+
+- **补上可选的反重力原生酒馆桥**：在 Gemini 桥接设置内明确选择一个 IDE 账户、读取该账户真实模型后启动，默认不选账户、不启动。文本 Chat Completions 支持增量 SSE、非流式回复和 token 用量；固定官方生产端点，登录变化即拒绝，不混用 Hub / Gemini CLI 身份，不轮换账户、不回退中转。保留原 Gemini CLI 桥，真实账户聊天仍未验证。
+- **中转请求增加可选发送限制与负载分流**：每条线路可设置并发上限、RPM 和明确额度检查，支持有限等候人数与总时限；默认均关闭。并发名额保留到响应流结束或取消，重试与测活共享实际发送计数，未发送的本机拒绝不伪造上游错误或消费。仅显式许可池可选“优先空闲线路”，普通选线仍严格限定该条。
+- **额度准入只使用可靠证据**：当前仅内置 DeepSeek 的 `is_available` 提供机器可用性，5 分钟内明确不可用且该线开启检查时才拦截；余额为 0、未知或过期均不自行推断，发送路径不主动刷新额度。修改来源会作废旧证据。这是发送准入，不是聊天费用硬预算。
+- **手动选线真正限定请求去向**：新增“仅所选线路 / 允许所勾选线路”。默认与旧配置升级均只用所选线路；普通选线和指定线路启动会停止智能调度，失败直接返回。跨线备用和智能调度只使用明确勾选并保存的名单，新增线路不会自动获准；池内固定首选与普通选线分开。聚合模型、首发和每次重试都检查最新允许范围，删除或撤销会阻止尚未发送的旧候选，已经发送的请求继续完成。
+- **手动切线和自动调度不再被旧快照覆盖**：账单读取完成后提交前，重新核对开关、偏好、允许范围、落盘队列与内存当前/待用线路；过期调度结果作废。设置页区分当前、下一发、实际尝试链及未发送的许可拒绝，并显示读写失败。
+- **总 Token / 总消费不再依赖站点账单卡片**：新增本机路由全记录汇总，支持滚动 1 小时、24 小时、7 天和全部历史（含归档）；缺失 Token 或价格保持“—”，不伪报为 0。总消费注明 USD 站内估算及已知价格范围。
+- **支持主动接收 CC Switch 网页导入链接**：用户明确接管 `ccswitch://` 后才登记，迁移安装目录也保留最初处理者备份，失败则恢复操作前状态。卸载仅有备份时执行恢复，无法启动恢复程序时明确中止。开发版不接管协议；真实注册表、卸载和安装包尚未实机验证。
+- **修复 GPT / Gemini CLI 酒馆桥接兼容性**：GPT 仅在 CLI 帮助明确支持时加入 `--ignore-user-config`；Google 返回 `UNSUPPORTED_CLIENT` 时给出说明。SillyTavern 替代连接使用真实中转线路及正确前缀（GPT `/codex/v1`、Gemini `/gemini`），拒绝官方 Codex、缺 Key 和明确不兼容的线路。未用真实账户完成酒馆端到端聊天。
+- **Claude 页关闭动作不再全局关停**：专用范围仅处理 Claude Desktop / Code / 桥接会话；全局紧急停止能力保留。
+- **更新有已知漏洞的依赖**：`rmcp` 升至 3.9.0，`rusqlite` 升至 0.41.1（`libsqlite3-sys` 0.39.1），对应 RustSec `RUSTSEC-2026-0457` / `0459` / `0461` / `0462`。源码构建最低 Rust 提升为 1.89；产品版本暂不变。
+
+检查：最终 Rust workspace 3067 通过、0 失败（2 个既有文档示例忽略），clippy --lib / fmt / deny 通过；前端 267 项 / 59 文件、build / types:check（345 类型）/ format / release:check 与完整 UI 151 + 27 通过。mock 覆盖原生桥协议 / SSE、准入计数 / 取消 / 等待期限和最新授权；UI 覆盖严格选线、许可池及容量设置。21 张原截图全部还原并核对 SHA-256。测试脚本改用 Vite 官方 API 等待静态依赖热身，保留浏览器导航时限。真实账户聊天、真实协议登记 / 卸载及安装版切线与容量仍待验；本轮未安装或重启运行实例，产品版本仍为 0.25.11。
+
 ## 0.25.10 — 2026-11-05
 
 - 修复了若干 bug。
@@ -496,7 +511,7 @@ ChatGPT Pro 20x ≈ $14,000 …），整组换成帖子里网友估算的**周�
 ### 2026-09-23：GPT / Gemini 登录态（对照 cockpit-tools）· 起 GPT 槽位不再关掉别处的 Codex
 
 使用者：「GPT 和 Gemini 的登录态你对着那个开源项目修一下，因为 GPT 有时候突然弹出第二个使用页面」。
-读了 cockpit-tools 的 Codex 账户与多开那几处（CC BY-NC-SA，只记行为事实、一行没抄，见 ATTRIBUTION），
+读了 cockpit-tools 的 Codex 账户与多开那几处（CC BY-NC-SA，只记行为事实、一行没抄），
 对照出三处：
 
 - **起 / 切 GPT 槽位之前会把所有 Codex 桌面端都关掉 —— 连别处起的也关。** 0.25.0 起走的是按官方包
@@ -864,7 +879,7 @@ Gemini CLI 装不上、酒馆的 GPT / Gemini 起不来 —— 使用者连着�
 
 ## 0.28.0 — 2026-09-20
 
-- **Codex 桌面端不开 Store 也能装**（融入 chrichuang218/codex-windows-cn 与 Wangnov/codex-app-mirror 两个 MIT 项目的做法，使用者定的）。面板对这个 Store 包早就能检测、按槽位启动、上锁、挂看门狗，唯独装不了 —— 找不到时只会说「请自行到 Store 装」。现在软件页新增「Codex 桌面端（Microsoft Store）」卡：**A 路** `winget install --source msstore`（Store 自己的部署通道，系统管注册，不提权）；没成走 **B 路** 直连微软：DisplayCatalog 取类别 → FE3 `GetCookie` / `SyncUpdates` / `GetExtendedUpdateInfo2` 取签名过的 CDN 地址 → 下载官方 `.msix`（约 800 MB，进度按清单大小画）→ 核对清单 SHA-256 与 OpenAI 签名 → `Add-AppxPackage`（包里带打包服务要管理员时改走一次 UAC，拒绝就不装，包留在托管目录）。装完回读 `Get-AppxPackage` 核对，不看退出码。两条路装出来的都是**正规注册的 Store 包**（包身份、`codex://`、自动更新照旧）；**不采用**两个来源的「解压未打包运行」与「多版本 junction」。有「检查 Store 版本」（只查元数据）、「强制重装」（同版本重装，修复注册失效 / os error 5）、自带 `.msix` 三个口子。三份 SOAP 信封与匿名票据来自 codex-windows-cn（MIT，见 ATTRIBUTION）；解析器自写、全纯函数带单测；下载域限定 `delivery.mp.microsoft.com`；FE3 的证书链到微软自己的根（不在 Mozilla 清单里），内置那一张根证书只给这个客户端用，指纹有测试钉着。实机核过：DisplayCatalog → FE3 三步都通，读到 Store 最新版 26.915.4065.0、清单 SHA-256 与 825 MB 大小、`tlu.dl.delivery.mp.microsoft.com` 的地址；**没有真的下载安装**（见 KNOWN-ISSUES）。新 IPC `codex_desktop_install(local, force)` / `codex_desktop_latest`，进度任务 `install-codex-desktop`；账户页 GPT 卡没检测到桌面端时给「去软件页安装」。
+- **Codex 桌面端不开 Store 也能装**（融入 chrichuang218/codex-windows-cn 与 Wangnov/codex-app-mirror 两个 MIT 项目的做法，使用者定的）。面板对这个 Store 包早就能检测、按槽位启动、上锁、挂看门狗，唯独装不了 —— 找不到时只会说「请自行到 Store 装」。现在软件页新增「Codex 桌面端（Microsoft Store）」卡：**A 路** `winget install --source msstore`（Store 自己的部署通道，系统管注册，不提权）；没成走 **B 路** 直连微软：DisplayCatalog 取类别 → FE3 `GetCookie` / `SyncUpdates` / `GetExtendedUpdateInfo2` 取签名过的 CDN 地址 → 下载官方 `.msix`（约 800 MB，进度按清单大小画）→ 核对清单 SHA-256 与 OpenAI 签名 → `Add-AppxPackage`（包里带打包服务要管理员时改走一次 UAC，拒绝就不装，包留在托管目录）。装完回读 `Get-AppxPackage` 核对，不看退出码。两条路装出来的都是**正规注册的 Store 包**（包身份、`codex://`、自动更新照旧）；**不采用**两个来源的「解压未打包运行」与「多版本 junction」。有「检查 Store 版本」（只查元数据）、「强制重装」（同版本重装，修复注册失效 / os error 5）、自带 `.msix` 三个口子。三份 SOAP 信封与匿名票据来自 codex-windows-cn（MIT，许可原文见 THIRD_PARTY_NOTICES.txt）；解析器自写、全纯函数带单测；下载域限定 `delivery.mp.microsoft.com`；FE3 的证书链到微软自己的根（不在 Mozilla 清单里），内置那一张根证书只给这个客户端用，指纹有测试钉着。实机核过：DisplayCatalog → FE3 三步都通，读到 Store 最新版 26.915.4065.0、清单 SHA-256 与 825 MB 大小、`tlu.dl.delivery.mp.microsoft.com` 的地址；**没有真的下载安装**（见 KNOWN-ISSUES）。新 IPC `codex_desktop_install(local, force)` / `codex_desktop_latest`，进度任务 `install-codex-desktop`；账户页 GPT 卡没检测到桌面端时给「去软件页安装」。
 - **修复：软件页「安装 / 重新下载安装」Claude Code / Codex CLI 与托管那份的「升级」一点下去永远转圈。** `install_run` / `upgrade_execute` 拿着 `operations::exclusive()` 再调 `managed_install`，而它开头又拿一次 —— tokio 的 Mutex 不可重入，就在自己手里的锁上永远等着：没有报错、没有一段进度。0.22.6 到 0.27.0 都是这样，待办里托管安装一直标着「未验证」。去掉里面那次；`architecture.rs` 新增 `helpers_called_under_the_exclusive_lock_never_take_it_again` 读源码钉住。
 - **修复：Codex CLI 卡「卸载提示词」给的是 Claude 的提示词。** 原来只分 Chrome / 其它，其它一律是通篇 Claude 路径的那份。新增 Codex 专属提示词（Store 包、npm / winget / 手动解压三种 CLI 落点、`~\.codex`、凭据管理器、`OPENAI_API_KEY` 别的工具也在用所以默认不删）。
 - **卸载提示词做成弹窗。** 原来内联在整页最底部的一张卡 —— 点顶上 Claude Code 卡的按钮，内容出现在六张卡之后，看不见它弹出来了。两份提示词都补上「面板够不到的两块」：WSL 发行版与本机其它 Windows 用户账户（卡上那句「兜面板够不到的地方」原来是句空话，提示词里根本没提）。
@@ -1492,7 +1507,7 @@ Text no longer escapes its box.
 - Startup recovery no longer aborts on the first unreadable or unsettled journal. Bad records are listed with their paths and reasons, and the recovery view can move just those into `quarantine/` instead of leaving the panel permanently unusable.
 - Relay sessions are no longer stopped by the gate. Unlocking and the lease still require a verified exit IP (the Deny ACE is per file, so bypassing it would be a bypass entrance), but an IP change no longer kills relay work and the in-session hook is kept out of relay directories.
 - Capped `operations`, `sessions` and `diagnostics` history, and added a retention period for on-disk recovery journals, which each hold a sealed copy of the previous configuration. Live and unverified sessions and journals still referenced by an environment rollback are never removed.
-- "Check for source updates" no longer overwrites the curated pins recorded in ATTRIBUTION.md; it reports upstream commits instead, and a single unreachable source no longer aborts the whole check. Results are now shown in the UI.
+- "Check for source updates" no longer overwrites the reviewed versions pinned in the extension catalog; it reports upstream commits instead, and a single unreachable source no longer aborts the whole check. Results are now shown in the UI.
 - Skills can no longer be installed into Codex, which never reads `skills/`.
 - Added a way to discard an unverifiable session record, which previously blocked account switching, migration, snapshot restore and version rollback with no in-app remedy.
 - User-initiated commands now queue briefly for the coordination lock instead of failing immediately when the watchdog holds it.

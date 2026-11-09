@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 导入链接（中转站重构阶段 5，cc-switch 的 X4 Deep Link）：`qbgate://v1/import?resource=…` → 一个导入请求。
 //!
 //! 链接格式照搬 cc-switch 的 v1（`ccswitch://v1/import?…`），所以中转站页面上给 CC Switch 的导入链接
@@ -269,6 +269,10 @@ fn parse_provider(params: &HashMap<String, String>) -> Result<ProviderLink> {
     if wants_enabled(params) {
         link.ignored
             .push("链接要求导入后直接用这条线：QB Gate 不替你切，导入后在中转站页点它".into());
+    }
+    if params.contains_key("icon") || params.contains_key("iconUrl") {
+        link.ignored
+            .push("站点图标（icon / iconUrl）：出于安全考虑，本次没有导入".into());
     }
     if params.keys().any(|k| k.starts_with("usage")) {
         link.ignored
@@ -632,7 +636,10 @@ mod tests {
         assert_eq!(a.model.as_deref(), Some("m-main"));
         assert_eq!(a.haiku_model.as_deref(), Some("m-h"));
         assert_eq!(a.api_format, Some(LinkFormat::OpenAiChat));
-        assert!(a.ignored.is_empty(), "图标直接丢掉，不算没导入的部分");
+        assert_eq!(
+            a.ignored,
+            ["站点图标（icon / iconUrl）：出于安全考虑，本次没有导入"]
+        );
     }
 
     #[test]

@@ -105,7 +105,7 @@ function Footer({ onClose }: { onClose: () => void }) {
           onClick={() => void stop()}
           data-testid="tavern-stop"
         >
-          停止酒馆（三条桥一起停）
+          停止酒馆（所有桥接一起停）
         </Button>
       </div>
       <div className="tv-panel-foot-group">

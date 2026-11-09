@@ -547,6 +547,8 @@ pub enum Scope {
     /// 切 Claude 账户之前的清场：只收 Claude 的（桌面端、Claude Code、酒馆桥接）。
     /// 反重力是 Google 账户，跟 Claude 槽位无关 —— 跟 [`needs_clearing`] 同一条。
     AccountSwitch,
+    /// Claude 页的关闭按钮：Claude 桌面端、CLI、桥接（包括 Claude 中转会话）。
+    Claude,
 }
 
 /// 按范围筛目标。**纯函数**。`relay_owned` 回答「这个 PID 是不是中转会话的」，
@@ -564,6 +566,7 @@ pub fn in_scope(
                 !relay_owned(t.pid) && (antigravity || t.role != Role::Antigravity)
             }
             Scope::AccountSwitch => !relay_owned(t.pid) && t.role != Role::Antigravity,
+            Scope::Claude => matches!(t.role, Role::Desktop | Role::Code | Role::Bridge),
         })
         .collect()
 }
@@ -722,10 +725,12 @@ async fn execute_scoped(scope: Scope) -> Result<KillReport> {
 /// 两份就会分叉，而分叉的症状是「校验时算的是一批、真去停的是另一批」——
 /// 没有任何报错，只是某个会话没被收掉，然后在它脚下换了资料目录。
 pub fn needs_clearing(s: &Session) -> bool {
-    s.context.identity_kind == IdentityKind::Official
-        && s.context.client != Client::Codex
-        // 反重力同理：Google 账户，跟 Claude 槽位无关（0.26.0）。
-        && !s.context.client.is_antigravity()
+    s.context.identity_kind == IdentityKind::Official && is_claude_session(s)
+}
+
+/// 按客户端正向识别，新增别家的客户端也不会被 Claude 的关闭动作收进去。
+pub fn is_claude_session(s: &Session) -> bool {
+    matches!(s.context.client, Client::ClaudeCode | Client::ClaudeDesktop)
 }
 
 /// 清场没清干净时给使用者看的那句话。
@@ -833,7 +838,7 @@ mod tests {
     }
 
     #[test]
-    fn the_three_scopes_take_different_processes() {
+    fn the_four_scopes_take_different_processes() {
         // 2026-09-25：切 Claude 账户原来用的是门禁那一档，把反重力 IDE 一起关了，
         // 确认框却只数 Claude 的三类。三件事三个范围，钉在这里。
         let all = || {
@@ -851,6 +856,11 @@ mod tests {
             pids(&in_scope(all(), Scope::Everything, relay)),
             vec![1, 2, 3, 4, 5],
             "使用者手点一键关闭：全收"
+        );
+        assert_eq!(
+            pids(&in_scope(all(), Scope::Claude, relay)),
+            vec![1, 2, 3, 5],
+            "Claude 页关闭：只收 Claude 桌面端、CLI 与桥接，保留反重力"
         );
         assert_eq!(
             pids(&in_scope(all(), Scope::AccountSwitch, relay)),

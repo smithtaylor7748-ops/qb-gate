@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 共存型工具自己的说明 / 记忆文件（中转站重构阶段 5，C3 / C4 的附带件，照 cc-switch）：
 //! OpenClaw 的工作区文件和每日记忆、Hermes 的两份记忆（加 `config.yaml` 里的开关和字数上限）、
 //! Pi 的系统提示词文件和斜杠命令模板。

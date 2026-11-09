@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! Skills 的来源（中转站重构阶段 5，cc-switch 的 M2）：从 GitHub 仓库 / 本地目录找出里面的 Skill、取文件、看有没有更新，
 //! 以及 skills.sh 的搜索。装到哪、怎么同步在 `qb-app::usecase::skill_ops`。
 //!

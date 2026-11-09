@@ -5,6 +5,10 @@ import type { SiteQuotaKind } from "./SiteQuotaKind";
 
 export type SiteQuota = { 
 /**
+ * 上游明确声明的可用性。余额为零不推导此字段；未提供就是未知。
+ */
+available: boolean | null, 
+/**
  * 认出来是哪一家（界面上的名字）。
  */
 provider: string, kind: SiteQuotaKind, balances: Array<SiteBalance>, windows: Array<SitePlanWindow>, 

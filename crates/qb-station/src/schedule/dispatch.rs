@@ -1,6 +1,6 @@
 //! 派单：一个软件的线路排成一个队列 —— 第一条是当前上游（p1），后面是失败时依次改用的热备。
 //!
-//! 改写自 sub2guard v2 的 `scheduler/rank.py` 的 `decide`（中转站重构阶段 2；ATTRIBUTION 的 sub2guard 一节），
+//! 改写自 sub2guard v2 的 `scheduler/rank.py` 的 `decide`（中转站重构阶段 2），
 //! 接到 QB Gate 自己的排序上（使用者定的「分档 + 档内按勾选项」，交接文档 §1.2）：
 //!
 //! | 档 | 是谁 | sub2guard 里对应 |

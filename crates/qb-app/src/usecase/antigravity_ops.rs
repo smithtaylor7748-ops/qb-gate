@@ -278,6 +278,13 @@ pub fn ide_select(id: &str) -> Result<()> {
 /// 面板**不替他认** —— IDE 的邮箱在状态库里，而 CLI 那边只看凭据文件在不在、
 /// 从不读内容，没有任何依据把两者对上号。见 [`account::attach`]。
 pub fn ide_attach(into: &str, from: &str) -> Result<()> {
+    if super::antigravity_native_bridge::uses_account(into)
+        || super::antigravity_native_bridge::uses_account(from)
+    {
+        return Err(GateError::Other(
+            "原生桥接正在使用这个 IDE 账户，请先停止原生桥接再合并".into(),
+        ));
+    }
     account::attach(&account::root(), into, from)?;
     crate::audit::write(&format!(
         "反重力账户 {from} 并入 {into}（只改索引，没搬目录）"
@@ -286,6 +293,11 @@ pub fn ide_attach(into: &str, from: &str) -> Result<()> {
 }
 
 pub fn ide_archive(id: &str, defer: bool) -> Result<()> {
+    if super::antigravity_native_bridge::uses_account(id) {
+        return Err(GateError::Other(
+            "原生桥接正在使用这个 IDE 账户，请先停止原生桥接再移除".into(),
+        ));
+    }
     account::archive(&account::root(), id, defer)?;
     // 这条槽位联网问到的额度、换新来的令牌，一起从内存里忘掉。
     super::antigravity_quota::forget(&super::antigravity_quota::Source::Account(id.to_string()));

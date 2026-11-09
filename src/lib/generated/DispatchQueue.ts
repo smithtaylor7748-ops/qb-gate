@@ -7,7 +7,7 @@ import type { DispatchRow } from "./DispatchRow";
 /**
  * 一个软件的派单队列（落盘的那一份，存在 `dispatch_queue` 表里，一个软件一行）。
  *
- * 当前那条失败时按 `order` 往下试（自动故障转移，见 [`RouterSettings::auto_failover`]）。
+ * 在允许线路池内，当前那条失败时按 `order` 往下试（见 [`RouterSettings::routing_mode`]）。
  * 调度关着时 `order` 是使用者在「路由设置」里手动排的；**调度开着时由调度排**
  * （`schedule::dispatch`，中转站重构阶段 2），连同钉住、防抖记忆和这一轮的结论一起存在这里。
  *

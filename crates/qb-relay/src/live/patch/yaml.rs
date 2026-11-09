@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! YAML 按顶层小节替换（Hermes 的 `~/.hermes/config.yaml`、MiniMax Code 的 `~/.minimax/config.yaml`，中转站重构阶段 4）。
 //!
 //! 照搬 cc-switch `hermes_config.rs` 的 `find_yaml_section_range` / `replace_yaml_section` 一族：只换掉点名的那一个顶层键

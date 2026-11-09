@@ -995,6 +995,175 @@
   transform: translateX(3px);
 }
 
+.qb-st-dispatch-runtime {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 9px 0 11px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.qb-st-schedule-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.qb-st-schedule-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.qb-st-schedule-footnote {
+  flex: 1;
+}
+.qb-st-schedule-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 3px 2px 4px;
+}
+.qb-st-schedule-intro h3 {
+  margin: 4px 0 5px;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.qb-st-schedule-intro p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.qb-st-eyebrow {
+  color: var(--accent);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+.qb-st-schedule-cadence {
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 7px 11px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+.qb-st-schedule-workspace > .qb-st-verdict {
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+}
+.qb-st-schedule-workspace .qb-st-deck {
+  grid-template-columns: minmax(280px, 0.85fr) minmax(0, 1.15fr);
+  gap: 16px;
+}
+.qb-st-schedule-workspace .qb-card {
+  min-width: 0;
+}
+.qb-st-schedule-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  width: fit-content;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.qb-st-schedule-tabs button {
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+.qb-st-schedule-tabs button[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--border);
+  font-weight: 600;
+}
+.qb-st-schedule-panel:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.qb-st-schedule-explainer > summary {
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+@media (max-width: 980px) {
+  .qb-st-schedule-workspace .qb-st-deck {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .qb-st-schedule-intro {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+}
+@media (max-width: 520px) {
+  .qb-st-schedule-footer {
+    flex-wrap: wrap;
+  }
+  .qb-st-schedule-footnote {
+    flex: 1 1 100%;
+  }
+}
+.qb-st-runtime-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 26px;
+  padding: 3px 9px;
+  border: 1px solid var(--ok-border);
+  border-radius: 999px;
+  background: var(--ok-bg);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.qb-st-runtime-chip .dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.qb-st-runtime-chip.pending {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+.qb-st-runtime-chip.warn {
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+}
+.qb-st-runtime-note {
+  flex: 1 1 100%;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.qb-st-settings-load {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--danger);
+}
+.qb-st-save-state {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .qb-st-launchbtn,
   .qb-st-schedbtn,
@@ -1379,6 +1548,194 @@
   display: flex;
   flex-direction: column;
   gap: 11px;
+}
+.qb-st-settings-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.qb-st-routing-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.qb-st-routing-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.qb-st-routing-option.active {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+.qb-st-routing-option input {
+  margin-top: 3px;
+}
+.qb-st-routing-option strong {
+  display: block;
+  margin-bottom: 5px;
+}
+.qb-st-routing-option span span {
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.65;
+}
+.qb-st-route-boundary {
+  padding: 13px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.qb-st-admission-settings,
+.qb-st-admission-routes {
+  display: grid;
+  gap: 11px;
+  min-width: 0;
+}
+.qb-st-admission-route {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.qb-st-admission-route > strong {
+  display: block;
+  margin-bottom: 12px;
+}
+.qb-st-admission-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.qb-st-admission-fields input {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  font: inherit;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.qb-st-admission-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+.qb-st-admission-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: 14px 0;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.qb-st-admission-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+.qb-st-admission-metrics dt {
+  color: var(--text-2);
+  font-size: 12px;
+}
+.qb-st-admission-metrics dd {
+  margin: 5px 0 0;
+  font-size: 21px;
+  font-variant-numeric: tabular-nums;
+}
+.qb-st-admission-metrics small {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+.qb-st-admission-reason {
+  color: var(--text-2);
+  font-size: 12px;
+}
+.qb-st-route-boundary.pool {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+.qb-st-route-boundary-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.qb-st-route-boundary-heading .qb-st-iconbtn {
+  width: auto;
+  padding: 4px 8px;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.qb-st-route-boundary p {
+  margin: 7px 0 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.qb-st-allowed-lines {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+.qb-st-allowed-lines > span {
+  padding: 4px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.qb-st-recent-route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+  padding: 2px 4px 6px;
+  font-size: 12px;
+}
+.qb-st-attempt-trail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 7px 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.qb-st-schedbtn[aria-disabled="true"] {
+  opacity: 0.7;
+}
+@media (max-width: 600px) {
+  .qb-st-routing-options {
+    grid-template-columns: 1fr;
+  }
+  .qb-st-route-boundary {
+    padding: 12px;
+  }
+  .qb-st-admission-fields {
+    grid-template-columns: 1fr;
+  }
 }
 .qb-st-form input[type="text"],
 .qb-st-form input[type="password"],

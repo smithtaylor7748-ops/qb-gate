@@ -2,6 +2,7 @@ import { call } from "./ipc";
 import type { DeepLinkChoice } from "./generated/DeepLinkChoice";
 import type { DeepLinkEntry } from "./generated/DeepLinkEntry";
 import type { DeepLinkOutcome } from "./generated/DeepLinkOutcome";
+import type { DeepLinkHandlerStatus } from "./generated/DeepLinkHandlerStatus";
 
 export type { DeepLinkChoice, DeepLinkEntry, DeepLinkOutcome };
 
@@ -10,6 +11,9 @@ export type { DeepLinkChoice, DeepLinkEntry, DeepLinkOutcome };
  * ⛔ 回来的形状里没有明文 Key（站点链接只给打码的）。
  */
 export const deeplinkApi = {
+  handlerStatus: () => call<DeepLinkHandlerStatus>("deeplink_handler_status"),
+  setHandler: (enabled: boolean) =>
+    call<DeepLinkHandlerStatus>("deeplink_handler_set", { enabled }),
   /** 现在待处理的那一条（读不清除）。 */
   peek: () => call<DeepLinkEntry | null>("deeplink_peek"),
   /** 「不导入」/ 显示过了：按编号清掉。 */

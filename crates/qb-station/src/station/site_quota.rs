@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 站点的余额与编程套餐额度（中转站重构阶段 6 · U3，cc-switch 的 `services/balance.rs` + `services/coding_plan.rs`）。
 //!
 //! **纯函数**：按站点地址认出是哪一家、该问哪个地址带什么头，再把回复解析成 [`SiteQuota`]。
@@ -76,6 +76,8 @@ pub struct SitePlanWindow {
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export)]
 pub struct SiteQuota {
+    /// 上游明确声明的可用性。余额为零不推导此字段；未提供就是未知。
+    pub available: Option<bool>,
     /// 认出来是哪一家（界面上的名字）。
     pub provider: String,
     pub kind: SiteQuotaKind,
@@ -346,6 +348,7 @@ fn balance(remaining: f64, unit: &str) -> SiteBalance {
 /// 把回复解析成 [`SiteQuota`]（`fetched_at` / `route_id` 留空给编排层填）。认不出来就报一句能看懂的话。
 pub fn parse(d: Detected, body: &Value) -> Result<SiteQuota, String> {
     let mut q = SiteQuota {
+        available: None,
         provider: d.name().into(),
         kind: d.kind(),
         balances: Vec::new(),
@@ -357,6 +360,7 @@ pub fn parse(d: Detected, body: &Value) -> Result<SiteQuota, String> {
     };
     match d {
         Detected::DeepSeek => {
+            q.available = body.get("is_available").and_then(Value::as_bool);
             for info in body
                 .get("balance_infos")
                 .and_then(Value::as_array)

@@ -34,7 +34,7 @@ members = ["src-tauri", "crates/*"]
 [workspace.package]
 version = "0.25.11"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "AGPL-3.0-only"
 authors = ["QB Gate contributors"]
 
@@ -146,8 +146,8 @@ regex = "1"
 toml_edit = { version = "0.22", features = ["serde"] }
 serde_yaml_ng = "0.10"
 reqwest-mcp = { package = "reqwest", version = "0.13", default-features = false, features = ["rustls"] }
-rmcp = { version = "=3.3.0", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
-rusqlite = { version = "0.40", features = ["bundled", "backup"] }
+rmcp = { version = "=3.9.0", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+rusqlite = { version = "0.41.1", features = ["bundled", "backup"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 

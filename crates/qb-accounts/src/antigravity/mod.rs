@@ -20,7 +20,7 @@
 //! 能力对照的来源是 `anglee0323/Antigravity-Tools-Lite` 与 `jlcodes99/cockpit-tools`
 //! （都是 CC BY-NC-SA 4.0，**一行都没抄**）。它们自己跑 OAuth 登录、把令牌存在自己那里；
 //! 这里仍然不跑登录、不存令牌 —— 2026-09-23 起只在点刷新时读官方客户端存在本机的那一份，
-//! 过期了在内存里换新。见 ATTRIBUTION.md。
+//! 过期了在内存里换新。
 
 pub mod account;
 pub mod hub;

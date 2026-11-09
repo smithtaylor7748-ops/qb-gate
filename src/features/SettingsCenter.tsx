@@ -523,8 +523,8 @@ function Help() {
         <ExternalLink href="https://github.com/smithtaylor7748-ops/qb-gate">
           GitHub 项目与使用说明
         </ExternalLink>
-        <ExternalLink href="https://github.com/smithtaylor7748-ops/qb-gate/blob/main/ATTRIBUTION.md">
-          第三方来源与许可证
+        <ExternalLink href="https://github.com/smithtaylor7748-ops/qb-gate/blob/main/THIRD_PARTY_NOTICES.txt">
+          第三方许可证
         </ExternalLink>
         <ExternalLink href="https://github.com/smithtaylor7748-ops/qb-gate/issues">
           报告问题

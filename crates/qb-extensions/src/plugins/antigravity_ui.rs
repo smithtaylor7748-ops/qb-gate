@@ -73,7 +73,7 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(4);
 const LOG_CAPACITY: usize = 300;
 
 /// 注入之后回读核实用的表达式。**这是面板自己的代码，不是 EasyAG 的脚本** ——
-/// `inject.js` 逐字保留，一个字都不许改（改了要同步改 ATTRIBUTION，且架构测试数着占位符）。
+/// `inject.js` 的执行代码保持原样，架构测试数着占位符；原版权与许可头必须保留。
 ///
 /// 只读，不改页面上任何东西。`__ea_verify` 这个键是回执的认领标记：回执里没有 `method`，
 /// 靠它把「核实结果」跟别的命令回执分开，省掉一套 id 记账。

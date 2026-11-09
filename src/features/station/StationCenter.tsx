@@ -53,6 +53,11 @@ import type { Client } from "../../lib/generated/Client";
 import type { Floors } from "../../lib/generated/Floors";
 import type { Provider } from "../../lib/generated/Provider";
 import type { Schedule } from "../../lib/generated/Schedule";
+import { StationUsageKpis } from "./StationUsageKpis";
+import {
+  RouteAttemptTrail,
+  StationRouteBoundary,
+} from "./StationRouteBoundary";
 import {
   convertedFormat,
   OUTPUT_MARKUP_TOLERANCE,
@@ -65,6 +70,7 @@ import {
   type Route,
   type RouteHealthView,
   type RouterStatus,
+  type RouterSettings,
 } from "../../lib/station";
 import { useSession } from "../../lib/store";
 import { useWorkspace, workspaceApi } from "../../lib/workspace";
@@ -73,13 +79,11 @@ import { DeepLinkPasteButton } from "../DeepLinkImport";
 import {
   Chart,
   dash,
-  mtok,
   pct,
   RANGES,
   rangeOf,
   stamp,
   STATION_CLIENTS,
-  tokenMix,
   type GranId,
   type RangeId,
 } from "./shared";
@@ -182,6 +186,13 @@ function StationBoard({
   const [gran, setGran] = useState<GranId>("hour");
 
   const [status, setStatus] = useState<RouterStatus | null>(null);
+  const [routerSettings, setRouterSettings] = useState<RouterSettings | null>(
+    null,
+  );
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [latestRequest, setLatestRequest] = useState<RouterRequest | null>(
+    null,
+  );
   const [health, setHealth] = useState<Record<string, RouteHealthView>>({});
   const [logs, setLogs] = useState<RouterRequest[]>([]);
   const [busy, setBusy] = useState(false);
@@ -242,6 +253,7 @@ function StationBoard({
   /** 异步回来时判断「使用者还停在这个分页吗」。闭包里的 client 是点下去那一刻的。 */
   const clientRef = useRef(client);
   clientRef.current = client;
+  const runtimeRead = useRef(0);
 
   const [routeDialog, setRouteDialog] = useState<{
     editing: Route | null;
@@ -319,17 +331,40 @@ function StationBoard({
   );
 
   const refreshStatus = useCallback(async () => {
+    const read = ++runtimeRead.current;
     try {
-      setStatus(await stationApi.routerStatus(client));
-    } catch {
-      // 状态读不到不该让整页报错 —— 右列会显示成「未启动」。
-      setStatus(null);
+      const [nextStatus, settings, requests] = await Promise.all([
+        stationApi.routerStatus(client),
+        stationApi.routerSettings(client),
+        stationApi.usageRequests({
+          client,
+          routeId: null,
+          model: null,
+          failedOnly: false,
+          offset: 0,
+          limit: 1,
+        }),
+      ]);
+      if (clientRef.current !== client || read !== runtimeRead.current) return;
+      setStatus(nextStatus);
+      setRouterSettings(settings);
+      setLatestRequest(requests.items[0] ?? null);
+      setRuntimeError(null);
+    } catch (e) {
+      if (clientRef.current === client && read === runtimeRead.current)
+        setRuntimeError(
+          `无法核对当前路由状态：${e instanceof Error ? e.message : String(e)}`,
+        );
     }
   }, [client]);
 
   // 换软件要重新问一次 —— 三个软件各有各的当前上游。不重问的话
   // 「正在路由」那一行会一直显示上一个软件的线，而那条线在这一页上根本不存在。
   useEffect(() => {
+    setStatus(null);
+    setRouterSettings(null);
+    setLatestRequest(null);
+    setRuntimeError(null);
     void refreshStatus();
   }, [refreshStatus]);
 
@@ -352,6 +387,7 @@ function StationBoard({
       if (!s?.enabled) return;
       try {
         const d = await stationApi.decide(s.prefs, client);
+        if (clientRef.current !== client) return;
         setSchedRows(
           Object.fromEntries(
             d.ranking.rows.map((r) => [
@@ -362,7 +398,7 @@ function StationBoard({
         );
       } catch {
         // 排不出名次不等于调度没开 —— 行上不写名次，开关照实显示开着。
-        setSchedRows({});
+        if (clientRef.current === client) setSchedRows({});
       }
     },
     [client],
@@ -372,11 +408,14 @@ function StationBoard({
     let mine: Schedule | undefined;
     try {
       mine = (await stationApi.schedules()).find((s) => s.client === client);
-    } catch {
-      // 读不到就当没开 —— ⛔ 但不要顺手去关它。读不到和关着是两回事，
-      // 而「顺手关掉」会在一次 IPC 抖动后把使用者的调度悄悄停掉。
-      mine = undefined;
+    } catch (e) {
+      if (clientRef.current === client)
+        setSchedNote(
+          `调度状态读取失败：${e instanceof Error ? e.message : String(e)}`,
+        );
+      return;
     }
+    if (clientRef.current !== client) return;
     showSchedule(mine);
     await loadRows(mine);
   }, [client, loadRows, showSchedule]);
@@ -385,19 +424,15 @@ function StationBoard({
     void refreshSched();
   }, [refreshSched]);
 
-  // 调度开着时每 30 秒把「上一轮」和排队中的那条读回来一次。不读的话，
-  // 卡上那句「上一轮」停在打开页面那一刻，而循环每分钟都在往下跑。
-  //
-  // ⛔ 只读本机的两样东西：库里的调度状态、路由器内存里的选择。**不调 decide** ——
-  // 它会给每条线现拉一轮站点账单，放进定时器等于替驻留循环加跳，
-  // 而 CLAUDE.md 写着一跳 60 秒、别调小。
+  // 每 5 秒核对本机调度、选线范围和真实请求记录。这里只读本机状态，
+  // 不调用会访问上游的 decide，也不改变驻留调度的周期。
   useEffect(() => {
-    if (!sched) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void stationApi
         .schedules()
         .then((all) => {
+          if (clientRef.current !== client) return;
           const s = all.find((x) => x.client === client);
           if (!s) return;
           setSched(s.enabled);
@@ -407,9 +442,9 @@ function StationBoard({
         })
         .catch(() => undefined);
       void refreshStatus();
-    }, 30_000);
+    }, 5_000);
     return () => window.clearInterval(timer);
-  }, [sched, client, refreshStatus]);
+  }, [client, refreshStatus]);
 
   // 健康度和日志都是**免费**的（读站点自己的账单 / 本机路由自己的记录，
   // 零额外请求），所以进页面就拉。要花钱的只有站点检验，那个得点。
@@ -463,13 +498,24 @@ function StationBoard({
     status?.pending_route != null &&
     status.pending_route !== status.current_route;
   const selected = mine.find((r) => r.id === selectedId) ?? null;
+  const canSchedule =
+    routerSettings?.routing_mode === "pool" &&
+    routerSettings.allowed_routes.length > 0 &&
+    !runtimeError;
+  const routeLabel = (id: string) => {
+    const r = routes.find((route) => route.id === id);
+    return r ? `${siteName(r.station_id)} · ${r.group || "默认分组"}` : id;
+  };
   const up = Boolean(status?.running && isRunning);
 
   const act = async (fn: () => Promise<RouterStatus>, what: string) => {
     setBusy(true);
     setLaunchError(null);
     try {
-      setStatus(await fn());
+      const next = await fn();
+      if (clientRef.current !== client) return;
+      setStatus(next);
+      await Promise.all([refreshStatus(), refreshSched()]);
     } catch (e) {
       toast.error(`${what}失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -487,11 +533,16 @@ function StationBoard({
     // 连点只认第一下。⛔ 不用 disabled 挡：按钮一 disabled 键盘焦点就掉回 body，
     // 按空格启停之后 Tab 得从页首重新走一遍。
     if (toggling) return;
+    if (!sched && !canSchedule) {
+      toast.info("请先在路由设置中勾选允许使用的线路并保存，再启动调度");
+      return;
+    }
     setBusy(true);
     setToggling(true);
     setLaunchError(null);
     try {
       const next = await stationApi.scheduleSet(client, !sched);
+      if (clientRef.current !== client) return;
       showSchedule(next);
       if (next.enabled) {
         setIgnite(true);
@@ -559,23 +610,11 @@ function StationBoard({
   /**
    * 行上的「启动」：**指定这一条再启动**。
    *
-   * 调度开着时先把调度停掉 —— 不停的话下一跳会立刻把它换走，而使用者以为
-   * 自己选的那条生效了（定稿 §2.2 #4）。停了就在提示里照实写出三步：
-   * 只说「已启动」的话，调度等于是被悄悄关掉的。⛔ 停在后端，不是只改这里的 state。
+   * 后端把明确指定线路与「仅所选线路」一起保存，并停止该软件的调度。
    */
   const launchFrom = async (r: Route) => {
     if (launching || stopping) return;
     const who = client;
-    const stoppedSchedule = sched;
-    if (stoppedSchedule) {
-      try {
-        showSchedule(await stationApi.scheduleSet(who, false));
-      } catch {
-        // 停不掉就别硬起 —— 起了也会被下一跳换走。
-        toast.error("调度停不下来，先别启动：下一跳会把你选的这条换走");
-        return;
-      }
-    }
     // 从行上点的也让右列那块跟着动 —— 启动在哪儿点的，进度都看同一个地方。
     setBusy(true);
     setLaunching(who);
@@ -585,8 +624,8 @@ function StationBoard({
       await stationApi.launch(who, r.id);
       await workspace.refresh();
       if (clientRef.current === who)
-        setStatus(await stationApi.routerStatus(who));
-      if (stoppedSchedule) toast.info("已停止智能调度，当前使用手动选择的线路");
+        await Promise.all([refreshStatus(), refreshSched()]);
+      toast.info("已设为仅用这条线路，智能调度已停止");
       finishLaunch(who, "done");
     } catch (e) {
       // 失败还是要说 —— 不接住的话按钮看起来像没反应。
@@ -635,41 +674,14 @@ function StationBoard({
   // ⛔ 每一格只报它**真拿得到**的那个口径，而且把口径写在副标题上。
   //
   // 请求数与平均耗时来自本机路由自己的日志，跟着时间范围走；
-  // Token 与消费来自站点账单，而账单只有一个固定 24 小时窗 ——
-  // 选别的档时这两格写「—」。拿 24h 的数去冒充「近 1 小时」，
-  // 或者缺数据时填个 0，都是在编。
-  const req = mineLogs.length;
+  // Token、费用和请求数由 StationUsageKpis 读完整本机汇总；
+  // 耗时与图表仍只反映已加载的最近日志。
   const totals = mineLogs
     .map((l) => (l.total_ms == null ? null : Number(l.total_ms)))
     .filter((v): v is number => v != null);
   const avgMs = totals.length
     ? totals.reduce((a, b) => a + b, 0) / totals.length
     : null;
-
-  /**
-   * 把这个软件底下各条线的账单数加起来。
-   *
-   * 一条都没取证到就返回 `null`（显示「—」），**不是 0** ——
-   * 0 是「量过了，就是零」这个断言。
-   */
-  const sumHealth = (
-    pick: (h: RouteHealthView) => number | null | undefined,
-  ) =>
-    range === "24h"
-      ? mine.reduce<number | null>((sum, r) => {
-          const h = health[r.id];
-          const v = h == null ? null : pick(h);
-          return v == null ? sum : (sum ?? 0) + v;
-        }, null)
-      : null;
-
-  const cost = sumHealth((h) => h.cost_24h);
-  const tokens = sumHealth((h) => h.tokens_24h);
-  // 四类分开给 —— 合成一个总数会把「输出翻五倍」这种结构藏掉。
-  const tokIn = sumHealth((h) => h.input_tokens);
-  const tokCacheRead = sumHealth((h) => h.cache_read_tokens);
-  const tokCacheWrite = sumHealth((h) => h.cache_write_tokens);
-  const tokOut = sumHealth((h) => h.output_tokens);
 
   const clientName = CLIENTS.find((c) => c.id === client)!;
 
@@ -790,37 +802,13 @@ function StationBoard({
           </div>
 
           <div className="qb-st-kpis">
-            <Kpi
-              k="总请求数"
-              v={req ? req.toLocaleString() : "—"}
-              s={`${rangeOf(range).name}内`}
-            />
-            <Kpi
-              k="总 Token"
-              v={tokens == null ? "—" : mtok(tokens)}
-              s={
-                range !== "24h"
-                  ? "账单只有 24 小时窗，这一档没有数"
-                  : tokens == null
-                    ? "站点账单里没有 token 字段"
-                    : tokenMix(tokIn, tokCacheRead, tokCacheWrite, tokOut)
-              }
-            />
-            <Kpi
-              k="总消费"
-              v={cost == null ? "—" : cost.toFixed(4)}
-              s={
-                range === "24h"
-                  ? "站点账单报的实扣，逐条相加"
-                  : "账单只有 24 小时窗，这一档没有数"
-              }
-            />
+            <StationUsageKpis client={client} range={range} />
             <Kpi
               k="平均耗时"
               v={avgMs == null ? "—" : `${(avgMs / 1000).toFixed(2)} s`}
               s={
                 totals.length
-                  ? `取到耗时的 ${totals.length} 条`
+                  ? `最近日志中取到耗时的 ${totals.length} 条`
                   : "本段没有请求"
               }
             />
@@ -958,6 +946,7 @@ function StationBoard({
             aria-pressed={sched}
             aria-describedby={schedDescId}
             aria-busy={toggling || undefined}
+            aria-disabled={!sched && !canSchedule}
             onPointerDown={schedRipple.onPointerDown}
             onClick={() => void toggleSched()}
           >
@@ -977,7 +966,11 @@ function StationBoard({
               {sched ? "智能调度运行中" : "启动智能调度"}
             </span>
             <span id={schedDescId} className="desc">
-              <span className="sub">{schedWhat}</span>
+              <span className="sub">
+                {!sched && !canSchedule
+                  ? "先在路由设置中勾选允许使用的线路"
+                  : schedWhat}
+              </span>
               {sched && (
                 <span className="sub last" title={schedNote || undefined}>
                   {schedNote
@@ -1015,7 +1008,7 @@ function StationBoard({
           >
             <span className="qb-st-sheen" aria-hidden="true" />
             <Shuffle size={14} aria-hidden="true" />
-            路由设置 · 故障转移
+            路由设置 · 允许范围
             {(status?.breakers.length ?? 0) > 0 && (
               <span className="qb-st-pill qb-st-pill--danger">
                 {status?.breakers.length} 条熔断
@@ -1116,6 +1109,29 @@ function StationBoard({
         </div>
       </div>
 
+      <StationRouteBoundary
+        settings={routerSettings}
+        selected={selectedId}
+        routeLabel={routeLabel}
+        error={runtimeError}
+        onConfigure={() => setRouterOpen(true)}
+      />
+      <div className="qb-st-recent-route">
+        <strong>最近请求实际去向</strong>
+        {latestRequest && (
+          <span className="qb-st-note">
+            {stamp(Number(latestRequest.at_ms))}
+          </span>
+        )}
+        {latestRequest ? (
+          <RouteAttemptTrail request={latestRequest} routeLabel={routeLabel} />
+        ) : (
+          <span className="qb-st-note">
+            尚无请求记录；开始新请求后可在此核对。
+          </span>
+        )}
+      </div>
+
       {/* ------------------------------------------------ 站点 → 账户行 */}
       {sites.length === 0 ? (
         <div className="qb-st-empty">
@@ -1178,19 +1194,12 @@ function StationBoard({
                   siteName={siteName}
                   topup={topupOf(providers.find((p) => p.id === s.id))}
                   onPick={() => {
-                    // 调度开着时手动选 = 钉住 4 小时（后端 `station_select_route` 顺手钉上），
-                    // 这期间调度不换走它；它挂了就不算。原来是直接拒绝、要先停调度（阶段 2 前）。
-                    void act(
-                      async () => {
-                        const st = await stationApi.selectRoute(r.id, false);
-                        if (sched)
-                          toast.ok(
-                            "已钉住 4 小时：这期间调度不换走它（它挂了就不算）",
-                          );
-                        return st;
-                      },
-                      sched ? "钉住这一条" : "切换上游",
-                    );
+                    // 普通选线即收紧为仅用这条，后端同时停掉该软件的调度。
+                    void act(async () => {
+                      const st = await stationApi.selectRoute(r.id, false);
+                      toast.ok("已设为仅用这条线路，智能调度已停止");
+                      return st;
+                    }, "仅用这条线路");
                   }}
                   onLaunch={() => void launchFrom(r)}
                   onAudit={() => setAuditOpen(r)}
@@ -1245,8 +1254,8 @@ function StationBoard({
         title={`调度设置 · ${clientName.name}`}
         size="form"
         footer={
-          <>
-            <span className="qb-st-note" style={{ flex: 1 }}>
+          <div className="qb-st-schedule-footer">
+            <span className="qb-st-note qb-st-schedule-footnote">
               换上游会让上游那边的 prompt 缓存作废，所以挑战者默认要领先现任
               8%、连续 2 轮有新证据才换。调度<b>只在面板开着时</b>生效。
             </span>
@@ -1257,12 +1266,12 @@ function StationBoard({
                 改完口径要关掉弹窗才能启动，那一步没有任何理由。 */}
             <Button
               variant={sched ? "ghost" : "primary"}
-              disabled={busy}
+              disabled={busy || (!sched && !canSchedule)}
               onClick={() => void toggleSched()}
             >
               {sched ? "停止调度" : "按这套启动调度"}
             </Button>
-          </>
+          </div>
         }
       >
         {/* 每存一次偏好就把卡上的口径换掉 —— 不等弹窗关掉。 */}
@@ -1277,6 +1286,7 @@ function StationBoard({
         onClose={() => {
           setRouterOpen(false);
           void refreshStatus();
+          void refreshSched();
         }}
         title={`路由设置 · ${clientName.name}`}
         size="form"
@@ -1286,7 +1296,10 @@ function StationBoard({
           routes={mine}
           status={status}
           label={(r) => `${siteName(r.station_id)} · ${r.group || "默认分组"}`}
-          onSaved={() => void refreshStatus()}
+          onSaved={() => {
+            void refreshStatus();
+            void refreshSched();
+          }}
         />
       </Modal>
 
@@ -1439,9 +1452,9 @@ function RouteRow({
       title={
         current
           ? queued
-            ? "已排队，下一次请求生效"
-            : "已是当前上游"
-          : "切到这条上游（下一次请求生效）"
+            ? "仅用这条线路：已排队，下一次请求生效"
+            : "点击设为仅用这条线路，并停止智能调度"
+          : "仅用这条线路，停止智能调度（下一次请求生效）"
       }
       onClick={onPick}
       onKeyDown={(e) => {
@@ -1509,7 +1522,7 @@ function RouteRow({
             variant="primary"
             onClick={stop(running && current ? onClose : onLaunch)}
           >
-            {running ? (current ? "一键关闭" : "切换并使用") : "启动"}
+            {running && current ? "一键关闭" : "仅用这条并启动"}
           </Button>
           <Button variant="ghost" onClick={stop(onAudit)}>
             查套路

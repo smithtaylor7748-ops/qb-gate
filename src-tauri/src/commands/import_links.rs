@@ -1,12 +1,12 @@
 //! 导入链接（中转站重构阶段 5，cc-switch 的 X4 Deep Link）：收链接、给界面看、确认之后导入。
 //!
 //! 链接从三处来：
-//! - **冷启动**：点了 `qbgate://…` 而面板没开着，Windows 把链接当第一个参数起面板（[`receive`] 在装配时扫一遍启动参数）；
+//! - **冷启动**：点了 `qbgate://…`（或主动开启兼容后的 `ccswitch://…`），Windows 把链接当第一个参数起面板；
 //! - **面板开着**：第二个实例被单实例插件拦下，参数转给这一个（`lib.rs` 的回调里同样交给 [`receive`]）；
 //! - **粘贴**：界面上「从链接导入」（[`deeplink_paste`]），中转站页面上给 CC Switch 的 `ccswitch://` 链接也认。
 //!
 //! 协议由**安装包**注册（`tauri.conf.json` 的 `plugins.deep-link` 是给打包用的配置，NSIS 模板按它写
-//! `HKCU\Software\Classes\qbgate`、卸载时删掉）。⛔ 运行时不注册、不引 `tauri-plugin-deep-link`：
+//! `HKCU\Software\Classes\qbgate`、卸载时删掉）。CC Switch 兼容只有显式按钮可登记且保存原处理者；启动不登记。
 //! 它在 Windows 上多出来的只有运行时写注册表（开发版一跑就把装好的面板的协议抢过去）和解析启动参数
 //! （单实例插件的回调本来就拿得到参数）。
 //!
@@ -19,21 +19,21 @@ use qb_app::deeplink::{CC_SWITCH_SCHEME, SCHEME};
 use qb_app::usecase::deeplink_ops::{DeepLinkChoice, DeepLinkEntry, DeepLinkOutcome};
 use tauri::{Emitter, Manager, State};
 
-/// 参数里有没有 `qbgate://` 链接：有就收下最后那条、通知界面，回 `true`。
-///
-/// 只认系统注册的那个协议：`ccswitch://` 不会从命令行来（那是 cc-switch 的），只认粘贴的。
+fn incoming_link(args: &[String]) -> Option<&str> {
+    args.iter().rev().map(|a| a.trim()).find(|a| {
+        let a = a.to_ascii_lowercase();
+        a.starts_with(&format!("{SCHEME}://")) || a.starts_with(&format!("{CC_SWITCH_SCHEME}://"))
+    })
+}
+
+/// 两种协议共用待确认收件箱；是否由 QB 接收 ccswitch 由显式兼容设置决定。
 pub fn receive(app: &tauri::AppHandle, args: &[String]) -> bool {
-    let prefix = format!("{SCHEME}://");
-    let Some(url) = args
-        .iter()
-        .rev()
-        .find(|a| a.trim().to_ascii_lowercase().starts_with(&prefix))
-    else {
+    let Some(url) = incoming_link(args) else {
         return false;
     };
     app.state::<AppState>().deeplinks.put(url);
     // 审计日志只记来了一条、是什么类型，不记链接本身（站点链接里有 Key）。
-    crate::audit::write("导入链接：收到一条 qbgate:// 链接，等使用者确认");
+    crate::audit::write("导入链接：收到一条支持的链接，等使用者确认");
     if let Err(e) = app.emit(qb_contract::channels::DEEPLINK, ()) {
         tracing::warn!("导入链接：通知界面失败（界面挂上来时会自己来取）：{e}");
     }
@@ -43,6 +43,40 @@ pub fn receive(app: &tauri::AppHandle, args: &[String]) -> bool {
         let _ = w.set_focus();
     }
     true
+}
+
+#[tauri::command]
+pub fn deeplink_handler_status() -> Result<qb_platform::url_protocol::DeepLinkHandlerStatus> {
+    qb_platform::url_protocol::status()
+}
+
+#[tauri::command]
+pub fn deeplink_handler_set(
+    enabled: bool,
+) -> Result<qb_platform::url_protocol::DeepLinkHandlerStatus> {
+    let status = qb_platform::url_protocol::set(enabled)?;
+    crate::audit::write(if enabled {
+        "导入链接：主动开启 CC Switch 网页导入兼容"
+    } else {
+        "导入链接：还原 CC Switch 网页导入接收方式"
+    });
+    Ok(status)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::incoming_link;
+    #[test]
+    fn cold_start_and_single_instance_accept_ccswitch_without_losing_the_payload() {
+        let args = vec![
+            "qb-gate.exe".into(),
+            "--quiet".into(),
+            "qbgate://v1/import?resource=provider&name=old".into(),
+            "CCSWITCH://v1/import?resource=provider&apiKey=example%2Bkey&config=a%2Bb%3D".into(),
+        ];
+        assert_eq!(incoming_link(&args), Some(args[3].as_str()));
+        assert!(incoming_link(&["https://example.invalid/ccswitch://test".into()]).is_none());
+    }
 }
 
 /// 现在待处理的那一条（读不清除；界面显示之后再 [`deeplink_ack`]）。

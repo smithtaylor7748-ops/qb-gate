@@ -6,7 +6,7 @@
  *
  * # ⛔ 键名和判定条件全部照 cc-switch 的源码抄
  *
- * cc-switch（MIT，Copyright (c) 2025 Jason Young，见 ATTRIBUTION.md）的
+ * cc-switch（MIT，Copyright (c) 2025 Jason Young，见 THIRD_PARTY_NOTICES.txt）的
  * `src/components/providers/forms/CommonConfigEditor.tsx` 与
  * `hooks/useModelState.ts`。**自己编一套键名的话，写进去的东西
  * Claude Code 根本不认，而界面上看起来一切正常** —— 那是最糟的一类失败。

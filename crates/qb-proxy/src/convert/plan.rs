@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! 选哪一种转换、请求和地址怎么改、响应怎么换回去（中转站重构阶段 3）。
 //!
 //! cc-switch 把这些判断散在适配器（`providers/claude.rs`、`providers/codex.rs`）、转发器（`forwarder.rs`）

@@ -45,6 +45,40 @@ use watchdog::WatchMode;
 /// 作为回调传进来。看门狗只管「该刷了」，不管刷的是托盘还是别的什么。
 pub type RefreshUi = std::sync::Arc<dyn Fn() + Send + Sync>;
 
+/// Claude 页的关闭只停止 Claude；全局停用仍由 `stop_managed` 负责。
+/// 不暂停共享门禁、不收回其它账户的租约，也不停止共用的 SillyTavern。
+pub async fn stop_claude(state: &GateState) -> Result<crate::killswitch::KillReport> {
+    let mut report = crate::killswitch::preview_in(crate::killswitch::Scope::Claude).await?;
+    crate::sessions::ensure_verified(crate::killswitch::is_claude_session)?;
+    for session in crate::sessions::list()
+        .into_iter()
+        .filter(|s| crate::killswitch::is_claude_session(s) && s.state == "running")
+    {
+        match crate::sessions::stop(&session.id) {
+            Ok(()) => {
+                report.killed.push(session.pid);
+                release_holder(state, &session.id)?;
+            }
+            Err(e) => report.failed.push((session.pid, e.to_string())),
+        }
+    }
+    crate::plugins::sillytavern::stop_claude_bridge()?;
+    // 登记会话已停的 PID 不再二次 taskkill；其余仍核验创建时间。
+    for target in &report.targets {
+        if report.killed.contains(&target.pid) {
+            continue;
+        }
+        match crate::sessions::terminate_verified(target.pid, target.process_created) {
+            Ok(()) => report.killed.push(target.pid),
+            Err(e) => report.failed.push((target.pid, e.to_string())),
+        }
+    }
+    if !crate::gpt_bridge::running() && !crate::gemini_bridge::running() {
+        release_holder(state, "sillytavern")?;
+    }
+    Ok(report)
+}
+
 pub async fn stop_managed(
     state: &GateState,
     all_sessions: bool,
@@ -68,6 +102,11 @@ pub async fn stop_managed(
     // Gemini 桥接同理（0.26.0）：它起的 Gemini CLI 子进程带着 Google 登录往外发请求。
     if let Err(e) = crate::gemini_bridge::stop() {
         errors.push(e.to_string());
+    }
+    if all_sessions || crate::settings::antigravity_under_gate() {
+        if let Err(e) = super::antigravity_native_bridge::stop() {
+            errors.push(e.to_string());
+        }
     }
     if let Err(e) = crate::sessions::stop_matching(|s| all_sessions || s.gated) {
         errors.push(e.to_string());

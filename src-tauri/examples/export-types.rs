@@ -171,6 +171,7 @@ fn main() {
         qb_app::gpt_bridge::GptBridgeStatus::export_all_to(&root)?;
         // 0.26.0：反重力 + Gemini 桥接。
         qb_app::gemini_bridge::GeminiBridgeStatus::export_all_to(&root)?;
+        qb_app::usecase::antigravity_native_bridge::AntigravityBridgeStatus::export_all_to(&root)?;
         qb_accounts::gemini::GeminiAccounts::export_all_to(&root)?;
         qb_accounts::gemini::GeminiSlot::export_all_to(&root)?;
         qb_gate_lib::install::antigravity::Product::export_all_to(&root)?;
@@ -339,6 +340,7 @@ fn main() {
         qb_app::usecase::project_ops::ProjectsView::export_all_to(&root)?;
         qb_app::usecase::project_ops::ProjectChange::export_all_to(&root)?;
         // 导入链接（阶段 5 · X4）：给界面的形状里没有明文 Key。
+        qb_platform::url_protocol::DeepLinkHandlerStatus::export_all_to(&root)?;
         qb_app::usecase::deeplink_ops::DeepLinkEntry::export_all_to(&root)?;
         qb_app::usecase::deeplink_ops::DeepLinkChoice::export_all_to(&root)?;
         qb_app::usecase::deeplink_ops::DeepLinkOutcome::export_all_to(&root)?;

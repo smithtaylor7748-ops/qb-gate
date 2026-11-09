@@ -1,4 +1,4 @@
-// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see ATTRIBUTION.md.
+// Portions derived from cc-switch v4.0.14 (https://github.com/farion1231/cc-switch, commit 5de6feb4e5adda61f4ad824ce0df2c449245f447), Copyright (c) 2025 Jason Young, MIT License — see THIRD_PARTY_NOTICES.txt.
 //! Codex 会话归桶（中转站重构阶段 4，cc-switch 的 C5「Codex 历史统一」）。
 //!
 //! Codex 按 `model_provider` 给会话分桶：`codex resume` 和桌面端的会话列表只列**当前那一家**的会话。
@@ -533,7 +533,7 @@ fn merge_at(place: &Place, home_id: &str, from: &[String], now_ms: i64) -> Resul
             continue;
         }
         let copy = dir.join(format!("state-{i}.sqlite"));
-        conn.backup(rusqlite::MAIN_DB, &copy, None)
+        conn.backup(rusqlite::MAIN_DB, &copy, rusqlite::backup::NO_PROGRESS)
             .map_err(|e| GateError::Other(format!("备份 Codex 状态库失败：{e}")))?;
         let tx = conn
             .transaction()

@@ -65,6 +65,24 @@ beforeEach(() => {
   mock.call.mockImplementation(async (command: string) => {
     if (command === "deeplink_peek") return pending;
     if (command === "deeplink_paste") return provider;
+    if (command === "deeplink_handler_status")
+      return {
+        enabled: false,
+        registered: false,
+        can_restore: false,
+        dev_build: false,
+        handler: "CC Switch",
+        user_choice: false,
+      };
+    if (command === "deeplink_handler_set")
+      return {
+        enabled: true,
+        registered: true,
+        can_restore: true,
+        dev_build: false,
+        handler: "QB Gate",
+        user_choice: false,
+      };
     if (command === "deeplink_import")
       return {
         message: "导入了「Relay · 默认分组」",
@@ -76,6 +94,27 @@ beforeEach(() => {
   });
 });
 afterEach(cleanup);
+
+it("only takes over CC Switch web links after the explicit button and explains the previous handler", async () => {
+  mount(<DeepLinkPasteButton />);
+  fireEvent.click(screen.getByRole("button", { name: "从链接导入" }));
+  expect(await screen.findByText("当前接收程序：CC Switch")).toBeTruthy();
+  expect(mock.call).not.toHaveBeenCalledWith(
+    "deeplink_handler_set",
+    expect.anything(),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "由 QB Gate 接收 CC Switch 导入" }),
+  );
+  await waitFor(() =>
+    expect(mock.call).toHaveBeenCalledWith("deeplink_handler_set", {
+      enabled: true,
+    }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "还原原来的接收方式" }),
+  ).toBeTruthy();
+});
 
 function mount(extra?: React.ReactNode) {
   render(

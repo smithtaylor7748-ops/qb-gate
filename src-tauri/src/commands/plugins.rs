@@ -21,6 +21,7 @@ pub fn plugin_list() -> Vec<plugins::PluginStatus> {
         plugins::sillytavern::status_with(
             Some(qb_app::gpt_bridge::running()),
             Some(qb_app::gemini_bridge::running()),
+            qb_app::usecase::antigravity_native_bridge::running(),
         ),
         plugins::codex_egress::status(),
         plugins::antigravity_ui::plugin_status(),
@@ -286,6 +287,12 @@ async fn stop_tavern_all(state: &AppState) -> Result<Vec<String>> {
     if gemini_was_running {
         done.push("内置 Gemini 桥接已停止".into());
     }
+    let native_was_running = qb_app::usecase::antigravity_native_bridge::running();
+    qb_app::usecase::antigravity_native_bridge::stop()?;
+    if native_was_running {
+        done.push("反重力原生桥接已停止".into());
+    }
+    gate::release_holder(&state.gate, "antigravity-native-bridge")?;
     gate::release_holder(&state.gate, "sillytavern")?;
     Ok(done)
 }
