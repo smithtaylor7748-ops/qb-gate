@@ -3345,89 +3345,89 @@
     {
       "ecosystem": "cargo",
       "name": "qb-accounts",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-accounts/0.25.12",
+      "source": "https://crates.io/crates/qb-accounts/0.25.13",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-app",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-app/0.25.12",
+      "source": "https://crates.io/crates/qb-app/0.25.13",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-contract",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-contract/0.25.12",
+      "source": "https://crates.io/crates/qb-contract/0.25.13",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-extensions",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-extensions/0.25.12",
+      "source": "https://crates.io/crates/qb-extensions/0.25.13",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-foundation",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-foundation/0.25.12",
+      "source": "https://crates.io/crates/qb-foundation/0.25.13",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-install",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-install/0.25.12",
+      "source": "https://crates.io/crates/qb-install/0.25.13",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-iplock",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-iplock/0.25.12",
+      "source": "https://crates.io/crates/qb-iplock/0.25.13",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-launch",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-launch/0.25.12",
+      "source": "https://crates.io/crates/qb-launch/0.25.13",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-platform",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-platform/0.25.12",
+      "source": "https://crates.io/crates/qb-platform/0.25.13",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-probe",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-probe/0.25.12",
+      "source": "https://crates.io/crates/qb-probe/0.25.13",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-proxy",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-proxy/0.25.12",
+      "source": "https://crates.io/crates/qb-proxy/0.25.13",
       "licenseFiles": [
         "LICENSE-cc-switch"
       ]
@@ -3435,33 +3435,33 @@
     {
       "ecosystem": "cargo",
       "name": "qb-relay",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-relay/0.25.12",
+      "source": "https://crates.io/crates/qb-relay/0.25.13",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-script",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-script/0.25.12",
+      "source": "https://crates.io/crates/qb-script/0.25.13",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-station",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-station/0.25.12",
+      "source": "https://crates.io/crates/qb-station/0.25.13",
       "licenseFiles": []
     },
     {
       "ecosystem": "cargo",
       "name": "qb-sysenv",
-      "version": "0.25.12",
+      "version": "0.25.13",
       "license": "AGPL-3.0-only",
-      "source": "https://crates.io/crates/qb-sysenv/0.25.12",
+      "source": "https://crates.io/crates/qb-sysenv/0.25.13",
       "licenseFiles": []
     },
     {

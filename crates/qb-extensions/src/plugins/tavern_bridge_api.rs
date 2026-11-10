@@ -28,8 +28,8 @@
 //!
 //! # 选项列表是快照，而当前值永远算合法
 //!
-//! 模型那 13 个、effort 那 5 档是按 `bridge.py` 2.4.0 抄的快照
-//! （[`MODELS`] / [`EFFORTS`] …；2026-09-21 抄，09-23 补了 `claude-opus-5-5`）。
+//! 模型与 effort 选项是按 `bridge.py` 2.4.0 抄的快照
+//! （[`MODELS`] / [`EFFORTS`] …；模型快照于 2026-11-10 补了 `claude-fable-5-2`）。
 //! 上游加一个新模型时，面板这边的下拉里没有它 ——
 //! 所以**桥当前用着的那个值永远算合法选项**（[`with_current`]），不然一打开设置
 //! 就把人家的模型悄悄换成列表里的第一个。保存被拒就把桥回的原话照搬到界面上。
@@ -51,9 +51,10 @@ use ts_rs::TS;
 /// 本机回环上的桥，2 秒还不应答就是没在跑。
 const TIMEOUT: Duration = Duration::from_secs(5);
 
-/// 从 `bridge.py` 2.4.0 的 `ALLOWED_MODELS` 抄的快照，顺序照抄。2026-09-21 抄，
-/// 09-23 补 `claude-opus-5-5`（桥那边同一天加进白名单与它自己的设置页）。
+/// 从 `bridge.py` 2.4.0 的 `ALLOWED_MODELS` 抄的快照。
+/// 2026-11-10 补 `claude-fable-5-2`；实际可用性仍由使用者自己的桥与上游决定。
 pub const MODELS: &[&str] = &[
+    "claude-fable-5-2",
     "claude-fable-5-1",
     "claude-fable-5",
     "claude-opus-5-5",
