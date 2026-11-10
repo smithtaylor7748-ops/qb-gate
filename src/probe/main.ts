@@ -38,14 +38,16 @@ async function main() {
     if (status) status.textContent = t;
   };
   try {
+    // 两份报告共用一次 ICE 采集，避免结果来自不同时刻的两次网络探测。
+    const webrtcProbe = webrtcCandidates();
     const [signals, webrtc] = await Promise.all([
-      collectSignals(),
-      webrtcCandidates(),
+      collectSignals(webrtcProbe),
+      webrtcProbe,
     ]);
     const opts = Intl.DateTimeFormat().resolvedOptions();
     const ua = uaData();
     const body = JSON.stringify({
-      v: 1,
+      v: 2,
       signals,
       webrtc,
       languages: [...navigator.languages],

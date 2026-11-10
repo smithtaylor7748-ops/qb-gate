@@ -655,7 +655,7 @@ function demoBrowserReport(): BrowserReport {
   const stamp = `${ymd(now)} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
   return {
     page_json: JSON.stringify({
-      v: 1,
+      v: 2,
       signals: [
         { id: "timezone", raw: "America/New_York", score: 0 },
         { id: "language", raw: "en-US, en", score: 0 },
@@ -668,7 +668,7 @@ function demoBrowserReport(): BrowserReport {
         { id: "timezoneOffset", raw: "UTC-4", score: 0 },
         { id: "emoji", raw: "Microsoft 风格", score: 0.1 },
       ],
-      webrtc: ["203.0.113.7"],
+      webrtc: { status: "completed", addresses: ["203.0.113.7"] },
       languages: ["en-US", "en"],
       timezone: "America/New_York",
       locale: "en-US",
@@ -4735,6 +4735,89 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       claudeQuotaFixture(String(args?.label)),
     ),
   egress_checks_scan: () => structuredClone(egress),
+  environment_stun: () => ({
+    checked_at: "2026-11-10 12:00:00",
+    scope: "演示：原生 UDP 与 HTTP 出口对照，部分采样未完成。",
+    items: [
+      {
+        id: "udp_coverage",
+        label: "UDP 采样完成度",
+        state: "warn",
+        detail: "2 / 4 项获得有效响应，未完成的节点仍为未知。",
+        fixable: false,
+        manual: null,
+      },
+      {
+        id: "udp_0",
+        label: "stun.cloudflare.com · IPv4",
+        state: "pass",
+        detail: "本次 UDP 与同族 HTTP 出口 203.0.113.7 一致。",
+        fixable: false,
+        manual: null,
+      },
+      {
+        id: "udp_1",
+        label: "stun.cloudflare.com · IPv6",
+        state: "unknown",
+        detail: "未获得响应，不等于没有暴露。",
+        fixable: false,
+        manual: null,
+      },
+    ],
+  }),
+  environment_proxy_runtime: () => ({
+    checked_at: "2026-11-10 12:00:00",
+    scope: "演示：模式 rule，只核对本机运行规则，不验证真实流量。",
+    items: [
+      {
+        id: "runtime_0",
+        label: "claude.ai · TCP/443",
+        state: "pass",
+        detail: "运行规则目标为代理节点。",
+        fixable: false,
+        manual: null,
+      },
+      {
+        id: "runtime_1",
+        label: "UDP/3478",
+        state: "unknown",
+        detail: "前序复杂规则的匹配条件无法确认。",
+        fixable: false,
+        manual: null,
+      },
+    ],
+  }),
+  environment_asn: (args) => ({
+    checked_at: "2026-11-10 12:00:00",
+    scope: "演示：网络类型不认证住宅属性或信誉。",
+    items: [
+      {
+        id: "asn_category",
+        label: "ASN 网络类型",
+        state: "pass",
+        detail: `${String(args?.ip ?? "")} · AS64500 · Example ISP；网络类型 Cable/DSL/ISP。`,
+        fixable: false,
+        manual: null,
+      },
+    ],
+  }),
+  environment_client_locale: (args) => ({
+    checked_at: "2026-11-10 12:00:00",
+    scope: "演示：只核对本地配置，不验证运行中的网页语言。",
+    items: [
+      {
+        id: "claude_locale_0",
+        label: "Claude 桌面配置",
+        state:
+          args?.expected && String(args.expected).toLowerCase() !== "en-us"
+            ? "warn"
+            : "pass",
+        detail: "locale=en-us；未验证运行中的 navigator.language。",
+        fixable: false,
+        manual: null,
+      },
+    ],
+  }),
   egress_checks_fix: (args) => {
     const item = egress.items.find((it) => it.id === args?.id && it.fixable);
     if (!item) throw new Error("演示：该项不能自动修复");

@@ -44,7 +44,7 @@ describe("真实浏览器交回来的报告", () => {
     );
     expect(p?.signals.map((s) => s.id)).toEqual(["timezone", "language"]);
     expect(p?.signals[1]).toEqual({ id: "language", raw: "", score: 0 });
-    expect(p?.webrtc).toEqual(["203.0.113.7"]);
+    expect(p?.webrtc).toEqual({ status: "unknown", addresses: [] });
     expect(p?.languages).toEqual([]);
     expect(parsePage("not json")).toBeNull();
     expect(parsePage("null")).toBeNull();
@@ -64,12 +64,39 @@ describe("真实浏览器交回来的报告", () => {
       browser: "Chrome 128",
       at: "2026-09-24 03:59:00",
     });
-    // 时区 24 + 字体 14，不是 99 × 24。
-    expect(scan?.total).toBe(38);
+    // 时区 24 + 字体 14；旧报告的 WebRTC 未知，去掉其 10 分权重后折算。
+    expect(scan?.total).toBe(42);
     expect(scan?.signals.find((s) => s.id === "language")?.raw).toBe(
       "没有采到",
     );
     expect(scanFromReport(report({ signals: [] }))).toBeNull();
+  });
+
+  it("旧报告和失败的 WebRTC 不会被旧的零风险分数伪装成成功", () => {
+    for (const webrtc of [
+      [],
+      { status: "timeout", addresses: [] },
+      { status: "error", addresses: ["203.0.113.7"] },
+    ]) {
+      const scan = scanFromReport(
+        report({
+          signals: [{ id: "webrtcLeak", raw: "未发现泄露", score: 0 }],
+          webrtc,
+        }),
+      );
+      expect(scan?.signals.find((s) => s.id === "webrtcLeak")?.verdict).toBe(
+        "unknown",
+      );
+    }
+    const scan = scanFromReport(
+      report({
+        signals: [{ id: "webrtcLeak", raw: "legacy", score: 1 }],
+        webrtc: { status: "completed", addresses: [] },
+      }),
+    );
+    expect(scan?.signals.find((s) => s.id === "webrtcLeak")?.verdict).toBe(
+      "low",
+    );
   });
 
   it("认浏览器", () => {

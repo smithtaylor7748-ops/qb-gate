@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -14,6 +14,7 @@ import {
   res,
   useResource,
 } from "./store";
+import { R } from "./resources";
 const wrapper = ({ children }: { children: React.ReactNode }) => (
   <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 );
@@ -30,6 +31,108 @@ afterEach(() => {
   localStorage.clear();
 });
 describe("backend query lifecycle", () => {
+  it("expires only old signals and egress measurements without starting replacement probes", () => {
+    const fetcher = vi.fn(async () => "fresh measurement");
+    for (const kind of ["signals", "egress"] as const) {
+      for (const version of [undefined, 0]) {
+        const key = `migration-${kind}-${String(version)}`;
+        localStorage.setItem(
+          `qb.cache.${key}`,
+          JSON.stringify({
+            at: 1234,
+            data: "legacy pass",
+            ...(version === undefined ? {} : { version }),
+          }),
+        );
+        const hook = renderHook(
+          () => useResource(key, res(fetcher, R[kind].options)),
+          { wrapper },
+        );
+        expect(hook.result.current.data).toBeUndefined();
+        expect(hook.result.current.neverLoaded).toBe(true);
+        expect(measuredAt(key)).toBeNull();
+      }
+    }
+    for (const kind of ["dns", "checkup"] as const) {
+      const key = `migration-preserve-${kind}`;
+      localStorage.setItem(
+        `qb.cache.${key}`,
+        JSON.stringify({ at: 5678, data: "retained measurement" }),
+      );
+      const hook = renderHook(
+        () => useResource(key, res(fetcher, R[kind].options)),
+        { wrapper },
+      );
+      expect(hook.result.current.data).toBe("retained measurement");
+      expect(measuredAt(key)).toBe(5678);
+      expect(JSON.parse(localStorage.getItem(`qb.cache.${key}`)!).data).toBe(
+        "retained measurement",
+      );
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("restores matching versions and saves a manual replacement with its current version", async () => {
+    const fetcher = vi.fn(async () => "new evidence");
+    const def = res(fetcher, { auto: false, persist: true, persistVersion: 1 });
+    const restoredKey = "version-matching";
+    localStorage.setItem(
+      `qb.cache.${restoredKey}`,
+      JSON.stringify({ version: 1, at: 6789, data: "current evidence" }),
+    );
+    const restored = renderHook(() => useResource(restoredKey, def), {
+      wrapper,
+    });
+    expect(restored.result.current.data).toBe("current evidence");
+    expect(measuredAt(restoredKey)).toBe(6789);
+    expect(fetcher).not.toHaveBeenCalled();
+
+    const replacedKey = "version-replacement";
+    localStorage.setItem(
+      `qb.cache.${replacedKey}`,
+      JSON.stringify({ at: 1234, data: "obsolete evidence" }),
+    );
+    const replaced = renderHook(() => useResource(replacedKey, def), {
+      wrapper,
+    });
+    expect(replaced.result.current.neverLoaded).toBe(true);
+    await act(async () => {
+      await replaced.result.current.refresh();
+    });
+    expect(fetcher).toHaveBeenCalledOnce();
+    await waitFor(() =>
+      expect(replaced.result.current.data).toBe("new evidence"),
+    );
+    expect(
+      JSON.parse(localStorage.getItem(`qb.cache.${replacedKey}`)!),
+    ).toEqual({
+      version: 1,
+      data: "new evidence",
+      at: measuredAt(replacedKey),
+    });
+  });
+
+  it("does not silently accept a future or malformed cache version", () => {
+    const fetcher = vi.fn(async () => "fresh");
+    for (const version of [2, "1", null]) {
+      const key = `version-invalid-${String(version)}-${typeof version}`;
+      localStorage.setItem(
+        `qb.cache.${key}`,
+        JSON.stringify({ version, at: 1234, data: "unverified pass" }),
+      );
+      const hook = renderHook(
+        () =>
+          useResource(
+            key,
+            res(fetcher, { auto: false, persist: true, persistVersion: 1 }),
+          ),
+        { wrapper },
+      );
+      expect(hook.result.current.data).toBeUndefined();
+      expect(measuredAt(key)).toBeNull();
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   it.each([false, true])(
     "refresh immediately after a mutation waits for invalidation (auto=%s)",
     async (auto) => {

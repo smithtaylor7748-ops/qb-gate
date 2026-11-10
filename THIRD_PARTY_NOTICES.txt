@@ -60,6 +60,40 @@ SOFTWARE.
 
 ========================================================================
 
+bundled: claude-switcher@1.7.1-cb6a72b255fde20f44d5157d5d6538c759458ae5
+Source: https://github.com/YOURSJEYO/claude-switcher/tree/cb6a72b255fde20f44d5157d5d6538c759458ae5
+Declared license: MIT
+https://github.com/YOURSJEYO/claude-switcher/blob/cb6a72b255fde20f44d5157d5d6538c759458ae5/LICENSE
+MIT License
+
+Copyright (c) 2026 Claude Switcher Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+https://github.com/YOURSJEYO/claude-switcher/blob/cb6a72b255fde20f44d5157d5d6538c759458ae5/core/claude-switch.sh
+Fixed MIT source SHA-256: 88b248ec9147290e9880158fcba30560cc685f25c43cc39a770ae8cd28e64625
+The proxy runtime diagnostics adapt the domain/port catalog and checking approach in Rust. Later AGPL revisions are not included.
+
+
+========================================================================
+
 bundled: codex-windows-cn@unversioned
 Source: https://github.com/chrichuang218/codex-windows-cn
 Declared license: MIT
@@ -50418,78 +50452,78 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 
 ========================================================================
 
-cargo: qb-accounts@0.25.13
-Source: https://crates.io/crates/qb-accounts/0.25.13
+cargo: qb-accounts@0.25.14
+Source: https://crates.io/crates/qb-accounts/0.25.14
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-app@0.25.13
-Source: https://crates.io/crates/qb-app/0.25.13
+cargo: qb-app@0.25.14
+Source: https://crates.io/crates/qb-app/0.25.14
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-contract@0.25.13
-Source: https://crates.io/crates/qb-contract/0.25.13
+cargo: qb-contract@0.25.14
+Source: https://crates.io/crates/qb-contract/0.25.14
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-extensions@0.25.13
-Source: https://crates.io/crates/qb-extensions/0.25.13
+cargo: qb-extensions@0.25.14
+Source: https://crates.io/crates/qb-extensions/0.25.14
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-foundation@0.25.13
-Source: https://crates.io/crates/qb-foundation/0.25.13
+cargo: qb-foundation@0.25.14
+Source: https://crates.io/crates/qb-foundation/0.25.14
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-install@0.25.13
-Source: https://crates.io/crates/qb-install/0.25.13
+cargo: qb-install@0.25.14
+Source: https://crates.io/crates/qb-install/0.25.14
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-iplock@0.25.13
-Source: https://crates.io/crates/qb-iplock/0.25.13
+cargo: qb-iplock@0.25.14
+Source: https://crates.io/crates/qb-iplock/0.25.14
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-launch@0.25.13
-Source: https://crates.io/crates/qb-launch/0.25.13
+cargo: qb-launch@0.25.14
+Source: https://crates.io/crates/qb-launch/0.25.14
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-platform@0.25.13
-Source: https://crates.io/crates/qb-platform/0.25.13
+cargo: qb-platform@0.25.14
+Source: https://crates.io/crates/qb-platform/0.25.14
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-probe@0.25.13
-Source: https://crates.io/crates/qb-probe/0.25.13
+cargo: qb-probe@0.25.14
+Source: https://crates.io/crates/qb-probe/0.25.14
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-proxy@0.25.13
-Source: https://crates.io/crates/qb-proxy/0.25.13
+cargo: qb-proxy@0.25.14
+Source: https://crates.io/crates/qb-proxy/0.25.14
 Declared license: AGPL-3.0-only
 LICENSE-cc-switch
 MIT License
@@ -50516,29 +50550,29 @@ SOFTWARE.
 
 ========================================================================
 
-cargo: qb-relay@0.25.13
-Source: https://crates.io/crates/qb-relay/0.25.13
+cargo: qb-relay@0.25.14
+Source: https://crates.io/crates/qb-relay/0.25.14
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-script@0.25.13
-Source: https://crates.io/crates/qb-script/0.25.13
+cargo: qb-script@0.25.14
+Source: https://crates.io/crates/qb-script/0.25.14
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-station@0.25.13
-Source: https://crates.io/crates/qb-station/0.25.13
+cargo: qb-station@0.25.14
+Source: https://crates.io/crates/qb-station/0.25.14
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 
 ========================================================================
 
-cargo: qb-sysenv@0.25.13
-Source: https://crates.io/crates/qb-sysenv/0.25.13
+cargo: qb-sysenv@0.25.14
+Source: https://crates.io/crates/qb-sysenv/0.25.14
 Declared license: AGPL-3.0-only
 License text is not present in this package installation; consult the fixed upstream package source.
 

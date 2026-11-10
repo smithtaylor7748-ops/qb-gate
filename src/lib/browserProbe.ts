@@ -9,11 +9,19 @@
  * 逐项检查形状，认不出的丢掉，字符串截短，分数夹在 0–1（`scanFrom` 里再夹一次）。
  */
 import type { BrowserReport } from "./generated/BrowserReport";
-import { SIGNALS, scanFrom, type RawSignal, type ScanResult } from "./signals";
+import {
+  SIGNALS,
+  scanFrom,
+  parseWebRtcReport,
+  webrtcOutcome,
+  type RawSignal,
+  type ScanResult,
+  type WebRtcReport,
+} from "./signals";
 
 export interface ProbePage {
   signals: RawSignal[];
-  webrtc: string[];
+  webrtc: WebRtcReport;
   languages: string[];
   timezone: string | null;
   locale: string | null;
@@ -42,24 +50,33 @@ export function parsePage(json: string): ProbePage | null {
   }
   if (!v || typeof v !== "object") return null;
   const o = v as Record<string, unknown>;
+  const webrtc = parseWebRtcReport(o.webrtc);
   const ids = new Set<string>(SIGNALS.map((s) => s.id));
   const signals: RawSignal[] = Array.isArray(o.signals)
     ? o.signals.flatMap((s): RawSignal[] => {
         if (!s || typeof s !== "object") return [];
         const r = s as Record<string, unknown>;
         if (typeof r.id !== "string" || !ids.has(r.id)) return [];
+        if (r.id === "webrtcLeak")
+          return [{ id: "webrtcLeak", ...webrtcOutcome(webrtc) }];
         return [
           {
             id: r.id as RawSignal["id"],
             raw: str(r.raw) ?? "",
             score: typeof r.score === "number" ? r.score : 0,
+            ...(r.status === "error" ||
+            r.status === "timeout" ||
+            r.status === "unsupported" ||
+            r.status === "unknown"
+              ? { status: r.status }
+              : {}),
           },
         ];
       })
     : [];
   return {
     signals,
-    webrtc: strs(o.webrtc, 16, 64),
+    webrtc,
     languages: strs(o.languages, 16, 32),
     timezone: str(o.timezone, 64),
     locale: str(o.locale, 32),

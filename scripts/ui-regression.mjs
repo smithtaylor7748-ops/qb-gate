@@ -2,6 +2,7 @@ import { chromium } from "@playwright/test";
 import { createServer } from "vite";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import assert from "node:assert/strict";
+const ARTIFACT_ROOT = process.env.QB_UI_OUTPUT_DIR || "docs";
 // 五个入口加几条详情页。`""` 是根路径（官方账户，同时是仪表盘）。
 // 前五条必须跟 src/lib/routes.ts 的 NAV 对得上，否则 CI 直接红。
 // （原来还有一条 `extensions/sillytavern`：酒馆那一整块面板 —— 路径、依赖、资产、备份。
@@ -328,7 +329,7 @@ try {
       : route.abort(),
   );
   const report = [];
-  mkdirSync("docs/screenshots", { recursive: true });
+  mkdirSync(`${ARTIFACT_ROOT}/screenshots`, { recursive: true });
   for (const theme of ["light", "dark"]) {
     const pending = new Set();
     const requestStarted = (request) => pending.add(request.url());
@@ -401,7 +402,7 @@ try {
             `${SHOT[route]}-${theme}.png 落盘时页面主题其实不是 ${theme}`,
           );
           await page.screenshot({
-            path: `docs/screenshots/${SHOT[route]}-${theme}.png`,
+            path: `${ARTIFACT_ROOT}/screenshots/${SHOT[route]}-${theme}.png`,
           });
         }
       }
@@ -990,7 +991,9 @@ try {
     .getByRole("button", { name: "Codex 第 1 页", exact: true })
     .click();
   await assertNoOverflow(page, "Codex four-account desktop layout");
-  await page.screenshot({ path: "docs/screenshots/codex-accounts-light.png" });
+  await page.screenshot({
+    path: `${ARTIFACT_ROOT}/screenshots/codex-accounts-light.png`,
+  });
   await page.getByTestId("codex-turnstate").click();
   await page.getByLabel("自动检测模型", { exact: true }).fill("ui-test-model");
   assert.match(
@@ -1165,7 +1168,9 @@ try {
   );
   assert.match(await repairDialog.innerText(), /本次修复结果/);
   assert.match(await repairDialog.innerText(), /已重新检测 5\/5 项/);
-  await page.screenshot({ path: "docs/screenshots/checkup-repair-light.png" });
+  await page.screenshot({
+    path: `${ARTIFACT_ROOT}/screenshots/checkup-repair-light.png`,
+  });
   await page.keyboard.press("Escape");
   // A completed self-test is visible even if a legacy manual record has no IP.
   assert.match(
@@ -1189,7 +1194,9 @@ try {
     .getByTestId("current-ip-result")
     .innerText();
   assert.match(currentReadout, /住宅 IP/);
-  await page.screenshot({ path: "docs/screenshots/ip-current-light.png" });
+  await page.screenshot({
+    path: `${ARTIFACT_ROOT}/screenshots/ip-current-light.png`,
+  });
   assert.equal(
     await purityDialog.locator(".modal-head .ipv6-switch").count(),
     1,
@@ -1247,7 +1254,9 @@ try {
     await purityDialog.getByTestId("current-ip-result").innerText(),
     /住宅 IP/,
   );
-  await page.screenshot({ path: "docs/screenshots/ip-lookup-light.png" });
+  await page.screenshot({
+    path: `${ARTIFACT_ROOT}/screenshots/ip-lookup-light.png`,
+  });
   await purityDialog
     .getByLabel("新 IP 地址", { exact: true })
     .fill("not-an-ip");
@@ -1286,13 +1295,84 @@ try {
   await purityDialog.getByText("网卡 IPv6 已禁用", { exact: true }).waitFor();
   await purityDialog.getByText("状态与恢复", { exact: true }).click();
   await assertNoOverflow(page, "IPv6 switch and adapter restore");
-  await page.screenshot({ path: "docs/screenshots/ipv6-light.png" });
+  await page.screenshot({
+    path: `${ARTIFACT_ROOT}/screenshots/ipv6-light.png`,
+  });
   for (const width of [680, 900]) {
     await page.setViewportSize({ width, height: 740 });
     await assertNoOverflow(page, `inline IP controls ${width}px`);
     assert.ok(await ipv6Switch.isVisible());
   }
-  await page.screenshot({ path: "docs/screenshots/ip-inline-compact.png" });
+  await page.screenshot({
+    path: `${ARTIFACT_ROOT}/screenshots/ip-inline-compact.png`,
+  });
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await page.keyboard.press("Escape");
+  // Supplemental environment checks are manual; each result keeps its own scope.
+  await page.locator(".scorecell").filter({ hasText: "出口一致性" }).click();
+  const diagnostics = page.getByRole("dialog");
+  await diagnostics
+    .getByRole("heading", { name: "补充环境检测", exact: true })
+    .waitFor();
+  await diagnostics
+    .getByRole("button", { name: "检测 UDP 出口", exact: true })
+    .click();
+  await diagnostics
+    .getByText("2 / 4 项获得有效响应，未完成的节点仍为未知。", { exact: true })
+    .waitFor();
+  assert.match(await diagnostics.innerText(), /未确认/);
+  await diagnostics
+    .getByRole("button", { name: "代理运行规则", exact: true })
+    .click();
+  await diagnostics
+    .getByLabel("本机控制接口", { exact: true })
+    .fill("http://127.0.0.1:19090");
+  await diagnostics
+    .getByLabel("控制接口密钥（可选）", { exact: true })
+    .fill("ui-diagnostic-fixture");
+  await diagnostics
+    .getByRole("button", { name: "核验运行规则", exact: true })
+    .click();
+  await diagnostics
+    .getByText("前序复杂规则的匹配条件无法确认。", { exact: true })
+    .waitFor();
+  assert.equal(
+    await diagnostics
+      .getByLabel("控制接口密钥（可选）", { exact: true })
+      .inputValue(),
+    "",
+  );
+  await diagnostics
+    .getByRole("button", { name: "ASN 网络类型", exact: true })
+    .click();
+  await diagnostics
+    .getByLabel("查询公网 IP", { exact: true })
+    .fill("203.0.113.7");
+  await diagnostics
+    .getByRole("button", { name: "查询 ASN 类型", exact: true })
+    .click();
+  await diagnostics.getByText(/AS64500 · Example ISP/).waitFor();
+  await diagnostics
+    .getByRole("button", { name: "Claude 客户端语言", exact: true })
+    .click();
+  await diagnostics
+    .getByRole("button", { name: "读取客户端语言", exact: true })
+    .click();
+  await diagnostics
+    .getByText("locale=en-us；未验证运行中的 navigator.language。", {
+      exact: true,
+    })
+    .waitFor();
+  for (const width of [1320, 680, 390]) {
+    await page.setViewportSize({ width, height: 820 });
+    await assertNoOverflow(
+      page,
+      `supplemental environment diagnostics ${width}px`,
+    );
+  }
+  await page.screenshot({
+    path: `${ARTIFACT_ROOT}/screenshots/environment-diagnostics-compact.png`,
+  });
   await page.setViewportSize({ width: 1320, height: 940 });
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Claude", exact: true }).click();
@@ -1559,7 +1639,9 @@ try {
   );
   await page.waitForFunction(() => !document.querySelector(".toast"));
   await assertNoOverflow(page, "Antigravity engine running state");
-  await page.screenshot({ path: "docs/screenshots/antigravity-light.png" });
+  await page.screenshot({
+    path: `${ARTIFACT_ROOT}/screenshots/antigravity-light.png`,
+  });
   // 用量明细（0.32.0）：不再是弹窗，而是一条**可滚动**的路由。
   // 趋势图 / 按模型分布 / 各模型配额条 / 覆盖率说明 在固定高度的账户页上摆不下。
   await page.getByRole("link", { name: "用量明细", exact: true }).click();
@@ -1626,7 +1708,9 @@ try {
   await page.setViewportSize({ width: 1320, height: 940 });
   await page.waitForFunction(() => !document.querySelector(".toast"));
   await assertFixedAccounts(page, "final account workspace");
-  await page.screenshot({ path: "docs/screenshots/accounts-layout-light.png" });
+  await page.screenshot({
+    path: `${ARTIFACT_ROOT}/screenshots/accounts-layout-light.png`,
+  });
   await page.goto(origin + "/#/relays");
   await page
     .getByRole("button", { name: "查套路", exact: true })
@@ -2666,6 +2750,7 @@ try {
     "keyboard modal close (extension import form)",
     "removed pages stay unreachable: old routes land home, template entries and the tavern gone from extensions, site search lands on the relay page, tavern search lands on the software card",
     "overview security modal",
+    "supplemental environment diagnostics: UDP partial/unknown, runtime rules, transient secret clearing, ASN and locale; no overflow at 1320/680/390px",
     "system theme matches explicit theme",
     "desktop account pagination and safe login confirmation",
     "five-item diagnostics and repair review",
@@ -2689,7 +2774,7 @@ try {
     "stage 7: the three background switches in settings start unchecked; other CLI tools check for a new version and hold back the update when Node is too old, an uninstalled Hermes offers only its official script; the environment-variable cleanup ticks nothing and offers only current-user variables; no overflow at 680px",
   ];
   writeFileSync(
-    "docs/ui-regression.json",
+    `${ARTIFACT_ROOT}/ui-regression.json`,
     JSON.stringify({ cases: report, flows, pageErrors: errors }, null, 2),
   );
   // 数字从数组里来，不手写 —— 手写的那个会跟列表漂开，而漂开之后它照样绿。

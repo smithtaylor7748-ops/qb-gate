@@ -45,6 +45,7 @@ import type { DependencyCheck } from "./generated/DependencyCheck";
 import type { DesktopState } from "./generated/DesktopState";
 import type { DnsReport } from "./generated/DnsReport";
 import type { EgressChecks } from "./generated/EgressChecks";
+import type { EnvironmentDiagnostics } from "./generated/EnvironmentDiagnostics";
 import type { EnvHit } from "./generated/EnvHit";
 import type { EnvEntry } from "./generated/EnvEntry";
 import type { EnvOwner } from "./generated/EnvOwner";
@@ -309,7 +310,8 @@ export type {
 export const api = {
   // 门禁
   gateStatus: () => call<GateStatus>("gate_status"),
-  gateCheckIntervalSave: (seconds: number) => call<Settings>("gate_check_interval_save", { seconds }),
+  gateCheckIntervalSave: (seconds: number) =>
+    call<Settings>("gate_check_interval_save", { seconds }),
   gateLockAll: () => call<number>("gate_lock_all"),
   gateUnlockAll: () => call<number>("gate_unlock_all"),
   /**
@@ -486,6 +488,16 @@ export const api = {
   egressFix: (id: string) => call<string>("egress_checks_fix", { id }),
   /** 撤销面板刚才改的那一项。 */
   egressUndo: (id: string) => call<string>("egress_checks_undo", { id }),
+  environmentStun: () => call<EnvironmentDiagnostics>("environment_stun"),
+  environmentProxy: (endpoint: string, secret: string | null) =>
+    call<EnvironmentDiagnostics>("environment_proxy_runtime", {
+      endpoint,
+      secret,
+    }),
+  environmentAsn: (ip: string) =>
+    call<EnvironmentDiagnostics>("environment_asn", { ip }),
+  environmentLocale: (expected: string | null) =>
+    call<EnvironmentDiagnostics>("environment_client_locale", { expected }),
 
   // 托管安装（v0.9.0）
   /** 托管根目录在哪、Claude Code 与 Codex 装没装、什么版本。 */
@@ -674,7 +686,8 @@ export const api = {
   ) => call<void>("tavern_antigravity_save", { config }),
   tavernAntigravityModels: (accountId: string) =>
     call<import("./generated/AntigravityBridgeModel").AntigravityBridgeModel[]>(
-      "tavern_antigravity_models", { accountId },
+      "tavern_antigravity_models",
+      { accountId },
     ),
   tavernAntigravityToken: () => call<string>("tavern_antigravity_token"),
   tavernAntigravityStart: () =>
