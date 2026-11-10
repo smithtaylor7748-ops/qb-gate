@@ -202,6 +202,7 @@ pub fn bindings() -> Result<Vec<Ipv6Binding>> {
     Err(GateError::Other("IPv6 网卡开关仅支持 Windows".into()))
 }
 
+#[cfg(any(windows, test))]
 fn mutation_script(targets: &[Ipv6Binding]) -> Result<String> {
     // 管理员进程只接受受限的网卡实例标识和布尔值；不执行磁盘上的脚本，
     // 不传网卡名称（含通配符的名称会误伤其他网卡），也不接受任意命令。

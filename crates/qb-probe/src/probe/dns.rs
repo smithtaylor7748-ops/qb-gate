@@ -472,6 +472,7 @@ fn adapter_script() -> String {
     )
 }
 
+#[cfg(any(windows, test))]
 fn flag(s: &str) -> Option<bool> {
     match s.trim() {
         "1" => Some(true),
@@ -480,6 +481,7 @@ fn flag(s: &str) -> Option<bool> {
     }
 }
 
+#[cfg(any(windows, test))]
 fn parse_adapter_lines(text: &str) -> AdapterScan {
     let mut scan = AdapterScan::default();
     for l in text.lines() {

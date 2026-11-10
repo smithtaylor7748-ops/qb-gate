@@ -16,6 +16,7 @@ pub struct Software {
     pub advisory: Option<String>,
 }
 
+#[cfg(not(target_os = "macos"))]
 fn home() -> PathBuf {
     dirs::home_dir().unwrap_or_default()
 }
@@ -94,7 +95,8 @@ pub fn codex_installs() -> Vec<CodexInstall> {
         .into_iter()
         .map(|path| {
             let lower = path.to_string_lossy().to_lowercase();
-            let lockable = !lower.ends_with(".cmd") && !lower.contains("\\windowsapps\\");
+            let lockable =
+                cfg!(windows) && !lower.ends_with(".cmd") && !lower.contains("\\windowsapps\\");
             CodexInstall { path, lockable }
         })
         .collect()
@@ -168,6 +170,7 @@ pub async fn claude_desktop() -> Software {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 struct MsixPackage {
     version: Option<String>,
     location: Option<String>,
@@ -205,7 +208,7 @@ ConvertTo-Json -InputObject $p -Compress
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 async fn msix_desktop() -> Option<MsixPackage> {
     None
 }

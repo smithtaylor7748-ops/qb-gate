@@ -20,6 +20,7 @@ shasum -a 256 -c SHA256SUMS.txt
 
 - 本地中转线路、模型路由与统计沿用现有跨平台核心。应用资料存于当前用户的 `Library/Application Support`，QB Gate 自己保存的密钥由登录钥匙串保护。各官方客户端的登录与账户切换需要分别验证，不能将 QB Gate 密钥存储等同于官方凭据迁移。
 - 软件页提供 Apple Silicon Claude Code / Codex CLI 托管安装，发现 Applications 中的桌面应用和常见 Homebrew / npm 路径。桌面应用从各自官方渠道安装。
+- Codex 版本信息来自 GitHub 公开发布 API，匿名请求按出口 IP 共享额度。触发限流时界面报告可重试时间，下载仍必须通过官方 SHA-256 校验；CI 的只读认证请求成功不代表所有网络环境都能下载。
 - 从面板启动的受管会话在启动前检查出口 IP，并由看门狗监督；Finder、其他终端或外部工具自行启动的程序不受此启动限制。
 - macOS 没有 Windows 的 NTFS Deny ACE 执行锁、Windows 防火墙规则或注册表环境清理。界面明确显示这些机制不适用，不宣称整机已保护。
 - 开机登录使用当前用户 LaunchAgent；Claude 会话内门禁使用原生辅助命令。真实账户登录、系统钥匙串授权、Terminal 交互以及断网时会话回收仍需 Mac 实机验收。
@@ -43,7 +44,7 @@ npm run build:mac
 
 ## 自动验证与构建
 
-`.github/workflows/macos.yml` 在标准 `macos-15` arm64 runner 上运行，开头核对 `uname -m`。它运行格式、前端、类型契约、Rust 单测、Clippy、浏览器回归，再打包并核对 Mach-O 架构与签名。测试用临时目录与测试密钥，不请求真实钥匙串授权。
+`.github/workflows/macos.yml` 在标准 `macos-15` arm64 runner 上运行，开头核对 `uname -m`。源码检查、应用打包、原生运行时与官方 CLI 安装分为独立任务。检查包括格式、前端、类型契约、Rust 单测、Clippy、浏览器回归、真实 Keychain 加解密与受管进程、CLI 官方哈希/架构/启动/回滚，以及挂载 DMG、安装并启动真实 WKWebView、调用原生 IPC 和切换主要页面。使用临时目录、隔离的临时钥匙串和测试密钥，不登录真实用户账号。
 
 首次推送 `codex/macos-port-*` 分支会触发此工作流，不需要合并主分支、打标签或创建 Release。成功产物名为 `qb-gate-macos-arm64`，保留 14 天。使用常规公开仓库标准 runner，不使用 `-large` / `-xlarge`。远程推送需按本次会话授权执行。
 

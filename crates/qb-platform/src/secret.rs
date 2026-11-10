@@ -180,6 +180,14 @@ mod mac {
         )
     }
 
+    fn keychain_failure(operation: &str, error: security_framework::Error) -> GateError {
+        // OSStatus and a fixed operation label diagnose access failures without exposing keys.
+        GateError::Other(format!(
+            "无法访问 macOS 钥匙串（{operation}，OSStatus {}），未保存密钥；请解锁登录钥匙串并允许 QB Gate 访问",
+            error.code()
+        ))
+    }
+
     fn key(create: bool) -> Result<crate::credentials::Secret> {
         // Downstream crate tests also pass through here: never access the user's real Keychain.
         if qb_foundation::test_context::running_in_a_test_binary(
@@ -207,7 +215,7 @@ mod mac {
                 bytes.fill(0);
                 // Add-only: a simultaneous helper must never overwrite an existing master key.
                 match SecKeychain::default()
-                    .map_err(|_| failure())?
+                    .map_err(|e| keychain_failure("选择默认钥匙串", e))?
                     .add_generic_password(SERVICE, ACCOUNT, secret.as_bytes())
                 {
                     Ok(()) => Ok(secret),
@@ -215,16 +223,17 @@ mod mac {
                         let existing = generic_password(PasswordOptions::new_generic_password(
                             SERVICE, ACCOUNT,
                         ))
-                        .map_err(|_| failure())?;
+                        .map_err(|e| keychain_failure("读取并发创建的主密钥", e))?;
                         if existing.len() != 32 {
                             return Err(failure());
                         }
                         Ok(crate::credentials::Secret::new(existing))
                     }
-                    Err(_) => Err(failure()),
+                    Err(e) => Err(keychain_failure("创建主密钥", e)),
                 }
             }
-            _ => Err(failure()),
+            Err(e) => Err(keychain_failure("读取主密钥", e)),
+            Ok(_) => Err(failure()),
         }
     }
 

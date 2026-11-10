@@ -31,6 +31,7 @@ pub struct CodexDesktopProcess {
 
 /// PowerShell 那边交回来的原样一条：命令行在 Rust 里解析（可测），**不往界面送**。
 #[derive(Deserialize)]
+#[cfg(any(not(target_os = "macos"), test))]
 struct RawInventory {
     executable: Option<String>,
     version: Option<String>,
@@ -38,6 +39,7 @@ struct RawInventory {
     processes: Vec<RawProcess>,
 }
 #[derive(Deserialize)]
+#[cfg(any(not(target_os = "macos"), test))]
 struct RawProcess {
     pid: u32,
     started: String,
@@ -45,6 +47,7 @@ struct RawProcess {
     command_line: Option<String>,
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 const INVENTORY: &str = r#"
 $ErrorActionPreference = 'Stop'
 $pkg = Get-AppxPackage -Name OpenAI.Codex | Where-Object { $_.PackageFamilyName -eq 'OpenAI.Codex_2p2nqsd0c76g0' } | Sort-Object Version -Descending | Select-Object -First 1
@@ -114,6 +117,7 @@ pub fn detect() -> Result<CodexDesktop> {
 /// `running` 看的是**全部**进程（包括读不出命令行的）—— 「查不到」不许降级成「没有」（§7.17）；
 /// `processes` 只列主进程。命令行读不出来的（比如以管理员跑的那份）当成主进程、默认资料、
 /// 不是面板的：宁可多报一个窗口，也不把一份认不出来的当成自己的去关。
+#[cfg(any(not(target_os = "macos"), test))]
 fn summarize(raw: RawInventory, state_dir: &Path, home: &Path) -> CodexDesktop {
     let running = !raw.processes.is_empty();
     let processes = raw

@@ -13,6 +13,8 @@ pub fn id() -> String {
 }
 
 pub fn ensure_plain_path(path: &Path) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    let path = normalize_macos_system_alias(path)?;
     for p in path.ancestors() {
         let meta = match std::fs::symlink_metadata(p) {
             Ok(m) => m,
@@ -34,6 +36,51 @@ pub fn ensure_plain_path(path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn normalize_macos_system_alias(path: &Path) -> Result<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    for (alias, target) in [("/var", "/private/var"), ("/tmp", "/private/tmp")] {
+        let Ok(relative) = path.strip_prefix(alias) else {
+            continue;
+        };
+        let link = std::fs::symlink_metadata(alias)?;
+        if !link.file_type().is_symlink() {
+            break;
+        }
+        // macOS puts its standard temporary directories behind these two root aliases.
+        // Resolve only this trusted prefix; inspecting the remaining path still rejects
+        // account-slot links, user-created aliases and links escaping the slot root.
+        let expected = Path::new(target);
+        let destination = std::fs::read_link(alias)?;
+        let exact_target =
+            destination == expected || destination == expected.strip_prefix("/").unwrap();
+        let protected_parents = [Path::new("/"), Path::new("/private")]
+            .into_iter()
+            .all(|p| {
+                std::fs::symlink_metadata(p)
+                    .is_ok_and(|m| m.is_dir() && m.uid() == 0 && m.mode() & 0o022 == 0)
+            });
+        let target_is_system_dir = std::fs::symlink_metadata(expected).is_ok_and(|m| {
+            m.is_dir()
+                && m.uid() == 0
+                && if alias == "/tmp" {
+                    m.mode() & 0o1000 != 0
+                } else {
+                    m.mode() & 0o022 == 0
+                }
+        });
+        if link.uid() == 0 && exact_target && protected_parents && target_is_system_dir {
+            let resolved = std::fs::canonicalize(alias)?;
+            if resolved == expected {
+                return Ok(resolved.join(relative));
+            }
+        }
+        // Keep the original path so the ordinary guard rejects an untrusted alias.
+        break;
+    }
+    Ok(path.to_path_buf())
 }
 
 pub fn read_optional(path: &Path) -> Result<Option<Vec<u8>>> {
@@ -467,6 +514,36 @@ mod tests {
         let p = std::env::temp_dir().join(format!("qb-config-test-{}", id()));
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn system_temp_aliases_work_but_nested_and_lookalike_links_are_rejected() {
+        use std::os::unix::fs::symlink;
+        for prefix in ["/tmp", "/var/tmp"] {
+            let root = Path::new(prefix).join(format!("qb-config-alias-test-{}", id()));
+            std::fs::create_dir_all(root.join("slot")).unwrap();
+            std::fs::create_dir(root.join("outside")).unwrap();
+            ensure_plain_path(&root.join("slot/not-created/config.json")).unwrap();
+
+            symlink(root.join("outside"), root.join("slot/escape")).unwrap();
+            assert!(ensure_plain_path(&root.join("slot/escape/config.json")).is_err());
+            // An identically named, user-created alias is never the OS root alias.
+            symlink("/private/var", root.join("var")).unwrap();
+            assert!(ensure_plain_path(&root.join("var/tmp/config.json")).is_err());
+            std::fs::write(root.join("outside/secret.json"), b"unchanged").unwrap();
+            symlink(
+                root.join("outside/secret.json"),
+                root.join("slot/config.json"),
+            )
+            .unwrap();
+            assert!(ensure_plain_path(&root.join("slot/config.json")).is_err());
+            assert_eq!(
+                std::fs::read(root.join("outside/secret.json")).unwrap(),
+                b"unchanged"
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]

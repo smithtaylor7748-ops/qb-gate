@@ -109,6 +109,7 @@ pub fn winget_id(product: Product) -> &'static str {
 ///
 /// ⚠ `/mergetasks=!runcode` 是**不要装完就启动**。少了它，静默安装会在后台把 IDE 拉起来，
 /// 而面板紧接着要上锁 —— 上锁时它正跑着，于是「装完之后门禁没生效」而没人说得清为什么。
+#[cfg(any(windows, test))]
 fn silent_args(product: Product) -> &'static [&'static str] {
     match product {
         Product::Hub => &["/S"],

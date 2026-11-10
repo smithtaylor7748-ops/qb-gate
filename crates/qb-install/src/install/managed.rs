@@ -670,9 +670,71 @@ pub async fn codex_latest_version() -> Result<String> {
 }
 
 async fn codex_release() -> Result<Release> {
-    let c = http()?;
-    let json = get_text(&c, CODEX_LATEST_API).await?;
+    // Public unauthenticated requests normally suffice. Shared CI egress can
+    // exhaust GitHub's hourly quota, so callers may explicitly supply a token
+    // for this one metadata request. Never put it on the download client, and
+    // do not follow redirects from the authenticated endpoint.
+    let c = http_with(reqwest::redirect::Policy::none())?;
+    let mut request = c
+        .get(CODEX_LATEST_API)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28");
+    if let Ok(token) = std::env::var("QB_GATE_GITHUB_TOKEN") {
+        if !token.trim().is_empty() {
+            request = request.bearer_auth(token.trim());
+        }
+    }
+    let json = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        let response = request.send().await?;
+        if let Some(message) = github_release_error(response.status(), response.headers()) {
+            return Err(GateError::Other(message));
+        }
+        Ok(response.error_for_status()?.text().await?)
+    })
+    .await
+    .map_err(|_| GateError::Other("GitHub 发布信息请求超过 60 秒，请稍后重试".into()))??;
     parse_codex_release(&json, codex_asset(is_arm64()))
+}
+
+fn github_release_error(
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+) -> Option<String> {
+    let numeric_header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+    };
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || (status == reqwest::StatusCode::FORBIDDEN
+            && (numeric_header("x-ratelimit-remaining") == Some(0)
+                || numeric_header("retry-after").is_some()))
+    {
+        let retry = numeric_header("retry-after")
+            .map(|seconds| format!("请在 {seconds} 秒后重试"))
+            .or_else(|| {
+                let seconds = i64::try_from(numeric_header("x-ratelimit-reset")?).ok()?;
+                let reset = chrono::DateTime::<chrono::Utc>::from_timestamp(seconds, 0)?;
+                Some(format!(
+                    "请在 {} UTC 后重试",
+                    reset.format("%Y-%m-%d %H:%M:%S")
+                ))
+            })
+            .unwrap_or_else(|| "请稍后重试".into());
+        return Some(format!(
+            "GitHub 发布信息接口限流（同一出口 IP 的请求共用额度）。{retry}；本次安装尚未下载程序。"
+        ));
+    }
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Some(
+            "GitHub 未接受发布信息查询凭据，请检查或移除 QB_GATE_GITHUB_TOKEN 后重试".into(),
+        );
+    }
+    if status.is_redirection() {
+        return Some("GitHub 发布信息接口返回了意外跳转，请稍后重试；查询凭据没有转发".into());
+    }
+    None
 }
 
 /// 下载到 `dest`，边下边算 SHA-256。返回算出来的哈希（小写十六进制）。
@@ -782,6 +844,7 @@ pub async fn unzip(zip: &Path, out: &Path) -> Result<()> {
         q(out)
     );
     let o = crate::process::powershell_tokio(&script)
+        .env_remove("QB_GATE_GITHUB_TOKEN")
         .output()
         .await
         .map_err(|e| GateError::Other(format!("启动 PowerShell 解压失败：{e}")))?;
@@ -832,6 +895,7 @@ pub async fn unzip(zip: &Path, out: &Path) -> Result<()> {
 async fn extract_codex_macos(archive: &Path, out: &Path) -> Result<PathBuf> {
     let member = codex_asset(is_arm64()).trim_end_matches(".tar.gz");
     let output = tokio::process::Command::new("/usr/bin/tar")
+        .env_remove("QB_GATE_GITHUB_TOKEN")
         .arg("-xOf")
         .arg(archive)
         .arg(member)
@@ -2066,6 +2130,42 @@ fn same_path(a: &Path, b: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn github_rate_limit_errors_use_reset_and_secondary_retry_headers() {
+        use reqwest::{header::HeaderMap, StatusCode};
+        let mut headers = HeaderMap::new();
+        headers.insert("x-ratelimit-remaining", "0".parse().unwrap());
+        headers.insert("x-ratelimit-reset", "1700000000".parse().unwrap());
+        let message = github_release_error(StatusCode::FORBIDDEN, &headers).unwrap();
+        assert!(message.contains("限流"));
+        assert!(message.contains("2023-11-14 22:13:20 UTC"));
+        assert!(github_release_error(StatusCode::OK, &headers).is_none());
+
+        headers.clear();
+        headers.insert("retry-after", "120".parse().unwrap());
+        let message = github_release_error(StatusCode::FORBIDDEN, &headers).unwrap();
+        assert!(message.contains("120 秒"));
+        headers.insert("retry-after", "invalid".parse().unwrap());
+        let message = github_release_error(StatusCode::TOO_MANY_REQUESTS, &headers).unwrap();
+        assert!(message.contains("稍后重试"));
+        // An unrelated 403 must retain its ordinary HTTP error instead of
+        // claiming that a retry after the hourly quota resets will fix it.
+        assert!(github_release_error(StatusCode::FORBIDDEN, &headers).is_none());
+    }
+
+    #[test]
+    fn github_metadata_redirects_and_rejected_credentials_are_explicit_errors() {
+        use reqwest::{header::HeaderMap, StatusCode};
+        let headers = HeaderMap::new();
+        assert!(github_release_error(StatusCode::FOUND, &headers)
+            .unwrap()
+            .contains("没有转发"));
+        assert!(github_release_error(StatusCode::UNAUTHORIZED, &headers)
+            .unwrap()
+            .contains("QB_GATE_GITHUB_TOKEN"));
+        assert!(github_release_error(StatusCode::OK, &headers).is_none());
+    }
 
     #[test]
     fn macos_official_manifest_keeps_unix_filename_and_requires_checksum() {

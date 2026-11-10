@@ -47,8 +47,9 @@ jobs:
       - run: cargo fmt --all --check
       - run: npm test
       - run: npm run types:check
-      - run: cargo test --locked --workspace
+      - run: cargo test --locked --workspace --no-fail-fast
       - run: cargo clippy --locked --workspace --lib -- -D warnings
+        if: ${{ !cancelled() }}
       - run: npx playwright install chromium
       - run: npm run test:ui
       - run: node scripts/macos-ui-smoke.mjs
@@ -142,6 +143,8 @@ jobs:
           set -o pipefail
           cargo build --locked -p qb-install --example macos-install-smoke 2>&1 | tee macos-install-smoke.log
       - name: Install official Claude and Codex binaries and verify rollback
+        env:
+          QB_GATE_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -o pipefail
           target/debug/examples/macos-install-smoke 2>&1 | tee -a macos-install-smoke.log

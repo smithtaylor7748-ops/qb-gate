@@ -3,7 +3,6 @@
   window.__QB_MACOS_SMOKE_STARTED__ = true;
   const invoke = window.__TAURI_INTERNALS__.invoke;
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  const heading = () => document.querySelector(".qb-page h1")?.textContent?.trim();
   const report = { ok: false, pages: [], platform: null, error: null };
   try {
     report.platform = await invoke("platform_capabilities");
@@ -12,15 +11,20 @@
     }
     await invoke("settings_load");
     await invoke("workspace_state");
-    for (const [path, title] of [["/software", "软件与安装"], ["/settings", "设置"], ["/relays", "中转站"]]) {
+    for (const [path, selector, title] of [
+      ["/software", ".qb-page h1", "软件与安装"],
+      ["/settings", ".qb-page h1", "设置"],
+      ["/relays", ".qb-page .qb-st-ctabs[role=tablist]", "Claude Code"],
+    ]) {
       location.hash = path;
+      const content = () => document.querySelector(selector)?.textContent?.trim();
       let ready = false;
       for (let attempt = 0; attempt < 160; attempt++) {
         await wait(250);
-        if (heading()?.includes(title)) { ready = true; break; }
+        if (content()?.includes(title)) { ready = true; break; }
       }
       if (!ready) throw new Error(`Native WebView did not render ${path}: ${document.body.innerText.slice(0, 1000)}`);
-      report.pages.push({ path, heading: heading() });
+      report.pages.push({ path, selector, content: content() });
     }
     report.ok = true;
   } catch (error) {

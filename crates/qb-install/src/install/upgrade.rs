@@ -500,11 +500,6 @@ fn free_space_mb(p: &Path) -> Option<u64> {
     Some(free / 1024 / 1024)
 }
 
-#[cfg(not(windows))]
-fn free_space_mb(_p: &Path) -> Option<u64> {
-    None
-}
-
 // ------------------------------------------------------------------ 补完
 
 /// 安装器没换成时，由面板自己把 `versions\<目标版本>` 装到 `bin\claude.exe`。

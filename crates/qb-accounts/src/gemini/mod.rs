@@ -340,9 +340,13 @@ mod tests {
     /// 凭据路径就是 Gemini CLI 自己的：`<GEMINI_CLI_HOME>\.gemini\oauth_creds.json`。
     #[test]
     fn creds_path_matches_gemini_cli() {
-        let home = Path::new(r"C:\x\gemini-accounts\abc\home");
-        assert!(creds_path(home).ends_with(r"home\.gemini\oauth_creds.json"));
-        assert_eq!(home_of(Path::new(r"C:\x\gemini-accounts\abc")), home);
+        let slot = Path::new("fixture").join("gemini-accounts").join("abc");
+        let home = slot.join("home");
+        assert_eq!(
+            creds_path(&home),
+            home.join(".gemini").join("oauth_creds.json")
+        );
+        assert_eq!(home_of(&slot), home);
     }
 
     /// google-auth-library 的 `Credentials` 形状：过期时刻是**毫秒**，要换成秒。

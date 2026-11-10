@@ -256,6 +256,7 @@ pub fn triage(
 ///
 /// 反重力那五个名字是 0.26.0 补的（Hub 主程序、IDE 主程序与第三方壳留下的 original、
 /// 两个语言服务器）。名字只用来缩小枚举范围，判定看的是路径（`install::antigravity::product_of`）。
+#[cfg(any(windows, test))]
 const SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
 
@@ -466,6 +467,7 @@ pub async fn preview() -> Result<KillReport> {
 /// 脚本里**一个双引号都没有**：它整段作为 `-Command` 的参数传过去，双引号要经过
 /// 一轮命令行转义，Windows PowerShell 5.1 在这一步上有过把引号吃掉的前科。
 /// 所以不用 `-Filter "Name='…'"`，改成在管道里按名字筛。
+#[cfg(any(windows, test))]
 const DESKTOP_SCRIPT: &str = r#"
 $ErrorActionPreference = 'Stop'
 $names = @('claude.exe', 'Update.exe')
