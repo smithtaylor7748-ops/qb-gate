@@ -1,14 +1,16 @@
 # QB Gate · Mac 安装与使用
 
-适用于 **Apple Silicon（M1 及更新芯片）、macOS 13.3 及以上**。本次发布目标为 **macos-v0.25.14-preview.1**，应用内版本号为 **0.25.14**。安装包正在构建与验收，下列下载入口在正式上传附件后生效。
+适用于 **Apple Silicon（M1 及更新芯片）、macOS 13.3 及以上**。当前已发布 **macos-v0.25.14-preview.1**，应用内版本号为 **0.25.14**。
 
 [下载 Mac 安装包](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.14-preview.1/QB-Gate-macOS-arm64.dmg) · [查看本版发布说明](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.14-preview.1) · [下载 SHA256SUMS.txt](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.14-preview.1/SHA256SUMS.txt)
 
 ## 本版补充环境检测
 
-本地开发分支已同步 STUN / 同族 HTTP 出口对照、代理运行规则、ASN 网络类型及 Claude 客户端语言检测，入口为「出口一致性 → 补充环境检测」。均由按钮手动启动，结果不保存历史，不修改网络设置或参与门禁；WebRTC 未完成采集保持未知，UA-CH 与本次请求 UA 的平台声明比较。语言配置从 `~/Library/Application Support/Claude/config.json` 读取，多份或缺失证据不猜测。
+本版已加入 STUN / 同族 HTTP 出口对照、代理运行规则、ASN 网络类型及 Claude 客户端语言检测，入口为「出口一致性 → 补充环境检测」。均由按钮手动启动，结果不保存历史，不修改网络设置或参与门禁；WebRTC 未完成采集保持未知，UA-CH 与本次请求 UA 的平台声明比较。语言配置从 `~/Library/Application Support/Claude/config.json` 读取，多份或缺失证据不猜测。
 
-本版纳入已通过 [Mac 原生回归](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42868567916) 和 [Windows CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42868568031) 的 `b963a96` 检测源码：Mac Rust 3160 项、Windows 3206 项，均 0 失败；两端前端 388 项、IPC 362、UI 151 + 28 通过。0.25.14 的新 DMG 与原生 WKWebView 检查由本次完整构建重新验证，完成前不将旧源码回归视为新安装包已通过。
+发布源码 `fa2ef63386f34dcf76a122bba7e5ce6722bbfbce` 的 [完整 Mac 构建](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42872807949) 与 [Windows CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42872807878) 全部成功：Mac Rust 3160 项、Windows 3206 项，均 0 失败、2 个既有忽略；前端 388 项、IPC 362、UI 151 + 28 通过。新 DMG 已完成 arm64 签名核对、真实 WKWebView 诊断 IPC、托盘唤回、资料持久化及隔离替换更新验证。[附件上传核验](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42876933022)确认 9 个文件的大小与哈希一致；公开 DMG 下载已核对。
+
+DMG SHA-256：`1a91c6afc2dc710b6f80d953e0454948e8c99cea3c68f3155fe781f3c3e8e69a`。真实第三方检测服务、真实账户和用户网络故障场景仍需另验。
 
 ## 安装与首次打开
 

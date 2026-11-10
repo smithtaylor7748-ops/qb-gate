@@ -4,13 +4,13 @@
 
 - **Mac 同步补充环境检测**：在出口一致性详情加入手动 STUN / IPv4 与 IPv6 HTTP 出口对照、Mihomo / Clash 运行规则核验、ASN 网络类型查询及 Claude 桌面语言配置检测。修复 WebRTC 不支持、异常、超时和旧报告的误通过；保留 Mac 现有网络适配，UA-CH 与本次请求 UA 的平台声明比较。旧 egress 缓存升至版本 2、signals 升至版本 1，等待手动重测。明确排除出口变化历史，结果只存内存、不参与门禁，控制密钥仅用于当次本机请求。
 
-应用版本 **0.25.14**，预览标签 **macos-v0.25.14-preview.1**。使用者已授权更新 Mac 安装包；本版正在进行 GitHub 原生构建与完整验收，完成前不视为已发布。
+应用版本 **0.25.14**，预览标签 **macos-v0.25.14-preview.1**。使用者已授权更新 Mac 安装包；本版已发布，标签指向 `fa2ef63386f34dcf76a122bba7e5ce6722bbfbce`。
 
 本地检查（Windows 主机运行 Mac 分支）：十项收工检查全部通过。Rust 全 workspace **3206 通过、0 失败、2 个既有忽略**；前端 **388 项 / 75 个文件**；UI **151 个响应式 / 主题组合 + 28 个交互流程**；另有 Mac 平台模拟 smoke，核对四项手动动作、输入传递、未知结果、密钥清空与不持久化。构建、IPC **362 个导出类型**、Clippy、Rust / 前端格式、发布一致性与公开源码扫描、cargo deny 均通过，npm audit **0 漏洞**。首轮完整运行中一项未改动的路由测试触发既有 500ms 时限；原断言与时限单独重跑通过，随后全量复跑通过，未调整测试或产品路由逻辑。
 
 远程验证：使用者授权后，源码提交 `b963a963b0f508705a4c9e288e37be9cb7df05a0` 已推至 `codex/macos-detection-20261110`，同提交的 [Mac 原生回归](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42868567916) 与 [Windows / 供应链 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42868568031) 全部成功。Apple Silicon / macOS 15：Rust **3160 通过、0 失败、2 个既有忽略**；Windows：**3206 / 0 / 2**；两平台前端 **388 / 75 文件**、IPC **362**、UI **151 + 28** 均通过。Mac 另通过隔离原生运行时及四项补充检测的 Mac 界面 smoke。
 
-验证边界：上述检测源码回归没有构建 DMG；本次 0.25.14 发布构建将运行完整 macos.yml，包含新 DMG 的安装、原生 WKWebView IPC fixture 与更新验证，结果以该构建记录为准。补充检测使用隔离资料，不请求真实 STUN / ASN / 用户代理控制接口或真实账户；不替使用者安装或重启面板。
+发布验证：[完整 Mac 构建](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42872807949) 10 / 10 作业成功，[同源码 Windows CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42872807878)全部成功，数量与上述源码回归一致。新 DMG 已通过真实挂载、arm64 / 签名、WKWebView 诊断 IPC、关闭唤回、配置持久化及隔离替换更新验收；[上传核验](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42876933022)确认9个附件与原始产物一致。DMG SHA-256 为 `1a91c6afc2dc710b6f80d953e0454948e8c99cea3c68f3155fe781f3c3e8e69a`，公开下载已核对。补充检测使用隔离资料，不请求真实 STUN / ASN / 用户代理控制接口或真实账户；不替使用者安装或重启面板。
 
 ## 0.25.12 macOS 预览版 2 — 2026-11-10
 
