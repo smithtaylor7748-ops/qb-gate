@@ -122,8 +122,33 @@ mod native {
     }
 
     pub fn process_argv(pid: u32) -> Result<Vec<String>> {
+        // XNU sysctl_procargsx rejects a non-null buffer larger than ARG_MAX
+        // (after reserving argc). Query the same kernel limit rather than guessing.
+        // https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sysctl.c
+        let mut arg_max_mib = [libc::CTL_KERN, libc::KERN_ARGMAX];
+        let mut arg_max: libc::c_int = 0;
+        let mut arg_max_size = std::mem::size_of_val(&arg_max);
+        let status = unsafe {
+            libc::sysctl(
+                arg_max_mib.as_mut_ptr(),
+                2,
+                &mut arg_max as *mut _ as *mut _,
+                &mut arg_max_size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if status != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        if arg_max_size != std::mem::size_of_val(&arg_max)
+            || arg_max <= 0
+            || arg_max > 16 * 1024 * 1024
+        {
+            return Err(GateError::Other("macOS 进程参数长度上限无效".into()));
+        }
         let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as i32];
-        let mut bytes = vec![0u8; 4 * 1024 * 1024];
+        let mut bytes = vec![0u8; arg_max as usize];
         let mut size = bytes.len();
         let status = unsafe {
             libc::sysctl(

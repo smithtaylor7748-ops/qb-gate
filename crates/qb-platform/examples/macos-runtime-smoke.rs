@@ -127,13 +127,14 @@ mod smoke {
                 0,
             )
         };
+        let fixture_exe = std::env::current_exe()?.canonicalize()?;
         let before = macos::processes()?;
         let prepared = prepare()?;
         let helpers: Vec<_> = macos::processes()?
             .into_iter()
             .filter(|p| {
                 p.ppid == std::process::id()
-                    && p.argv.iter().any(|a| a == "--qb-managed")
+                    && p.path.canonicalize().ok().as_ref() == Some(&fixture_exe)
                     && !before
                         .iter()
                         .any(|old| old.pid == p.pid && old.created == p.created)
@@ -141,6 +142,17 @@ mod smoke {
             .map(|p| (p.pid, p.created))
             .collect();
         assert_eq!(helpers.len(), 1);
+        let helper_args = macos::process_argv(helpers[0].0)
+            .map_err(|error| format!("prepared helper argument query failed: {error}"))?;
+        assert!(
+            helper_args.iter().any(|arg| arg == "--qb-managed"),
+            "prepared helper mode missing from {} readable arguments",
+            helper_args.len()
+        );
+        println!(
+            "PASS native helper argument query ({} arguments)",
+            helper_args.len()
+        );
         assert!(!marker.exists(), "prepare must not start the client");
         drop(prepared);
         wait_for(

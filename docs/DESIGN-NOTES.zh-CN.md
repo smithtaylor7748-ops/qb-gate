@@ -2,6 +2,8 @@
 
 ## macOS 平台适配与当前源码修复
 
+原生运行时回归暴露 `KERN_PROCARGS2` 的平台上限：XNU 会拒绝大于 `ARG_MAX` 的缓冲区，不能用固定 4 MiB 读取进程参数。读取先查询 `KERN_ARGMAX`，核验类型和长度后按系统值分配，异常直接报告。辅助进程测试先依据父进程、规范化可执行路径及 PID / 创建时间确定身份，再断言真实参数可读，避免将空参数隐藏为测试通过。
+
 平台层提供结构化能力 `PlatformCapabilities`；前端不根据浏览器 UA 假定安全能力。Windows ACL 的公开操作与受管启动的租约协调分开：Mac 不实现 NTFS 执行锁，但受管启动仍检查 IP。Mac 密钥由钥匙串中的主密钥保护，进程通过原生 helper 与进程组托管。Tauri 用平台配置合并 `.app` / `.dmg` 目标，Apple Silicon 构建固定 `aarch64-apple-darwin`；更新镜像经 SHA-256 校验后交给 Finder，用户手动替换应用。详见 [macOS 说明](MACOS.zh-CN.md)。
 
 `macos-v0.25.12-preview.1` 已于 2026-11-10 发布；以下为同日复核后尚未发布的源码修复，版本不变。Windows 本地完整回归通过，本轮 Mac 原生验证尚待执行；具体结果见 [Mac 说明](MACOS.zh-CN.md)。原发布的成功构建不能替代这轮验证。
