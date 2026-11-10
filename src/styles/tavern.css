@@ -337,8 +337,9 @@
   line-height: 1.6;
 }
 .tv-console-line {
+  min-width: 0;
   min-height: 1.6em;
-  white-space: pre-wrap;
+  white-space: break-spaces;
   overflow-wrap: anywhere;
 }
 /* SillyTavern 自己打的颜色码（`lib/ansi.ts`）→ 主题里的颜色。 */

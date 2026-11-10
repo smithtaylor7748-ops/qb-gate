@@ -57,7 +57,9 @@ jobs:
         if: failure()
         with:
           name: macos-layout-failure
-          path: test-results/accounts-*.png
+          path: |
+            test-results/accounts-*.png
+            test-results/layout-*.png
           if-no-files-found: ignore
           retention-days: 14
   apple-silicon:

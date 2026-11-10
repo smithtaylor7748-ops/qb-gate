@@ -134,7 +134,20 @@ function watchErrors(target, errors) {
   });
 }
 
-/** 查一处，有问题就把具体是哪个元素、溢出多少 px 写进断言消息。 */
+const layoutFailures = [];
+async function collectLayoutAssertion(page, scope, check) {
+  try {
+    await check();
+  } catch (error) {
+    if (error.code !== "ERR_ASSERTION") throw error;
+    layoutFailures.push({ scope, assertion: error.message });
+    mkdirSync("test-results", { recursive: true });
+    await page.screenshot({
+      path: `test-results/layout-${layoutFailures.length}.png`,
+    });
+  }
+}
+/** Collect every overflow, then fail the run after the existing interaction checks. */
 async function assertNoOverflow(page, scope) {
   // A rotating loading ring has a changing bounding box; inspect the settled layout.
   await page.waitForFunction(
@@ -143,11 +156,27 @@ async function assertNoOverflow(page, scope) {
         (el) => el.getBoundingClientRect().width > 0,
       ),
   );
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    );
+  });
   const { live, stress } = await page.evaluate(OVERFLOW_PROBE);
-  assert.deepEqual(live, [], `${scope} 有文字顶出了盒子`);
-  assert.deepEqual(stress, [], `${scope} 装不下长字符串`);
+  if (live.length || stress.length) {
+    layoutFailures.push({ scope, live, stress });
+    mkdirSync("test-results", { recursive: true });
+    await page.screenshot({
+      path: `test-results/layout-${layoutFailures.length}.png`,
+    });
+  }
 }
 async function assertFixedAccounts(page, scope) {
+  await collectLayoutAssertion(page, scope, () =>
+    checkFixedAccountsGeometry(page, scope),
+  );
+}
+async function checkFixedAccountsGeometry(page, scope) {
   const geometry = await page.evaluate(() => {
     const left = document
       .querySelector(".account-slots")
@@ -372,10 +401,15 @@ try {
         const overflow = await page
           .locator(".qb-main")
           .evaluate((e) => e.scrollWidth > e.clientWidth + 2);
-        assert.equal(
-          overflow,
-          false,
-          `${route} overflows at ${width} / ${theme}`,
+        await collectLayoutAssertion(
+          page,
+          `/${route} ${width}px ${theme}`,
+          () =>
+            assert.equal(
+              overflow,
+              false,
+              `${route} overflows at ${width} / ${theme}`,
+            ),
         );
         // ⛔ 文档本身一格都不许滚。外壳是 `height: 100dvh; overflow: hidden`，
         // 会滚的只该是 `.qb-main` 一个 —— 文档也能滚就意味着窗口右边出现了
@@ -385,14 +419,19 @@ try {
         // 软件页 +1089px、设置页 +257px，原因是 `ExternalLink` 里那个
         // `.sr-only` 绝对定位后认到了 `<body>`，整个逃出滚动容器
         // （修法见 `workspace.css` 的 `.qb-main { position: relative }`）。
-        assert.equal(
-          await page.evaluate(
-            () =>
-              document.documentElement.scrollHeight -
-              document.documentElement.clientHeight,
-          ),
-          0,
-          `${route} 在 ${width} / ${theme} 下文档自己也能滚 —— 窗口会多出第二根滚动条`,
+        await collectLayoutAssertion(
+          page,
+          `/${route} document ${width}px ${theme}`,
+          async () =>
+            assert.equal(
+              await page.evaluate(
+                () =>
+                  document.documentElement.scrollHeight -
+                  document.documentElement.clientHeight,
+              ),
+              0,
+              `${route} 在 ${width} / ${theme} 下文档自己也能滚 —— 窗口会多出第二根滚动条`,
+            ),
         );
         await assertNoOverflow(page, `/${route} ${width}px ${theme}`);
         assert.equal(await page.getByText("此页面暂时无法显示").count(), 0);
@@ -432,12 +471,14 @@ try {
         await view.goto(origin + "/#/" + route);
         await view.getByText("演示数据", { exact: true }).waitFor();
         await view.locator(".qb-page h1, .qb-page .qb-st-ctl").waitFor();
-        assert.equal(
-          await view
-            .locator(".qb-main")
-            .evaluate((e) => e.scrollWidth > e.clientWidth + 2),
-          false,
-          `DPI ${scale}: ${route}`,
+        await collectLayoutAssertion(view, `DPI ${scale}: ${route}`, async () =>
+          assert.equal(
+            await view
+              .locator(".qb-main")
+              .evaluate((e) => e.scrollWidth > e.clientWidth + 2),
+            false,
+            `DPI ${scale}: ${route}`,
+          ),
         );
         report.push({
           route,
@@ -1302,18 +1343,10 @@ try {
   await page.getByRole("button", { name: "Claude", exact: true }).click();
   const right = await page.locator(".account-workspace-right").boundingBox();
   const left = await page.locator(".account-slots").boundingBox();
-  assert.ok(right.x > left.x && Math.abs(right.y - left.y) < 3);
-  const accountLayoutFailures = [];
-  const checkAccountLayout = async (scope) => {
-    try {
-      await assertFixedAccounts(page, scope);
-    } catch (error) {
-      accountLayoutFailures.push(`${scope}: ${error.message}`);
-      await page.screenshot({
-        path: `test-results/accounts-${scope.replaceAll(/[^a-zA-Z0-9]/g, "-")}.png`,
-      });
-    }
-  };
+  await collectLayoutAssertion(page, "account columns alignment", () =>
+    assert.ok(right.x > left.x && Math.abs(right.y - left.y) < 3),
+  );
+  const checkAccountLayout = (scope) => assertFixedAccounts(page, scope);
   mkdirSync("test-results", { recursive: true });
   for (const [width, height] of [
     [1320, 940],
@@ -1331,11 +1364,6 @@ try {
     await checkAccountLayout(`Antigravity ${width}x${height}`);
     await page.getByRole("button", { name: "Claude", exact: true }).click();
   }
-  assert.deepEqual(
-    accountLayoutFailures,
-    [],
-    "Account layouts must all fit without clipping",
-  );
   // 反重力侧的交互：账户切换、两半的徽标、并入、启动要确认、
   // 汉化引擎（弹窗里）附加 / 停止翻真翻假、用量卡的配额格与明细弹窗。
   await page.setViewportSize({ width: 1320, height: 940 });
@@ -2679,6 +2707,11 @@ try {
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
 
+  assert.deepEqual(
+    layoutFailures,
+    [],
+    "All page and interaction layouts must fit without clipping",
+  );
   assert.deepEqual(errors, []);
   const flows = [
     "catalog isolation",
