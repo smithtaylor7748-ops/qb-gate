@@ -524,14 +524,18 @@ mod tests {
             Some(InstallerKind::Inno)
         );
         assert_eq!(installer_kind(b"MZ plain"), None);
-        let d = Path::new(r"D:\My Apps\antigravity");
+        let d = if cfg!(windows) {
+            Path::new(r"D:\My Apps\antigravity")
+        } else {
+            Path::new("/tmp/My Apps/antigravity")
+        };
         assert_eq!(
             installer_dir_arg(InstallerKind::Nsis, d).unwrap(),
-            r"/D=D:\My Apps\antigravity"
+            format!("/D={}", d.display())
         );
         assert_eq!(
             installer_dir_arg(InstallerKind::Inno, d).unwrap(),
-            r#"/DIR="D:\My Apps\antigravity""#
+            format!("/DIR=\"{}\"", d.display())
         );
         assert!(installer_dir_arg(InstallerKind::Nsis, Path::new("rel")).is_err());
     }

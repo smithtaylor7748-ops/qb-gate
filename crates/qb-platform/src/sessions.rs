@@ -19,6 +19,13 @@ fn registry() -> &'static Mutex<BTreeMap<String, Managed>> {
     SESSIONS.get_or_init(Default::default)
 }
 
+fn environment_key(key: &str) -> String {
+    #[cfg(windows)]
+    return key.to_ascii_uppercase();
+    #[cfg(not(windows))]
+    key.to_owned()
+}
+
 pub fn sanitized_environment(
     inherited: impl IntoIterator<Item = (String, String)>,
     additions: Vec<(String, String)>,
@@ -55,7 +62,7 @@ pub fn sanitized_environment(
     let mut out: BTreeMap<String, (String, String)> = inherited
         .into_iter()
         .filter(|(k, _)| !CONFLICTS.contains(&k.to_ascii_uppercase().as_str()))
-        .map(|(k, v)| (k.to_ascii_uppercase(), (k, v)))
+        .map(|(k, v)| (environment_key(&k), (k, v)))
         .collect();
     #[cfg(target_os = "macos")]
     let secure_dir = additions
@@ -63,7 +70,7 @@ pub fn sanitized_environment(
         .find(|(k, _)| k == "CLAUDE_CONFIG_DIR")
         .map(|(_, value)| value.clone());
     for (k, v) in additions {
-        out.insert(k.to_ascii_uppercase(), (k, v));
+        out.insert(environment_key(&k), (k, v));
     }
     #[cfg(target_os = "macos")]
     if let Some(dir) = secure_dir {
@@ -1108,7 +1115,7 @@ mod tests {
     #[test]
     fn mixed_case_inherited_credentials_are_removed_without_mutating_parent() {
         let inherited = vec![
-            ("Path".into(), "bin".into()),
+            ("PATH".into(), "/usr/bin".into()),
             ("OpenAi_Api_Key".into(), "official".into()),
             ("CLAUDE_CONFIG_DIR".into(), "old".into()),
             (
@@ -1128,6 +1135,44 @@ mod tests {
             .iter()
             .any(|(k, v)| k == "OPENAI_API_KEY" && v == "relay"));
         assert!(!result.iter().any(|(k, _)| k == "CLAUDE_CONFIG_DIR"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_environment_names_keep_their_distinct_case() {
+        let result = sanitized_environment(
+            vec![
+                ("PATH".into(), "/original/bin".into()),
+                ("Path".into(), "unrelated".into()),
+                ("OPENAI_API_KEY".into(), "inherited-secret".into()),
+            ],
+            vec![("PATH".into(), "/selected/bin".into())],
+        );
+        assert!(result.iter().any(|(k, v)| k == "Path" && v == "unrelated"));
+        let path = result.iter().find(|(k, _)| k == "PATH").unwrap();
+        assert_eq!(
+            std::env::split_paths(&path.1).next().unwrap(),
+            Path::new("/selected/bin")
+        );
+        assert!(!result
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("OPENAI_API_KEY")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_secure_storage_follows_the_selected_claude_slot() {
+        let result = sanitized_environment(
+            vec![(
+                "CLAUDE_SECURESTORAGE_CONFIG_DIR".into(),
+                "/other-slot".into(),
+            )],
+            vec![("CLAUDE_CONFIG_DIR".into(), "/selected-slot".into())],
+        );
+        assert!(result.iter().any(|(key, value)| {
+            key == "CLAUDE_SECURESTORAGE_CONFIG_DIR" && value == "/selected-slot"
+        }));
+        assert!(!result.iter().any(|(_, value)| value == "/other-slot"));
     }
 
     #[test]

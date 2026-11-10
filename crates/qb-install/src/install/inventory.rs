@@ -338,7 +338,7 @@ pub fn refresh_desktop_real_dir() {
 pub fn is_desktop_process_path(path: &Path, local: Option<&Path>) -> bool {
     if cfg!(target_os = "macos") {
         return super::macos_install::bundle("Claude")
-            .is_some_and(|bundle| path.starts_with(bundle.join("Contents")));
+            .is_some_and(|bundle| desktop_bundle_contains(path, &bundle));
     }
     let p = norm(path);
     if let Some(l) = local {
@@ -364,6 +364,10 @@ pub fn is_desktop_process_path(path: &Path, local: Option<&Path>) -> bool {
     false
 }
 
+fn desktop_bundle_contains(path: &Path, bundle: &Path) -> bool {
+    path.starts_with(bundle.join("Contents"))
+}
+
 /// 桌面端带的 CLI 副本（`%APPDATA%\Claude*\claude-code\…`）吗。
 ///
 /// 它们是桌面端 Code 页拉起的会话，归桌面端所有：一键关闭与切账户报「关掉了什么」时
@@ -372,6 +376,19 @@ pub fn is_desktop_managed_path(path: &Path, roaming: Option<&Path>) -> bool {
     let Some(r) = roaming else {
         return false;
     };
+    if cfg!(target_os = "macos") {
+        let Ok(relative) = path.strip_prefix(r) else {
+            return false;
+        };
+        let mut components = relative.components();
+        let Some(profile) = components.next().and_then(|c| c.as_os_str().to_str()) else {
+            return false;
+        };
+        return (profile == "Claude" || profile.starts_with("Claude-"))
+            && components
+                .next()
+                .is_some_and(|c| c.as_os_str() == "claude-code");
+    }
     let p = norm(path);
     let root = format!("{}\\", norm(r).trim_end_matches('\\'));
     let Some(rest) = p.strip_prefix(&root) else {
@@ -952,6 +969,37 @@ fn scan_macos(r: &Roots) -> Vec<Install> {
 #[cfg(all(test, target_os = "macos"))]
 mod macos_inventory_tests {
     use super::*;
+    #[test]
+    fn macos_desktop_bundle_and_profile_paths_use_component_boundaries() {
+        let bundle = Path::new("/Applications/Claude.app");
+        assert!(desktop_bundle_contains(
+            &bundle.join("Contents/MacOS/Claude"),
+            bundle
+        ));
+        assert!(!desktop_bundle_contains(
+            Path::new("/Applications/Claude.app-copy/Contents/MacOS/Claude"),
+            bundle
+        ));
+        assert!(!desktop_bundle_contains(
+            Path::new("/Users/Test/.local/bin/claude"),
+            bundle
+        ));
+        let roaming = Path::new("/Users/Test/Library/Application Support");
+        for profile in ["Claude", "Claude-SLOT-A"] {
+            assert!(is_desktop_managed_path(
+                &roaming.join(profile).join("claude-code/2.1.322/claude"),
+                Some(roaming)
+            ));
+        }
+        assert!(!is_desktop_managed_path(
+            &roaming.join("Claude Code/claude-code/2.1.322/claude"),
+            Some(roaming)
+        ));
+        assert!(!is_desktop_managed_path(
+            &roaming.join("Claude/other/claude"),
+            Some(roaming)
+        ));
+    }
     #[test]
     fn macos_codex_archives_and_interrupted_deployments_use_native_names() {
         let root =

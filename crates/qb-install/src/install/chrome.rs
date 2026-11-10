@@ -128,6 +128,16 @@ fn roaming() -> PathBuf {
 /// 于是 per-user 装的 Chrome 会被报成「未安装」，然后重装流程会直接去
 /// 「装一个新的」，把使用者已有的那份连同资料一起留在原地不管。
 pub fn chrome_candidates() -> Vec<PathBuf> {
+    if cfg!(target_os = "macos") {
+        let mut roots = vec![PathBuf::from("/Applications")];
+        if let Some(home) = dirs::home_dir() {
+            roots.push(home.join("Applications"));
+        }
+        return roots
+            .into_iter()
+            .map(|root| root.join("Google Chrome.app/Contents/MacOS/Google Chrome"))
+            .collect();
+    }
     let pf = PathBuf::from(std::env::var("ProgramFiles").unwrap_or_default());
     let pf86 = PathBuf::from(std::env::var("ProgramFiles(x86)").unwrap_or_default());
     vec![
@@ -153,6 +163,9 @@ pub fn chrome_exe() -> Option<PathBuf> {
 
 /// Chrome 的用户资料根目录（书签、密码、Cookie、站点数据全在这下面）。
 pub fn chrome_user_data() -> PathBuf {
+    if cfg!(target_os = "macos") {
+        return local().join("Google/Chrome");
+    }
     local().join("Google").join("Chrome").join("User Data")
 }
 
@@ -653,6 +666,7 @@ mod tests {
     /// 于是 per-user 装的 Chrome 被报成「未安装」，重装流程会直接跳到
     /// 「装一个新的」，把使用者已有的那份连同 claude.ai 登录态留在原地 ——
     /// 而这恰恰是整个功能要清掉的东西。
+    #[cfg(windows)]
     #[test]
     fn per_user_install_location_is_probed() {
         let c = chrome_candidates();
@@ -673,6 +687,7 @@ mod tests {
     ///
     /// 弄混了就会「卸载完把程序目录删了、资料还在」—— 既没清掉登录态，
     /// 又把重装弄坏。
+    #[cfg(windows)]
     #[test]
     fn user_data_is_the_profile_root_not_the_program_dir() {
         let p = chrome_user_data();
@@ -685,6 +700,33 @@ mod tests {
             "指到安装目录去了：{}",
             p.display()
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_chrome_has_system_and_user_application_candidates() {
+        let candidates = chrome_candidates();
+        assert!(candidates.contains(&PathBuf::from(
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        )));
+        assert!(candidates
+            .contains(&home().join("Applications/Google Chrome.app/Contents/MacOS/Google Chrome")));
+        assert!(candidates
+            .iter()
+            .all(|p| p.is_absolute() && p.file_name().unwrap() == "Google Chrome"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_chrome_profiles_live_in_application_support_without_user_data_suffix() {
+        let profile = chrome_user_data();
+        assert_eq!(
+            profile,
+            home().join("Library/Application Support/Google/Chrome")
+        );
+        assert!(!chrome_candidates()
+            .iter()
+            .any(|exe| profile.starts_with(exe)));
     }
 
     /// 骑在分块边界上的那次出现不能漏。

@@ -168,6 +168,15 @@ pub fn stale_copies() -> Vec<PathBuf> {
 
 pub fn kind_of(p: &Path) -> TargetKind {
     let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    #[cfg(target_os = "macos")]
+    {
+        if name.starts_with("claude.old.") {
+            return TargetKind::StaleCopy;
+        }
+        if name == "codex" || name == "codex.before" || name.starts_with("codex.old.") {
+            return TargetKind::CodexCli;
+        }
+    }
     if name.starts_with("claude.exe.old.") {
         return TargetKind::StaleCopy;
     }
@@ -210,6 +219,7 @@ mod tests {
     /// 备份名必须落进 `stale_copies()` 的清理范围。
     ///
     /// 那是一份没有 Deny ACL 的完整 claude.exe，也就是一条绕过门禁的路。
+    #[cfg(windows)]
     #[test]
     fn backup_name_matches_stale_copies_prefix() {
         let name = crate::install::upgrade::backup_name("20260910-114500");
@@ -224,6 +234,7 @@ mod tests {
     }
     use super::*;
 
+    #[cfg(windows)]
     #[test]
     fn desktop_runtime_copies_are_never_lockable() {
         // 给 app-* 加 Deny ACE 会让桌面端开新窗口就崩，这条不能破。
@@ -258,6 +269,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn classifies_stub_and_plain_cli() {
         assert_eq!(
@@ -272,6 +284,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn classifies_stale_copy_regardless_of_directory() {
         assert_eq!(
@@ -282,6 +295,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn codex_is_recognised_by_filename_not_by_path() {
         // Codex 的落点有五种（npm / .local\bin / Programs / OpenAI\Codex\bin
@@ -316,6 +330,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn claude_paths_are_never_mistaken_for_codex() {
         assert_eq!(
@@ -366,5 +381,63 @@ mod tests {
         assert_eq!(target_kind(Kind::DesktopManaged), TargetKind::CliVersioned);
         assert_eq!(target_kind(Kind::Editor), TargetKind::EditorExtension);
         assert_eq!(target_kind(Kind::DesktopStub), TargetKind::DesktopStub);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_cli_names_are_classified_with_unix_path_components() {
+        for path in [
+            "/opt/homebrew/bin/codex",
+            "/Users/test/.local/bin/codex",
+            "/Users/test/managed/codex/versions/1.2.3/codex",
+            "/Users/test/managed/codex/codex.before",
+            "/Users/test/managed/codex/codex.old.123",
+        ] {
+            assert_eq!(kind_of(Path::new(path)), TargetKind::CodexCli, "{path}");
+        }
+        assert_eq!(
+            kind_of(Path::new("/Users/test/.local/bin/claude")),
+            TargetKind::Cli
+        );
+        assert_ne!(
+            kind_of(Path::new(r"/tmp/folder\codex")),
+            TargetKind::CodexCli
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_backups_and_versioned_claude_copies_keep_their_classification() {
+        for path in [
+            "/Users/test/.local/bin/claude.old.123",
+            "/Users/test/managed/claude-code/claude.old.123",
+        ] {
+            assert_eq!(kind_of(Path::new(path)), TargetKind::StaleCopy, "{path}");
+        }
+        assert_eq!(
+            kind_of(Path::new(
+                "/Users/test/.local/share/claude/versions/2.1.321"
+            )),
+            TargetKind::NativeVersion
+        );
+        assert_eq!(
+            kind_of(Path::new(
+                "/Users/test/Library/Application Support/Claude/claude-code/2.1.321/claude"
+            )),
+            TargetKind::CliVersioned
+        );
+        assert_eq!(
+            kind_of(Path::new("/Users/test/.vscode/extensions/anthropic.claude-code-2.1.321-darwin-arm64/resources/native-binary/claude")),
+            TargetKind::EditorExtension
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_global_execution_locks_remain_unsupported() {
+        assert!(crate::gate::lock_all().is_err());
+        assert!(crate::gate::unlock_all().is_err());
+        assert_eq!(crate::gate::lock_for_managed().unwrap(), 0);
+        assert_eq!(crate::gate::unlock_for_managed().unwrap(), 0);
     }
 }

@@ -262,7 +262,21 @@ pub fn score(
     let mut notes: Vec<String> = Vec::new();
 
     let lower = path.to_string_lossy().to_lowercase();
-    if STALE_WORDS.iter().any(|w| lower.contains(w)) {
+    if STALE_WORDS.iter().any(|w| {
+        lower.match_indices(w).any(|(at, _)| {
+            // The macOS temporary root is /var/folders; "old" inside
+            // "folders" does not make every candidate a stale copy.
+            *w != "old"
+                || (!at
+                    .checked_sub(1)
+                    .and_then(|i| lower.as_bytes().get(i))
+                    .is_some_and(u8::is_ascii_alphabetic)
+                    && !lower
+                        .as_bytes()
+                        .get(at + w.len())
+                        .is_some_and(u8::is_ascii_alphabetic))
+        })
+    }) {
         score -= 500;
         notes.push("路径里有备份/旧版字样".into());
     }
@@ -667,6 +681,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn macos_temporary_folders_do_not_mark_live_copies_as_old() {
+        let live = Path::new("/var/folders/session/chat/bridge-v2");
+        let (live_score, live_note) = score(live, TavernEvidence::Scan, None);
+        assert!(!live_note.contains("备份/旧版"));
+        for name in ["old-bridge", "bridge.old", "old_backup"] {
+            let backup = live.with_file_name(name);
+            let (backup_score, backup_note) = score(&backup, TavernEvidence::Scan, None);
+            assert!(live_score > backup_score, "{name}");
+            assert!(backup_note.contains("备份/旧版"), "{name}");
+        }
+    }
+
     /// 有 `server.js` 不等于是酒馆。
     #[test]
     fn a_plain_node_project_is_not_sillytavern() {
@@ -722,8 +749,8 @@ mod tests {
         let roots = Roots {
             starts: vec![root.clone()],
             running_cmdlines: vec![format!(
-                "python.exe -u {}\\bridge.py --claude c:\\claude.exe --data-dir d:\\dd --port 5001",
-                running.display()
+                "python -u \"{}\" --port 5001",
+                running.join("bridge.py").display()
             )],
             ..Default::default()
         };
@@ -737,12 +764,18 @@ mod tests {
 
     #[test]
     fn a_quoted_path_with_spaces_survives_tokenizing() {
-        let cmd =
-            r#""C:\Program Files\Py\python.exe" -u "D:\my stuff\bridge v2\bridge.py" --port 5001"#;
-        assert_eq!(
-            bridge_root_from_cmdline(cmd),
-            Some(PathBuf::from(r"D:\my stuff\bridge v2"))
-        );
+        let (cmd, expected) = if cfg!(windows) {
+            (
+                r#""C:\Program Files\Py\python.exe" -u "D:\my stuff\bridge v2\bridge.py" --port 5001"#,
+                r"D:\my stuff\bridge v2",
+            )
+        } else {
+            (
+                r#""/Applications/Python 3/python3" -u "/Users/test/my stuff/bridge v2/bridge.py" --port 5001"#,
+                "/Users/test/my stuff/bridge v2",
+            )
+        };
+        assert_eq!(bridge_root_from_cmdline(cmd), Some(PathBuf::from(expected)));
     }
 
     /// 裸 `bridge.py` 给不出位置 —— 认了它就又回到那句
@@ -806,7 +839,7 @@ mod tests {
         };
         let survey = locate(&roots, &Budget::quick());
         assert!(
-            survey.sillytavern[0].path.ends_with(r"chat\SillyTavern"),
+            Path::new(&survey.sillytavern[0].path).ends_with(Path::new("chat").join("SillyTavern")),
             "实得 {}",
             survey.sillytavern[0].path
         );

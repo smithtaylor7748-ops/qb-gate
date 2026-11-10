@@ -201,25 +201,30 @@ mod tests {
 
     #[test]
     fn tavern_paths_under_the_old_dir_follow_it() {
-        let old = Path::new(r"C:\apps\sillytavern");
-        let new = Path::new(r"D:\ST");
+        let old = Path::new(if cfg!(windows) {
+            r"C:\apps\sillytavern"
+        } else {
+            "/apps/sillytavern"
+        });
+        let new = Path::new(if cfg!(windows) { r"D:\ST" } else { "/apps/ST" });
+        let bridge = Path::new(if cfg!(windows) {
+            r"E:\bridge"
+        } else {
+            "/other/bridge"
+        });
         let mut cfg = crate::plugins::sillytavern::TavernConfig {
             sillytavern_root: old.to_path_buf(),
             st_launcher: old.join("Start.bat"),
-            bridge_root: PathBuf::from(r"E:\bridge"),
+            bridge_root: bridge.to_path_buf(),
             ..Default::default()
         };
         assert_eq!(rebase_tavern(&mut cfg, old, new), 2);
-        assert_eq!(cfg.sillytavern_root, PathBuf::from(r"D:\ST"));
-        assert_eq!(cfg.st_launcher, PathBuf::from(r"D:\ST").join("Start.bat"));
-        assert_eq!(
-            cfg.bridge_root,
-            PathBuf::from(r"E:\bridge"),
-            "不在旧目录下的不动"
-        );
+        assert_eq!(cfg.sillytavern_root, new);
+        assert_eq!(cfg.st_launcher, new.join("Start.bat"));
+        assert_eq!(cfg.bridge_root, bridge, "不在旧目录下的不动");
         assert_eq!(rebase(Path::new(""), old, new), None);
         assert_eq!(
-            rebase(Path::new(r"C:\apps\sillytavern2\x"), old, new),
+            rebase(&old.with_file_name("sillytavern2").join("x"), old, new),
             None,
             "前缀相同但不是子目录"
         );

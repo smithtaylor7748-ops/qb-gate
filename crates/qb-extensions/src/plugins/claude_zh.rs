@@ -802,13 +802,13 @@ mod tests {
             Self { dir }
         }
         fn put(&self, rel: &str, body: &str) -> PathBuf {
-            let p = self.dir.join(rel);
+            let p = self.dir.join(rel.split('\\').collect::<PathBuf>());
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(&p, body).unwrap();
             p
         }
         fn read(&self, rel: &str) -> Option<String> {
-            std::fs::read_to_string(self.dir.join(rel)).ok()
+            std::fs::read_to_string(self.dir.join(rel.split('\\').collect::<PathBuf>())).ok()
         }
     }
 
@@ -836,7 +836,7 @@ mod tests {
 
     #[test]
     fn only_frontend_backups_are_restored_automatically() {
-        let p = |s: &str| PathBuf::from(s);
+        let p = |s: &str| s.split('\\').collect::<PathBuf>();
         assert!(restorable(&[
             p(r"ion-dist\assets\v1\a.js"),
             p(r"ion-dist\i18n\en-US.json")

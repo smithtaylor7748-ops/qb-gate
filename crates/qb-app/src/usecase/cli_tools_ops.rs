@@ -855,11 +855,18 @@ mod tests {
             assert_eq!(t.install.kind, StepKind::Manual);
         }
         let hermes = s.tools.iter().find(|t| t.tool == CliTool::Hermes).unwrap();
-        assert!(hermes
-            .script_url
-            .as_deref()
-            .unwrap()
-            .ends_with("install.ps1"));
+        if cfg!(windows) {
+            assert!(hermes
+                .script_url
+                .as_deref()
+                .unwrap()
+                .ends_with("install.ps1"));
+        } else {
+            assert!(
+                hermes.script_url.is_none(),
+                "Windows installer is not offered on Unix"
+            );
+        }
         assert!(hermes.npm_package.is_none());
     }
 }

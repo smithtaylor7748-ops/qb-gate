@@ -724,11 +724,17 @@ mod tests {
         }];
         overlay_slots(&mut slots);
         assert!(slots[0].logged_in, "访问令牌被拒不等于要重新登录");
-        assert!(slots[0]
-            .login_problem
-            .as_deref()
-            .unwrap()
-            .starts_with("访问令牌被拒"));
+        if cfg!(target_os = "macos") {
+            // Keychain credentials have no file timestamp to bind the cached
+            // rejection to. The direct request still reports the 401 above.
+            assert!(slots[0].login_problem.is_none());
+        } else {
+            assert!(slots[0]
+                .login_problem
+                .as_deref()
+                .unwrap()
+                .starts_with("访问令牌被拒"));
+        }
         // Claude Code 重新登录、换了令牌（凭据文件一变）：那一笔自动作废。
         std::thread::sleep(Duration::from_millis(20));
         write_cred(

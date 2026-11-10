@@ -1182,7 +1182,11 @@ mod tests {
     #[test]
     fn roles_tell_desktop_from_code() {
         let local = std::path::Path::new(r"C:\Users\me\AppData\Local");
-        let roaming = std::path::Path::new(r"C:\Users\me\AppData\Roaming");
+        let roaming = if cfg!(target_os = "macos") {
+            std::path::Path::new("/Users/me/Library/Application Support")
+        } else {
+            std::path::Path::new(r"C:\Users\me\AppData\Roaming")
+        };
         let at = |path: &str| RawProcess {
             created: 1,
             pid: 1,
@@ -1201,16 +1205,32 @@ mod tests {
             )
         };
 
+        #[cfg(windows)]
         assert_eq!(
             role(r"C:\Users\me\AppData\Local\AnthropicClaude\app-1.49585.0\claude.exe"),
             Role::Desktop
         );
         // 桌面端 Code 页拉起的会话归桌面端。
         assert_eq!(
-            role(r"C:\Users\me\AppData\Roaming\Claude\claude-code\2.1.266\claude.exe"),
+            role(
+                &roaming
+                    .join("Claude")
+                    .join("claude-code")
+                    .join("2.1.266")
+                    .join(crate::install::managed::App::ClaudeCode.exe_name())
+                    .display()
+                    .to_string()
+            ),
             Role::Desktop
         );
-        assert_eq!(role(r"C:\Users\me\.local\bin\claude.exe"), Role::Code);
+        assert_eq!(
+            role(if cfg!(target_os = "macos") {
+                "/Users/me/.local/bin/claude"
+            } else {
+                r"C:\Users\me\.local\bin\claude.exe"
+            }),
+            Role::Code
+        );
 
         let bridge = proc("python.exe", Some("x"), None);
         assert_eq!(
@@ -1230,6 +1250,7 @@ mod tests {
 
     // ------------------------------------------------------- 桌面端进程
 
+    #[cfg(windows)]
     #[test]
     fn desktop_rows_are_filtered_in_rust_not_in_the_script() {
         let local = std::path::Path::new(r"C:\Users\Demo'Quote\AppData\Local");
@@ -1258,6 +1279,26 @@ mod tests {
         assert!(parse_desktop_rows("not json", None).is_err());
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_desktop_profile_lookalikes_remain_independent_cli_processes() {
+        let roaming = std::path::Path::new("/Users/Test/Library/Application Support");
+        for relative in [
+            "Claude Code/claude-code/2.1.322/claude",
+            "Claude/other/claude",
+            "Claude-other/other/claude",
+        ] {
+            let process = RawProcess {
+                path: Some(roaming.join(relative).display().to_string()),
+                ..Default::default()
+            };
+            assert_eq!(
+                role_of(&process, Evidence::AnthropicSigned, None, Some(roaming)),
+                Role::Code
+            );
+        }
+    }
+
     #[test]
     fn desktop_script_uses_the_51_safe_json_form() {
         let call = DESKTOP_SCRIPT
@@ -1276,7 +1317,10 @@ mod tests {
     /// 而别的 IDE 也有叫 `language_server.exe` 的东西。
     #[test]
     fn antigravity_is_recognised_by_install_directory_only() {
+        use crate::install::antigravity::Product;
         let local = std::path::Path::new(r"C:\Users\me\AppData\Local");
+        let hub_dir = Product::Hub.dir(local);
+        let ide_dir = Product::Ide.dir(local);
         let mk = |path: &str, name: &str, signer: Option<&str>| RawProcess {
             pid: 42,
             name: name.into(),
@@ -1286,7 +1330,7 @@ mod tests {
             ..Default::default()
         };
         let hub = mk(
-            r"C:\Users\me\AppData\Local\Programs\antigravity\Antigravity.exe",
+            &Product::Hub.launcher(local).display().to_string(),
             "Antigravity.exe",
             Some("CN=Google LLC"),
         );
@@ -1300,7 +1344,14 @@ mod tests {
         );
         // 语言服务器没签名也算。
         let ls = mk(
-            r"C:\Users\me\AppData\Local\Programs\antigravity\resources\bin\language_server.exe",
+            &hub_dir
+                .join(if cfg!(target_os = "macos") {
+                    "Contents/Resources/bin/language_server_macos_arm"
+                } else {
+                    "resources/bin/language_server.exe"
+                })
+                .display()
+                .to_string(),
             "language_server.exe",
             None,
         );
@@ -1310,7 +1361,14 @@ mod tests {
         );
         // IDE 目录下第三方壳留下的 original 也算。
         let orig = mk(
-            r"C:\Users\me\AppData\Local\Programs\Antigravity IDE\Antigravity IDE.original.exe",
+            &ide_dir
+                .join(if cfg!(target_os = "macos") {
+                    "Contents/MacOS/Antigravity IDE"
+                } else {
+                    "Antigravity IDE.original.exe"
+                })
+                .display()
+                .to_string(),
             "Antigravity IDE.original.exe",
             Some("CN=Google LLC"),
         );
@@ -1320,11 +1378,25 @@ mod tests {
         );
         // 别处的同名文件不算 —— 不按名字认。
         let other = mk(
-            r"C:\Users\me\AppData\Local\Programs\Windsurf\language_server.exe",
+            &hub_dir
+                .with_file_name("Windsurf.app")
+                .join("language_server.exe")
+                .display()
+                .to_string(),
             "language_server.exe",
             None,
         );
         assert_eq!(classify(&other, DD, Some(local)), None);
+        let sibling = hub_dir.with_file_name(format!(
+            "{}-copy",
+            hub_dir.file_name().unwrap().to_string_lossy()
+        ));
+        let lookalike = mk(
+            &sibling.join("language_server.exe").display().to_string(),
+            "language_server.exe",
+            None,
+        );
+        assert_eq!(classify(&lookalike, DD, Some(local)), None);
         // 不知道根目录就认不出（宁可放过）。
         assert_eq!(classify(&hub, DD, None), None);
     }
@@ -1346,12 +1418,12 @@ mod tests {
             t(
                 1,
                 Role::Antigravity,
-                r"C:\Users\me\AppData\Local\Programs\antigravity\Antigravity.exe",
+                &Product::Hub.launcher(local).display().to_string(),
             ),
             t(
                 2,
                 Role::Antigravity,
-                r"C:\Users\me\AppData\Local\Programs\Antigravity IDE\Antigravity IDE.exe",
+                &Product::Ide.launcher(local).display().to_string(),
             ),
             t(
                 3,

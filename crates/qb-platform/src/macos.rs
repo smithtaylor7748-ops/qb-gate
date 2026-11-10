@@ -305,7 +305,7 @@ mod native {
             .ok_or_else(|| GateError::Other("监护管道不可用".into()))?
             .read_exact(&mut ready)
             .is_err()
-            || ready != [b'1']
+            || ready != *b"1"
         {
             let _ = child.kill();
             let _ = child.wait();

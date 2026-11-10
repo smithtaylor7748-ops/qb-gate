@@ -188,28 +188,9 @@ pub(crate) async fn blob(repo: &str, revision: &str, path: &str) -> Result<Vec<u
     Ok(out)
 }
 pub(crate) fn reject_links(path: &Path) -> Result<()> {
-    for ancestor in path.ancestors() {
-        let metadata = match std::fs::symlink_metadata(ancestor) {
-            Ok(m) => m,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e.into()),
-        };
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::MetadataExt;
-            if metadata.file_attributes() & 0x400 != 0 {
-                return Err(GateError::Other(
-                    "所选路径经过联结点或符号链接，请选择实际目录".into(),
-                ));
-            }
-        }
-        if metadata.file_type().is_symlink() {
-            return Err(GateError::Other(
-                "所选路径经过符号链接，请选择实际目录".into(),
-            ));
-        }
-    }
-    Ok(())
+    // Share the checked macOS system-alias handling with account configuration;
+    // user-created symlinks and Windows reparse points remain rejected.
+    crate::config_io::ensure_plain_path(path)
 }
 pub(crate) fn safe_relative(path: &str) -> bool {
     !path.is_empty()

@@ -888,8 +888,12 @@ mod tests {
         );
         assert_eq!(
             c[1].file_name().and_then(|n| n.to_str()),
-            Some("codex.cmd"),
-            "其次是 npm 全局那份"
+            Some(if cfg!(target_os = "macos") {
+                "codex"
+            } else {
+                "codex.cmd"
+            }),
+            "随后按当前平台的 PATH / npm 入口查找"
         );
         assert!(c.len() >= 5, "候选路径不该少于五条，实际 {}", c.len());
     }

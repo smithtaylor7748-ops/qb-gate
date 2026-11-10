@@ -566,6 +566,7 @@ mod tests {
 
     /// 只有面板状态目录下的（加上没有槽位时退回的 `~\.codex\desktop`）才算面板的；
     /// 大小写、斜杠方向、结尾的反斜杠都不影响；同名前缀的兄弟目录不算。
+    #[cfg(windows)]
     #[test]
     fn only_profiles_under_the_panel_state_dir_are_ours() {
         let state = Path::new(r"C:\Users\test\AppData\Local\ClaudeIpGate");
@@ -593,10 +594,52 @@ mod tests {
         assert!(!is_panel_profile(r"C:\Users\test\.codex", state, home));
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_profiles_preserve_argv_spaces_and_only_claim_panel_directories() {
+        let home = Path::new("/Users/测试 User");
+        let state = home.join("Library/Application Support/ClaudeIpGate");
+        let profile = state.join("codex-accounts/slot a/desktop");
+        let args = vec![
+            "/Applications/Codex.app/Contents/MacOS/Codex".into(),
+            "--user-data-dir".into(),
+            profile.display().to_string(),
+        ];
+        assert_eq!(
+            main_profile_args(&args),
+            Some(Some(profile.display().to_string()))
+        );
+        assert!(is_panel_profile(
+            &profile.display().to_string(),
+            &state,
+            home
+        ));
+        assert!(is_panel_profile(
+            &home.join(".codex/desktop").display().to_string(),
+            &state,
+            home
+        ));
+        for path in [
+            home.join("Library/Application Support/Codex"),
+            home.join("Library/Application Support/ClaudeIpGate-other/desktop"),
+            home.join(".codex"),
+        ] {
+            assert!(!is_panel_profile(&path.display().to_string(), &state, home));
+        }
+        let mut child = args;
+        child.push("--type=renderer".into());
+        assert_eq!(main_profile_args(&child), None);
+    }
+
     /// 读不出命令行的那份当成「不是面板的」—— 不许把认不出来的当成自己的去关；
     /// 但它仍然算「在跑」（查不到 ≠ 没有，§7.17）。
     #[test]
     fn processes_without_a_command_line_still_count_as_running_but_never_as_ours() {
+        let state = if cfg!(target_os = "macos") {
+            Path::new("/Users/Test/State")
+        } else {
+            Path::new(r"C:\S")
+        };
         let raw = RawInventory {
             executable: Some("C:\\app\\ChatGPT.exe".into()),
             version: None,
@@ -609,10 +652,10 @@ mod tests {
                 RawProcess {
                     pid: 2,
                     started: "t2".into(),
-                    command_line: Some(
-                        r#""C:\app\ChatGPT.exe" "--user-data-dir=C:\S\codex-accounts\a\desktop""#
-                            .into(),
-                    ),
+                    command_line: Some(format!(
+                        r#""Codex" "--user-data-dir={}""#,
+                        state.join("codex-accounts/a/desktop").display()
+                    )),
                 },
                 RawProcess {
                     pid: 3,
@@ -621,7 +664,7 @@ mod tests {
                 },
             ],
         };
-        let d = summarize(raw, Path::new(r"C:\S"), Path::new(r"C:\H"));
+        let d = summarize(raw, state, Path::new(r"C:\H"));
         assert!(d.running);
         assert_eq!(d.processes.len(), 2, "子进程不单列");
         assert!(!d.processes[0].ours && d.processes[0].profile.is_none());

@@ -1610,6 +1610,28 @@ pub enum Method {
 /// 别的包管理器里那一份该怎么卸（给人看的一句话）。**纯函数**，按路径认是谁装的。
 pub fn manager_uninstall_hint(path: &Path) -> String {
     const PKG: &str = "@anthropic-ai/claude-code";
+    if cfg!(target_os = "macos") {
+        let n = path.to_string_lossy();
+        if let Some(version) = n
+            .split_once("/.nvm/versions/node/")
+            .and_then(|(_, tail)| tail.split('/').next())
+        {
+            return format!("这一份装在 nvm 的 Node {version} 里：先 nvm use {version}，再 npm uninstall -g {PKG}");
+        }
+        for (component, command) in [
+            ("pnpm", "pnpm remove -g"),
+            (".pnpm", "pnpm remove -g"),
+            ("yarn", "yarn global remove"),
+            (".yarn", "yarn global remove"),
+            (".bun", "bun remove -g"),
+            (".volta", "volta uninstall"),
+        ] {
+            if path.components().any(|part| part.as_os_str() == component) {
+                return format!("请在原包管理器中运行 {command} {PKG}");
+            }
+        }
+        return format!("用装它的那个包管理器卸载 {PKG}");
+    }
     let n = crate::install::inventory::norm(path);
     if n.contains("\\pnpm\\") {
         format!("这一份是 pnpm 装的：在终端里跑 pnpm remove -g {PKG}")
@@ -1763,6 +1785,25 @@ pub fn plan_codex_externals(found: &[PathBuf], managed: &[PathBuf]) -> Vec<Exter
     let mut winget = false;
     for p in found {
         if inside_any(p, managed) {
+            continue;
+        }
+        if cfg!(target_os = "macos") {
+            // A native PATH entry can be a Homebrew/npm symlink. Removing the
+            // binary alone would leave its package manager's installation broken.
+            if p.components()
+                .any(|part| part.as_os_str().to_string_lossy().ends_with(".app"))
+            {
+                continue;
+            }
+            out.push(External {
+                app: App::Codex,
+                method: Method::Manual,
+                target: p.display().to_string(),
+                action: format!(
+                    "请通过安装这一份的 npm、Homebrew 或原安装器卸载：{}",
+                    p.display()
+                ),
+            });
             continue;
         }
         let n = norm(p);
@@ -2645,6 +2686,7 @@ mod tests {
 
     /// 别的包管理器里那几份（阶段 7 · X3）：不删、不跑 `npm uninstall -g`（够不着），只告诉人去哪卸；
     /// 同一个管理器的两个 exe 只列一句，全局 Scoop 不跟用户那份的 `scoop uninstall` 混在一起。
+    #[cfg(windows)]
     #[test]
     fn copies_in_other_package_managers_become_instructions_not_deletions() {
         use crate::install::inventory::{Install, Kind};
@@ -2697,6 +2739,7 @@ mod tests {
         .contains("yarn global remove"));
     }
 
+    #[cfg(windows)]
     #[test]
     fn codex_externals_skip_the_desktop_app_and_msix_copies() {
         let managed = &[
@@ -2727,14 +2770,49 @@ mod tests {
     fn codex_helpers_travel_with_the_main_binary() {
         // winget 清单实测：zip 里有三个 exe。只装主程序，Codex 的 Windows 沙箱就起不来。
         let all = vec![
-            PathBuf::from(r"C:\x\codex-command-runner.exe"),
-            PathBuf::from(r"C:\x\codex-windows-sandbox-setup.exe"),
-            PathBuf::from(r"C:\x\codex-x86_64-pc-windows-msvc.exe"),
+            Path::new("fixture").join("codex-command-runner.exe"),
+            Path::new("fixture").join("codex-windows-sandbox-setup.exe"),
+            Path::new("fixture").join("codex-x86_64-pc-windows-msvc.exe"),
         ];
         let (main, helpers) = split_codex_exes(&all).unwrap();
         assert!(main.ends_with("codex-x86_64-pc-windows-msvc.exe"));
         assert_eq!(helpers.len(), 2);
         assert!(split_codex_exes(&all[..2]).is_none(), "没有主程序就不装");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_external_codex_cleanup_preserves_bundles_and_package_manager_ownership() {
+        let managed = [PathBuf::from("/Users/Test/QB apps/codex")];
+        let paths = [
+            managed[0].join("codex"),
+            PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"),
+            PathBuf::from("/opt/homebrew/bin/codex"),
+            PathBuf::from(
+                "/Users/Test/.nvm/versions/node/v24/lib/node_modules/@openai/codex/bin/codex.js",
+            ),
+        ];
+        let planned = plan_codex_externals(&paths, &managed);
+        assert_eq!(planned.len(), 2);
+        assert!(planned.iter().all(|entry| entry.method == Method::Manual));
+        assert_eq!(planned[0].target, paths[2].display().to_string());
+        assert_eq!(planned[1].target, paths[3].display().to_string());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_package_manager_hints_select_the_original_node_installation() {
+        assert!(manager_uninstall_hint(Path::new("/Users/Test/.nvm/versions/node/v24.1.0/lib/node_modules/@anthropic-ai/claude-code/cli.js")).contains("nvm use v24.1.0"));
+        for (path, command) in [
+            (
+                "/Users/Test/.volta/tools/image/packages/claude",
+                "volta uninstall",
+            ),
+            ("/Users/Test/.bun/install/global/claude", "bun remove -g"),
+            ("/Users/Test/Library/pnpm/global/claude", "pnpm remove -g"),
+        ] {
+            assert!(manager_uninstall_hint(Path::new(path)).contains(command));
+        }
     }
 
     #[test]
