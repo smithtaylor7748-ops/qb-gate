@@ -46,13 +46,20 @@ jobs:
       - run: npm run format:check
       - run: cargo fmt --all --check
       - run: npm test
+      - run: npx playwright install chromium
+      - run: npm run test:ui
+      - run: node scripts/macos-ui-smoke.mjs
       - run: npm run types:check
       - run: cargo test --locked --workspace --no-fail-fast
       - run: cargo clippy --locked --workspace --lib -- -D warnings
         if: ${{ !cancelled() }}
-      - run: npx playwright install chromium
-      - run: npm run test:ui
-      - run: node scripts/macos-ui-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: macos-layout-failure
+          path: test-results/accounts-*.png
+          if-no-files-found: ignore
+          retention-days: 14
   apple-silicon:
     runs-on: macos-15
     timeout-minutes: 60

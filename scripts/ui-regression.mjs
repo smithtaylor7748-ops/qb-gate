@@ -164,7 +164,9 @@ async function assertFixedAccounts(page, scope) {
         el.scrollHeight > el.clientHeight + 2 ||
         el.scrollWidth > el.clientWidth + 2
       )
-        overflow.push(el.className);
+        overflow.push(
+          `${el.className}: ${el.scrollWidth}x${el.scrollHeight} in ${el.clientWidth}x${el.clientHeight}`,
+        );
     }
     for (const el of document.querySelectorAll(".account-workspace *")) {
       if (el.closest("dialog, .sr-only") || !el.checkVisibility()) continue;
@@ -176,7 +178,9 @@ async function assertFixedAccounts(page, scope) {
         rect.height &&
         (rect.bottom > innerHeight + 2 || rect.bottom > parent.bottom + 2)
       )
-        overflow.push(el.className);
+        overflow.push(
+          `${el.className}: bottom ${rect.bottom.toFixed(1)} / parent ${parent.bottom.toFixed(1)}: ${el.textContent?.trim().slice(0, 120)}`,
+        );
       if (
         el.matches(".notice, .tile-note") &&
         el.clientHeight > 0 &&
@@ -1299,6 +1303,18 @@ try {
   const right = await page.locator(".account-workspace-right").boundingBox();
   const left = await page.locator(".account-slots").boundingBox();
   assert.ok(right.x > left.x && Math.abs(right.y - left.y) < 3);
+  const accountLayoutFailures = [];
+  const checkAccountLayout = async (scope) => {
+    try {
+      await assertFixedAccounts(page, scope);
+    } catch (error) {
+      accountLayoutFailures.push(`${scope}: ${error.message}`);
+      await page.screenshot({
+        path: `test-results/accounts-${scope.replaceAll(/[^a-zA-Z0-9]/g, "-")}.png`,
+      });
+    }
+  };
+  mkdirSync("test-results", { recursive: true });
   for (const [width, height] of [
     [1320, 940],
     [1180, 820],
@@ -1306,15 +1322,20 @@ try {
     [680, 640],
   ]) {
     await page.setViewportSize({ width, height });
-    await assertFixedAccounts(page, `Claude ${width}x${height}`);
+    await checkAccountLayout(`Claude ${width}x${height}`);
     await page.getByRole("button", { name: "GPT", exact: true }).click();
-    await assertFixedAccounts(page, `GPT ${width}x${height}`);
+    await checkAccountLayout(`GPT ${width}x${height}`);
     // 0.26.0：反重力那一侧同一套固定高度断言，四档一个都不许裁。
     await page.getByRole("button", { name: "反重力", exact: true }).click();
     await page.getByTestId("antigravity-accounts").waitFor();
-    await assertFixedAccounts(page, `Antigravity ${width}x${height}`);
+    await checkAccountLayout(`Antigravity ${width}x${height}`);
     await page.getByRole("button", { name: "Claude", exact: true }).click();
   }
+  assert.deepEqual(
+    accountLayoutFailures,
+    [],
+    "Account layouts must all fit without clipping",
+  );
   // 反重力侧的交互：账户切换、两半的徽标、并入、启动要确认、
   // 汉化引擎（弹窗里）附加 / 停止翻真翻假、用量卡的配额格与明细弹窗。
   await page.setViewportSize({ width: 1320, height: 940 });
