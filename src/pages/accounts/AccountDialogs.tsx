@@ -24,6 +24,7 @@ import { AFTER, R } from "../../lib/resources";
 import { invalidate, useResource, useSession } from "../../lib/store";
 import { slotName } from "../../lib/slotName";
 import { workspaceApi } from "../../lib/workspace";
+import { usePlatform } from "../../lib/platform";
 import {
   Button,
   Checkbox,
@@ -421,6 +422,7 @@ function NewSlotDialog() {
  */
 function DeleteSlotDialog() {
   const toast = useToast();
+  const macos = usePlatform()?.os === "macos";
   const accounts = useResource("accounts", R.accounts);
   const [label, setLabel] = useSession<string | null>(DELETE_KEY, null);
   const [dropDesktop, setDropDesktop] = useState(true);
@@ -473,8 +475,19 @@ function DeleteSlotDialog() {
       danger
     >
       <p>
-        整个目录一起删：凭证、设置、会话历史。<strong>不可恢复</strong>，
-        这个账户以后要用得重新登录。
+        {macos ? (
+          <>
+            删除槽位目录中的设置和会话历史，<strong>不可恢复</strong>。
+            官方钥匙串登录仍由 Claude Code 保管，删除槽位不等于退出登录；
+            如需退出，请先在此槽位的官方 Claude Code 中退出。
+            删除后不能再建同名槽位，新建账户请使用新的名称。
+          </>
+        ) : (
+          <>
+            整个目录一起删：凭证、设置、会话历史。<strong>不可恢复</strong>，
+            这个账户以后要用得重新登录。
+          </>
+        )}
       </p>
       <p className="notice mt-2">{slot?.dir ?? "读不出槽位目录"}</p>
 
@@ -490,7 +503,9 @@ function DeleteSlotDialog() {
           <p className="notice mt-1">
             {dropDesktop
               ? `一并删掉 ${slot.desktop_dir ?? `Claude-${label}`}。`
-              : "保留着 —— 以后建同名槽位会接着用这一份。"}
+              : macos
+                ? "保留桌面端资料；Mac 上不能重建同名槽位。"
+                : "保留着 —— 以后建同名槽位会接着用这一份。"}
           </p>
         </div>
       )}

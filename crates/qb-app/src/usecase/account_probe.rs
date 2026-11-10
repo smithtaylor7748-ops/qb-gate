@@ -40,6 +40,8 @@
 //! 所以 [`ProbeState::Rejected`] 的文案里必须把第二种可能也写出来。
 //! 哪天拿一个刚刷新过的令牌测出 200，就可以把那半句删掉 —— 在那之前不许删。
 
+use crate::error::{GateError, Result};
+use qb_platform::credentials::Secret;
 use serde::Serialize;
 use std::path::Path;
 use ts_rs::TS;
@@ -57,7 +59,7 @@ pub enum ProbeState {
     Rejected,
     /// 本地这份 `accessToken` 已经过期 —— **没有发请求**。
     LocallyExpired,
-    /// 这个槽位还没登录过，或者凭证读不出来。
+    /// 这个槽位没有 OAuth 登录凭证。读取失败归 Unreachable，不误报未登录。
     NoCredential,
     /// 问不到（网断了、被代理拦了、服务端回了别的状态码）。
     Unreachable,
@@ -100,13 +102,44 @@ fn ago_text(ms: i64) -> String {
 ///
 /// ⛔ 返回值里带着真令牌 —— 调用方只许把它放进 `Authorization` 头，
 /// **不许写日志、不许放进任何 `detail`、不许返回给界面**。
-fn credential(slot_dir: &Path) -> Option<(String, i64)> {
-    let text = std::fs::read_to_string(slot_dir.join(".credentials.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let o = v.get("claudeAiOauth")?;
-    let token = o.get("accessToken")?.as_str()?.to_string();
-    let expires = o.get("expiresAt")?.as_i64()?;
-    (!token.is_empty()).then_some((token, expires))
+fn credential(stored: Result<Option<Secret>>) -> Result<Option<(Secret, i64)>> {
+    let Some(bytes) = stored? else {
+        return Ok(None);
+    };
+    let v: serde_json::Value = serde_json::from_slice(bytes.as_bytes())
+        .map_err(|_| GateError::Other("Claude 凭据格式无法识别，未发送检测请求".into()))?;
+    if !v.is_object() {
+        return Err(GateError::Other(
+            "Claude 凭据格式无法识别，未发送检测请求".into(),
+        ));
+    }
+    let Some(o) = v.get("claudeAiOauth").or_else(|| v.get("claude.ai_oauth")) else {
+        return Ok(None);
+    };
+    let Some(token) = o
+        .get("accessToken")
+        .and_then(|t| t.as_str())
+        .filter(|t| !t.is_empty())
+    else {
+        return Ok(None);
+    };
+    let expires = o
+        .get("expiresAt")
+        .and_then(|value| match value {
+            serde_json::Value::Number(n) => n.as_i64().and_then(|t| {
+                if t > 1_000_000_000_000 {
+                    Some(t)
+                } else {
+                    t.checked_mul(1000)
+                }
+            }),
+            serde_json::Value::String(s) => chrono::DateTime::parse_from_rfc3339(s)
+                .ok()
+                .map(|d| d.timestamp_millis()),
+            _ => None,
+        })
+        .ok_or_else(|| GateError::Other("Claude 凭据的到期时间无法识别，未发送检测请求".into()))?;
+    Ok(Some((Secret::new(token.as_bytes().to_vec()), expires)))
 }
 
 /// 问一次「你还认这个令牌吗」。
@@ -114,11 +147,28 @@ fn credential(slot_dir: &Path) -> Option<(String, i64)> {
 /// 只由使用者当次点击触发 —— 没有定时器、没有启动时触发，
 /// 跟这个项目里所有会对外发请求的东西同一条规矩。
 pub async fn probe(slot_dir: &Path, client: &reqwest::Client) -> ProbeResult {
-    let Some((token, expires_at)) = credential(slot_dir) else {
-        return out(
-            ProbeState::NoCredential,
-            "这个槽位还没登录过（读不到 .credentials.json 里的 OAuth 凭证），没什么可测的。",
-        );
+    probe_stored(
+        crate::accounts::credential_store::read_checked(slot_dir),
+        client,
+    )
+    .await
+}
+
+async fn probe_stored(stored: Result<Option<Secret>>, client: &reqwest::Client) -> ProbeResult {
+    let (token, expires_at) = match credential(stored) {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            return out(
+                ProbeState::NoCredential,
+                "这个槽位没有 Claude OAuth 登录凭证，请从此槽位打开官方 Claude Code 登录。",
+            )
+        }
+        Err(error) => {
+            return out(
+                ProbeState::Unreachable,
+                format!("登录凭据读不出来：{error}。没有发送检测请求。"),
+            )
+        }
     };
 
     let now = chrono::Utc::now().timestamp_millis();
@@ -138,7 +188,7 @@ pub async fn probe(slot_dir: &Path, client: &reqwest::Client) -> ProbeResult {
     let sent = client
         .get(MODELS_URL)
         .header("anthropic-version", "2023-06-01")
-        .bearer_auth(&token)
+        .bearer_auth(token.as_str().expect("令牌由 JSON 字符串读取"))
         .timeout(std::time::Duration::from_secs(12))
         .send()
         .await;
@@ -203,7 +253,11 @@ mod tests {
     #[test]
     fn a_slot_that_never_logged_in_has_nothing_to_probe() {
         let d = scratch("nocred");
-        assert!(credential(&d).is_none());
+        assert!(
+            credential(crate::accounts::credential_store::read_checked(&d))
+                .unwrap()
+                .is_none()
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -211,7 +265,12 @@ mod tests {
     fn an_empty_token_counts_as_no_credential() {
         let d = scratch("empty");
         write_cred(&d, "", i64::MAX);
-        assert!(credential(&d).is_none(), "空串不是凭证");
+        assert!(
+            credential(crate::accounts::credential_store::read_checked(&d))
+                .unwrap()
+                .is_none(),
+            "空串不是凭证"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -219,8 +278,10 @@ mod tests {
     fn a_live_token_is_read_back_with_its_expiry() {
         let d = scratch("live");
         write_cred(&d, "tok-abc", 1_788_000_000_000);
-        let (t, e) = credential(&d).expect("读得出来");
-        assert_eq!(t, "tok-abc");
+        let (t, e) = credential(crate::accounts::credential_store::read_checked(&d))
+            .unwrap()
+            .expect("读得出来");
+        assert_eq!(t.as_str(), Some("tok-abc"));
         assert_eq!(e, 1_788_000_000_000);
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -279,6 +340,69 @@ mod tests {
             out(ProbeState::NoCredential, "b"),
         ] {
             assert!(!r.detail.contains("**"));
+        }
+    }
+
+    #[tokio::test]
+    async fn keychain_credentials_work_without_a_file_and_denial_is_not_logged_out() {
+        let dead = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all("http://127.0.0.1:1").unwrap())
+            .timeout(std::time::Duration::from_millis(50))
+            .build()
+            .unwrap();
+        // A storage result can come from Keychain; no credentials file is required.
+        let stored = Secret::new(
+            br#"{"claudeAiOauth":{"accessToken":"synthetic-keychain","expiresAt":1000}}"#.to_vec(),
+        );
+        let result = probe_stored(Ok(Some(stored)), &dead).await;
+        assert_eq!(result.state, ProbeState::LocallyExpired);
+        assert!(!result.detail.contains("synthetic-keychain"));
+        let result = probe_stored(Err(GateError::Other("钥匙串访问被拒绝".into())), &dead).await;
+        assert_eq!(result.state, ProbeState::Unreachable);
+        assert!(result.detail.contains("钥匙串访问被拒绝"));
+        assert!(result.detail.contains("没有发送"));
+        let result = probe_stored(
+            Ok(Some(Secret::new(b"invalid-json-secret".to_vec()))),
+            &dead,
+        )
+        .await;
+        assert_eq!(result.state, ProbeState::Unreachable);
+        assert!(!result.detail.contains("invalid-json-secret"));
+    }
+
+    #[tokio::test]
+    async fn a_storage_read_error_is_not_a_missing_login() {
+        let dir = scratch("unreadable");
+        std::fs::create_dir(dir.join(".credentials.json")).unwrap();
+        let client = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all("http://127.0.0.1:1").unwrap())
+            .timeout(std::time::Duration::from_millis(50))
+            .build()
+            .unwrap();
+        let result = probe(&dir, &client).await;
+        assert_eq!(result.state, ProbeState::Unreachable);
+        assert!(result.detail.contains("没有发送"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn storage_parser_accepts_expiry_seconds_and_rfc3339() {
+        for expires in [
+            serde_json::json!(1_788_000_000),
+            serde_json::json!("2026-08-29T18:40:00Z"),
+        ] {
+            let stored = serde_json::json!({"claude.ai_oauth":{"accessToken":"synthetic", "expiresAt":expires.clone()}});
+            let (_, expiry) =
+                credential(Ok(Some(Secret::new(serde_json::to_vec(&stored).unwrap()))))
+                    .unwrap()
+                    .unwrap();
+            let expected = match expires {
+                serde_json::Value::String(s) => chrono::DateTime::parse_from_rfc3339(&s)
+                    .unwrap()
+                    .timestamp_millis(),
+                _ => 1_788_000_000_000,
+            };
+            assert_eq!(expiry, expected);
         }
     }
 }

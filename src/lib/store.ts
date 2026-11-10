@@ -29,6 +29,8 @@ export interface ResourceOptions {
    * 留的这三项都是「环境长什么样」，慢、且不随网络秒变。
    */
   persist?: boolean;
+  /** 持久化结果的规则版本，默认 0。规则改变时递增，旧结果须重测。 */
+  persistVersion?: number;
 }
 export interface ResourceDef<T> {
   fetcher: () => Promise<T>;
@@ -70,8 +72,17 @@ function hydrate(key: string, def: ResourceDef<unknown>): void {
   try {
     const raw = localStorage.getItem(CACHE_PREFIX + key);
     if (!raw) return;
-    const saved = JSON.parse(raw) as { at: number; data: unknown };
+    const saved = JSON.parse(raw) as {
+      version?: number;
+      at: number;
+      data: unknown;
+    };
     if (typeof saved?.at !== "number" || saved.data === undefined) return;
+    const savedVersion = saved.version === undefined ? 0 : saved.version;
+    if (savedVersion !== (def.options.persistVersion ?? 0)) {
+      localStorage.removeItem(CACHE_PREFIX + key);
+      return;
+    }
     measured.set(key, saved.at);
     // 只在缓存还空着时塞 —— 本次会话已经跑过的话，那份才是新的。
     if (queryClient.getQueryData([key]) === undefined) {
@@ -92,7 +103,10 @@ function fetcherFor<T>(key: string, def: ResourceDef<T>): () => Promise<T> {
     const at = Date.now();
     measured.set(key, at);
     try {
-      localStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ at, data }));
+      localStorage.setItem(
+        CACHE_PREFIX + key,
+        JSON.stringify({ version: def.options.persistVersion ?? 0, at, data }),
+      );
     } catch {
       // 写不进去不影响本次显示，下次重启退回「未检测」而已。
     }

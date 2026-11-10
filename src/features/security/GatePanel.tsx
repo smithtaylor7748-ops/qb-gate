@@ -103,24 +103,23 @@ export function AllowlistPanel() {
             />
             <div className="min-w-0">
               <div className="text-md text-[var(--warn)]">
-                白名单是空的，门禁尚未启用
+                白名单是空的，受管启动不会放行
               </div>
               <p className="notice notice--warn mt-1">
-                空名单意味着任何 IP 都过不了门禁，所以面板
-                <strong>启动时不会上锁</strong> ——
-                否则你会被自己的工具关在门外。 先把当前 IP 加进来。
+                空名单意味着任何 IP 都过不了门禁。先检测并加入当前出口 IP；
+                加入白名单不会自动启动会话或恢复已暂停的门禁。
               </p>
               <Button
                 variant="primary"
                 className="mt-2"
                 icon={<Plus size={13} />}
                 loading={busy === "add"}
-                disabled={!st?.current_ip}
+                disabled={!!busy}
                 onClick={() =>
                   void act(
                     "add",
                     api.allowlistAddCurrent,
-                    `已把 ${st?.current_ip} 加进白名单`,
+                    "当前出口 IP 已通过检查并加入白名单",
                   )
                 }
               >
@@ -144,15 +143,15 @@ export function AllowlistPanel() {
           {st?.current_ip}
         </Metric>
         <Metric
-          label="是否在白名单"
+          label="当前门禁检查"
           loading={gate.loading && !st}
           error={gate.error}
         >
           {st ? (
             st.ip_allowed ? (
-              <Pill tone="ok">是</Pill>
+              <Pill tone="ok">通过</Pill>
             ) : (
-              <Pill tone="danger">否</Pill>
+              <Pill tone="danger">未通过或已暂停</Pill>
             )
           ) : undefined}
         </Metric>
@@ -172,6 +171,19 @@ export function AllowlistPanel() {
         </Metric>
       </div>
 
+      <Button
+        className="mb-3"
+        icon={<RotateCw size={13} />}
+        loading={check.running}
+        disabled={!!busy}
+        onClick={() => void check.run()}
+      >
+        检测当前出口
+      </Button>
+      {check.error && (
+        <p className="notice notice--danger mb-3">{check.error}</p>
+      )}
+
       <Card
         as="h3"
         title="白名单"
@@ -182,12 +194,12 @@ export function AllowlistPanel() {
             variant="primary"
             icon={<Plus size={12} />}
             loading={busy === "add"}
-            disabled={!st?.current_ip}
+            disabled={!!busy}
             onClick={() =>
               void act(
                 "add",
                 api.allowlistAddCurrent,
-                `已把 ${st?.current_ip} 加进白名单`,
+                "当前出口 IP 已通过检查并加入白名单",
               )
             }
           >
@@ -217,7 +229,7 @@ export function AllowlistPanel() {
           ))
         ) : (
           <EmptyState title="白名单为空">
-            没有任何 IP 会被放行。面板因此不上锁 —— 这是刻意的，见上方提示。
+            没有任何 IP 会被放行。可直接点击「加入当前 IP」完成实时检测。
           </EmptyState>
         )}
       </Card>
@@ -256,12 +268,12 @@ export function AllowlistPanel() {
           <p className="notice notice--danger mt-2">
             <strong>这是你当前的出口 IP。</strong>
             删掉之后门禁不会再放行你，
-            <strong>你会被自己的工具关在门外</strong>—— 那时只能走「应急解锁」。
+            受管会话会被关闭。需要继续使用时，请重新检测并加入合格的出口 IP。
           </p>
         )}
         {st?.allowlist.length === 1 && (
           <p className="notice notice--warn mt-2">
-            删完白名单就空了。空名单时面板不会上锁，门禁等于关闭。
+            删完白名单就空了，任何 IP 都不能通过受管启动检查。
           </p>
         )}
       </ConfirmDialog>
@@ -418,7 +430,7 @@ function CountryGate() {
 
 // ------------------------------------------------------------------ 执行锁
 
-type LockDialog = null | "unlock" | "clean";
+type LockDialog = null | "unlock" | "clean" | "managed-close";
 
 /**
  * 运行日志。0.20.0 从总览挪进这里 ——
@@ -434,13 +446,83 @@ export function LockPanel() {
 
   if (!systemLock)
     return (
-      <Card as="h3" title="受管启动与 IP 检查">
-        <p className="notice">
-          macOS 不提供 Windows 执行锁。只有从 QB Gate 启动的受管会话在启动前检查
-          IP 并由看门狗监督，Finder 和其他终端的启动不受限制。
-        </p>
-        <GateCheckInterval />
-      </Card>
+      <>
+        <Card as="h3" title="受管启动与 IP 检查" className="mb-3">
+          <p className="notice">
+            macOS 不提供系统执行锁。从 QB Gate 启动的受管会话在启动前检查 IP，
+            运行期间由看门狗监督。Finder 和其他终端启动前不会被拦截；
+            门禁失效时，已识别的外部官方进程也可能被关闭。
+          </p>
+          <Row className="mt-2">
+            <span>监督任务</span>
+            {st ? (st.watchdog_running ? "运行中" : "未运行") : "读取中"}
+          </Row>
+          {gate.error && <p className="notice notice--danger">{gate.error}</p>}
+          {st?.needs_reopen && (
+            <p className="notice notice--warn">{st.needs_reopen}</p>
+          )}
+          <p className="notice mt-2">
+            出口 IP 或国家不合格、查不到出口时，会关闭受门禁管理的官方会话，
+            不提供宽限。检测只更新读数；「重新放行」才会恢复门禁。
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              loading={busy === "check"}
+              disabled={!!busy}
+              onClick={() => void act("check", api.gateCheck, "门禁检测已更新")}
+            >
+              检测当前出口
+            </Button>
+            <Button
+              variant="primary"
+              loading={busy === "reopen"}
+              disabled={!!busy}
+              onClick={() =>
+                void act("reopen", api.gateReopen, "已验证并重新放行门禁")
+              }
+            >
+              验证并重新放行
+            </Button>
+            <Button
+              variant="danger"
+              disabled={!!busy}
+              onClick={() => setDialog("managed-close")}
+            >
+              关闭受管门禁
+            </Button>
+          </div>
+          <GateCheckInterval />
+        </Card>
+        <Card as="h3" title="ip-gate.log" className="mb-3">
+          <LogView lines={st?.recent_log ?? []} />
+          <Button
+            size="sm"
+            loading={gate.loading}
+            onClick={() => void gate.refresh()}
+          >
+            刷新日志
+          </Button>
+        </Card>
+        <LogBand />
+        <ConfirmDialog
+          open={dialog === "managed-close"}
+          onCancel={() => setDialog(null)}
+          onConfirm={() =>
+            void act("lock", api.gateLockAll, "受管门禁已关闭").then(() =>
+              setDialog(null),
+            )
+          }
+          title="关闭受管门禁？"
+          confirmLabel="确认关闭"
+          loading={busy === "lock"}
+          danger
+        >
+          <p>
+            将关闭受门禁管理的官方会话，未保存的内容可能丢失。
+            门禁保持暂停，之后需要重新验证并放行；不会添加系统执行锁。
+          </p>
+        </ConfirmDialog>
+      </>
     );
 
   return (
@@ -726,6 +808,7 @@ export function LockPanel() {
  * 起来之后持租约、看门狗判不过就收。
  */
 function GateRange() {
+  const systemLock = usePlatform()?.system_execution_lock === true;
   const settings = useResource("settings", R.settings);
   const action = useAction();
   // 待确认的调整：改的是哪个开关、改成什么。两个开关一个弹窗，文案按 which 分。
@@ -741,9 +824,9 @@ function GateRange() {
         <span>
           <strong>GPT（Codex）也归门禁管</strong>
           <small>
-            默认开启，与 Claude 共用同一套门禁：启动前验出口
-            IP、看门狗巡检、codex.exe 上执行锁。关闭正在运行的 GPT
-            桌面端后可调整。
+            默认开启，与 Claude 共用同一套门禁：启动前验出口 IP、看门狗巡检
+            {systemLock ? "、codex.exe 上执行锁" : "；macOS 无系统执行锁"}
+            。关闭正在运行的 GPT 桌面端后可调整。
           </small>
         </span>
         <input
@@ -757,9 +840,12 @@ function GateRange() {
         <span>
           <strong>反重力（Hub + IDE）也归门禁管</strong>
           <small>
-            默认开启（0.26.0）。两个产品共用这一个开关：主程序、语言服务器、第三方汉化壳留下的
-            original 一起上执行锁；起之前验出口
-            IP，看门狗按桌面档盯。关闭正在运行的反重力后可调整。
+            默认开启。两个产品共用这一个开关：启动前验出口
+            IP，运行期间由看门狗监督。
+            {systemLock
+              ? "主程序、语言服务器与第三方汉化壳留下的 original 一起上执行锁。"
+              : "macOS 不提供系统执行锁。"}
+            关闭正在运行的反重力后可调整。
           </small>
         </span>
         <input
@@ -806,11 +892,11 @@ function GateRange() {
         <p>
           {next?.which === "antigravity"
             ? next.on
-              ? "之后反重力 Hub / IDE 起之前先验出口 IP，起来之后归看门狗管，检查未通过会被关闭；它们的主程序与语言服务器一并上执行锁。"
-              : "之后反重力独立启动：不验 IP、不受看门狗管，并解除它们身上已知的执行锁。Claude 与 GPT 那两侧不受影响。"
+              ? `之后反重力 Hub / IDE 启动前先验出口 IP，运行期间由看门狗监督，检查未通过会被关闭。${systemLock ? "主程序与语言服务器一并上执行锁。" : "macOS 不提供系统执行锁。"}`
+              : `之后反重力独立启动：不验 IP、不受看门狗管。${systemLock ? "同时解除已知的执行锁。" : ""}Claude 与 GPT 不受影响。`
             : next?.on
-              ? "之后 GPT 桌面端起之前先验出口 IP，起来之后归看门狗管，检查未通过会被关闭；codex.exe 一并上执行锁。"
-              : "之后 GPT 桌面端独立启动：不验 IP、不受看门狗管，并解除已知 codex.exe 上的执行锁。Claude 那一侧不受影响。"}
+              ? `之后 GPT 桌面端启动前先验出口 IP，运行期间由看门狗监督，检查未通过会被关闭。${systemLock ? "codex.exe 一并上执行锁。" : "macOS 不提供系统执行锁。"}`
+              : `之后 GPT 桌面端独立启动：不验 IP、不受看门狗管。${systemLock ? "同时解除已知 codex.exe 上的执行锁。" : ""}Claude 不受影响。`}
         </p>
         {action.error && (
           <p className="notice notice--danger">{action.error}</p>
@@ -901,7 +987,7 @@ export function SessionGatePanel() {
         <p className="notice notice--warn mt-2">
           <strong>这是严格档（fail-closed）：判不过就拦，查不到也拦。</strong>
           <br />
-          包括「面板没在跑」—— 裁决超过 90 秒没刷新就算不新鲜，一律拦。
+          包括「面板没在跑」—— 裁决超过 45 秒没刷新就算不新鲜，一律拦。
           被拦时命令行里会印出自救步骤；面板打不开时，手动删掉
           {h.settings_path ? (
             <code className="mx-1">{h.settings_path}</code>

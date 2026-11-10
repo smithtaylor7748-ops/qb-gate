@@ -1413,6 +1413,36 @@ fn looks_like_access_denied(msg: &str) -> bool {
     msg.contains("0x80070005") || msg.contains("Access is denied") || msg.contains("拒绝访问")
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn ensure_launch_current(state: &crate::gate::GateState, generation: u64) -> Result<()> {
+    use std::sync::atomic::Ordering;
+    if state.generation.load(Ordering::SeqCst) != generation
+        || state.manual_paused.load(Ordering::SeqCst)
+    {
+        Err(GateError::Other(
+            "启动等待期间门禁已关闭或发生变更，请重新启动".into(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+async fn recheck_prepared_launch<F: std::future::Future<Output = crate::gate::judge::Judgement>>(
+    state: &crate::gate::GateState,
+    generation: u64,
+    probe: impl FnOnce() -> F,
+) -> Result<()> {
+    ensure_launch_current(state, generation)?;
+    let verdict = probe().await;
+    ensure_launch_current(state, generation)?;
+    match verdict {
+        crate::gate::judge::Judgement::Allowed { .. } => Ok(()),
+        crate::gate::judge::Judgement::IpUnknown => Err(GateError::IpUnknown),
+        other => Err(GateError::GateRejected(other.reason())),
+    }
+}
+
 pub async fn launch(
     client: Client,
     kind: IdentityKind,
@@ -1658,23 +1688,49 @@ pub async fn launch(
     // 判不过时收不收这个会话，看的是身份。两件事分开，见 `stops_with_gate`。
     let gated = target.gated();
     let stops_with_gate = target.stops_with_gate(kind);
+    #[cfg(target_os = "macos")]
+    let generation = gate_state
+        .generation
+        .load(std::sync::atomic::Ordering::SeqCst);
     if gated {
         crate::gate::open_authorized_with_mode(&holder, Some(target.watch_mode()), gate_state)
             .await?;
     }
-    let result = crate::sessions::start(
-        LaunchContext {
-            client,
-            identity_kind: kind,
-            identity_id: id.into(),
-            config_dir,
-            working_dir,
-        },
-        &exe,
-        env,
-        stops_with_gate,
-        revision,
-    );
+    let result: Result<Session> = async {
+        let prepared = crate::sessions::prepare(
+            LaunchContext {
+                client,
+                identity_kind: kind,
+                identity_id: id.into(),
+                config_dir,
+                working_dir,
+            },
+            &exe,
+            env,
+            stops_with_gate,
+            revision,
+        )?;
+        // Terminal automation / Keychain permission can wait tens of seconds. The helper
+        // is ready but the client is still suspended; recheck without granting a new lease.
+        #[cfg(target_os = "macos")]
+        if gated {
+            recheck_prepared_launch(gate_state, generation, crate::gate::judge_now).await?;
+        }
+        let session = prepared.start()?;
+        #[cfg(target_os = "macos")]
+        if gated {
+            if let Err(cancelled) = ensure_launch_current(gate_state, generation) {
+                return match crate::sessions::stop(&session.id) {
+                    Ok(()) => Err(cancelled),
+                    Err(error) => Err(GateError::Other(format!(
+                        "{cancelled}；关闭刚启动的会话失败：{error}"
+                    ))),
+                };
+            }
+        }
+        Ok(session)
+    }
+    .await;
     // Store 版 Codex 更新后注册失效时，CreateProcessW 会回「拒绝访问 (0x80070005)」——
     // 跟账户页那条 os error 5 是同一件事，同样给可操作的说明，别让人在这里看到裸错误。
     let result = match result {
@@ -1705,6 +1761,50 @@ pub async fn launch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn prepared_launch_rechecks_network_and_respects_cancellation_during_probe() {
+        use crate::gate::{judge::Judgement, GateState};
+        use std::sync::atomic::Ordering;
+        let state = GateState::default();
+        assert!(recheck_prepared_launch(&state, 0, || async {
+            Judgement::Allowed {
+                ip: "203.0.113.1".into(),
+            }
+        })
+        .await
+        .is_ok());
+        assert!(matches!(
+            recheck_prepared_launch(&state, 0, || async { Judgement::IpUnknown }).await,
+            Err(GateError::IpUnknown)
+        ));
+        assert!(recheck_prepared_launch(&state, 0, || async {
+            Judgement::IpNotAllowed {
+                ip: "203.0.113.2".into(),
+            }
+        })
+        .await
+        .is_err());
+        let cancelled = recheck_prepared_launch(&state, 0, || async {
+            state.generation.fetch_add(1, Ordering::SeqCst);
+            Judgement::Allowed {
+                ip: "203.0.113.1".into(),
+            }
+        })
+        .await;
+        assert!(cancelled.is_err());
+        assert!(recheck_prepared_launch(&state, 0, || async {
+            panic!("stale launch must not probe")
+        })
+        .await
+        .is_err());
+        state.manual_paused.store(true, Ordering::SeqCst);
+        assert!(recheck_prepared_launch(&state, 1, || async {
+            panic!("paused launch must not probe")
+        })
+        .await
+        .is_err());
+    }
 
     /// GPT 槽位下桌面端的两个目录是**兄弟**（`<槽位>\home` / `<槽位>\desktop`），
     /// 跟 0.24 账户页裸 spawn 给的一模一样 —— 换启动方式不能换目录，否则桌面端

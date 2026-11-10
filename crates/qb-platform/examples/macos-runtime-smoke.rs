@@ -19,7 +19,10 @@ fn main() {
 
 #[cfg(target_os = "macos")]
 mod smoke {
-    use qb_platform::{macos, secret, sessions::OwnedProgram};
+    use qb_platform::{
+        macos, secret,
+        sessions::{self, OwnedProgram},
+    };
     use std::{
         error::Error,
         fs,
@@ -41,7 +44,7 @@ mod smoke {
     }
     fn same_process(pid: u32, created: u64) -> bool {
         macos::processes()
-            .unwrap_or_default()
+            .expect("process enumeration must succeed before confirming cleanup")
             .iter()
             .any(|p| p.pid == pid && p.created == created)
     }
@@ -99,8 +102,116 @@ mod smoke {
         }
         Ok(())
     }
+
+    fn prepared_lifecycle(root: &Path) -> Result<()> {
+        use qb_platform::domain::{Client, IdentityKind, LaunchContext};
+        let marker = root.join("prepared-client-started");
+        let prepare = || {
+            sessions::prepare(
+                LaunchContext {
+                    client: Client::ClaudeDesktop,
+                    identity_kind: IdentityKind::Official,
+                    identity_id: "synthetic-prepared".into(),
+                    config_dir: root.join("prepared-config").display().to_string(),
+                    working_dir: root.display().to_string(),
+                },
+                &std::env::current_exe()?,
+                vec![
+                    ("QB_RUNTIME_SMOKE_FIXTURE".into(), "1".into()),
+                    (
+                        "QB_RUNTIME_PREPARED_MARKER".into(),
+                        marker.display().to_string(),
+                    ),
+                ],
+                true,
+                0,
+            )
+        };
+        let before = macos::processes()?;
+        let prepared = prepare()?;
+        let helpers: Vec<_> = macos::processes()?
+            .into_iter()
+            .filter(|p| {
+                p.ppid == std::process::id()
+                    && p.argv.iter().any(|a| a == "--qb-managed")
+                    && !before
+                        .iter()
+                        .any(|old| old.pid == p.pid && old.created == p.created)
+            })
+            .map(|p| (p.pid, p.created))
+            .collect();
+        assert_eq!(helpers.len(), 1);
+        assert!(!marker.exists(), "prepare must not start the client");
+        drop(prepared);
+        wait_for(
+            || {
+                helpers
+                    .iter()
+                    .all(|(pid, created)| !same_process(*pid, *created))
+            },
+            "cancelled prepared helper cleanup",
+        )?;
+        assert!(
+            !marker.exists(),
+            "cancelled preparation must never start the client"
+        );
+        let session = prepare()?.start()?;
+        wait_for(|| marker.is_file(), "prepared client resume")?;
+        sessions::stop(&session.id)?;
+        wait_for(
+            || !same_process(session.pid, session.process_created),
+            "resumed session cleanup",
+        )?;
+        println!(
+            "PASS prepared sessions stay suspended, cancel cleanly and start only after resume"
+        );
+        Ok(())
+    }
+
+    fn nvm_interpreter(root: &Path) -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let home = dirs::home_dir().ok_or("missing fixture HOME")?;
+        assert!(
+            home.starts_with(root),
+            "Node fixture must be inside the isolated HOME"
+        );
+        let bin = home.join(".nvm/versions/node/v24.0.0/bin");
+        fs::create_dir_all(&bin)?;
+        let interpreter = bin.join("node");
+        fs::write(
+            &interpreter,
+            b"#!/bin/sh\nprintf 'nvm-interpreter' > \"$QB_NODE_PATH_MARKER\"\n",
+        )?;
+        fs::set_permissions(&interpreter, fs::Permissions::from_mode(0o755))?;
+        let cli = root.join("synthetic-claude");
+        fs::write(&cli, b"#!/usr/bin/env node\nfixture-only\n")?;
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755))?;
+        let marker = root.join("nvm-interpreter-used");
+        let owned = OwnedProgram::launch_logged(
+            &cli,
+            &[],
+            root,
+            vec![
+                ("PATH".into(), "/usr/bin:/bin".into()),
+                ("QB_NODE_PATH_MARKER".into(), marker.display().to_string()),
+            ],
+            &root.join("nvm-interpreter.log"),
+        )?;
+        wait_for(|| marker.exists(), "Finder PATH finds nvm interpreter")?;
+        assert_eq!(fs::read_to_string(marker)?, "nvm-interpreter");
+        drop(owned);
+        println!("PASS Finder-style PATH executes a Node shebang through isolated nvm");
+        Ok(())
+    }
+
     pub(super) fn run() -> Result<()> {
         let args: Vec<String> = std::env::args().collect();
+        if let Ok(marker) = std::env::var("QB_RUNTIME_PREPARED_MARKER") {
+            guard_fixture()?;
+            fs::write(marker, b"prepared client started")?;
+            std::thread::sleep(Duration::from_secs(60));
+            return Ok(());
+        }
         match args.get(1).map(String::as_str) {
             Some("--fixture-child") if args.len() == 3 => {
                 guard_fixture()?;
@@ -175,6 +286,9 @@ mod smoke {
         );
         fs::write(root.join("sealed-fixture"), &first)?;
         println!("PASS real Keychain master key and authenticated encryption");
+
+        prepared_lifecycle(&root)?;
+        nvm_interpreter(&root)?;
 
         let owned = launch_fixture(&root, &root.join("stop-child"))?;
         let (pid, created) = read_pid(&root.join("stop-child"))?;

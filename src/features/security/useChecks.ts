@@ -3,12 +3,13 @@
  */
 import { useCallback } from "react";
 
-import type { DnsReport, GateStatus, Risk } from "../../lib/api";
+import { api, type DnsReport, type GateStatus, type Risk } from "../../lib/api";
 import { markStep } from "../../lib/progress";
 import { R } from "../../lib/resources";
 import type { ScanResult } from "../../lib/signals";
 import {
   getSession,
+  invalidate,
   peek,
   refresh,
   setSession,
@@ -190,6 +191,10 @@ const BODY: Record<CheckId, (toast: Toast) => Promise<void>> = {
     // 要拿刚回来的结果得直接读缓存。
     const r = peek<DnsReport>("dns");
     if (!r) return;
+    const unknown =
+      r.score === null &&
+      r.adapters_safe !== false &&
+      !r.resolvers.some((resolver) => resolver.is_domestic);
     const risk: Risk = r.passed
       ? "low"
       : r.findings.length > 1
@@ -197,13 +202,16 @@ const BODY: Record<CheckId, (toast: Toast) => Promise<void>> = {
         : "medium";
     await markStep(
       "dns",
-      r.passed ? "passed" : "failed",
+      r.passed ? "passed" : unknown ? "pending" : "failed",
       risk,
       r.passed
-        ? "简易检测通过，未发现配置层或解析层泄露"
-        : `发现 ${r.findings.length} 项：${r.findings[0]}`,
+        ? "本轮系统解析回显与已检查的 DNS 路由未发现泄露"
+        : unknown
+          ? `尚不能判定：${r.findings[0] ?? r.adapters_note}`
+          : `发现 ${r.findings.length} 项：${r.findings[0]}`,
     );
-    if (r.passed) toast.ok("未发现泄露");
+    if (r.passed) toast.ok("已检查的路径未发现泄露");
+    else if (unknown) toast.info("DNS 检测尚不能判定，请查看缺失的证据");
     else toast.error(`发现 ${r.findings.length} 项问题`);
   },
 
@@ -219,6 +227,9 @@ const BODY: Record<CheckId, (toast: Toast) => Promise<void>> = {
   },
 
   async iplock(toast) {
+    await api.gateCheck();
+    // The inspection changed the backend observation. An older status poll must not win.
+    invalidate("gate");
     await refresh("gate");
     const risk = await recordGate();
     if (risk === "high") toast.error("门禁不会放行当前出口");

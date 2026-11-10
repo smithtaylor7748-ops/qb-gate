@@ -82,6 +82,11 @@ fn claude_switches_three_symlinks_preserves_slot_bytes_and_refuses_active_delete
     accounts::delete_slot(&roots, "two", true).unwrap();
     assert!(!two.exists());
     assert!(!roots.desktop_dir("two").unwrap().exists());
+    let error = accounts::create_slot(&roots, "two")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("不能再次使用"), "{error}");
+    assert!(!two.exists(), "拒绝重建时不能留下新的空目录");
     assert_eq!(
         std::fs::read(roots.desktop_dir("one").unwrap().join("fixture")).unwrap(),
         b"desktop-one"

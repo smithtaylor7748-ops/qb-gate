@@ -126,8 +126,8 @@ export function SignalsScore() {
             </>
           ) : (
             <>
-              来源：面板内置的 WebView2 —— 不是你登 claude.ai 用的那个浏览器。
-              下面「用默认浏览器测」能测那一个。
+              来源：面板内置网页组件。它与登录 claude.ai
+              使用的浏览器可能有不同设置。 下面「用默认浏览器测」能测那一个。
             </>
           )}
         </p>
@@ -228,9 +228,9 @@ export function BrowserProbeCard() {
       }
     >
       <p className="notice mb-2">
-        上面那十项默认是在面板<strong>内置的 WebView2</strong> 里测的 ——
-        那不是你登 claude.ai 用的那个浏览器，语言、WebRTC、扩展都可能不一样。
-        点这里，面板在 127.0.0.1 上开一个一次性页面、用系统默认浏览器打开，
+        上面那十项默认在面板<strong>内置网页组件</strong>中检测； 登录 claude.ai
+        使用的浏览器可能有不同的语言、WebRTC 和扩展设置。 点这里，面板在
+        127.0.0.1 上开一个一次性页面、用系统默认浏览器打开，
         测它真正的语言、时区、字体、WebRTC 和请求头。结果只回到本机面板；
         链接只能用一次，两分钟后作废。
       </p>
@@ -447,11 +447,12 @@ export function LocalCheckup() {
       }
     >
       <p className="notice mb-2">
-        读注册表与本地配置文件，<strong>不改任何东西</strong>。
+        读取系统网络状态与本地配置，<strong>不改任何东西</strong>。
         查的是浏览器指纹看不到的那几项：代理形态（TUN / 系统代理 / PAC）、
         出口一致性、Anthropic 服务可达、claude.ai 的解析、IPv6 出口、浏览器 DoH
         策略、环境变量残留，以及 MCP / Codex 配置里有没有写成明文的密钥。
         联网的那几项只在你点的这一次发，<strong>都不带任何账户凭据</strong>。
+        未支持或未取得证据的检查显示“查不出”；代理脚本不会被执行，未知结果不代表安全。
       </p>
 
       {checkup.error && (
@@ -519,7 +520,7 @@ export function LocalCheckup() {
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <span className="notice">
           Claude Code、Codex、Gemini CLI、Grok Build
-          与代理相关的用户环境变量，可以先备份再删，删错了能还原。
+          与代理相关的环境变量需要结合启动方式核对；当前平台可用的处理入口见下方。
         </span>
         <EnvCleanup />
       </div>

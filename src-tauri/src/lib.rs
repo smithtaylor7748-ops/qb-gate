@@ -176,6 +176,7 @@ pub fn run() {
             commands::workspace::tool_files_hermes_save,
             commands::workspace::tool_files_hermes_web,
             commands::gate::gate_status,
+            commands::gate::gate_check,
             commands::gate::gate_check_interval_save,
             commands::gate::gate_lock_all,
             commands::gate::gate_unlock_all,

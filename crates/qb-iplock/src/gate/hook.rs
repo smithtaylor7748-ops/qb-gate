@@ -547,18 +547,57 @@ pub fn handle_helper_args() -> Option<i32> {
             _ => Some("门禁裁决缺失或已过期，请打开 QB Gate 并重新验证 IP".into()),
         },
     };
-    Some(match reason {
+    Some(native_hook_result(reason, &blocked_log()))
+}
+
+fn native_hook_result(reason: Option<String>, log: &std::path::Path) -> i32 {
+    match reason {
         None => 0,
         Some(reason) => {
+            // Logging failure must never turn a denial into an allowed request.
+            let _ = append_blocked_log(log, &reason);
             eprintln!("QB Gate 拦下了这次请求：{reason}\n临时停用：面板 → 会话内门禁 → 停用；面板无法打开时，从 Claude settings.json 的 hooks 中移除带 _qb_gate 标记的条目。");
             2
         }
-    })
+    }
+}
+
+fn append_blocked_log(path: &std::path::Path, reason: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    let reason = reason.replace(['\r', '\n'], " ");
+    writeln!(
+        file,
+        "{}  {reason}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_hook_records_each_denial_but_never_logs_an_allowed_request() {
+        let dir = std::env::temp_dir().join(format!("qb-hook-log-{}", crate::config_io::id()));
+        let log = dir.join("hooks/blocked.log");
+        assert_eq!(native_hook_result(None, &log), 0);
+        assert!(!log.exists());
+        assert_eq!(native_hook_result(Some("门禁已暂停".into()), &log), 2);
+        assert_eq!(native_hook_result(Some("裁决已过期".into()), &log), 2);
+        let saved = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(saved.lines().count(), 2);
+        assert!(saved.contains("门禁已暂停") && saved.contains("裁决已过期"));
+        // An unwritable destination is still a denial, never a crash or success exit.
+        assert_eq!(native_hook_result(Some("拒绝".into()), &dir), 2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn merge_adds_both_events_with_our_mark() {

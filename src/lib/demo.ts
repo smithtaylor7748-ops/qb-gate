@@ -4630,6 +4630,7 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
           problem: null,
         },
   gate_status: () => gate,
+  gate_check: () => null,
   gate_check_interval_save: (args) => {
     const seconds = Number(args?.seconds);
     if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30) throw new Error("检查间隔须为1–30秒的整数");

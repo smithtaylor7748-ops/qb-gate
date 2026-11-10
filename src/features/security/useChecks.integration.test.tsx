@@ -14,9 +14,12 @@ const mock = vi.hoisted(() => ({
   ip: vi.fn(),
   dns: vi.fn(),
   signals: vi.fn(),
+  gate: vi.fn(),
+  checkGate: vi.fn(),
   toast: { ok: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
 vi.mock("../../ui", () => ({ useToast: () => mock.toast }));
+vi.mock("../../lib/api", () => ({ api: { gateCheck: mock.checkGate } }));
 vi.mock("../../lib/progress", () => ({ markStep: vi.fn() }));
 vi.mock("../../lib/resources", async () => {
   const { res } = await import("../../lib/store");
@@ -27,11 +30,7 @@ vi.mock("../../lib/resources", async () => {
       dns: res(() => mock.dns(), manual),
       signals: res(() => mock.signals(), manual),
       checkup: res(async () => ({ checks: [] }), manual),
-      gate: res(async () => ({
-        allowlist: ["203.0.113.7"],
-        ip_allowed: true,
-        stale_copies: [],
-      })),
+      gate: res(() => mock.gate()),
       egress: res(async () => ({ items: [] }), manual),
     },
   };
@@ -42,6 +41,12 @@ beforeEach(() => {
     ip: "203.0.113.7",
     fraudScore: 3,
     isResidential: true,
+  });
+  mock.checkGate.mockResolvedValue(undefined);
+  mock.gate.mockResolvedValue({
+    allowlist: ["203.0.113.7"],
+    ip_allowed: true,
+    stale_copies: [],
   });
   setSession("security.failed", {});
 });
@@ -94,6 +99,84 @@ it("finishes all five checks when workspace notifications arrive during DNS and 
   expect(peek("signals")).toEqual({ total: 0, hits: [] });
   expect(result.current.busy).toBe(false);
   expect(mock.ip).toHaveBeenCalledOnce();
+  expect(mock.checkGate).toHaveBeenCalledOnce();
+});
+
+it("explicitly inspects the exit before refreshing an empty gate snapshot", async () => {
+  mock.gate.mockResolvedValue({
+    current_ip: null,
+    allowlist: [],
+    ip_allowed: false,
+    stale_copies: [],
+  });
+  mock.checkGate.mockImplementationOnce(async () => {
+    mock.gate.mockResolvedValue({
+      current_ip: "203.0.113.9",
+      allowlist: [],
+      ip_allowed: false,
+      stale_copies: [],
+    });
+  });
+  const { result } = renderHook(useChecks, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    ),
+  });
+  await waitFor(() => expect(peek("gate")).toMatchObject({ current_ip: null }));
+  await act(async () => {
+    await result.current.iplock.run();
+  });
+  expect(mock.checkGate).toHaveBeenCalledOnce();
+  expect(peek("gate")).toMatchObject({
+    current_ip: "203.0.113.9",
+    ip_allowed: false,
+  });
+  expect(result.current.iplock.error).toBeUndefined();
+});
+
+it("does not let a status poll started before inspection overwrite the new result", async () => {
+  let finishOld!: (value: unknown) => void;
+  mock.gate.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishOld = resolve;
+      }),
+  );
+  mock.gate.mockResolvedValue({
+    current_ip: "203.0.113.9",
+    allowlist: [],
+    ip_allowed: false,
+    stale_copies: [],
+  });
+  const { result } = renderHook(useChecks, {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    ),
+  });
+  await waitFor(() => expect(mock.gate).toHaveBeenCalledOnce());
+  let checking!: Promise<void>;
+  await act(async () => {
+    checking = result.current.iplock.run();
+  });
+  await waitFor(() =>
+    expect(peek("gate")).toMatchObject({
+      current_ip: "203.0.113.9",
+      ip_allowed: false,
+    }),
+  );
+  await act(async () => {
+    finishOld({
+      current_ip: "203.0.113.7",
+      allowlist: ["203.0.113.7"],
+      ip_allowed: true,
+      stale_copies: [],
+    });
+    await checking;
+  });
+  expect(peek("gate")).toMatchObject({
+    current_ip: "203.0.113.9",
+    ip_allowed: false,
+  });
 });
 
 it("uses one snapshot for the local IP self-test and recovers from a failed refresh", async () => {

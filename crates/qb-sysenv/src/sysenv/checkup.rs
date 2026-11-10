@@ -108,7 +108,7 @@ fn reg_query(path: &str, name: &str) -> Option<String> {
     Some(val)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn reg_query(_path: &str, _name: &str) -> Option<String> {
     None
 }
@@ -127,6 +127,8 @@ pub struct ProxySettings {
     pub pac: Option<String>,
     /// 「自动检测设置」（WPAD）。读自 `Connections\DefaultConnectionSettings` 的标志位。
     pub auto_detect: Option<bool>,
+    /// 采集得到但当前 HTTP 探测不能复现的系统代理形态。
+    pub comparison_note: Option<String>,
 }
 
 /// 默认路由（`0.0.0.0/0`，或 VPN 常用的 `0.0.0.0/1` + `128.0.0.0/1` 两半）挂在哪张网卡上。
@@ -149,6 +151,7 @@ pub fn auto_detect_from(hex: &str) -> Option<bool> {
     Some(b & 0x08 != 0)
 }
 
+#[cfg(not(target_os = "macos"))]
 fn read_proxy_settings() -> ProxySettings {
     const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
     ProxySettings {
@@ -157,6 +160,39 @@ fn read_proxy_settings() -> ProxySettings {
         pac: reg_query(KEY, "AutoConfigURL").filter(|v| !v.trim().is_empty()),
         auto_detect: reg_query(&format!(r"{KEY}\Connections"), "DefaultConnectionSettings")
             .and_then(|hex| auto_detect_from(&hex)),
+        comparison_note: None,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn read_proxy_settings() -> ProxySettings {
+    use crate::probe::macos_network as network;
+    let Some(p) = network::proxy_config() else {
+        return ProxySettings::default();
+    };
+    let environment_note = network::proxy_environment_override(
+        |name| std::env::var(name).ok(),
+        std::env::var_os("REQUEST_METHOD").is_some(),
+    );
+    macos_proxy_settings(p, environment_note)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_proxy_settings(
+    p: crate::probe::macos_network::ProxyConfig,
+    environment_note: Option<String>,
+) -> ProxySettings {
+    ProxySettings {
+        enabled: p.enabled,
+        server: p.server,
+        pac: p.pac,
+        auto_detect: p.auto_detect,
+        comparison_note: environment_note.or_else(|| {
+            p.unsupported.then(|| {
+                "系统含 SOCKS、按接口限定代理或代理绕过规则；本轮 HTTP 探测无法完整复现其选路"
+                    .into()
+            })
+        }),
     }
 }
 
@@ -181,7 +217,25 @@ fn read_default_routes() -> Option<Vec<RouteRow>> {
     serde_json::from_slice(&out.stdout).ok()
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn read_default_routes() -> Option<Vec<RouteRow>> {
+    Some(
+        crate::probe::macos_network::default_routes()?
+            .into_iter()
+            .enumerate()
+            .map(|(i, (alias, tunnel))| RouteRow {
+                prefix: if i == 0 { "0.0.0.0/1" } else { "128.0.0.0/1" }.into(),
+                alias,
+                metric: 0,
+                hardware: !tunnel,
+                desc: "macOS 实际路由接口".into(),
+                up: true,
+            })
+            .collect(),
+    )
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn read_default_routes() -> Option<Vec<RouteRow>> {
     None
 }
@@ -219,6 +273,22 @@ pub fn proxy_form_item(s: &ProxySettings, routes: Option<&[RouteRow]>) -> CheckI
     let tun_text = tun.map(|r| format!("TUN / 虚拟网卡接管了默认路由（{}）", r.alias));
     let pac = s.pac.as_deref();
 
+    if let Some(note) = &s.comparison_note {
+        return item(
+            ID,
+            LABEL,
+            State::Warn,
+            format!(
+                "{note}。{}",
+                tun_text.as_deref().unwrap_or("默认路由未确认由隧道接管")
+            ),
+        );
+    }
+    if s.auto_detect == Some(true) && pac.is_none() {
+        return item(ID, LABEL, State::Warn,
+            "系统开启了自动发现代理，可能由 WPAD 下发 PAC；面板不执行脚本，不能把此状态当作未使用代理。");
+    }
+
     if let Some(url) = pac {
         let mut it = item(
             ID,
@@ -231,7 +301,7 @@ pub fn proxy_form_item(s: &ProxySettings, routes: Option<&[RouteRow]>) -> CheckI
             ),
         );
         it.manual = Some(
-            "要关就去「设置 → 网络和 Internet → 代理 → 使用设置脚本」里关，或者在代理软件里改成全局 / TUN。\
+            "请在系统网络设置或代理软件里核对 PAC 分流规则，或者在代理软件里改成全局 / TUN。\
              面板不替你关 —— 你的网可能正是靠它出去的。"
                 .into(),
         );
@@ -253,7 +323,7 @@ pub fn proxy_form_item(s: &ProxySettings, routes: Option<&[RouteRow]>) -> CheckI
             ),
         );
         it.manual = Some(
-            "要关就去「设置 → 网络和 Internet → 代理」里关。\
+            "请在系统网络设置的代理选项里核对。\
              面板不替你关 —— 你的网可能正是靠它出去的，关掉会当场断网。"
                 .into(),
         );
@@ -270,8 +340,8 @@ pub fn proxy_form_item(s: &ProxySettings, routes: Option<&[RouteRow]>) -> CheckI
             LABEL,
             State::Pass,
             format!(
-                "{t}，没开系统代理与 PAC：所有程序的流量（含 UDP 与 DNS）都从隧道出去，\
-                 跟面板量到的是同一条路。{wpad}"
+                "{t}，未检测到手动系统代理与 PAC；这些默认路由探测使用隧道。\
+                 按目的地址、应用或 DNS 分流的路径需要结合其他检测核对。{wpad}"
             ),
         ),
         (None, Some(_), Some(false)) => item(
@@ -318,8 +388,8 @@ fn ipv6_bindings_note(
 ///
 /// | 实测 | 结论 |
 /// |---|---|
-/// | 只有 v6 的回显服务都连不上 | 通过：没有 v6 出口 |
-/// | 回来的是 IPv4 | 通过：v6 请求被代理接走了 |
+/// | 只有 v6 的回显服务都连不上或回复异常 | 未知：不能证明没有 v6 出口 |
+/// | 回来的是 IPv4 | 未知：只证明这次请求看到了 IPv4 |
 /// | 有 v6 出口，跟 IPv4 同一个国家 | 通过 |
 /// | 有 v6 出口，跟 IPv4 **不是**同一个国家 | **失败**（关键项）：隧道没接管 v6，对端看得到另一个国家的地址 |
 /// | 有 v6 出口，查不到国家 / IPv4 国家没测到 | 警告 |
@@ -333,19 +403,19 @@ pub fn ipv6_item(
     use crate::probe::reach::V6Exit;
     let note = ipv6_bindings_note(bindings);
     let mut it = match exit {
-        Some(V6Exit::None) => item(
+        Some(V6Exit::Unknown) => item(
             "ipv6",
             "IPv6",
-            State::Pass,
+            State::Unknown,
             format!(
-                "测不到 IPv6 出口（只有 v6 的回显服务一个都连不上）—— 没有从 v6 漏出去的路。{note}"
+                "没有取得有效 IPv6 回显：可能是网络、DNS、TLS 或回显服务异常，不能据此证明没有 IPv6 出口。{note}"
             ),
         ),
         Some(V6Exit::ViaProxy { ip }) => item(
             "ipv6",
             "IPv6",
-            State::Pass,
-            format!("IPv6 请求被代理接走了（回显看到的是 {ip}），本机没有自己的 v6 出口。{note}"),
+            State::Unknown,
+            format!("IPv6 回显服务这次返回了 IPv4（{ip}）；可能是代理或服务变化，不能据此排除本机 IPv6 出口。{note}"),
         ),
         Some(V6Exit::Exit {
             ip,
@@ -407,10 +477,11 @@ pub fn ipv6_item(
             ),
         },
     };
-    it.manual = Some(
-        "在代理软件里打开 IPv6 接管；或者用「IP 纯净度 → 禁用本机 IPv6」开关（需要管理员授权，能随时恢复原设置）。"
-            .into(),
-    );
+    it.manual = Some(if cfg!(windows) {
+        "在代理软件里核对 IPv6 接管；或者用「IP 纯净度 → 禁用本机 IPv6」开关（需要管理员授权，能随时恢复原设置）。"
+    } else {
+        "在代理软件和系统网络设置里核对 IPv6 路由；当前平台不提供网卡 IPv6 禁用开关。回显失败时可重试检测。"
+    }.into());
     it
 }
 
@@ -640,6 +711,13 @@ pub fn dns_item(rs: &[crate::probe::reach::Resolved]) -> CheckItem {
     }
 }
 
+#[cfg(not(windows))]
+fn check_doh() -> CheckItem {
+    item("doh", "浏览器 DoH 策略", State::Unknown,
+        "当前平台未读取浏览器管理策略；未检查不等于没有配置。请在浏览器策略页核对，并结合真实 DNS 回显。")
+}
+
+#[cfg(windows)]
 fn check_doh() -> CheckItem {
     let chrome = reg_query(r"HKLM\SOFTWARE\Policies\Google\Chrome", "DnsOverHttpsMode");
     let edge = reg_query(r"HKLM\SOFTWARE\Policies\Microsoft\Edge", "DnsOverHttpsMode");
@@ -971,8 +1049,16 @@ pub fn scan_env() -> (CheckItem, Vec<EnvHit>) {
         item(
             "env_residue",
             "环境变量残留",
-            State::Pass,
-            "没有会影响 Claude Code 的环境变量残留。",
+            if cfg!(windows) {
+                State::Pass
+            } else {
+                State::Unknown
+            },
+            if cfg!(windows) {
+                "没有会影响 Claude Code 的环境变量残留。"
+            } else {
+                "当前面板进程未发现相关环境变量；未读取终端启动文件或其他进程环境，不能据此确认 Claude Code 没有环境变量残留。"
+            },
         )
     } else {
         let mut why: Vec<&str> = Vec::new();
@@ -1000,9 +1086,8 @@ pub fn scan_env() -> (CheckItem, Vec<EnvHit>) {
         );
         if redirecting || proxied {
             it.manual = Some(
-                "当前用户的这几个可以用这张卡末尾的「清理环境变量…」删：逐个勾、先备份、能还原。\
-                 也可以自己改：设置 → 系统 → 系统信息 → 高级系统设置 → 环境变量。\
-                 改完要重开终端 / 重开 Claude Code 才生效。\
+                "请核对系统用户环境设置或终端启动配置。Windows 可用「清理环境变量…」逐个备份后删除；\
+                 macOS 只读取面板进程环境，终端配置需手动核对。改完要重开终端 / Claude Code 才生效。\
                  体检自己不删 —— 这些变量可能正是你别的工作要用的。"
                     .into(),
             );
@@ -1092,6 +1177,29 @@ pub fn compare_egress(
     )
 }
 
+fn proxy_comparison_unavailable(settings: &ProxySettings) -> Option<String> {
+    if settings.pac.is_some() || settings.auto_detect == Some(true) {
+        Some("系统启用了 PAC / 自动发现代理；面板不执行这些脚本，无法确认浏览器实际选路，不能判定出口一致".into())
+    } else if let Some(note) = &settings.comparison_note {
+        Some(note.clone())
+    } else if settings.enabled.is_none() {
+        Some("系统代理设置未能读取，不能确认跟随系统代理的探测是否代表浏览器实际路径".into())
+    } else {
+        None
+    }
+}
+
+fn compare_configured_egress(
+    direct: &crate::probe::ip::Reading,
+    via_proxy: &crate::probe::ip::Reading,
+    settings: &ProxySettings,
+) -> CheckItem {
+    match proxy_comparison_unavailable(settings) {
+        Some(note) => item("egress_consistency", "出口一致性", State::Unknown, note),
+        None => compare_egress(direct, via_proxy),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export)]
 pub struct Checkup {
@@ -1170,7 +1278,9 @@ pub async fn scan() -> Checkup {
         });
 
     // 系统代理开着时，服务可达再按「跟随系统代理」问一轮：浏览器与桌面端走的是那一路。
-    let via_proxy_reach = if proxy_settings.enabled == Some(true) {
+    let via_proxy_reach = if proxy_settings.enabled == Some(true)
+        && proxy_comparison_unavailable(&proxy_settings).is_none()
+    {
         match crate::probe::ip::build_client(false) {
             Ok(c) => Some(crate::probe::reach::reach(&c).await),
             Err(_) => None,
@@ -1184,15 +1294,26 @@ pub async fn scan() -> Checkup {
         exit_ips.push(ip.clone());
     }
 
+    let reach = reach
+        .as_ref()
+        .map(|r| {
+            let mut it = reach_item(r, via_proxy_reach.as_ref());
+            if let Some(note) = proxy_comparison_unavailable(&proxy_settings) {
+                it.detail = format!("以下结果仅代表绕过系统代理的路径：{}。{note}。", it.detail);
+                if it.state == State::Pass {
+                    it.state = State::Unknown;
+                }
+            }
+            it
+        })
+        .unwrap_or_else(|| unavailable("anthropic_reach", "Anthropic 服务可达"));
+
     Checkup {
         exit_ips,
         items: vec![
             proxy_form_item(&proxy_settings, routes.as_deref()),
-            compare_egress(&direct, &via_proxy),
-            reach
-                .as_ref()
-                .map(|r| reach_item(r, via_proxy_reach.as_ref()))
-                .unwrap_or_else(|| unavailable("anthropic_reach", "Anthropic 服务可达")),
+            compare_configured_egress(&direct, &via_proxy, &proxy_settings),
+            reach,
             dns_item(&dns),
             ipv6_item(&bindings, v6.as_ref(), &direct.distinct_countries()),
             doh,
@@ -1226,6 +1347,90 @@ pub fn fix(id: &str) -> Result<String> {
 mod tests {
     use super::*;
     use crate::probe::reach::{HttpOutcome, ReachReport, Resolved, V6Exit};
+
+    #[test]
+    fn macos_proxy_bypass_and_environment_cannot_pass_matching_egress() {
+        use crate::probe::macos_network as network;
+        let reading = crate::probe::ip::Reading {
+            ip: Some("203.0.113.1".into()),
+            countries: vec![("fixture".into(), "US".into())],
+        };
+        let static_proxy = " HTTPSEnable : 1\n HTTPSProxy : 127.0.0.1\n HTTPSPort : 7890\n";
+        for bypass in [
+            " ExceptionsList : <array> {\n  0 : claude.ai\n }\n",
+            " ExcludeSimpleHostnames : 1\n",
+        ] {
+            let config =
+                network::parse_proxy(&format!("<dictionary> {{\n{static_proxy}{bypass}}}\n"))
+                    .unwrap();
+            let settings = macos_proxy_settings(config, None);
+            assert_eq!(
+                compare_configured_egress(&reading, &reading, &settings).state,
+                State::Unknown
+            );
+            assert_eq!(proxy_form_item(&settings, Some(&[])).state, State::Warn);
+        }
+        let config = network::parse_proxy(&format!("<dictionary> {{\n{static_proxy}}}\n")).unwrap();
+        for (key, value) in [
+            ("https_proxy", "http://proxy.example.test:7890"),
+            ("NO_PROXY", "*"),
+        ] {
+            let note = network::proxy_environment_override(
+                |name| (name == key).then(|| value.to_string()),
+                false,
+            );
+            let settings = macos_proxy_settings(config.clone(), note);
+            assert_eq!(
+                compare_configured_egress(&reading, &reading, &settings).state,
+                State::Unknown
+            );
+        }
+        let settings = macos_proxy_settings(config, None);
+        assert_eq!(
+            compare_configured_egress(&reading, &reading, &settings).state,
+            State::Pass
+        );
+    }
+
+    #[test]
+    fn matching_echoes_do_not_prove_pac_or_unread_proxy_routes_match() {
+        let reading = crate::probe::ip::Reading {
+            ip: Some("203.0.113.1".into()),
+            countries: vec![("fixture".into(), "US".into())],
+        };
+        for settings in [
+            ProxySettings::default(),
+            ProxySettings {
+                enabled: Some(false),
+                pac: Some("enabled".into()),
+                ..Default::default()
+            },
+            ProxySettings {
+                enabled: Some(false),
+                auto_detect: Some(true),
+                ..Default::default()
+            },
+            ProxySettings {
+                enabled: Some(true),
+                comparison_note: Some("unsupported scoped proxy".into()),
+                ..Default::default()
+            },
+        ] {
+            assert_eq!(
+                compare_configured_egress(&reading, &reading, &settings).state,
+                State::Unknown
+            );
+        }
+        let static_proxy = ProxySettings {
+            enabled: Some(true),
+            auto_detect: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(
+            compare_configured_egress(&reading, &reading, &static_proxy).state,
+            State::Pass
+        );
+    }
 
     fn route(prefix: &str, alias: &str, metric: i64, hardware: bool, desc: &str) -> RouteRow {
         RouteRow {
@@ -1286,6 +1491,7 @@ mod tests {
             server: Some("127.0.0.1:10808".into()),
             pac: Some("http://127.0.0.1:10809/pac".into()),
             auto_detect: Some(false),
+            comparison_note: None,
         };
         let it = proxy_form_item(&s, Some(&[]));
         assert_eq!(it.state, State::Warn);
@@ -1330,7 +1536,7 @@ mod tests {
         assert_eq!(auto_detect_from("4600"), None);
     }
 
-    /// IPv6 看真实出口：没有 v6 出口就通过，哪怕网卡上还开着。
+    /// 回显失败或只返回 IPv4 都不能证明没有 IPv6；有效 IPv6 才比较地区。
     #[test]
     fn ipv6_is_judged_by_the_real_exit_not_the_adapter_switch() {
         let open = Ok(vec![super::super::ipv6::Ipv6Binding {
@@ -1340,8 +1546,8 @@ mod tests {
         }]);
         let us = vec!["US".to_string()];
         assert_eq!(
-            ipv6_item(&open, Some(&V6Exit::None), &us).state,
-            State::Pass
+            ipv6_item(&open, Some(&V6Exit::Unknown), &us).state,
+            State::Unknown
         );
         assert_eq!(
             ipv6_item(
@@ -1352,7 +1558,7 @@ mod tests {
                 &us
             )
             .state,
-            State::Pass
+            State::Unknown
         );
         let exit = |cc: Option<&str>| V6Exit::Exit {
             ip: "2001:db8::1".into(),

@@ -419,6 +419,19 @@ fn scope_word(s: browser_audit::Scope) -> &'static str {
     }
 }
 
+fn browser_policy_rows(a: &browser_audit::Audit, supported: bool) -> (CheckItem, CheckItem) {
+    if supported {
+        (webrtc(a), doh(a))
+    } else {
+        (
+            item("browser_webrtc", "WebRTC 出口", State::Unknown,
+                "当前平台未读取 Chrome 的 WebRTC 管理策略；未检查不等于未配置。可用默认浏览器实测，或在 chrome://policy 核对。"),
+            item("browser_doh", "浏览器 DoH", State::Unknown,
+                "当前平台未读取浏览器 DoH 管理策略；请在浏览器设置及策略页核对，并结合真实 DNS 回显。"),
+        )
+    }
+}
+
 // ------------------------------------------------------------------ 入口
 
 /// 跑一轮出口一致性检查。
@@ -454,6 +467,7 @@ pub async fn scan(country: Option<String>) -> EgressChecks {
 
     // 阻塞任务挂了也要给出一份能看的报告 —— 整项白屏比少几行糟得多。
     let audit = local.await.unwrap_or_default();
+    let (policy_webrtc, policy_doh) = browser_policy_rows(&audit, cfg!(windows));
 
     // 一小时内用默认浏览器实测过（`browser_probe`）：浏览器语言与 WebRTC 两行改用实测 ——
     // 请求头里真正发出去的 Accept-Language、真正收到的 WebRTC 候选地址，任何浏览器都算，
@@ -473,9 +487,9 @@ pub async fn scan(country: Option<String>) -> EgressChecks {
     let webrtc_row = match (&report, &browser) {
         (Some(r), Some(b)) => match report_webrtc(&r.page_json) {
             Some(ips) => webrtc_measured(&ips, &checkup.exit_ips, b),
-            None => webrtc(&audit),
+            None => policy_webrtc,
         },
-        _ => webrtc(&audit),
+        _ => policy_webrtc,
     };
 
     EgressChecks {
@@ -486,7 +500,7 @@ pub async fn scan(country: Option<String>) -> EgressChecks {
             take("ipv6"),
             locale,
             webrtc_row,
-            doh(&audit),
+            policy_doh,
         ],
         checked_at,
         undoable: [
@@ -527,6 +541,21 @@ pub fn undo(id: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_policy_reading_is_unknown_without_a_repair_or_false_absence() {
+        let a = browser_audit::Audit {
+            chrome_installed: true,
+            ..Default::default()
+        };
+        let (webrtc, doh) = browser_policy_rows(&a, false);
+        for row in [webrtc, doh] {
+            assert_eq!(row.state, State::Unknown);
+            assert!(!row.fixable);
+            assert!(!row.detail.contains("没设过"));
+        }
+        assert_eq!(browser_policy_rows(&a, true).0.state, State::Warn);
+    }
 
     fn at(id: &str, state: State) -> CheckItem {
         item(id, id, state, "")

@@ -30,6 +30,75 @@ afterEach(() => {
   localStorage.clear();
 });
 describe("backend query lifecycle", () => {
+  it.each([undefined, 0, 2])(
+    "discards incompatible persisted diagnostics without running a manual check (saved version=%s)",
+    (version) => {
+      const key = `incompatible-persisted-${version}`;
+      localStorage.setItem(
+        `qb.cache.${key}`,
+        JSON.stringify({ version, at: 123, data: "obsolete report" }),
+      );
+      let calls = 0;
+      const def = res(async () => ++calls, {
+        auto: false,
+        persist: true,
+        persistVersion: 1,
+      });
+      const hook = renderHook(() => useResource(key, def), { wrapper });
+      expect(hook.result.current.data).toBeUndefined();
+      expect(hook.result.current.neverLoaded).toBe(true);
+      expect(measuredAt(key)).toBeNull();
+      expect(localStorage.getItem(`qb.cache.${key}`)).toBeNull();
+      expect(calls).toBe(0);
+    },
+  );
+  it.each([
+    { savedVersion: undefined, persistVersion: undefined },
+    { savedVersion: 0, persistVersion: undefined },
+    { savedVersion: 1, persistVersion: 1 },
+  ])(
+    "restores compatible saved diagnostics and preserves legacy default-version resources (%j)",
+    ({ savedVersion, persistVersion }) => {
+      const key = `compatible-persisted-${savedVersion}`;
+      localStorage.setItem(
+        `qb.cache.${key}`,
+        JSON.stringify({
+          version: savedVersion,
+          at: 456,
+          data: "saved report",
+        }),
+      );
+      const def = res(async () => "fresh report", {
+        auto: false,
+        persist: true,
+        persistVersion,
+      });
+      const hook = renderHook(() => useResource(key, def), { wrapper });
+      expect(hook.result.current.data).toBe("saved report");
+      expect(measuredAt(key)).toBe(456);
+      expect(localStorage.getItem(`qb.cache.${key}`)).not.toBeNull();
+    },
+  );
+  it.each([undefined, 1])(
+    "persists a fresh measurement with its resource version (version=%s)",
+    async (persistVersion) => {
+      const key = `versioned-refresh-${persistVersion}`;
+      const def = res(async () => "fresh report", {
+        auto: false,
+        persist: true,
+        persistVersion,
+      });
+      const hook = renderHook(() => useResource(key, def), { wrapper });
+      await act(async () => {
+        await hook.result.current.refresh();
+      });
+      expect(JSON.parse(localStorage.getItem(`qb.cache.${key}`)!)).toEqual({
+        version: persistVersion ?? 0,
+        at: measuredAt(key),
+        data: "fresh report",
+      });
+    },
+  );
   it.each([false, true])(
     "refresh immediately after a mutation waits for invalidation (auto=%s)",
     async (auto) => {

@@ -2,38 +2,10 @@
 use std::path::{Path, PathBuf};
 
 pub fn path_dirs() -> Vec<PathBuf> {
-    let mut paths: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|v| std::env::split_paths(&v).collect())
-        .unwrap_or_default();
-    if let Some(home) = dirs::home_dir() {
-        for relative in [
-            ".local/bin",
-            ".cargo/bin",
-            ".volta/bin",
-            ".bun/bin",
-            ".npm-global/bin",
-        ] {
-            paths.push(home.join(relative));
-        }
-        let nvm = home.join(".nvm/versions/node");
-        let mut versions: Vec<_> = std::fs::read_dir(nvm)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|e| e.path().join("bin"))
-            .collect();
-        versions.sort();
-        versions.reverse();
-        paths.extend(versions);
-    }
-    paths.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].map(PathBuf::from));
-    let mut result = Vec::new();
-    for path in paths {
-        if path.is_absolute() && !result.contains(&path) {
-            result.push(path);
-        }
-    }
-    result
+    qb_platform::macos_paths::directories(
+        std::env::var_os("PATH").as_deref(),
+        dirs::home_dir().as_deref(),
+    )
 }
 
 pub fn command(name: &str) -> Option<PathBuf> {

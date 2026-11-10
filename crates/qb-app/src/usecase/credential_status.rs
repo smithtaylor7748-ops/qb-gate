@@ -8,6 +8,7 @@
 //! ⛔ 令牌内容不进这里的任何返回值。
 use super::login_health;
 use crate::error::Result;
+use qb_platform::credentials::Secret;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -198,7 +199,7 @@ pub fn gpt() -> Result<Vec<SlotCredential>> {
 
 // ------------------------------------------------------------------ Claude
 
-/// `.credentials.json` → 状态（只看 `expiresAt`，不碰令牌）。
+/// 官方凭据 JSON（文件或 Keychain）→ 状态，令牌不进入返回值。
 ///
 /// 实测（2026-11-05，闲置槽位）：`claude auth status --json` 前后凭据文件的修改时刻和长度都没变 ——
 /// 它不会替过期的访问令牌换新。所以到点了只给「切换并打开」：Claude Code 跑起来会自己换。
@@ -207,25 +208,55 @@ pub fn claude_from_file(bytes: Option<&[u8]>, now_ms: i64) -> CredentialStatus {
         return status("logged_out", "这个槽位还没登录过", Some("switch_open"));
     };
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(bytes) else {
-        return status("unreadable", ".credentials.json 读不出来", None);
+        return status("unreadable", "Claude 凭据格式读不出来", None);
     };
+    if !v.is_object() {
+        return status("unreadable", "Claude 凭据格式读不出来", None);
+    }
     let Some(o) = v.get("claudeAiOauth").or_else(|| v.get("claude.ai_oauth")) else {
         return status("logged_out", "没有 Claude 账户登录", Some("switch_open"));
     };
-    let exp = o.get("expiresAt").and_then(|e| e.as_i64()).map(|t| {
-        if t > 1_000_000_000_000 {
-            t
-        } else {
-            t * 1000
-        }
+    if !o.is_object() {
+        return status("unreadable", "Claude OAuth 凭据格式读不出来", None);
+    }
+    if o.get("accessToken")
+        .and_then(|token| token.as_str())
+        .is_none_or(str::is_empty)
+    {
+        return status(
+            "logged_out",
+            "没有 Claude OAuth 访问令牌",
+            Some("switch_open"),
+        );
+    }
+    let exp = o.get("expiresAt").and_then(|value| match value {
+        serde_json::Value::Number(n) => n.as_i64().and_then(|t| {
+            if t > 1_000_000_000_000 {
+                Some(t)
+            } else {
+                t.checked_mul(1000)
+            }
+        }),
+        serde_json::Value::String(s) => chrono::DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|d| d.timestamp_millis()),
+        _ => None,
     });
     match exp {
-        Some(e) if e <= now_ms + 60_000 => status(
+        Some(e) if e <= now_ms.saturating_add(60_000) => status(
             "access_expired",
             "访问令牌到点了 · 面板不替 Claude 换新：切换到这个账户并打开 Claude Code，它会自己换",
             Some("switch_open"),
         ),
-        _ => status("ok", "本机凭据完整，访问令牌没到点", None),
+        Some(_) => status("ok", "本机凭据完整，访问令牌没到点", None),
+        None => status("unreadable", "Claude 凭据的到期时间无法识别", None),
+    }
+}
+
+fn claude_from_store(stored: Result<Option<Secret>>, now_ms: i64) -> CredentialStatus {
+    match stored {
+        Ok(bytes) => claude_from_file(bytes.as_ref().map(Secret::as_bytes), now_ms),
+        Err(error) => status("unreadable", format!("Claude 凭据读不出来：{error}"), None),
     }
 }
 
@@ -237,14 +268,18 @@ pub fn claude() -> Vec<SlotCredential> {
         .into_iter()
         .map(|s| {
             let cred = Path::new(&s.dir).join(".credentials.json");
-            let bytes = std::fs::read(&cred).ok();
-            let key = login_health::claude_key(&s.label);
-            let mut st = overlay(
-                &key,
-                &cred,
-                claude_from_file(bytes.as_deref(), now),
-                "switch_open",
+            let base = claude_from_store(
+                qb_accounts::accounts::credential_store::read_checked(Path::new(&s.dir)),
+                now,
             );
+            let key = login_health::claude_key(&s.label);
+            // File metadata cannot version a Keychain login. Match claude_quota's
+            // policy, and never replace an actual read failure with a cached result.
+            let mut st = if cfg!(target_os = "macos") || base.kind == "unreadable" {
+                base
+            } else {
+                overlay(&key, &cred, base, "switch_open")
+            };
             st.email_mismatch = email_check(&key, s.email.as_deref());
             SlotCredential {
                 id: s.label,
@@ -310,6 +345,97 @@ mod tests {
         let s = claude_from_file(Some(f), 10_000_000);
         assert_eq!(s.kind, "access_expired");
         assert_eq!(s.action.as_deref(), Some("switch_open"));
+    }
+
+    #[test]
+    fn malformed_claude_credentials_are_never_reported_as_healthy() {
+        for bytes in [
+            b"not-json".as_slice(),
+            b"null",
+            b"[]",
+            br#"{"claudeAiOauth":null}"#,
+            br#"{"claudeAiOauth":"invalid"}"#,
+        ] {
+            let s = claude_from_file(Some(bytes), 1_700_000_000_000);
+            assert_eq!(s.kind, "unreadable");
+            assert_eq!(s.action, None);
+        }
+    }
+
+    #[test]
+    fn a_missing_or_empty_claude_access_token_requires_login() {
+        for oauth in [
+            serde_json::json!({"expiresAt": 1_800_000_000_000_i64}),
+            serde_json::json!({"accessToken": "", "expiresAt": 1_800_000_000_000_i64}),
+            serde_json::json!({"accessToken": null, "expiresAt": 1_800_000_000_000_i64}),
+        ] {
+            let bytes = serde_json::to_vec(&serde_json::json!({"claudeAiOauth": oauth})).unwrap();
+            let s = claude_from_file(Some(&bytes), 1_700_000_000_000);
+            assert_eq!(s.kind, "logged_out");
+            assert_eq!(s.action.as_deref(), Some("switch_open"));
+        }
+    }
+
+    #[test]
+    fn missing_invalid_and_overflowing_claude_expiry_remain_unreadable() {
+        for expiry in [
+            None,
+            Some(serde_json::json!("not-a-date")),
+            Some(serde_json::Value::Null),
+            Some(serde_json::json!(true)),
+            Some(serde_json::json!(i64::MIN)),
+        ] {
+            let mut oauth = serde_json::json!({"accessToken": "synthetic-private-token"});
+            if let Some(expiry) = expiry {
+                oauth["expiresAt"] = expiry;
+            }
+            let bytes = serde_json::to_vec(&serde_json::json!({"claudeAiOauth": oauth})).unwrap();
+            let s = claude_from_file(Some(&bytes), 1_700_000_000_000);
+            assert_eq!(s.kind, "unreadable");
+            assert_eq!(s.action, None);
+            assert!(!serde_json::to_string(&s)
+                .unwrap()
+                .contains("synthetic-private-token"));
+        }
+    }
+
+    #[test]
+    fn rfc3339_claude_expiry_marks_expired_tokens_and_accepts_future_tokens() {
+        for (expiry, expected) in [
+            ("2020-01-01T00:00:00Z", "access_expired"),
+            ("2030-01-01T00:00:00+00:00", "ok"),
+        ] {
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "claude.ai_oauth": {"accessToken": "synthetic", "expiresAt": expiry}
+            }))
+            .unwrap();
+            let s = claude_from_file(Some(&bytes), 1_700_000_000_000);
+            assert_eq!(s.kind, expected);
+            if expected == "access_expired" {
+                assert_eq!(s.action.as_deref(), Some("switch_open"));
+            }
+        }
+    }
+
+    #[test]
+    fn claude_keychain_state_distinguishes_missing_denied_and_present_credentials() {
+        assert_eq!(claude_from_store(Ok(None), 1_000).kind, "logged_out");
+        let denied = claude_from_store(
+            Err(crate::error::GateError::Other("钥匙串访问被拒绝".into())),
+            1_000,
+        );
+        assert_eq!(denied.kind, "unreadable");
+        assert_eq!(denied.action, None);
+        assert!(denied.reason.contains("钥匙串访问被拒绝"));
+        let present = Secret::new(
+            br#"{"claudeAiOauth":{"accessToken":"synthetic-keychain","expiresAt":1700000000000}}"#
+                .to_vec(),
+        );
+        let state = claude_from_store(Ok(Some(present)), 1_000);
+        assert_eq!(state.kind, "ok");
+        assert!(!serde_json::to_string(&state)
+            .unwrap()
+            .contains("synthetic-keychain"));
     }
 
     #[test]

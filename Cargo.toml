@@ -116,6 +116,9 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = ["c
 reqwest = { version = "0.12", features = [
   "json",
   "rustls-tls",
+  # 体检的跟随系统代理分支必须读取 macOS / Windows 系统设置。
+  # 门禁仍显式 no_proxy；PAC/WPAD 不能由此执行，检测端另报未知。
+  "system-proxy",
   # 本机路由要把上游的响应**流式**转回客户端。整包收完再转的话，
   # SSE 会一直卡到最后一个 token 才吐出来，而且首字延迟根本量不到。
   "stream",

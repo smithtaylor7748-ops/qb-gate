@@ -81,6 +81,10 @@ export function DnsResult() {
   // 存盘的旧报告（2026-09-24 之前的评分规则）：分数不显示，请使用者重测。
   const legacy = report ? isLegacyDnsReport(report) : false;
   const resolvers = report?.resolvers ?? [];
+  const unknown =
+    report?.score === null &&
+    report.adapters_safe !== false &&
+    !resolvers.some((r) => r.is_domestic);
   const shown = showAll ? resolvers : resolvers.slice(0, HEAD);
 
   return (
@@ -103,7 +107,8 @@ export function DnsResult() {
           }
         >
           向 bash.ws 取一个测试 id，依次解析 10 个探针域名，由它的权威域名服务器
-          回报「是谁来查的」，再叠加本机网卡 DNS 配置一起判定。
+          回报「是谁来查的」，再检查系统 DNS
+          的路由。采集失败或路由未知时不判通过。
         </EmptyState>
       ) : report ? (
         <>
@@ -111,6 +116,8 @@ export function DnsResult() {
             <Metric label="判定">
               {report.passed ? (
                 <Pill tone="ok">通过</Pill>
+              ) : unknown ? (
+                <Pill tone="warn">未完成判定</Pill>
               ) : (
                 <Pill tone="danger">发现 {report.findings.length} 项问题</Pill>
               )}
@@ -142,7 +149,7 @@ export function DnsResult() {
               ) : report.adapters_safe === false ? (
                 <Pill tone="danger">绕过隧道</Pill>
               ) : (
-                <Pill>不适用</Pill>
+                <Pill>未判定 / 不适用</Pill>
               )}
             </Metric>
           </div>
@@ -172,7 +179,7 @@ export function DnsResult() {
                   side={
                     <>
                       {r.from_adapter && (
-                        <Pill tone="default">网卡 {r.interface}</Pill>
+                        <Pill tone="default">系统 DNS {r.interface}</Pill>
                       )}
                       {r.from_adapter && r.connected === false && (
                         <Pill tone="default">已断开 · 不看</Pill>
@@ -224,8 +231,8 @@ export function DnsAdvanced() {
   return (
     <Card as="h3" title="高级通过" tone="accent">
       <p className="notice mb-3">
-        让 Codex 读网卡配置、路由表、系统代理、浏览器 DoH，必要时用 PktMon
-        抓包核实， 发现问题给出修复方案。
+        让 Codex 读网卡配置、路由表、系统代理、浏览器
+        DoH，必要时使用系统抓包工具核实，发现问题给出修复方案。
         <strong>{DNS_LEAK_PROMPT.modelHint}</strong>
       </p>
 
@@ -270,10 +277,12 @@ export function DnsWhy() {
       </p>
       <p className="notice mt-2">
         <strong>网卡配置检查</strong>：只在 TUN 开着时算。看
-        <strong>连着的</strong>物理网卡（有线、Wi-Fi 都算）上配的
-        DNS，这条查询从哪张网卡出去：进隧道就没事，从物理网卡直接出去才是缺口 ——
-        Windows 会同时向每张网卡的 DNS 发查询。断开的网卡、隧道网卡自己的 DNS
-        不看；没开 TUN 时没有隧道可绕，这一项不计分。
+        <strong>连着的</strong>物理网卡（有线、Wi-Fi 都算）上配的 DNS
+        的实际路由。Windows 检查已连接网卡；macOS
+        读取默认、域名补充和按接口限定的系统解析器。 DNS
+        不走隧道表示相关查询可能绕过隧道，不代表已经抓到了泄露数据包。
+        默认路由或应检查的 DNS 路由查不出时不判通过；确认没开 TUN
+        时这一项不计分。
       </p>
       <p className="notice mt-2">
         用 fake-ip 模式的代理（Clash / mihomo 这类）时，探针域名会被解析成{" "}

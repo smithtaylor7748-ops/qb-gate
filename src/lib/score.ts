@@ -228,7 +228,7 @@ function dnsItem(dns?: DnsReport): ScoreItem {
       detail: "评分规则改过（2026-09-24），请重测一次",
     };
   if (dns.score === null || !dns.resolvers.some((r) => !r.from_adapter))
-    return { ...base, earned: null, detail: "未收到真实解析回显，结果不完整" };
+    return { ...base, earned: null, detail: "检测未完成，结果不完整" };
   // DnsReport.score 已经是 100 分制且方向一致（高了好）。
   return {
     ...base,

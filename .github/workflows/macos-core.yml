@@ -1,0 +1,75 @@
+name: macOS core regressions
+on:
+  push:
+    branches: ["codex/macos-core-*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: macos-core-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+jobs:
+  source-checks:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify native Apple Silicon runner
+        run: test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - run: npm ci
+      - run: npm run release:check
+      - run: npm run format:check
+      - run: cargo fmt --all --check
+      - run: npm test
+      - run: npm run build
+      - run: npm run types:check
+      - run: cargo test --locked --workspace --no-fail-fast
+      - run: cargo clippy --locked --workspace --lib -- -D warnings
+        if: ${{ !cancelled() }}
+      - run: npx playwright install chromium
+      - run: npm run test:ui
+      - run: node scripts/macos-ui-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: macos-core-ui-failure
+          path: test-results/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+  native-runtime:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify native Apple Silicon runner
+        run: test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - run: cargo build --locked -p qb-platform --example macos-runtime-smoke
+      - run: node scripts/macos-runtime-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-core-runtime-validation
+          path: docs/macos-runtime-smoke.log
+          if-no-files-found: ignore
+          retention-days: 7

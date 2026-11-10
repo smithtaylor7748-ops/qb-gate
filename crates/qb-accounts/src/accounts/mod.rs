@@ -47,6 +47,7 @@
 use crate::error::{GateError, Result};
 use serde::Serialize;
 use ts_rs::TS;
+mod retirement;
 pub mod tokens;
 mod transaction;
 pub mod usage;
@@ -659,6 +660,16 @@ pub fn create_slot(r: &AccountRoots, label: &str) -> Result<CreateOutcome> {
     if std::fs::symlink_metadata(&dir).is_ok() {
         return Err(GateError::Other(format!("槽位 {label} 已经存在")));
     }
+    if cfg!(target_os = "macos") {
+        retirement::ensure_available(r, label)?;
+        // Also cover a name deleted by an older version, before retirement was
+        // recorded. Query only this managed slot's scoped official service.
+        if credential_store::read_checked(&dir)?.is_some() {
+            return Err(GateError::Other(format!(
+                "槽位名「{label}」仍有关联的官方登录凭据，不能作为空白槽位新建。请使用一个新的槽位名，以免继承旧登录。"
+            )));
+        }
+    }
     std::fs::create_dir_all(&dir)?;
 
     let mut notes = Vec::new();
@@ -684,7 +695,7 @@ pub struct DeleteOutcome {
     pub notes: Vec<String>,
 }
 
-/// 删掉一个槽位。**不可恢复** —— 那个账户在这台机器上要重新登录一次。
+/// 删掉一个槽位。目录不可恢复；Mac 官方 Keychain 不删除，旧槽位名不可重用。
 ///
 /// # ⛔ 当前激活的槽位一律拒删
 ///
@@ -741,15 +752,29 @@ pub fn delete_slot(r: &AccountRoots, label: &str, drop_desktop: bool) -> Result<
         .panel
         .join(format!(".deleting-{label}-{}", crate::config_io::id()));
     // 被占着时退避重试约 3 秒，还不行就报出是谁占着（`archive_dir`，三家共用）。
-    crate::archive_dir::move_dir(&dir, &staged).map_err(|e| {
+    let moved = if cfg!(target_os = "macos") {
+        retirement::stage_delete(r, label, &dir, &staged)
+    } else {
+        crate::archive_dir::move_dir(&dir, &staged)
+    };
+    moved.map_err(|e| {
         if crate::archive_dir::is_busy(&e) {
             e
+        } else if cfg!(target_os = "macos") {
+            GateError::Other(format!(
+                "槽位 {label} 删除准备失败（{e}），原槽位目录未删除。"
+            ))
         } else {
             GateError::Other(format!(
                 "槽位 {label} 的目录改不了名（{e}），一个文件都没动。"
             ))
         }
     })?;
+    if cfg!(target_os = "macos") {
+        notes.push(format!(
+            "槽位名「{label}」不再用于新建。官方钥匙串登录由 Claude Code 自己保管，删除目录不等于退出官方登录；新建账户请使用新的槽位名。"
+        ));
+    }
     removed.push(dir.display().to_string());
     if let Err(e) = std::fs::remove_dir_all(&staged) {
         notes.push(format!(
@@ -774,9 +799,11 @@ pub fn delete_slot(r: &AccountRoots, label: &str, drop_desktop: bool) -> Result<
             _ => {}
         }
     } else if r.desktop_dir(label).is_some_and(|d| d.is_dir()) {
-        notes.push(format!(
-            "桌面端资料 Claude-{label} 保留着。以后建同名槽位会接着用这一份。"
-        ));
+        notes.push(if cfg!(target_os = "macos") {
+            format!("桌面端资料 Claude-{label} 保留着；Mac 上不能重建同名槽位。")
+        } else {
+            format!("桌面端资料 Claude-{label} 保留着。以后建同名槽位会接着用这一份。")
+        });
     }
 
     Ok(DeleteOutcome {

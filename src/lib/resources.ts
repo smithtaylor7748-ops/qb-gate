@@ -69,6 +69,7 @@ export const R = {
   egress: res(() => api.egressChecks(peek<IpInfo>("ip")?.countryCode ?? null), {
     auto: false,
     persist: true,
+    persistVersion: 1,
   }),
 
   /**
@@ -77,7 +78,11 @@ export const R = {
    * `persist` 是必须的：不留的话面板一重启，综合评分里这 25 分就回到
    * 「未检测」—— 昨天测过也白测，而重测要再等六秒。
    */
-  dns: res(() => api.probeDns(), { auto: false, persist: true }),
+  dns: res(() => api.probeDns(), {
+    auto: false,
+    persist: true,
+    persistVersion: 1,
+  }),
 
   /**
    * 中文环境识别。纯本地计算，但 `runScan()` 是串行 `for await`，
@@ -92,7 +97,11 @@ export const R = {
    * 演示模式下自动跑一次 —— 截图脚本点不了按钮，而一张「还没体检过」的空卡片
    * 说明不了这个功能在查什么。正式构建里 `DEMO_ENABLED` 是编译期常量 false。
    */
-  checkup: res(() => api.checkupScan(), { auto: DEMO_ENABLED, persist: true }),
+  checkup: res(() => api.checkupScan(), {
+    auto: DEMO_ENABLED,
+    persist: true,
+    persistVersion: 1,
+  }),
 
   /**
    * 环境变量清理（阶段 7 · X5）的列表与备份。读注册表两处 + 一个目录，便宜；只在清理弹窗打开时有人订，

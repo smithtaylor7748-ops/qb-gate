@@ -447,29 +447,8 @@ mod native {
             .find(|(k, _)| k == "PATH")
             .map(|(_, v)| v.clone())
             .unwrap_or_default();
-        let mut dirs: Vec<PathBuf> = std::env::split_paths(&existing)
-            .filter(|p| p.is_absolute())
-            .collect();
-        let mut additions = vec![
-            PathBuf::from("/opt/homebrew/bin"),
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/usr/bin"),
-            PathBuf::from("/bin"),
-            PathBuf::from("/usr/sbin"),
-            PathBuf::from("/sbin"),
-        ];
-        if let Some(home) = dirs::home_dir() {
-            additions.extend([
-                home.join(".local/bin"),
-                home.join(".volta/bin"),
-                home.join(".bun/bin"),
-            ]);
-        }
-        for path in additions {
-            if !dirs.contains(&path) {
-                dirs.push(path);
-            }
-        }
+        let dirs =
+            crate::macos_paths::directories(Some(existing.as_ref()), dirs::home_dir().as_deref());
         if let Ok(path) = std::env::join_paths(dirs) {
             env.retain(|(key, _)| key != "PATH");
             env.push(("PATH".into(), path.to_string_lossy().into_owned()));

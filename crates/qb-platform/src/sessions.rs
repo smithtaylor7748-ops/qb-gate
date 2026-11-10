@@ -128,6 +128,23 @@ pub fn start(
     gated: bool,
     revision: u32,
 ) -> Result<Session> {
+    prepare(context, exe, env, gated, revision)?.start()
+}
+
+/// Own a suspended client/helper while the caller performs its final authorization.
+/// Dropping this value stops the helper; no client has been resumed or registered yet.
+pub struct PreparedSession {
+    session: Session,
+    process: NativeProcess,
+}
+
+pub fn prepare(
+    context: LaunchContext,
+    exe: &Path,
+    env: Vec<(String, String)>,
+    gated: bool,
+    revision: u32,
+) -> Result<PreparedSession> {
     let id = crate::config_io::id();
     let args = desktop_arguments(context.client, &env);
     let process = NativeProcess::create(
@@ -145,7 +162,7 @@ pub fn start(
         None,
         &id,
     )?;
-    let mut session = Session {
+    let session = Session {
         id: id.clone(),
         context,
         pid: process.pid,
@@ -156,44 +173,55 @@ pub fn start(
         detail: "进程已登记".into(),
         config_revision: revision,
     };
-    if let Err(e) = Repository::open().and_then(|db| db.put("sessions", &id, &session)) {
-        let _ = process.stop();
-        return Err(e);
-    }
-    if let Err(e) = process.resume() {
-        let _ = process.stop();
-        session.state = "failed".into();
-        session.detail = e.to_string();
-        let _ = Repository::open().and_then(|db| db.put("sessions", &id, &session));
-        return Err(e);
-    }
-    // An Electron second-instance handoff or a crashing client is not a launch.
-    std::thread::sleep(std::time::Duration::from_millis(900));
-    if !process.running()? {
-        session.state = "failed".into();
-        session.detail = "客户端启动后立即退出，请检查客户端配置".into();
-        Repository::open()?.put("sessions", &id, &session)?;
-        return Err(GateError::Other(session.detail));
-    }
-    if cfg!(windows) && session.context.client == Client::Codex {
-        if let Some(notice) = codex_setup_notice(Path::new(&session.context.config_dir)) {
-            session.detail = notice;
-            Repository::open()?.put("sessions", &session.id, &session)?;
-        }
-    }
-    registry().lock().unwrap().insert(
-        id,
-        Managed {
-            session: session.clone(),
+    Ok(PreparedSession { session, process })
+}
+
+impl PreparedSession {
+    pub fn start(self) -> Result<Session> {
+        let Self {
+            mut session,
             process,
-        },
-    );
-    // 历史会话行不清理的话会一直涨，而 workspace_state 每次都全量回前端。
-    // 正在跑和待核验的不会被删，见 Repository::prune_history。
-    if let Err(e) = Repository::open().and_then(|db| db.prune_history()) {
-        crate::audit::write(&format!("清理历史会话记录失败：{e}"));
+        } = self;
+        let id = session.id.clone();
+        if let Err(e) = Repository::open().and_then(|db| db.put("sessions", &id, &session)) {
+            let _ = process.stop();
+            return Err(e);
+        }
+        if let Err(e) = process.resume() {
+            let _ = process.stop();
+            session.state = "failed".into();
+            session.detail = e.to_string();
+            let _ = Repository::open().and_then(|db| db.put("sessions", &id, &session));
+            return Err(e);
+        }
+        // An Electron second-instance handoff or a crashing client is not a launch.
+        std::thread::sleep(std::time::Duration::from_millis(900));
+        if !process.running()? {
+            session.state = "failed".into();
+            session.detail = "客户端启动后立即退出，请检查客户端配置".into();
+            Repository::open()?.put("sessions", &id, &session)?;
+            return Err(GateError::Other(session.detail));
+        }
+        if cfg!(windows) && session.context.client == Client::Codex {
+            if let Some(notice) = codex_setup_notice(Path::new(&session.context.config_dir)) {
+                session.detail = notice;
+                Repository::open()?.put("sessions", &session.id, &session)?;
+            }
+        }
+        registry().lock().unwrap().insert(
+            id,
+            Managed {
+                session: session.clone(),
+                process,
+            },
+        );
+        // 历史会话行不清理的话会一直涨，而 workspace_state 每次都全量回前端。
+        // 正在跑和待核验的不会被删，见 Repository::prune_history。
+        if let Err(e) = Repository::open().and_then(|db| db.prune_history()) {
+            crate::audit::write(&format!("清理历史会话记录失败：{e}"));
+        }
+        Ok(session)
     }
-    Ok(session)
 }
 
 /// 反重力 IDE 的用户数据目录（槽位）从编排层传到 [`desktop_arguments`] 用的 env 键。

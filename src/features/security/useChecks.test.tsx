@@ -6,12 +6,15 @@ import { useChecks } from "./useChecks";
 const mock = vi.hoisted(() => ({
   state: new Map<string, unknown>(),
   refresh: vi.fn(async (_key: string) => {}),
+  checkGate: vi.fn(async () => {}),
   toast: { ok: vi.fn(), info: vi.fn(), error: vi.fn() },
 }));
 vi.mock("../../ui", () => ({ useToast: () => mock.toast }));
+vi.mock("../../lib/api", () => ({ api: { gateCheck: mock.checkGate } }));
 vi.mock("../../lib/resources", () => ({ R: {} }));
 vi.mock("../../lib/progress", () => ({ markStep: vi.fn() }));
 vi.mock("../../lib/store", () => ({
+  invalidate: vi.fn(),
   getSession: (key: string, fallback: unknown) =>
     mock.state.get(key) ?? fallback,
   setSession: (key: string, value: unknown) => mock.state.set(key, value),
@@ -26,6 +29,8 @@ beforeEach(() => {
   mock.state.clear();
   mock.refresh.mockReset();
   mock.refresh.mockResolvedValue(undefined);
+  mock.checkGate.mockReset();
+  mock.checkGate.mockResolvedValue(undefined);
 });
 describe("complete five-item checkup", () => {
   it("runs egress and local details as part of the complete checkup", async () => {
@@ -43,6 +48,7 @@ describe("complete five-item checkup", () => {
       "gate",
       "egress",
     ]);
+    expect(mock.checkGate).toHaveBeenCalledOnce();
   });
   it("continues after a failed check and reports that failure", async () => {
     mock.refresh.mockImplementation(async (key) => {

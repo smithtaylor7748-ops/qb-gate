@@ -351,9 +351,26 @@ async fn enumerate() -> Result<Snapshot> {
     })
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn macos_claude_candidate(
+    path: &std::path::Path,
+    installed: &std::collections::BTreeSet<std::path::PathBuf>,
+) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("claude" | "Claude")
+    ) || installed.contains(path)
+}
+
 #[cfg(target_os = "macos")]
 async fn enumerate() -> Result<Snapshot> {
     let processes = qb_platform::macos::processes()?;
+    // proc_pidpath resolves ~/.local/bin/claude to a version-named native binary.
+    // Inventory membership only selects candidates; the signature remains the evidence.
+    let installed = crate::install::inventory::scan(&crate::install::inventory::Roots::current())
+        .into_iter()
+        .filter_map(|item| std::fs::canonicalize(item.path).ok())
+        .collect();
     let mut self_chain = Vec::new();
     let mut next = std::process::id();
     while next != 0 && !self_chain.contains(&next) {
@@ -372,15 +389,15 @@ async fn enumerate() -> Result<Snapshot> {
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        let relevant = name == "claude"
-            || name == "Claude"
+        let claude_candidate = macos_claude_candidate(&p.path, &installed);
+        let relevant = claude_candidate
             || name == "node"
             || p.cmdline.contains("bridge.py")
             || p.path.to_string_lossy().contains("Antigravity");
         if !relevant {
             continue;
         }
-        let signer = if name == "claude" || name == "Claude" {
+        let signer = if claude_candidate {
             qb_platform::signature::signer_of(&p.path).await
         } else {
             None
@@ -1277,6 +1294,29 @@ mod tests {
             "空输出只可能是出错了"
         );
         assert!(parse_desktop_rows("not json", None).is_err());
+    }
+
+    #[test]
+    fn version_named_native_cli_is_inspected_but_inventory_alone_never_authorizes_killing() {
+        use std::{collections::BTreeSet, path::PathBuf};
+        let path = PathBuf::from("/Users/fixture/.local/share/claude/versions/2.1.322");
+        let installed = BTreeSet::from([path.clone()]);
+        assert!(macos_claude_candidate(&path, &installed));
+        assert!(!macos_claude_candidate(
+            &PathBuf::from("/tmp/2.1.322"),
+            &installed
+        ));
+        let mut process = RawProcess {
+            path: Some(path.to_string_lossy().into_owned()),
+            name: "2.1.322".into(),
+            ..Default::default()
+        };
+        assert_eq!(classify(&process, DD, None), None);
+        process.signer = Some("Anthropic".into());
+        assert_eq!(
+            classify(&process, DD, None),
+            Some(Evidence::AnthropicSigned)
+        );
     }
 
     #[cfg(target_os = "macos")]

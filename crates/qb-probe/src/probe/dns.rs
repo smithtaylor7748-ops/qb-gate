@@ -444,9 +444,46 @@ async fn adapter_resolvers() -> Result<AdapterScan> {
     Ok(parse_adapter_lines(&String::from_utf8_lossy(&out.stdout)))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 async fn adapter_resolvers() -> Result<AdapterScan> {
-    Ok(AdapterScan::default())
+    tokio::task::spawn_blocking(|| {
+        use super::macos_network as network;
+        let unavailable =
+            || GateError::Other("macOS DNS 配置或路由未能完整读取，不能判为无泄露".into());
+        let text = network::read_command("/usr/sbin/scutil", &["--dns"]).ok_or_else(unavailable)?;
+        let servers = network::parse_dns(&text)
+            .filter(|r| !r.is_empty())
+            .ok_or_else(unavailable)?;
+        let routes = network::default_routes().ok_or_else(unavailable)?;
+        // 两个半区只要有一条走隧道，就检查是否有解析器走了另一条路。
+        let rows: Vec<AdapterDns> = servers
+            .into_iter()
+            .map(|server| {
+                let route = network::route(server.ip, server.interface.as_deref());
+                AdapterDns {
+                    name: server.interface.unwrap_or_else(|| "系统默认解析器".into()),
+                    // scutil 的条目可能用于默认、域名或接口限定查询；全部检查，不能把
+                    // 隧道上配置的 DNS 自动当作已安全发送。
+                    tunnel: false,
+                    connected: true,
+                    via_tunnel: route.map(|(_, tunnel)| tunnel),
+                    ip: server.ip.to_string(),
+                }
+            })
+            .collect();
+        let tun_active = Some(
+            routes.iter().any(|(_, tunnel)| *tunnel)
+                || rows.iter().any(|row| row.via_tunnel == Some(true)),
+        );
+        Ok(AdapterScan { tun_active, rows })
+    })
+    .await
+    .map_err(|_| GateError::Other("macOS DNS 采集任务异常结束".into()))?
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+async fn adapter_resolvers() -> Result<AdapterScan> {
+    Err(GateError::Other("此平台尚未实现 DNS 配置与路由采集".into()))
 }
 
 /// 读网卡那一层的 PowerShell。单独拿出来是为了单测看得见它的形状 —— 输出格式跟
@@ -544,16 +581,19 @@ pub async fn check(rep: &dyn ProgressSink) -> Result<DnsReport> {
     if !resolvers.iter().any(|r| !r.from_adapter) {
         findings.push(no_echo_finding(lookups));
     }
-    let (score, adapters_safe) = score_report(&resolvers, scan.tun_active);
+    let (mut score, adapters_safe) = score_report(&resolvers, scan.tun_active);
+    if incomplete_routes(&resolvers, scan.tun_active) {
+        findings.push("部分 DNS 路由无法确认（包括本地转发解析器），本轮不能判定无泄露。".into());
+        score = None;
+    }
     let adapters_note = adapters_note(&resolvers, scan.tun_active);
 
     Ok(DnsReport {
         passed: findings.is_empty() && !resolvers.is_empty(),
         egress_asn,
         upstream_conclusion,
-        note: "简易检测覆盖真实解析回显与网卡配置两层。\
-               应用层自带解析器、DoH 直连等情况仍看不到；\
-               深度排查请用高级通过让 Codex 抓包核实。",
+        note: "本轮检查系统解析回显及系统 DNS 的路由配置；只代表已采集到的路径。\
+               应用自带解析器、DoH、按域名分流及本地转发后的路径仍需单独核实。",
         resolvers,
         findings,
         score,
@@ -600,9 +640,12 @@ fn adapters_verdict(resolvers: &[Resolver], tun_active: Option<bool>) -> Option<
     if rows.iter().any(|r| r.via_tunnel == Some(false)) {
         return Some(false);
     }
-    rows.iter()
-        .any(|r| r.via_tunnel == Some(true))
-        .then_some(true)
+    (!rows.is_empty() && rows.iter().all(|r| r.via_tunnel == Some(true))).then_some(true)
+}
+
+fn incomplete_routes(resolvers: &[Resolver], tun_active: Option<bool>) -> bool {
+    tun_active.is_none()
+        || (tun_active == Some(true) && uplink_rows(resolvers).any(|r| r.via_tunnel.is_none()))
 }
 
 /// 100 分制，两项各自**适用才计分**（见文件头）：只有回显时是 100 或 0，两项都适用时
@@ -689,7 +732,7 @@ fn evaluate(resolvers: &[Resolver], tun_active: Option<bool>) -> Vec<String> {
     if tun_active == Some(true) {
         for r in uplink_rows(resolvers).filter(|r| r.via_tunnel == Some(false)) {
             findings.push(format!(
-                "{} 的 DNS {} 不走隧道：Windows 会同时向每张网卡的 DNS 发查询，这一路绕过了隧道",
+                "{} 的 DNS {} 不走隧道：使用该系统解析器的查询可能绕过隧道",
                 r.interface.as_deref().unwrap_or("物理网卡"),
                 r.address
             ));
@@ -851,6 +894,23 @@ mod tests {
         ];
         assert!(evaluate(&r, TUN_ON).is_empty());
         assert_eq!(score_report(&r, TUN_ON), (Some(100), None));
+        assert!(
+            incomplete_routes(&r, TUN_ON),
+            "完整报告必须阻止未知路由产生通过或满分"
+        );
+    }
+
+    #[test]
+    fn one_known_route_cannot_hide_another_unknown_dns_route() {
+        let r = vec![
+            echo("1.1.1.1", false),
+            nic("en0", "10.0.0.53", true, Some(true)),
+            nic("en1", "127.0.0.1", true, None),
+        ];
+        assert_eq!(adapters_verdict(&r, TUN_ON), None);
+        assert!(incomplete_routes(&r, TUN_ON));
+        assert!(incomplete_routes(&r, None));
+        assert!(!incomplete_routes(&r, TUN_OFF));
     }
 
     #[test]

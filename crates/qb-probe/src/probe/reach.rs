@@ -28,7 +28,7 @@
 //!
 //! 原来体检只看「网卡上 IPv6 开没开」—— 开着不等于有 v6 出口（很多宽带根本不给 v6），
 //! 关着也看不出隧道到底接没接管 v6。这里直接访问**只有 AAAA 记录**的回显服务：
-//! 连不上 = 没有 v6 出口；回来的是 IPv4 = 走的是代理；回来的是 IPv6 = 真有 v6 出口，
+//! 连不上或回复无效 = 未知；回来的是 IPv4 = 这次请求只看到了 IPv4；回来的是 IPv6 = 真有 v6 出口，
 //! 再查它落在哪个国家、跟 IPv4 出口比。只用只有 v6 的域名 —— 双栈域名在没有 v6 时
 //! 会退回 v4，得出「有 v6 出口」的错结论（CheckClaude 的注释里写着这一条）。
 //!
@@ -316,8 +316,8 @@ pub async fn resolve_claude() -> Vec<Resolved> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum V6Exit {
-    /// 三个只有 v6 的服务一个都连不上：这台机器没有 IPv6 出口。
-    None,
+    /// 请求失败或没有有效回显，不能把上游不可用当作本机没有 IPv6。
+    Unknown,
     /// 回来的是 IPv4：请求被代理接走了，本机没有自己的 v6 出口。
     ViaProxy { ip: String },
     /// 真有 IPv6 出口。`country` 查不到时是 `None`。
@@ -330,10 +330,17 @@ fn parse_ip(body: &str) -> Option<IpAddr> {
 
 /// 问一次 IPv6 出口；有 v6 出口时再查它落在哪个国家。
 pub async fn ipv6_exit(c: &reqwest::Client) -> V6Exit {
-    for url in V6_ONLY {
+    ipv6_exit_with_urls(c, V6_ONLY).await
+}
+
+async fn ipv6_exit_with_urls(c: &reqwest::Client, urls: &[&str]) -> V6Exit {
+    for url in urls {
         let Ok(resp) = c.get(*url).send().await else {
             continue;
         };
+        if !resp.status().is_success() {
+            continue;
+        }
         let Ok(text) = resp.text().await else {
             continue;
         };
@@ -349,7 +356,7 @@ pub async fn ipv6_exit(c: &reqwest::Client) -> V6Exit {
             None => continue,
         }
     }
-    V6Exit::None
+    V6Exit::Unknown
 }
 
 async fn v6_country(c: &reqwest::Client, ip: &str) -> Option<String> {
@@ -357,6 +364,8 @@ async fn v6_country(c: &reqwest::Client, ip: &str) -> Option<String> {
         .get(format!("https://ipinfo.io/{ip}/country"))
         .send()
         .await
+        .ok()?
+        .error_for_status()
         .ok()?
         .text()
         .await
@@ -372,6 +381,32 @@ pub async fn ipv6_exit_direct() -> Result<V6Exit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn unavailable_or_invalid_ipv6_echo_is_unknown() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for response in ["HTTP/1.1 503 Service Unavailable\r\nContent-Length: 11\r\nConnection: close\r\n\r\n2001:db8::1", "HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\ninvalid"] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0u8; 2048];
+                stream.read(&mut request).await.unwrap();
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let url = format!("http://{addr}/");
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        assert_eq!(
+            ipv6_exit_with_urls(&client, &[&url, &url]).await,
+            V6Exit::Unknown
+        );
+        server.await.unwrap();
+    }
 
     fn o(status: Option<u16>, cf: bool) -> HttpOutcome {
         HttpOutcome {

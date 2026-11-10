@@ -60,6 +60,8 @@ pub struct GateStatus {
 
 #[derive(Default)]
 pub struct GateState {
+    /// A manual inspection is presentation data, never a launch lease or hook authorization.
+    inspection: Mutex<Option<GateInspection>>,
     pub pending_stop: Mutex<Option<bool>>,
     pub manual_paused: std::sync::atomic::AtomicBool,
     pub generation: std::sync::atomic::AtomicU64,
@@ -67,6 +69,15 @@ pub struct GateState {
     pub watchdog_running: Mutex<bool>,
     /// 见 [`GateStatus::needs_reopen`]。
     pub needs_reopen: Mutex<Option<String>>,
+}
+
+struct GateInspection {
+    generation: u64,
+    allowlist: Vec<String>,
+    countries: Vec<String>,
+    verdict: Verdict,
+    /// A subsequent watchdog/launch verdict supersedes this inspection as one complete snapshot.
+    prior_authorization: Option<Verdict>,
 }
 
 impl GateState {
@@ -78,6 +89,47 @@ impl GateState {
     /// 门重新开了 —— 把标记撤掉。
     pub fn clear_needs_reopen(&self) {
         *self.needs_reopen.lock().unwrap() = None;
+    }
+
+    pub fn record_inspection(
+        &self,
+        generation: u64,
+        reading: &crate::probe::ip::Reading,
+        allowlist: Vec<String>,
+        countries: Vec<String>,
+        prior_authorization: Option<Verdict>,
+    ) {
+        if self.generation.load(std::sync::atomic::Ordering::SeqCst) != generation {
+            return;
+        }
+        let judgement = judge::judge(reading, &allowlist, &countries);
+        *self.inspection.lock().unwrap() = Some(GateInspection {
+            generation,
+            allowlist,
+            countries,
+            verdict: verdict_of(&judgement, unix_now()),
+            prior_authorization,
+        });
+    }
+
+    /// Select IP and decision together. Inspection never writes the file consumed by hooks.
+    pub fn display_verdict(
+        &self,
+        cached: Option<Verdict>,
+        allowlist: &[String],
+        countries: &[String],
+    ) -> Option<Verdict> {
+        let inspection = self.inspection.lock().unwrap();
+        if let Some(inspection) = inspection.as_ref().filter(|i| {
+            i.generation == self.generation.load(std::sync::atomic::Ordering::SeqCst)
+                && i.allowlist == allowlist
+                && i.countries == countries
+                && verdict_fresh(&i.verdict)
+                && i.prior_authorization == cached
+        }) {
+            return Some(inspection.verdict.clone());
+        }
+        cached
     }
 }
 
@@ -282,6 +334,18 @@ pub async fn judge_now() -> judge::Judgement {
     j
 }
 
+/// Explicit read-only inspection. The caller serializes configuration changes; a concurrent
+/// manual pause invalidates the generation. This never grants, restores or persists authority.
+pub async fn inspect_now(state: &GateState) -> Result<()> {
+    crate::settings::load_checked()?;
+    let generation = state.generation.load(std::sync::atomic::Ordering::SeqCst);
+    let allow = allowlist::read()?;
+    let countries = crate::settings::country_allowlist();
+    let reading = crate::probe::ip::reading().await;
+    state.record_inspection(generation, &reading, allow, countries, cached_verdict());
+    Ok(())
+}
+
 /// 当前出口 IP 验得过、而且在白名单（含国家白名单）里吗？
 async fn verified_ip() -> std::result::Result<String, GateError> {
     match judge_now().await {
@@ -303,7 +367,7 @@ pub fn verdict_path() -> PathBuf {
     crate::paths::state_dir().join("gate-verdict.json")
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Verdict {
     #[serde(default)]
     pub ip: Option<String>,
@@ -362,10 +426,12 @@ fn unix_now() -> u64 {
 fn verdict_of(j: &judge::Judgement, now: u64) -> Verdict {
     Verdict {
         ip: match j {
-            judge::Judgement::Allowed { ip } | judge::Judgement::IpNotAllowed { ip } => {
-                Some(ip.clone())
-            }
-            _ => None,
+            judge::Judgement::Allowed { ip }
+            | judge::Judgement::IpNotAllowed { ip }
+            | judge::Judgement::CountryNotAllowed { ip, .. }
+            | judge::Judgement::CountryUnknown { ip }
+            | judge::Judgement::CountryConflict { ip, .. } => Some(ip.clone()),
+            judge::Judgement::IpUnknown => None,
         },
         allowed: j.is_allowed(),
         reason: j.reason(),
@@ -800,6 +866,73 @@ pub async fn try_restore_lease(state: &GateState) -> Option<WatchMode> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn manual_inspection_reports_a_new_ip_without_granting_or_resuming_a_lease() {
+        use std::sync::atomic::Ordering;
+        let state = GateState::default();
+        state.manual_paused.store(true, Ordering::SeqCst);
+        state.mark_needs_reopen("用户已暂停");
+        let allow = vec!["203.0.113.7".into()];
+        let countries = vec!["US".into()];
+        let reading = crate::probe::ip::Reading {
+            ip: Some("203.0.113.7".into()),
+            countries: vec![("fixture".into(), "US".into())],
+        };
+        state.record_inspection(0, &reading, allow.clone(), countries.clone(), None);
+        let observed = state.display_verdict(None, &allow, &countries).unwrap();
+        assert_eq!(observed.ip.as_deref(), Some("203.0.113.7"));
+        assert!(observed.allowed);
+        assert!(state.manual_paused.load(Ordering::SeqCst));
+        assert!(!state.lease.lock().unwrap().is_held());
+        assert_eq!(
+            state.needs_reopen.lock().unwrap().as_deref(),
+            Some("用户已暂停")
+        );
+        assert!(!*state.watchdog_running.lock().unwrap());
+    }
+
+    #[test]
+    fn inspection_never_combines_a_new_rejected_ip_with_an_old_allowed_verdict() {
+        let state = GateState::default();
+        let allow = vec!["1.2.3.4".into()];
+        let old = verdict_at(unix_now());
+        let reading = crate::probe::ip::Reading {
+            ip: Some("203.0.113.9".into()),
+            countries: vec![],
+        };
+        state.record_inspection(0, &reading, allow.clone(), vec![], Some(old.clone()));
+        let observed = state
+            .display_verdict(Some(old.clone()), &allow, &[])
+            .unwrap();
+        assert_eq!(observed.ip.as_deref(), Some("203.0.113.9"));
+        assert!(!observed.allowed);
+        let later = verdict_of(&judge::Judgement::IpUnknown, unix_now());
+        let next = state.display_verdict(Some(later), &allow, &[]).unwrap();
+        assert!(next.ip.is_none() && !next.allowed);
+        assert!(!state.lease.lock().unwrap().is_held());
+    }
+
+    #[test]
+    fn a_pause_or_policy_change_invalidates_in_flight_and_completed_inspections() {
+        use std::sync::atomic::Ordering;
+        let state = GateState::default();
+        let allow = vec!["203.0.113.7".into()];
+        let reading = crate::probe::ip::Reading {
+            ip: Some("203.0.113.7".into()),
+            countries: vec![],
+        };
+        state.record_inspection(0, &reading, allow.clone(), vec![], None);
+        assert!(state.display_verdict(None, &allow, &[]).is_some());
+        assert!(state.display_verdict(None, &[], &[]).is_none());
+        assert!(state
+            .display_verdict(None, &allow, &["US".into()])
+            .is_none());
+        state.generation.fetch_add(1, Ordering::SeqCst);
+        assert!(state.display_verdict(None, &allow, &[]).is_none());
+        state.record_inspection(0, &reading, allow.clone(), vec![], None);
+        assert!(state.display_verdict(None, &allow, &[]).is_none());
+    }
+
     #[test]
     fn a_late_network_probe_cannot_repopulate_invalidated_gate_cache() {
         let generation = std::sync::Mutex::new(1);

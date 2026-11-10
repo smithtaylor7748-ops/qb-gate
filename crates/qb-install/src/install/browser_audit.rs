@@ -315,6 +315,9 @@ fn scan_profile(profile: &std::path::Path) -> Vec<Extension> {
 pub fn audit() -> Audit {
     let chrome = super::chrome::chrome_exe();
     let mut unchecked = Vec::new();
+    if !cfg!(windows) {
+        unchecked.push("当前平台未读取 Chrome 管理策略；WebRTC / DoH 策略状态未知，不代表未配置。请在 chrome://policy 核对。".into());
+    }
 
     let profiles = super::chrome::chrome_profiles();
     if profiles.is_empty() {

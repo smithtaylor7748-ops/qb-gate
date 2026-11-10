@@ -49,6 +49,7 @@ pub mod endpoint;
 pub mod firewall;
 pub mod logging;
 pub mod macos;
+pub mod macos_paths;
 pub mod operations;
 pub mod panic_hook;
 pub mod process;

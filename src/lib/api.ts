@@ -312,6 +312,7 @@ export const api = {
     call<PlatformCapabilities>("platform_capabilities"),
   // 门禁
   gateStatus: () => call<GateStatus>("gate_status"),
+  gateCheck: () => call<void>("gate_check"),
   gateCheckIntervalSave: (seconds: number) =>
     call<Settings>("gate_check_interval_save", { seconds }),
   gateLockAll: () => call<number>("gate_lock_all"),

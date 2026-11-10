@@ -15,7 +15,11 @@ use crate::{
 #[tauri::command]
 pub async fn gate_status(state: tauri::State<'_, AppState>) -> Result<gate::GateStatus> {
     let allow = gate::allowlist::read()?;
-    let cached = gate::cached_verdict();
+    let cached = state.gate.display_verdict(
+        gate::cached_verdict(),
+        &allow,
+        &settings::country_allowlist(),
+    );
     let current_ip = cached.as_ref().and_then(|v| v.ip.clone());
     let paused = state
         .gate
@@ -37,6 +41,13 @@ pub async fn gate_status(state: tauri::State<'_, AppState>) -> Result<gate::Gate
         recent_log: audit::tail(20),
         needs_reopen: state.gate.needs_reopen.lock().unwrap().clone(),
     })
+}
+
+/// Refresh observations without opening the gate, resuming supervision or changing a lease.
+#[tauri::command]
+pub async fn gate_check(state: tauri::State<'_, AppState>) -> Result<()> {
+    let _guard = operations::exclusive().await?;
+    gate::inspect_now(&state.gate).await
 }
 
 #[tauri::command]
@@ -113,20 +124,31 @@ pub async fn allowlist_write(entries: Vec<String>) -> Result<()> {
 /// 这条路上我们手里正好有一轮完整的多源探测，查国家是免费的，
 /// 所以这里可以严，也必须严。
 #[tauri::command]
-pub async fn allowlist_add_current() -> Result<Vec<String>> {
+pub async fn allowlist_add_current(state: tauri::State<'_, AppState>) -> Result<Vec<String>> {
     let _guard = operations::exclusive().await?;
+    let generation = state
+        .gate
+        .generation
+        .load(std::sync::atomic::Ordering::SeqCst);
     let reading = probe::ip::reading().await;
-    let ip =
-        gate::judge::may_add(&reading, &settings::country_allowlist()).map_err(|j| match j {
-            gate::judge::Judgement::IpUnknown => GateError::IpUnknown,
-            other => GateError::GateRejected(format!("{}，拒绝加入白名单", other.reason())),
-        })?;
+    let countries = settings::country_allowlist();
+    let ip = gate::judge::may_add(&reading, &countries).map_err(|j| match j {
+        gate::judge::Judgement::IpUnknown => GateError::IpUnknown,
+        other => GateError::GateRejected(format!("{}，拒绝加入白名单", other.reason())),
+    })?;
 
     let mut all = gate::allowlist::read().unwrap_or_default();
     if !all.contains(&ip) {
         all.push(ip);
         gate::allowlist::write(&all)?;
     }
+    state.gate.record_inspection(
+        generation,
+        &reading,
+        all.clone(),
+        countries,
+        gate::cached_verdict(),
+    );
     Ok(all)
 }
 

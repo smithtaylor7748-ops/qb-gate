@@ -734,6 +734,17 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "core-foundation",
+      "version": "0.9.4",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/servo/core-foundation-rs",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
       "name": "core-graphics-types",
       "version": "0.2.0",
       "license": "MIT OR Apache-2.0",
@@ -4516,6 +4527,28 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "system-configuration-sys",
+      "version": "0.6.0",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/mullvad/system-configuration-rs",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "system-configuration",
+      "version": "0.7.0",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/mullvad/system-configuration-rs",
+      "licenseFiles": [
+        "LICENSE-APACHE",
+        "LICENSE-MIT"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
       "name": "system-deps",
       "version": "6.2.2",
       "license": "MIT OR Apache-2.0",
@@ -6269,6 +6302,17 @@
       "ecosystem": "cargo",
       "name": "windows-numerics",
       "version": "0.3.1",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/microsoft/windows-rs",
+      "licenseFiles": [
+        "license-apache-2.0",
+        "license-mit"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "windows-registry",
+      "version": "0.6.1",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/microsoft/windows-rs",
       "licenseFiles": [
