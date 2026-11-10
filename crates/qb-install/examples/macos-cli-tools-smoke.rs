@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tool = CliTool::ALL
         .into_iter()
         .find(|t| {
-            Some(t.command()) == args.first().map(String::as_str()) && t.npm_package().is_some()
+            Some(t.command()) == args.first().map(String::as_str) && t.npm_package().is_some()
         })
         .ok_or("Expected opencode/grok/pi/mcode/openclaw and isolated root")?;
     let root = PathBuf::from(args.get(1).ok_or("Expected isolated root")?);
