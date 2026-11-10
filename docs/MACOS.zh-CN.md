@@ -77,7 +77,7 @@ Windows 继续使用 Windows 稳定版的更新提示或 [v0.25.12 发布页](ht
 
 Mac 版还提供中转线路与模型路由、用量统计、MCP、Skills、提示词、项目、备份和会话历史。附加 CLI 与 SillyTavern 可在“软件与安装”管理；Hermes 按官方文档手动安装。开机登录启动使用当前用户的 LaunchAgent。`qbgate://` 链接会先显示导入预览，确认后导入；`ccswitch://` 链接可复制到面板预览。
 
-本次核心修复已通过 [Mac 原生 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42810788872)与 [Windows 回归 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42810788907)。Mac 验证环境为 Apple Silicon / macOS 15，Rust 3114 项、前端 370 项、IPC 353 个类型、UI 151 个布局与主题场景及 27 个交互流程通过；另有 2 项既有文档示例忽略。原生验证覆盖系统网络采样、隔离 Keychain、受管进程启动与回收、Finder 环境下的 nvm 工具发现。
+本版安装包来自源码 `09442a0`，已通过 [Mac 构建与原生验证](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42816743818)的 10 项作业及 [Windows 回归 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42816743594)。Mac 验证环境为 Apple Silicon / macOS 15，Rust 3114 项、前端 370 项、IPC 353 个类型、UI 151 个布局与主题场景及 27 个交互流程通过；另有 2 项既有文档示例忽略。原生验证覆盖从 DMG 安装并打开真实应用、窗口与 URL 操作、替换更新、系统网络采样、隔离 Keychain、受管进程、nvm、官方 CLI 安装和 SillyTavern 本地服务。发布附件已逐项核对 SHA-256。
 
 真实账户登录、首次 Terminal 系统授权和实际 VPN 换网属于使用者环境下的交互验证；以上 CI 使用隔离测试资料。进一步的平台说明与排查信息见 [本版已知问题](https://github.com/smithtaylor7748-ops/qb-gate/blob/macos-v0.25.12-preview.2/docs/KNOWN-ISSUES.zh-CN.md)。
 
