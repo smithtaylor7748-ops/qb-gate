@@ -1,8 +1,8 @@
 # Changelog
 
-## 未发布
+## 0.25.12 macOS 预览版 — 2026-11-10
 
-- **macOS Apple Silicon 移植**：新增原生 arm64 应用与 DMG 构建流程、平台能力接口与 Mac 安装页；钥匙串加密、受管 Terminal 会话、登录启动与 CLI 工具发现适配 macOS。系统执行锁和 Windows 系统修复在 Mac 界面明确不适用；更新器只下载经哈希核对的 Mac 镜像。详细平台范围与实机验收见 `docs/MACOS.zh-CN.md`。
+- **macOS Apple Silicon 预览版已发布**：[macos-v0.25.12-preview.1](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.12-preview.1)，产物源码为 `5f9703d19ab6602c2704ad704f282757d58190c3`，应用版本保持 0.25.12。适用 macOS 13.3+，实际在 macOS 15 arm64 完成原生应用、隔离 Keychain、进程、CLI 安装与酒馆 HTTP 验证；修复 Gemini 安装、缺失软件入口、URL 导入及 MiniMax 路径别名下的 npm 更新。尚未 Apple 公证；真实账号/额度、Terminal 首次授权和真实网络变化仍待验，Hermes 自动管理不支持。独立预览版手动下载，Windows 稳定版 latest 保持不变。详见 [Mac 安装与验证范围](docs/MACOS.zh-CN.md)。
 
 ## 0.25.12 — 2026-11-09
 

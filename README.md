@@ -2,6 +2,8 @@
 
 **简体中文** | [English](README.en.md)
 
+**macOS Apple Silicon 预览版已发布**：[下载 DMG](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.12-preview.1/QB-Gate-macOS-arm64.dmg) · [发布页](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.12-preview.1) · [安装、验证范围与限制](docs/MACOS.zh-CN.md)。适用 M1 及更新芯片、macOS 13.3+，实际验证于 macOS 15；尚未 Apple 公证，真实账号和首次 Terminal 授权待验。Mac 版不提供 Windows 系统执行锁、防火墙或注册表能力，外部手动启动不经过启动前检查。本预览版采用手动下载，以下 Windows 安装与更新说明不适用于它。
+
 工作需要经常换 IP 的人，常会碰到一件事：网络出口一变，电脑上开着的 AI 软件并不会停下来，而是继续从一个你没确认过的出口发请求。QB Gate 替你盯着这件事 —— **出口 IP 在你认可的名单里，本机的 Claude、GPT（Codex）和反重力才打得开；用着用着 IP 变了或者查不到，它会立刻把这些软件关掉。**
 
 [![Windows 一键下载安装包](https://img.shields.io/badge/Windows-%E4%B8%80%E9%94%AE%E4%B8%8B%E8%BD%BD%E5%AE%89%E8%A3%85%E5%8C%85-0078D6?style=for-the-badge)](https://github.com/smithtaylor7748-ops/qb-gate/releases/latest/download/QB-Gate-Windows-x64-setup.exe)

@@ -2,6 +2,8 @@
 
 [简体中文](README.md) | **English**
 
+**macOS Apple Silicon preview is available**: [Download DMG](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.12-preview.1/QB-Gate-macOS-arm64.dmg) · [Release](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.12-preview.1) · [Installation and verification limits (Chinese)](docs/MACOS.zh-CN.md). Requires M1 or newer and macOS 13.3+; tested on macOS 15. It is not Apple notarized; real accounts and first-time Terminal authorization still need validation. Windows execution locks, firewall and registry features do not apply to macOS, and external launches bypass prelaunch checks. Download this preview manually; the Windows installation and update instructions below do not apply to it.
+
 If your work makes you change IP addresses often, you have probably noticed this: when your network exit changes, the AI apps on your computer don't stop. They keep sending requests from an exit you never approved. QB Gate keeps an eye on that for you. **Claude, GPT (Codex) and Antigravity can only start while your exit IP is on a list you approved. If the IP changes or can't be checked while they run, QB Gate closes them right away.**
 
 [![Download for Windows](https://img.shields.io/badge/Windows-Download%20installer-0078D6?style=for-the-badge)](https://github.com/smithtaylor7748-ops/qb-gate/releases/latest/download/QB-Gate-Windows-x64-setup.exe)

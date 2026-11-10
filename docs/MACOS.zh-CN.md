@@ -2,11 +2,15 @@
 
 浏览器最低要求依据：[Tailwind CSS 官方兼容性说明](https://tailwindcss.com/docs/compatibility)（Safari 16.4）。
 
-本分支以 Apple Silicon（M1/M2/M3/M4 及后续 arm64）为首发目标，最低 macOS 13.3（界面使用 Tailwind v4，要求 Safari/WebKit 16.4 的 color-mix 等 CSS 支持）。当前版本号保持 0.25.12；移植变更属于未发布内容。Windows 上的检查通过不代表已经完成 Mac 实机验收，原生构建与测试结果以 macOS 工作流和交付记录为准。
+**已于 2026-11-10 发布 [macos-v0.25.12-preview.1](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.12-preview.1)**，应用版本保持 0.25.12，标签指向已验收源码 `5f9703d19ab6602c2704ad704f282757d58190c3`。适用 Apple Silicon（M1 及更新芯片），最低 macOS 13.3；实际原生运行验证使用 macOS 15，未在 13.3 实机验收，不支持 Intel Mac。
+
+同一提交的 [Mac 十项作业](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42788560066)与 [Windows 回归](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42788560193)全部通过。**自动验证不等于所有真实账号和首次系统授权流程正常**，待验范围见下文。
 
 ## 安装
 
-原生构建成功后交付 `QB-Gate-macOS-arm64.dmg`、应用归档与 `SHA256SUMS.txt`。打开 DMG，将 QB Gate 拖入 Applications，再从 Applications 打开。
+[下载 DMG](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.12-preview.1/QB-Gate-macOS-arm64.dmg)，打开后将 QB Gate 拖入 Applications，再从 Applications 打开。发布页另附应用归档、`SHA256SUMS.txt`、中文安装说明及许可证。
+
+DMG 为 16,710,185 字节，SHA-256：`2afd5b20b270b9f28a26ea889bca159233deb4474ff89af46c4c859821ee93b0`。仅下载 DMG 时运行 `shasum -a 256 QB-Gate-macOS-arm64.dmg` 并与此值核对；下载两份二进制与清单后可运行下方完整清单校验。
 
 当前构建使用 ad-hoc 签名，尚无 Apple Developer ID 签名与公证。如果 macOS 阻止首次打开，请先确认来源并核对 SHA-256，再到“系统设置 → 隐私与安全性”使用“仍要打开”。不需要关闭 Gatekeeper。需要无警告分发时，应在正式发布流程配置开发者证书与公证，当前开发构建不读取这些凭据。
 
@@ -19,7 +23,8 @@ shasum -a 256 -c SHA256SUMS.txt
 ## 平台范围
 
 - 本地中转线路、模型路由与统计沿用现有跨平台核心。应用资料存于当前用户的 `Library/Application Support`，QB Gate 自己保存的密钥由登录钥匙串保护。各官方客户端的登录与账户切换需要分别验证，不能将 QB Gate 密钥存储等同于官方凭据迁移。
-- 软件页提供 Apple Silicon Claude Code / Codex CLI 托管安装，发现 Applications 中的桌面应用和常见 Homebrew / npm 路径。桌面应用从各自官方渠道安装。
+- 原生实际安装验证覆盖 Claude Code 2.1.311 / 2.1.322（升级及双向回滚）、Codex CLI 0.167.0、Gemini CLI 0.67.0；OpenCode 1.19.5、Grok Build 1.0.77、Pi 1.5.1、MiniMax Code 0.7.6、OpenClaw 2026.11.2 的生产安装、检测、更新、真实版本执行、卸载及外部安装保持均通过。附加 CLI 使用独立用户目录，不修改终端全局 PATH。
+- SillyTavern 1.19.0 官方安装、依赖安装、实际本地 HTTP、控制台、复用、停止及进程清理通过；模型桥接推理未验。Hermes 自动安装、升级和卸载暂不支持，使用官方文档手动安装；桌面应用也从各自官方渠道安装。
 - Codex 版本信息来自 GitHub 公开发布 API，匿名请求按出口 IP 共享额度。触发限流时界面报告可重试时间，下载仍必须通过官方 SHA-256 校验；CI 的只读认证请求成功不代表所有网络环境都能下载。
 - 从面板启动的受管会话在启动前检查出口 IP，并由看门狗监督。Finder、其他终端或外部工具自行启动的程序不经过启动前检查，但门禁失效时，看门狗仍可能按官方程序路径识别规则关闭检测到的官方进程。
 - macOS 没有 Windows 的 NTFS Deny ACE 执行锁、Windows 防火墙规则或注册表环境清理。界面明确显示这些机制不适用，不宣称整机已保护。
@@ -28,7 +33,9 @@ shasum -a 256 -c SHA256SUMS.txt
 
 ## 更新
 
-Mac 更新器只选择 `QB-Gate-macOS-arm64.dmg`，下载后按同一发布中的 `SHA256SUMS.txt` 校验。确认更新后面板退出并打开镜像，手动替换 Applications 中的应用后重开。正式 Release 没有 Mac 附件时，更新会明确失败，不下载 Windows 安装包。开发分支产物不会自动发布为正式更新。
+本次发布是独立 prerelease，通过上述发布页手动下载安装，不进入稳定版自动更新通道；Windows latest 仍为 `v0.25.12`。不要把本预览标签写入 `update.json`：现有更新器只接受 `v` 加三段数字，并从 stable latest 获取清单。
+
+Mac 更新器按同一发布的 `SHA256SUMS.txt` 核验 arm64 DMG，再退出并打开镜像，需手动替换应用。原生自动验证已通过**同版本**真实镜像校验、退出打开、复制替换和重启资料保留；互联网在线升级及跨版本资料迁移尚未验收。
 
 ## 在 Mac 构建
 
@@ -46,15 +53,17 @@ npm run build:mac
 
 `.github/workflows/macos.yml` 在标准 `macos-15` arm64 runner 上运行，开头核对 `uname -m`。源码检查、应用打包、原生运行时与官方 CLI 安装分为独立任务。检查包括格式、前端、类型契约、Rust 单测、Clippy、浏览器回归、真实 Keychain 加解密与受管进程、CLI 官方哈希/架构/启动/回滚，以及挂载 DMG、安装并启动真实 WKWebView、调用原生 IPC 和切换主要页面。使用临时目录、隔离的临时钥匙串和测试密钥，不登录真实用户账号。
 
-首次推送 `codex/macos-port-*` 分支会触发此工作流，不需要合并主分支、打标签或创建 Release。成功产物名为 `qb-gate-macos-arm64`，保留 14 天。使用常规公开仓库标准 runner，不使用 `-large` / `-xlarge`。远程推送需按本次会话授权执行。
+已发布包来自上述同一提交成功构建，公开 Release 的二进制与构建产物一致。Rust 测试 Mac 3,084 / Windows 3,132 通过，各有 2 项既有文档示例忽略；两平台前端 355、IPC 契约 353、UI 151 个布局/主题场景与 27 个交互流程通过。
+
+实际应用内还验证了 MCP、Skills、提示词、工具文件、线路、项目、备份、会话历史的合成资料生命周期与重启持久化；系统 URL 确认/取消、窗口关闭唤回、原生退出、LaunchAgent 启停、Keychain 锁定/错误钥匙串拒绝均通过。LaunchAgent 注册成功不等于已执行真实系统注销/登录。
 
 ## Mac 实机验收
 
-1. 首次打开、菜单栏显示、关闭窗口再唤回、退出后重开。
-2. 创建测试账户资料与中转线路；确认钥匙串拒绝访问时不会明文保存密钥。
-3. 安装 Claude Code / Codex CLI，启动 Terminal 受管会话；使用两个新的 Claude CLI 测试槽位分别登录、切换和重开，核对身份与额度隔离。Claude Desktop 独立验收，不以 CLI 结果替代。
-4. 配置白名单，验证不合格 IP 阻止受管启动，以及断网/切换 IP 时的监督回收。
-5. 检查实际桌面应用路径、登录项开关、更新 DMG 手动替换流程。
+1. 首次 Gatekeeper 打开、Terminal 自动化授权的允许/拒绝，以及实际菜单和键盘交互。
+2. 用新的测试槽位验证真实 Claude / Codex / Gemini 登录、切换、额度与刷新；Claude Desktop、Codex Desktop、Antigravity 的身份隔离分别验收。
+3. 配置白名单，验证不合格 IP 阻止受管启动，以及断网/切换 IP 时真实官方进程的监督回收。
+4. 使用自己的中转服务和酒馆桥接核对真实模型请求、流式输出与费用。
+5. 实际系统注销/登录自动启动；未来正式 Mac Release 的在线升级及跨版本资料迁移。
 
 这些步骤包含真实系统交互，不能用 Windows 检查或浏览器演示代替。
 
@@ -66,4 +75,4 @@ CLI 启动同时传入同一槽位的 `CLAUDE_CONFIG_DIR` 与 `CLAUDE_SECURESTOR
 
 登录读取被系统拒绝或分片不完整时显示「登录状态未知」及原因；额度读取失败原样报告，不因此覆盖身份。Windows 文件存储保持原有路径。Mac 上额度请求完成后重新比较当前访问令牌，防止刷新期间换号把结果记到旧身份；文件时间戳型失败缓存不用于 Mac 钥匙串。
 
-2026-11-09 查询到官方当前版本 2.1.321，Darwin arm64 文件 323,686,048 字节，官方清单 SHA-256 为 `abc9feeeca8091d51b623291e044cf0528c2f6b74e0c1d6ef671d52c73f7cd3c`。受下载源限速影响，当前包没有完整下载或完成代码核验，不能据此保证其钥匙串实现与已核版本完全一致。原生验收必须用两个新测试槽位分别登录，验证切换后账号、额度及退出/重开均隔离；还需单独核对 Claude Desktop 的系统钥匙串行为，不能把 CLI 的证据等同于桌面端保证。
+本轮已实际下载并执行 Claude Code 2.1.311 / 2.1.322，核对官方摘要和 arm64，但没有登录真实账户，也没有完整审计这些版本内部的 Keychain 协议。必须用两个新测试槽位分别登录，验证切换后的账号、额度和退出/重开隔离；Claude Desktop 的系统钥匙串行为单独验收，不能用 CLI 安装成功代替。
