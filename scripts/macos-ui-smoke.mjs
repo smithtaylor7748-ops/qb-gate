@@ -1,4 +1,4 @@
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 import { createServer } from "vite";
 import { existsSync, mkdirSync } from "node:fs";
 import assert from "node:assert/strict";
@@ -67,13 +67,9 @@ try {
   await page.goto(
     `${origin}/?platform=macos#/software?focus=sillytavern&tab=console`,
   );
-  await page.getByRole("tab", { name: "控制台", exact: true }).waitFor();
-  assert.equal(
-    await page
-      .getByRole("tab", { name: "控制台", exact: true })
-      .getAttribute("aria-selected"),
-    "true",
-  );
+  await expect(
+    page.getByRole("tab", { name: "控制台", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   mkdirSync("test-results", { recursive: true });
   await page.screenshot({
     path: "test-results/macos-software.png",

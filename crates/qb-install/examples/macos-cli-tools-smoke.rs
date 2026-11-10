@@ -104,6 +104,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?
     {
+        if tool == CliTool::MiniMaxCode {
+            let mut diagnostic = tokio::process::Command::new(&node);
+            diagnostic
+                .arg(
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../scripts/macos-minimax-policy-diagnostic.cjs"),
+                )
+                .arg(&program)
+                .arg(&dir)
+                .envs(update_env.iter().copied())
+                .kill_on_drop(true);
+            match tokio::time::timeout(Duration::from_secs(30), diagnostic.output()).await {
+                Ok(Ok(output)) => {
+                    println!("{}", String::from_utf8_lossy(&output.stdout));
+                    eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+                }
+                other => eprintln!("Native npm policy diagnostic did not complete: {other:?}"),
+            }
+        }
         return Err(format!(
             "Production update failed for {}: {}",
             tool.command(),
