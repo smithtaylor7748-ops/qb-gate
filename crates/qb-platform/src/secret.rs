@@ -180,7 +180,7 @@ mod mac {
         )
     }
 
-    fn keychain_failure(operation: &str, error: security_framework::Error) -> GateError {
+    fn keychain_failure(operation: &str, error: security_framework::base::Error) -> GateError {
         // OSStatus and a fixed operation label diagnose access failures without exposing keys.
         GateError::Other(format!(
             "无法访问 macOS 钥匙串（{operation}，OSStatus {}），未保存密钥；请解锁登录钥匙串并允许 QB Gate 访问",
