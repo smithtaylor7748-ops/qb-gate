@@ -487,6 +487,10 @@ fn walk(roots: &Roots, budget: &Budget) -> (Vec<PathBuf>, Vec<PathBuf>, u32, boo
 /// 酒馆目录里的 `Start.bat`。反过来的话，在需要外层脚本的部署上
 /// 会起出一个乱码的控制台。
 fn launchers_for(st_root: &Path) -> Vec<PathBuf> {
+    if cfg!(target_os = "macos") {
+        let entry = crate::install::sillytavern::launcher_in(st_root);
+        return entry.is_file().then_some(entry).into_iter().collect();
+    }
     let mut out = Vec::new();
     let leaf = st_root
         .file_name()
@@ -789,6 +793,30 @@ mod tests {
     }
 
     /// 外层启动脚本优先于酒馆目录里的 `Start.bat`。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_survey_selects_the_node_entry_even_when_windows_launchers_exist() {
+        let root = tmp("native-launcher");
+        let st = root.join("SillyTavern");
+        make_tavern(&st);
+        std::fs::write(st.join("Start.bat"), "node server.js").unwrap();
+        std::fs::write(root.join("start-sillytavern.cmd"), "cd SillyTavern").unwrap();
+        let survey = locate(
+            &Roots {
+                starts: vec![root.clone()],
+                ..Default::default()
+            },
+            &Budget::quick(),
+        );
+        assert_eq!(survey.launcher.len(), 1);
+        assert_eq!(
+            PathBuf::from(&survey.launcher[0].path),
+            st.join("server.js")
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
     #[test]
     fn the_outer_launcher_wins_over_the_inner_start_bat() {
         let root = tmp("launcher");

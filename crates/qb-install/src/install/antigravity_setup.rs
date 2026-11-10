@@ -431,6 +431,9 @@ pub async fn install(
     force: bool,
     rep: &dyn ProgressSink,
 ) -> Result<Outcome> {
+    if cfg!(target_os = "macos") {
+        return Err(GateError::Other("macOS 请从 https://antigravity.google/download 安装官方应用到「应用程序」；面板不运行 Windows 安装器。".into()));
+    }
     let mut log = Vec::new();
     let arch = Arch::current();
 
@@ -545,6 +548,11 @@ pub async fn install_to(
     dir: &Path,
     rep: &dyn ProgressSink,
 ) -> Result<Vec<String>> {
+    if cfg!(target_os = "macos") {
+        return Err(GateError::Other(
+            "macOS 不支持通过 Windows 安装器迁移 Antigravity，请在 Finder 中管理官方 .app。".into(),
+        ));
+    }
     let mut log = Vec::new();
     let old = product.dir(&local_dir());
     rep.phase(1, "查官网上的最新版本");

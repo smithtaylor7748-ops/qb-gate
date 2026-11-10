@@ -334,6 +334,16 @@ async fn run_step(step: &Step, rep: &dyn ProgressSink, log: &mut Vec<String>) ->
     match step {
         Step::Run { program, args, env } => {
             rep.phase(2, &step.shown());
+            #[cfg(target_os = "macos")]
+            let env = {
+                let mut env = env.clone();
+                if !env.iter().any(|(key, _)| key == "PATH") {
+                    let path = std::env::join_paths(crate::install::macos_install::path_dirs())
+                        .map_err(|e| GateError::Other(format!("CLI 的 PATH 无效：{e}")))?;
+                    env.push(("PATH".into(), path.to_string_lossy().into_owned()));
+                }
+                env
+            };
             let env: Vec<(&str, &str)> =
                 env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
             winget::run_streaming_env(&program.display().to_string(), args, &env, rep, 2, log).await
@@ -659,6 +669,9 @@ pub async fn script_run(
     sha256: &str,
     rep: &dyn ProgressSink,
 ) -> Result<String> {
+    if cfg!(target_os = "macos") {
+        return Err(GateError::Other("macOS 不运行 Windows PowerShell 安装脚本，请使用 npm 安装或工具官方的 macOS 安装方式。".into()));
+    }
     rep.phase(1, "核对要跑的是你看过的那一份");
     let (meta, ps1) = staged_script(dir, id, sha256)?;
     let args: Vec<String> = [

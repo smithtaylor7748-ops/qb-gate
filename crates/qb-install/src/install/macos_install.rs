@@ -93,9 +93,13 @@ pub fn npm_roots() -> Vec<PathBuf> {
             roots.push(prefix.join("lib/node_modules"));
         }
     }
-    roots.sort();
-    roots.dedup();
-    roots
+    let mut ordered = Vec::new();
+    for root in roots {
+        if !ordered.contains(&root) {
+            ordered.push(root);
+        }
+    }
+    ordered
 }
 
 #[cfg(all(test, target_os = "macos"))]

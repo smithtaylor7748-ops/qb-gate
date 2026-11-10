@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, type InstallTarget, type Software } from "../lib/api";
+import { antigravityApi } from "../lib/antigravity";
 import { R } from "../lib/resources";
 import { useResource } from "../lib/store";
 import { useAction } from "../lib/workspace";
@@ -8,7 +9,9 @@ import { Button, ExternalLink } from "../ui";
 export default function MacSoftware() {
   const software = useResource("software", R.software);
   const action = useAction();
-  const [installing, setInstalling] = useState<InstallTarget | null>(null);
+  const [installing, setInstalling] = useState<InstallTarget | "gemini" | null>(
+    null,
+  );
   const data = software.data;
   const install = async (target: InstallTarget) => {
     setInstalling(target);
@@ -16,6 +19,19 @@ export default function MacSoftware() {
       await action.run(
         "mac-install",
         () => api.installRun(target),
+        "安装任务完成",
+      );
+      await software.refresh();
+    } finally {
+      setInstalling(null);
+    }
+  };
+  const installGemini = async () => {
+    setInstalling("gemini");
+    try {
+      await action.run(
+        "mac-gemini",
+        () => antigravityApi.geminiCliInstall(),
         "安装任务完成",
       );
       await software.refresh();
@@ -78,6 +94,9 @@ export default function MacSoftware() {
                 : "尚未检测到"}
             </small>
             {item?.advisory && <small>{item.advisory}</small>}
+            {label === "Gemini CLI" && (
+              <small>需要已安装 Node.js LTS 与 npm。</small>
+            )}
           </span>
           {target ? (
             <Button
@@ -90,7 +109,13 @@ export default function MacSoftware() {
           ) : url ? (
             <ExternalLink href={url}>官方下载</ExternalLink>
           ) : (
-            <span className="qb-muted">使用 npm 安装 @google/gemini-cli</span>
+            <Button
+              loading={installing === "gemini"}
+              disabled={!!action.pending}
+              onClick={() => void installGemini()}
+            >
+              {item?.installed ? "更新" : "安装"}
+            </Button>
           )}
         </section>
       ))}

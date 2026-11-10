@@ -516,6 +516,24 @@ pub const GEMINI_INSTALL_TOTAL: u32 = 3;
 ///   机器上得到的是一个一闪而过的窗口，没有任何人说得出少了什么；
 /// - **装完回读检测核对，不看退出码**（§7.21 那条教训）。
 pub async fn gemini_cli_install(rep: &dyn crate::sink::ProgressSink) -> Result<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let dir = crate::install::managed::slot_dir("gemini-cli");
+        let installed = crate::install::gemini_setup::install_into(&dir, rep).await?;
+        let detail = format!(
+            "Gemini CLI {} 已装好（QB Gate 托管目录）：{}",
+            installed.version,
+            installed.entry.display()
+        );
+        crate::audit::write(&detail);
+        Ok(detail)
+    }
+    #[cfg(not(target_os = "macos"))]
+    gemini_cli_install_global(rep).await
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn gemini_cli_install_global(rep: &dyn crate::sink::ProgressSink) -> Result<String> {
     use qb_install::install::{detect, winget};
 
     rep.phase(1, "检查 Node.js 与 npm");

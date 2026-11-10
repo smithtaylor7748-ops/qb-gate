@@ -429,6 +429,18 @@ mod native {
         )
     }
 
+    fn terminal_command(helper: &Path, id: &str, parent_home: &Path) -> String {
+        // Terminal starts a fresh login shell, so it otherwise loses the panel's
+        // HOME and looks for both the launch plan and Keychain in another context.
+        // Pass only this directory, never the client's environment or credentials.
+        format!(
+            "exec /usr/bin/env {} {} --qb-managed {}",
+            shell_quote(&format!("HOME={}", parent_home.to_string_lossy())),
+            shell_quote(&helper.to_string_lossy()),
+            shell_quote(id)
+        )
+    }
+
     pub(crate) fn environment_with_path(mut env: Vec<(String, String)>) -> Vec<(String, String)> {
         let existing = env
             .iter()
@@ -507,11 +519,10 @@ mod native {
                 private_write(&dir.join("plan"), encoded.as_bytes())?;
                 let helper = std::env::current_exe()?;
                 if terminal {
-                    let line = format!(
-                        "exec {} --qb-managed {}",
-                        shell_quote(&helper.to_string_lossy()),
-                        shell_quote(id)
-                    );
+                    let parent_home = dirs::home_dir()
+                        .filter(|p| p.is_absolute())
+                        .ok_or_else(|| GateError::Other("无法确定受管终端的用户主目录".into()))?;
+                    let line = terminal_command(&helper, id, &parent_home);
                     let script = format!(
                         "tell application \"Terminal\"\nactivate\ndo script {}\nend tell",
                         apple_quote(&line)
@@ -767,6 +778,35 @@ mod native {
         fn terminal_quoting_keeps_arguments_literal() {
             assert_eq!(shell_quote("a'b $(x)"), "'a'\\''b $(x)'");
             assert_eq!(apple_quote("a\"b\\c"), "\"a\\\"b\\\\c\"");
+        }
+        #[test]
+        fn terminal_receives_the_parent_home_without_shell_expansion() {
+            let parent_home = Path::new(r#"/tmp/QB Gate's "double" $(false) `false` \slash"#);
+            let id = "8a0718fc-6b43-4cc3-af19-25c7b7d06724";
+            let command = terminal_command(Path::new("/usr/bin/printenv"), id, parent_home);
+            // Parse the actual AppleScript literal without asking Terminal for TCC access.
+            let decoded = Command::new("/usr/bin/osascript")
+                .args(["-e", &format!("return {}", apple_quote(&command))])
+                .output()
+                .unwrap();
+            assert!(decoded.status.success());
+            let decoded = String::from_utf8(decoded.stdout).unwrap();
+            assert_eq!(decoded, format!("{command}\n"));
+            // Use printenv as a harmless target so the shell reports only the literal HOME.
+            let command = decoded
+                .strip_suffix('\n')
+                .unwrap()
+                .strip_suffix(&format!(" --qb-managed '{}'", id))
+                .unwrap();
+            let output = Command::new("/bin/sh")
+                .args(["-c", &format!("{command} HOME")])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap(),
+                format!("{}\n", parent_home.display())
+            );
         }
         #[test]
         fn private_launch_files_reject_symlinks_and_public_permissions() {

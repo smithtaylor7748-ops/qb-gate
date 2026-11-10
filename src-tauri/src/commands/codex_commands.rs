@@ -210,6 +210,12 @@ pub async fn codex_desktop_install(
     local: Option<String>,
     force: bool,
 ) -> Result<String> {
+    if cfg!(target_os = "macos") {
+        return Err(GateError::Other(
+            "macOS 请从 https://chatgpt.com/codex 安装 Codex.app 到「应用程序」。现有应用未关闭。"
+                .into(),
+        ));
+    }
     use crate::sink::ProgressSink;
     let _guard = operations::exclusive().await?;
     let rep = events::Reporter::new(

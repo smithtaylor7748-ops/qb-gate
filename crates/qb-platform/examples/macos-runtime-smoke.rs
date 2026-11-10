@@ -121,6 +121,49 @@ mod smoke {
         if !root.is_absolute() || !root.is_dir() {
             return Err("invalid smoke root".into());
         }
+        match args.get(1).map(String::as_str) {
+            Some("--keychain-reopen") => {
+                let stored = fs::read_to_string(root.join("sealed-fixture"))?;
+                assert_eq!(
+                    secret::open(&stored).as_deref(),
+                    Some("fixture-token-not-a-real-credential")
+                );
+                println!("PASS persisted ciphertext decrypts in a fresh process with the original Keychain");
+                return Ok(());
+            }
+            Some("--keychain-locked") => {
+                // CI must return the genuine Security error instead of waiting for a GUI unlock.
+                let _no_prompt =
+                    security_framework::os::macos::keychain::SecKeychain::disable_user_interaction(
+                    )?;
+                let stored = fs::read_to_string(root.join("sealed-fixture"))?;
+                assert!(secret::open(&stored).is_none());
+                assert!(
+                    secret::seal("locked-fixture").is_err(),
+                    "Locked Keychain must not save a plaintext fallback"
+                );
+                println!(
+                    "PASS locked Keychain refuses decrypt and save without a plaintext fallback"
+                );
+                return Ok(());
+            }
+            Some("--keychain-other") => {
+                let stored = fs::read_to_string(root.join("sealed-fixture"))?;
+                assert!(secret::open(&stored).is_none());
+                let new = secret::seal("other-keychain-fixture")?;
+                assert_eq!(
+                    secret::open(&new).as_deref(),
+                    Some("other-keychain-fixture")
+                );
+                assert!(secret::open(&stored).is_none());
+                assert_eq!(fs::read_to_string(root.join("sealed-fixture"))?, stored);
+                println!(
+                    "PASS a different Keychain cannot decrypt or replace the original ciphertext"
+                );
+                return Ok(());
+            }
+            _ => {}
+        }
         let first = secret::seal("fixture-token-not-a-real-credential")?;
         let second = secret::seal("fixture-token-not-a-real-credential")?;
         assert!(first.starts_with("keychain-aes-gcm-v1:"));

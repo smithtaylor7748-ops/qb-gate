@@ -494,6 +494,9 @@ pub const REINSTALL_TOTAL: u32 = 6;
 /// **调用方必须已经拿到使用者的确认。** 这个函数不会再问第二次 ——
 /// 使用者明确要求「确认之后全程自动，中途不再问」。
 pub async fn reinstall(rep: &dyn ProgressSink) -> Result<String> {
+    if cfg!(target_os = "macos") {
+        return Err(GateError::Other(format!("macOS 不支持自动清空资料并重装 Chrome。请在浏览器中管理站点数据，并从 {CHROME_DOWNLOAD_PAGE} 安装官方 Mac 版本。")));
+    }
     rep.phase(1, "盘点 Chrome");
     if !winget_available().await {
         return Err(GateError::Other(format!(

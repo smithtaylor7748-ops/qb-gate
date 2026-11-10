@@ -848,6 +848,9 @@ pub async fn install_local(
 /// 装完用 `codex_desktop::detect()` 回读核对，**不看命令的退出码**。
 /// `local` 给了就只装那一份（跳过 A / B）。
 pub async fn install(local: Option<&Path>, force: bool, rep: &dyn ProgressSink) -> Result<Outcome> {
+    if cfg!(target_os = "macos") {
+        return Err(GateError::Other("macOS 请从 https://chatgpt.com/codex 下载 Codex.app 并放进「应用程序」；不支持 Microsoft Store 安装包。".into()));
+    }
     let mut log = Vec::new();
     let arch = Arch::current();
 

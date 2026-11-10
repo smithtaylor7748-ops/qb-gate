@@ -1034,6 +1034,9 @@ fn extension_dir(root: &Path, name: &str, scope: ExtensionScope) -> Result<PathB
 
 /// 本机的 git：先 `where git.exe`，再看 Git for Windows 的几个默认位置。
 pub fn find_git() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        return crate::install::macos_install::command("git");
+    }
     if let Ok(out) = crate::process::hidden_std(std::process::Command::new("where"))
         .arg("git.exe")
         .output()

@@ -465,7 +465,7 @@ pub fn gemini_cli() -> Software {
         version,
         path: entry,
         advisory: node_exe().is_none().then(|| {
-            "找不到 node.exe：Gemini CLI 是 Node 包，酒馆的 Gemini 桥接要用 node 起它。".into()
+            "找不到 Node.js：Gemini CLI 和酒馆的 Gemini 桥接需要它，请先安装 Node.js LTS。".into()
         }),
     }
 }

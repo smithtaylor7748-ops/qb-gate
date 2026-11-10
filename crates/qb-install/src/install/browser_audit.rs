@@ -438,6 +438,9 @@ if (Test-Path -LiteralPath $path) {{
 }
 
 fn set_backed_up(name: &str, next: &str) -> Result<()> {
+    if !cfg!(windows) {
+        return Err(GateError::Other("浏览器注册表策略修复只支持 Windows；macOS 请在 Chrome 设置中配置并在 chrome://policy 核对。".into()));
+    }
     if let Some(p) = read_policy(name) {
         if p.scope == Scope::Machine && p.value != next {
             return Err(GateError::Other(
@@ -466,6 +469,11 @@ fn set_backed_up(name: &str, next: &str) -> Result<()> {
 }
 
 fn restore_policy(name: &str, written: &str) -> Result<()> {
+    if !cfg!(windows) {
+        return Err(GateError::Other(
+            "浏览器注册表策略撤销只支持 Windows。".into(),
+        ));
+    }
     let path = backup_path(name);
     let bytes = crate::config_io::read_optional(&path)?.ok_or_else(|| {
         GateError::Other("没有本面板保存的策略原值，不撤销其他程序设置的策略".into())

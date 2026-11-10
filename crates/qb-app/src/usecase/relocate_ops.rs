@@ -139,7 +139,9 @@ pub fn relocate_sillytavern(new: &Path) -> Result<Vec<String>> {
 
 /// Gemini CLI 装进 `new`（`npm install --prefix`）。旧的 npm 全局那份不删。
 pub async fn relocate_gemini_cli(new: &Path) -> Result<Vec<String>> {
-    use crate::install::{detect, managed, winget};
+    use crate::install::managed;
+    #[cfg(not(target_os = "macos"))]
+    use crate::install::{detect, winget};
     const KEY: &str = "gemini-cli";
     let probe = check_target(KEY, new);
     if !probe.ok {
@@ -150,33 +152,38 @@ pub async fn relocate_gemini_cli(new: &Path) -> Result<Vec<String>> {
             "酒馆的 Gemini 桥接正在用 Gemini CLI，先停掉再迁移。".into(),
         ));
     }
-    detect::node_exe().ok_or_else(|| {
-        GateError::Other("没找到 Node.js：Gemini CLI 是 npm 包，先装 Node.js LTS。".into())
-    })?;
-    std::fs::create_dir_all(new)?;
-    let mut log = Vec::new();
-    let args: Vec<String> = vec![
-        "/c".into(),
-        "npm".into(),
-        "install".into(),
-        "--prefix".into(),
-        new.display().to_string(),
-        "@google/gemini-cli".into(),
-    ];
-    let ok = winget::run_streaming("cmd", &args, &crate::sink::Silent, 1, &mut log).await?;
-    let pkg = new.join("node_modules").join("@google").join("gemini-cli");
-    if !detect::gemini_cli_entries(&pkg).iter().any(|p| p.is_file()) {
-        return Err(GateError::Other(format!(
-            "npm {}，但 {} 下找不到 Gemini CLI 的入口文件。npm 最后几行：{}",
-            if ok { "报告成功" } else { "没有成功" },
-            pkg.display(),
-            log.iter()
-                .rev()
-                .take(3)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(" / ")
-        )));
+    #[cfg(target_os = "macos")]
+    crate::install::gemini_setup::install_into(new, &crate::sink::Silent).await?;
+    #[cfg(not(target_os = "macos"))]
+    {
+        detect::node_exe().ok_or_else(|| {
+            GateError::Other("没找到 Node.js：Gemini CLI 是 npm 包，先装 Node.js LTS。".into())
+        })?;
+        std::fs::create_dir_all(new)?;
+        let mut log = Vec::new();
+        let args: Vec<String> = vec![
+            "/c".into(),
+            "npm".into(),
+            "install".into(),
+            "--prefix".into(),
+            new.display().to_string(),
+            "@google/gemini-cli".into(),
+        ];
+        let ok = winget::run_streaming("cmd", &args, &crate::sink::Silent, 1, &mut log).await?;
+        let pkg = new.join("node_modules").join("@google").join("gemini-cli");
+        if !detect::gemini_cli_entries(&pkg).iter().any(|p| p.is_file()) {
+            return Err(GateError::Other(format!(
+                "npm {}，但 {} 下找不到 Gemini CLI 的入口文件。npm 最后几行：{}",
+                if ok { "报告成功" } else { "没有成功" },
+                pkg.display(),
+                log.iter()
+                    .rev()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" / ")
+            )));
+        }
     }
     let old = managed::slot_dir(KEY);
     store_app_dir(KEY, new)?;

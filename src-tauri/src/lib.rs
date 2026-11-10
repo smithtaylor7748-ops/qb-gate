@@ -700,6 +700,16 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::RunEvent::Reopen { .. }) {
                 window::reveal(_app, None);
+                macos_smoke::reopened(_app);
+            }
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = &event {
+                let links: Vec<String> = urls.iter().map(ToString::to_string).collect();
+                if commands::import_links::receive(_app, &links) {
+                    // URL receipt only opens the existing confirmation dialog.
+                    // It never imports, selects a route or launches a client.
+                    window::reveal(_app, None);
+                }
             }
             // 轻量模式（阶段 7 · X7）把最后一个窗口关掉时，Tauri 默认会退出整个程序。
             // `code` 是 `None` 的只有这一种（「最后一个窗口关了」）；托盘的「退出」、一键更新走的是

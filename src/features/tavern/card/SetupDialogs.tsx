@@ -464,9 +464,8 @@ function NodeChoice({
         </Checkbox>
       ) : (
         <p className="notice mt-1">
-          本机没有 winget：到{" "}
-          <ExternalLink href={NODE_PAGE}>nodejs.org</ExternalLink> 下载 LTS
-          版装上再来。
+          请先到 <ExternalLink href={NODE_PAGE}>nodejs.org</ExternalLink> 下载
+          LTS 版装上再来。
         </p>
       )}
     </div>

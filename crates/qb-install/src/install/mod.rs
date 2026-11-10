@@ -17,6 +17,8 @@ pub mod antigravity;
 pub mod antigravity_setup;
 pub mod codex_desktop;
 pub mod codex_store;
+#[cfg(target_os = "macos")]
+pub mod gemini_setup;
 pub mod macos_install;
 pub mod sillytavern;
 pub mod sillytavern_setup;

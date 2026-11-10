@@ -143,6 +143,9 @@ jobs:
       - uses: actions/checkout@v5
       - name: Verify native Apple Silicon runner
         run: test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
@@ -157,6 +160,10 @@ jobs:
         run: |
           set -o pipefail
           target/debug/examples/macos-install-smoke 2>&1 | tee -a macos-install-smoke.log
+      - name: Install Gemini CLI in an isolated user directory
+        run: |
+          set -o pipefail
+          cargo run --locked -p qb-install --example macos-gemini-smoke 2>&1 | tee -a macos-install-smoke.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

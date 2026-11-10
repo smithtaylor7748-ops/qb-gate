@@ -517,6 +517,11 @@ async fn ensure_node(
             v.as_deref().unwrap_or("?")
         ),
     };
+    if cfg!(target_os = "macos") {
+        return Err(GateError::Other(format!(
+            "{what}。请先从 https://nodejs.org 安装 macOS 版 Node.js LTS，再回来安装 SillyTavern。"
+        )));
+    }
     if !install_node {
         return Err(GateError::Other(format!(
             "{what}。勾上「先用 winget 装 Node.js LTS」再点一次，或者到 https://nodejs.org 装 LTS 版之后再来。"

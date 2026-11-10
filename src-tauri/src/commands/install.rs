@@ -714,6 +714,10 @@ pub async fn relocate_run(
     state: tauri::State<'_, AppState>,
 ) -> Result<RelocateReport> {
     use install::managed;
+    if cfg!(target_os = "macos") && (product_of_key(&which).is_some() || which == "claude-desktop")
+    {
+        return Err(GateError::Other("macOS 桌面应用请在 Finder 中管理 .app；面板不使用 Windows 安装器或目录联结点迁移应用。".into()));
+    }
     let _guard = operations::exclusive().await?;
     let new = std::path::PathBuf::from(path.trim());
     {
@@ -834,6 +838,11 @@ pub async fn relocate_run(
 /// 联结点指向的地方已经空了（卸载后留下的）就只是把它收掉。
 #[tauri::command]
 pub async fn relocate_desktop_restore(state: tauri::State<'_, AppState>) -> Result<RelocateReport> {
+    if cfg!(target_os = "macos") {
+        return Err(GateError::Other(
+            "macOS 不需要还原 Windows 桌面端目录联结点；请在 Finder 中管理 Claude.app。".into(),
+        ));
+    }
     let _guard = operations::exclusive().await?;
     let local = local_dir();
     let link = local.join(install::relocate::DESKTOP_DIR);
@@ -856,6 +865,11 @@ pub async fn relocate_desktop_restore(state: tauri::State<'_, AppState>) -> Resu
 /// Codex 桌面端是 MSIX：面板不搬，只打开 Windows 的「已安装的应用」页并给一句怎么做。
 #[tauri::command]
 pub fn codex_desktop_move_settings() -> Result<String> {
+    if cfg!(target_os = "macos") {
+        return Err(GateError::Other(
+            "macOS 请在 Finder 的「应用程序」中管理 Codex.app。".into(),
+        ));
+    }
     std::process::Command::new("explorer.exe")
         .arg("ms-settings:appsfeatures")
         .spawn()

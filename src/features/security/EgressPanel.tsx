@@ -185,7 +185,7 @@ function Row({
               修
             </Button>
           )}
-          {undoable && UNDOABLE.has(it.id) && (
+          {platform?.os === "windows" && undoable && UNDOABLE.has(it.id) && (
             <Button
               size="sm"
               loading={busy === `${it.id}:undo`}
