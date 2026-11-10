@@ -18,6 +18,7 @@ fn output_dir() -> Option<PathBuf> {
 
 pub fn install(app: &tauri::AppHandle) {
     let Some(dir) = output_dir() else { return };
+    let injection_dir = dir.clone();
     let handle = app.clone();
     app.listen("qb-macos-ui-smoke", move |event| {
         let result = serde_json::from_str::<serde_json::Value>(event.payload());
@@ -32,10 +33,20 @@ pub fn install(app: &tauri::AppHandle) {
     });
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        if let Some(window) = handle.get_webview_window("main") {
-            let _ = window.show();
-            let _ = window.eval(include_str!("macos_smoke.js"));
+        for _ in 0..60 {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            if injection_dir.join("webview.json").exists() {
+                break;
+            }
+            if let Some(window) = handle.get_webview_window("main") {
+                let _ = window.show();
+                if let Err(error) = window.eval(include_str!("macos_smoke.js")) {
+                    let _ = std::fs::write(
+                        injection_dir.join("injection-error.log"),
+                        error.to_string(),
+                    );
+                }
+            }
         }
     });
 }

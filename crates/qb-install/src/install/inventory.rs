@@ -600,8 +600,9 @@ pub fn managed_codex_copies(r: &Roots) -> Vec<PathBuf> {
     let Some(dir) = r.managed_codex.clone() else {
         return out;
     };
+    let executable = crate::install::managed::App::Codex.exe_name();
     for e in entries(&dir.join("versions")) {
-        let p = e.path().join("codex.exe");
+        let p = e.path().join(executable);
         if p.is_file() {
             out.push(p);
         }
@@ -609,7 +610,7 @@ pub fn managed_codex_copies(r: &Roots) -> Vec<PathBuf> {
     for e in entries(&dir) {
         let stage = e.path();
         if name_lower(&stage).starts_with(".rollback-") && stage.is_dir() {
-            for name in ["codex.exe", "codex.exe.before"] {
+            for name in [executable.to_string(), format!("{executable}.before")] {
                 let p = stage.join(name);
                 if p.is_file() {
                     out.push(p);
@@ -951,6 +952,27 @@ fn scan_macos(r: &Roots) -> Vec<Install> {
 #[cfg(all(test, target_os = "macos"))]
 mod macos_inventory_tests {
     use super::*;
+    #[test]
+    fn macos_codex_archives_and_interrupted_deployments_use_native_names() {
+        let root =
+            std::env::temp_dir().join(format!("qb-codex-inventory-{}", crate::config_io::id()));
+        let archived = root.join("versions/1.0.0/codex");
+        let staged = root.join(".rollback-test/codex.before");
+        for path in [&archived, &staged] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "fixture").unwrap();
+        }
+        let roots = Roots {
+            managed_codex: Some(root.clone()),
+            ..Default::default()
+        };
+        let actual = managed_codex_copies(&roots);
+        assert_eq!(actual.len(), 2);
+        assert!(actual.contains(&archived));
+        assert!(actual.contains(&staged));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn macos_native_inventory_prefers_managed_and_deduplicates_links_without_claiming_locks() {
         let root = std::env::temp_dir().join(format!(

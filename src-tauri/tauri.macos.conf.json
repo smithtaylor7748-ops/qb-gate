@@ -6,7 +6,9 @@
     "macOS": {
       "minimumSystemVersion": "13.3",
       "signingIdentity": "-",
-      "hardenedRuntime": true
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.macos.plist",
+      "infoPlist": "Info.macos.plist"
     }
   }
 }

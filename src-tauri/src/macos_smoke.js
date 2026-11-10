@@ -1,4 +1,6 @@
 (async () => {
+  if (document.readyState === "loading" || !window.__TAURI_INTERNALS__?.invoke || window.__QB_MACOS_SMOKE_STARTED__) return;
+  window.__QB_MACOS_SMOKE_STARTED__ = true;
   const invoke = window.__TAURI_INTERNALS__.invoke;
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const heading = () => document.querySelector(".qb-page h1")?.textContent?.trim();

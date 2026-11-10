@@ -62,6 +62,21 @@ try {
   const app = join(root, "QB Gate.app");
   run("/usr/bin/ditto", [join(mount, "QB Gate.app"), app]);
   run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
+  const entitlements = run("/usr/bin/codesign", [
+    "-d",
+    "--entitlements",
+    ":-",
+    app,
+  ]);
+  assert.match(entitlements, /com\.apple\.security\.automation\.apple-events/);
+  assert.match(entitlements, /<true\s*\/>/);
+  writeFileSync(join(evidence, "entitlements.plist"), entitlements);
+  const usage = run("/usr/libexec/PlistBuddy", [
+    "-c",
+    "Print :NSAppleEventsUsageDescription",
+    join(app, "Contents/Info.plist"),
+  ]).trim();
+  assert.ok(usage.includes("终端"), "Missing Terminal automation purpose");
   const binary = join(app, "Contents/MacOS/qb-gate");
   assert.equal(run("/usr/bin/lipo", ["-archs", binary]).trim(), "arm64");
   assert.equal(
@@ -89,6 +104,9 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   writeFileSync(join(evidence, "app.log"), output);
+  const injectionError = join(root, "injection-error.log");
+  if (existsSync(injectionError))
+    copyFileSync(injectionError, join(evidence, "injection-error.log"));
   assert.ok(
     existsSync(result),
     `Packaged WKWebView did not report readiness: ${output}`,

@@ -46,16 +46,16 @@ jobs:
       - run: npm run format:check
       - run: cargo fmt --all --check
       - run: npm test
+      - name: Build native runtime smoke
+        run: cargo build --locked -p qb-platform --example macos-runtime-smoke
+      - name: Verify isolated Keychain and managed processes
+        run: node scripts/macos-runtime-smoke.mjs
       - run: npm run types:check
       - run: cargo test --locked --workspace
       - run: cargo clippy --locked --workspace --lib -- -D warnings
       - run: npx playwright install chromium
       - run: npm run test:ui
       - run: node scripts/macos-ui-smoke.mjs
-      - name: Build native runtime smoke
-        run: cargo build --locked -p qb-platform --example macos-runtime-smoke
-      - name: Verify isolated Keychain and managed processes
-        run: node scripts/macos-runtime-smoke.mjs
       - name: Build native app and disk image
         run: npm run build:mac
       - name: Verify arm64 executable and bundle signature
@@ -78,5 +78,30 @@ jobs:
         with:
           name: qb-gate-macos-arm64
           path: dist-installers/*
+          if-no-files-found: error
+          retention-days: 14
+  official-cli-install:
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify native Apple Silicon runner
+        run: test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Install official Claude and Codex binaries and verify rollback
+        run: |
+          set -o pipefail
+          cargo run --locked -p qb-install --example macos-install-smoke 2>&1 | tee macos-install-smoke.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-official-cli-validation
+          path: macos-install-smoke.log
           if-no-files-found: error
           retention-days: 14

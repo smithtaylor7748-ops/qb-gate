@@ -327,8 +327,14 @@ pub fn forbidden_reason(
     panel_dir: Option<&Path>,
 ) -> Option<String> {
     use crate::install::inventory::norm;
-    let d = format!("{}\\", norm(dir).trim_end_matches('\\'));
-    let under = |base: &Path| d.starts_with(&format!("{}\\", norm(base).trim_end_matches('\\')));
+    let separator = if cfg!(target_os = "macos") { '/' } else { '\\' };
+    let d = format!("{}{separator}", norm(dir).trim_end_matches(separator));
+    let under = |base: &Path| {
+        d.starts_with(&format!(
+            "{}{separator}",
+            norm(base).trim_end_matches(separator)
+        ))
+    };
 
     if let Some(p) = panel_dir {
         if under(p) {
@@ -341,9 +347,9 @@ pub fn forbidden_reason(
         }
     }
     if let Some(r) = roaming {
-        let rr = format!("{}\\", norm(r).trim_end_matches('\\'));
+        let rr = format!("{}{separator}", norm(r).trim_end_matches(separator));
         if let Some(rest) = d.strip_prefix(&rr) {
-            let first = rest.split('\\').next().unwrap_or("");
+            let first = rest.split(separator).next().unwrap_or("").to_lowercase();
             if first == "claude" || first.starts_with("claude-") {
                 return Some("这是 Claude 桌面端的资料目录，换一个目录。".into());
             }
@@ -842,6 +848,7 @@ async fn extract_codex_macos(archive: &Path, out: &Path) -> Result<PathBuf> {
 }
 
 /// 解压目录里的全部 exe（往下最多两层）。
+#[cfg(not(target_os = "macos"))]
 fn exes_in(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![(dir.to_path_buf(), 0u32)];
@@ -971,8 +978,19 @@ pub const TOTAL: u32 = 7;
 ///
 /// 已经装了就是升级：同一条路，旧的改名留底。
 pub async fn install(app: App, channel: &str, rep: &dyn ProgressSink) -> Result<InstallOutcome> {
+    install_into(app, channel, &app_dir_of(app), rep).await
+}
+
+/// The production installer with an explicit target directory. This does not
+/// update application settings; it also supports isolated native smoke checks.
+pub async fn install_into(
+    app: App,
+    channel: &str,
+    dir: &Path,
+    rep: &dyn ProgressSink,
+) -> Result<InstallOutcome> {
     let mut log = Vec::new();
-    let dir = app_dir_of(app);
+    let dir = dir.to_path_buf();
 
     rep.phase(1, "实测托管目录能不能上锁");
     let probe = probe_dir(&dir);
@@ -1398,7 +1416,17 @@ pub async fn running_from(dir: &Path) -> Result<Vec<(u32, String)>> {
         .collect())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub async fn running_from(dir: &Path) -> Result<Vec<(u32, String)>> {
+    let key = canonical_key(dir);
+    Ok(qb_platform::macos::processes()?
+        .into_iter()
+        .filter(|process| is_inside_canon(&process.path, &key))
+        .map(|process| (process.pid, process.path.to_string_lossy().into_owned()))
+        .collect())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub async fn running_from(_dir: &Path) -> Result<Vec<(u32, String)>> {
     Ok(Vec::new())
 }
@@ -1407,6 +1435,9 @@ pub async fn running_from(_dir: &Path) -> Result<Vec<(u32, String)>> {
 /// 再去掉 `\\?\`（`\\?\UNC\` 还原成 `\\`）、统一小写反斜杠。解析不了（不存在）就按原样比。
 pub fn canonical_key(p: &Path) -> String {
     let real = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    if cfg!(target_os = "macos") {
+        return real.to_string_lossy().into_owned();
+    }
     let s = real.to_string_lossy().to_string();
     let s = if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{rest}")
@@ -1420,6 +1451,9 @@ pub fn canonical_key(p: &Path) -> String {
 
 /// `a` 规范化之后在 `dir_key`（已经是 [`canonical_key`]）里面吗。
 pub fn is_inside_canon(a: &Path, dir_key: &str) -> bool {
+    if cfg!(target_os = "macos") {
+        return Path::new(&canonical_key(a)).starts_with(Path::new(dir_key));
+    }
     let a = format!("{}\\", canonical_key(a));
     a.starts_with(&format!("{dir_key}\\"))
 }
@@ -2330,6 +2364,7 @@ mod tests {
         assert!(!old.exists());
     }
 
+    #[cfg(windows)]
     #[test]
     fn inside_checks_are_case_and_slash_insensitive() {
         assert!(is_inside(Path::new(r"C:\A\b\c"), Path::new(r"c:/a/B")));
@@ -2337,6 +2372,7 @@ mod tests {
         assert!(!is_inside(Path::new(r"C:\AB"), Path::new(r"C:\A")));
     }
 
+    #[cfg(windows)]
     #[test]
     fn some_directories_are_never_acceptable_as_the_root() {
         let home = Path::new(r"C:\Users\me");
@@ -2362,6 +2398,53 @@ mod tests {
         assert!(why(r"C:\\Users\\me\\AppData\\Local\\ClaudeIpGate\\apps").is_none());
         assert!(why(r"D:\ClaudeApps").is_none());
         assert!(why(r"C:\Users\me\AppData\Roaming\Claude Code Tools").is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_install_directories_keep_account_and_application_data_separate() {
+        let home = Path::new("/Users/测试 User");
+        let roaming = home.join("Library/Application Support");
+        let panel = Path::new("/Applications/QB Gate.app/Contents/MacOS");
+        let forbidden = |path: &Path| {
+            forbidden_reason(
+                path,
+                Some(home),
+                Some(&roaming),
+                Some(&roaming),
+                Some(panel),
+            )
+            .is_some()
+        };
+        for path in [
+            home.join(".claude/apps"),
+            home.join(".local/bin"),
+            roaming.join("Claude-main/apps"),
+            roaming.join("Claude/apps"),
+            panel.join("apps"),
+        ] {
+            assert!(forbidden(&path), "{}", path.display());
+        }
+        assert!(!forbidden(&roaming.join("ClaudeIpGate/apps")));
+        assert!(!forbidden(&home.join(".claude-other/apps")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_canonical_directory_checks_follow_links_and_respect_components() {
+        let temp = Tmp::new("native-path");
+        let real = temp.0.join("真实 App Dir");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("claude"), "fixture").unwrap();
+        let alias = temp.0.join("alias");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let key = canonical_key(&real);
+        assert!(is_inside_canon(&alias.join("claude"), &key));
+        assert!(!is_inside_canon(
+            &temp.0.join("真实 App Directory/claude"),
+            &key
+        ));
+        assert!(is_inside_canon(&real, "/"));
     }
 
     #[cfg(windows)]
