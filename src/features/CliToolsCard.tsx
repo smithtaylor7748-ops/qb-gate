@@ -7,9 +7,10 @@
  * - 升级交给装它的那个包管理器（写回同一处）；认不出就只说要你自己做什么。
  * - ⛔ 官方 PowerShell 安装脚本：先下载、在这里给你看全文和 SHA-256，你勾了「看过了」才跑那一份。
  *
- * 这几个不归 IP 门禁管，也不进托管目录（Claude Code / Codex / Gemini CLI 在上面各自的卡里）。
+ * 这几个不归 IP 门禁管；macOS 的 npm 安装使用各工具独立的用户目录。
  */
 import { useState } from "react";
+import { usePlatform } from "../lib/platform";
 import {
   ChevronRight,
   Download,
@@ -40,6 +41,7 @@ import {
   Modal,
   Pill,
   Row,
+  ExternalLink,
   useToast,
 } from "../ui";
 
@@ -65,6 +67,8 @@ function errMsg(e: unknown): string {
 }
 
 export default function CliToolsCard() {
+  const platform = usePlatform();
+  const macOS = platform?.os === "macos";
   const status = useResource("cliTools", R.cliTools);
   const task = useTask("cli-tool");
   const toast = useToast();
@@ -145,14 +149,17 @@ export default function CliToolsCard() {
         OpenCode、Grok Build、OpenClaw、Hermes、Pi、MiniMax Code。这里只看文件：
         装了几份、谁装的、版本从包里的 package.json
         读，不运行它们、不联网；「检查新版本」才问 npm / GitHub /
-        PyPI。升级交给装它的那个包管理器，写回同一处。这几个不归 IP 门禁管。
+        PyPI。这几个不归 IP 门禁管。
+        {macOS
+          ? "macOS 安装使用 QB Gate 的独立用户目录，更新和卸载只处理面板托管的安装，不修改终端全局 PATH。"
+          : "升级交给装它的那个包管理器，写回同一处。"}
       </p>
       {status.error && <p className="notice notice--danger">{status.error}</p>}
       {report && !report.npm && (
         <p className="notice notice--warn mb-2">
           没找到 npm（Node.js 没装，或者不在 PATH 上）：除了 Hermes，这几个都是
-          npm 包。先装 Node.js LTS（https://nodejs.org/），Grok Build 和 MiniMax
-          Code 也可以用官方脚本装。
+          npm 包。先装 Node.js LTS（https://nodejs.org/）。
+          {!macOS && "Grok Build 和 MiniMax Code 也可以用官方脚本装。"}
         </p>
       )}
       {report?.tools.map((t) => (
@@ -298,13 +305,15 @@ function ToolRow({
   onScript: (purpose: CliScriptPurpose) => void;
   onRemove: (install: CliInstall) => void;
 }) {
+  const platform = usePlatform();
+  const windowsScripts = platform?.os === "windows";
   const def = t.installs[0];
   const installed = t.installs.length > 0;
   const nodeBlocked = latest?.node_ok === false;
   const [open, setOpen] = useState(false);
   const actions = (
     <span className="flex flex-wrap justify-end gap-1">
-      {!installed && (
+      {!installed && (windowsScripts || t.tool !== "hermes") && (
         <Button
           size="sm"
           icon={<Download size={12} />}
@@ -315,7 +324,7 @@ function ToolRow({
           用 npm 装
         </Button>
       )}
-      {!installed && t.script_url && (
+      {!installed && t.script_url && windowsScripts && (
         <Button
           size="sm"
           icon={<FileCode size={12} />}
@@ -347,7 +356,7 @@ function ToolRow({
           升级
         </Button>
       )}
-      {installed && t.update?.kind === "script" && (
+      {installed && t.update?.kind === "script" && windowsScripts && (
         <Button
           size="sm"
           icon={<FileCode size={12} />}
@@ -358,9 +367,22 @@ function ToolRow({
           用官方脚本升级…
         </Button>
       )}
+      {!windowsScripts && t.tool === "hermes" && (
+        <span className="notice">
+          自动安装暂不支持 ·{" "}
+          <ExternalLink href="https://github.com/NousResearch/hermes-agent#installation">
+            macOS 官方安装说明
+          </ExternalLink>
+        </span>
+      )}
     </span>
   );
-  const removable = t.installs.filter((i) => REMOVABLE.includes(i.source));
+  const removable = t.installs.filter(
+    (i) =>
+      REMOVABLE.includes(i.source) &&
+      (platform?.os !== "macos" ||
+        /\/cli-[^/]+\/node_modules\/\.bin\//.test(i.path)),
+  );
   return (
     <div className="qb-sw-tool">
       <Row
@@ -431,7 +453,10 @@ function ToolRow({
                 t.installs.map((i) => (
                   <p key={i.path} className="notice mt-1">
                     <span className="block break-all font-mono">{i.path}</span>
-                    {SOURCE_LABEL[i.source]} · {i.version ?? "版本读不出"}
+                    {i.source === "nvm" && platform?.os === "macos"
+                      ? "nvm"
+                      : SOURCE_LABEL[i.source]}{" "}
+                    · {i.version ?? "版本读不出"}
                     {i.default ? " · 命令行用的是这一份" : ""}
                   </p>
                 ))
@@ -443,7 +468,7 @@ function ToolRow({
           gate={
             <LockRow
               kind="na"
-              reason="不归 IP 门禁管：这几个工具不进托管目录、不上执行锁，走的是你自己配的中转或官方登录。"
+              reason="不归 IP 门禁管：这几个工具走的是你自己配的中转或官方登录。"
             />
           }
           uninstall={

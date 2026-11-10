@@ -51,6 +51,29 @@ try {
   assert.ok(
     await page.getByText("本版不提供系统执行锁", { exact: false }).isVisible(),
   );
+  await page
+    .getByRole("heading", { name: "其他命令行工具", exact: true })
+    .waitFor();
+  await page
+    .getByRole("tablist", { name: "酒馆的分页", exact: true })
+    .waitFor();
+  assert.equal(
+    await page
+      .getByRole("button", { name: "用官方脚本装…", exact: true })
+      .count(),
+    0,
+  );
+  await page.getByRole("link", { name: /macOS 官方安装说明/ }).waitFor();
+  await page.goto(
+    `${origin}/?platform=macos#/software?focus=sillytavern&tab=console`,
+  );
+  await page.getByRole("tab", { name: "控制台", exact: true }).waitFor();
+  assert.equal(
+    await page
+      .getByRole("tab", { name: "控制台", exact: true })
+      .getAttribute("aria-selected"),
+    "true",
+  );
   mkdirSync("test-results", { recursive: true });
   await page.screenshot({
     path: "test-results/macos-software.png",

@@ -24,7 +24,10 @@ pub fn install(app: &tauri::AppHandle) {
     let stage_dir = dir.clone();
     app.listen("qb-macos-ui-stage", move |event| {
         if let Ok(stage) = serde_json::from_str::<String>(event.payload()) {
-            if matches!(stage.as_str(), "await-url" | "await-invalid") {
+            if matches!(
+                stage.as_str(),
+                "await-url" | "await-invalid" | "url-inbox" | "url-confirmation"
+            ) {
                 let _ = std::fs::write(stage_dir.join(stage), "ready");
             }
         }

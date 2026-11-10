@@ -5,6 +5,8 @@ import { R } from "../lib/resources";
 import { useResource } from "../lib/store";
 import { useAction } from "../lib/workspace";
 import { Button, ExternalLink } from "../ui";
+import SillyTavernCard from "./tavern/SillyTavernCard";
+import CliToolsCard from "./CliToolsCard";
 
 export default function MacSoftware() {
   const software = useResource("software", R.software);
@@ -124,6 +126,10 @@ export default function MacSoftware() {
           {software.error || action.error}
         </p>
       )}
+      <div className="qb-legacy-detail qb-software mt-4">
+        <CliToolsCard />
+        <SillyTavernCard />
+      </div>
     </section>
   );
 }

@@ -88,6 +88,7 @@ beforeEach(() => {
   });
   mock.call.mockReset();
   mock.call.mockImplementation(async (command: string) => {
+    if (command === "platform_capabilities") return { os: "windows" };
     if (command === "cli_tools_status") return report;
     if (command === "cli_tools_script_fetch") return script;
     if (command === "cli_tools_script_run") return "Hermes 的官方脚本跑完了";

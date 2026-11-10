@@ -327,7 +327,7 @@ try {
   await waitFor(
     () => existsSync(join(root, "await-invalid")),
     "Native URL confirmation did not complete",
-    50,
+    100,
   );
   run("/usr/bin/open", [
     "-a",
@@ -411,44 +411,60 @@ try {
   );
   console.log(JSON.stringify(final));
 } finally {
-  child?.kill("SIGTERM");
-  if (existsSync(join(root, "webview.json")))
-    copyFileSync(
-      join(root, "webview.json"),
-      join(evidence, "last-webview.json"),
-    );
-  if (existsSync(join(root, "injection-error.log")))
-    copyFileSync(
-      join(root, "injection-error.log"),
-      join(evidence, "injection-error.log"),
-    );
-  if (mounted) run("/usr/bin/hdiutil", ["detach", mount]);
-  if (updateMount)
-    spawnSync("/usr/bin/hdiutil", ["detach", updateMount], { timeout: 30_000 });
-  rmSync(
-    join(smokeHome, "Library/LaunchAgents/com.qbgate.panel.autostart.plist"),
-    { force: true },
-  );
   const failures = [];
+  const cleanup = (action) => {
+    try {
+      action();
+    } catch (error) {
+      failures.push(error.message);
+    }
+  };
+  if (child && child.exitCode === null) {
+    child.kill("SIGTERM");
+    for (let attempt = 0; attempt < 40 && child.exitCode === null; attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    if (child.exitCode === null) {
+      child.kill("SIGKILL");
+      for (let attempt = 0; attempt < 20 && child.exitCode === null; attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (child.exitCode === null && child.signalCode === null)
+      failures.push("Native app cleanup did not complete");
+  }
+  for (const file of [
+    "webview.json",
+    "injection-error.log",
+    "closed.json",
+    "reopened.json",
+    "await-url",
+    "url-inbox",
+    "url-confirmation",
+    "await-invalid",
+  ])
+    if (existsSync(join(root, file)))
+      cleanup(() =>
+        copyFileSync(
+          join(root, file),
+          join(evidence, file === "webview.json" ? "last-webview.json" : file),
+        ),
+      );
+  if (mounted) cleanup(() => run("/usr/bin/hdiutil", ["detach", mount]));
+  if (updateMount)
+    cleanup(() => run("/usr/bin/hdiutil", ["detach", updateMount]));
+  cleanup(() =>
+    rmSync(
+      join(smokeHome, "Library/LaunchAgents/com.qbgate.panel.autostart.plist"),
+      { force: true },
+    ),
+  );
   for (const selectedEnv of [env, process.env]) {
     for (const args of [
       ["default-keychain", "-d", "user", "-s", oldDefault],
       ["list-keychains", "-d", "user", "-s", ...oldSearch],
-    ]) {
-      try {
-        security(args, selectedEnv);
-      } catch (error) {
-        failures.push(error.message);
-      }
-    }
+    ])
+      cleanup(() => security(args, selectedEnv));
   }
-  if (keychainCreated) {
-    try {
-      security(["delete-keychain", keychain]);
-    } catch (error) {
-      failures.push(error.message);
-    }
-  }
+  if (keychainCreated) cleanup(() => security(["delete-keychain", keychain]));
   if (failures.length)
-    throw new Error(`Keychain cleanup failed: ${failures.join("; ")}`);
+    throw new Error(`Native smoke cleanup failed: ${failures.join("; ")}`);
 }

@@ -19,6 +19,8 @@ pub mod codex_desktop;
 pub mod codex_store;
 #[cfg(target_os = "macos")]
 pub mod gemini_setup;
+#[cfg(target_os = "macos")]
+pub mod macos_cli_tools;
 pub mod macos_install;
 pub mod sillytavern;
 pub mod sillytavern_setup;

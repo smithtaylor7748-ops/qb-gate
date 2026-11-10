@@ -41,9 +41,11 @@
     }
     // The subscription acknowledgement is a local UI choice, unrelated to accounts.
     for (const dialog of document.querySelectorAll("dialog[open]")) {
-      const button = [...dialog.querySelectorAll("button")].find((b) => /知道|明白|同意|确认/.test(b.textContent));
+      const button = [...dialog.querySelectorAll("button")].find((b) => /我读完了，进入指南/.test(b.textContent));
       button?.click();
     }
+    location.hash = "/relays";
+    await wait(300);
     if (config.phase === "create") {
       const target = "claude-code:default";
       const mcp = { id: "qb-native-mcp", name: "QB native MCP", server: { command: "/usr/bin/true", args: [] }, targets: [target], description: "Disposable fixture", homepage: null, tags: [] };
@@ -139,11 +141,15 @@
 
       await invoke("plugin:event|emit", { event: "qb-macos-ui-stage", payload: "await-url" });
       const entry = await until(() => invoke("deeplink_peek"), (e) => e?.view?.kind === "prompt" && e.view.name === "QB-native-URL", "macOS Opened URL did not reach native inbox");
-      await until(() => document.querySelector("dialog[open]")?.textContent || "", (text) => text.includes("QB-native-URL"), "Native URL did not open confirmation dialog");
+      await invoke("plugin:event|emit", { event: "qb-macos-ui-stage", payload: "url-inbox" });
+      await until(() => [...document.querySelectorAll("dialog[open]")].some((dialog) => dialog.textContent.includes("QB-native-URL")), (ready) => ready, "Native URL did not open confirmation dialog");
+      await invoke("plugin:event|emit", { event: "qb-macos-ui-stage", payload: "url-confirmation" });
       check(!(await invoke("prompts_list")).prompts.some((p) => p.name === "QB-native-URL"), "Native URL imported without confirmation");
-      const dismiss = [...document.querySelectorAll("dialog[open] button")].find((b) => b.textContent.trim() === "不导入");
+      const confirmation = [...document.querySelectorAll("dialog[open]")].find((dialog) => dialog.textContent.includes("QB-native-URL"));
+      const dismiss = [...confirmation.querySelectorAll("button")].find((b) => b.textContent.trim() === "不导入");
       check(dismiss, "URL confirmation has no dismiss action"); dismiss.click();
       await until(() => invoke("deeplink_peek"), (e) => e === null, "URL dismissal did not clear inbox");
+      check(!(await invoke("prompts_list")).prompts.some((p) => p.name === "QB-native-URL"), "Dismissed native URL persisted a prompt");
       pass("Actual operating-system qbgate URL opens confirmation and does not auto-import");
       await invoke("plugin:event|emit", { event: "qb-macos-ui-stage", payload: "await-invalid" });
       await until(() => invoke("deeplink_peek"), (e) => e?.view?.kind === "error", "Unsupported native URL action was not rejected");

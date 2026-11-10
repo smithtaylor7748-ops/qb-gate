@@ -37,6 +37,16 @@ pub fn path_dirs() -> Vec<PathBuf> {
 }
 
 pub fn command(name: &str) -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    if let Some(tool) = super::cli_tools::CliTool::ALL
+        .into_iter()
+        .find(|t| t.command() == name && t.npm_package().is_some())
+    {
+        let entry = super::macos_cli_tools::entry(tool, &super::macos_cli_tools::directory(tool));
+        if entry.is_file() {
+            return Some(entry);
+        }
+    }
     path_dirs()
         .into_iter()
         .map(|p| p.join(name))

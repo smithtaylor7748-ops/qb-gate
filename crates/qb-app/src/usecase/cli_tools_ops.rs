@@ -367,27 +367,45 @@ fn tail(log: &[String]) -> String {
 
 /// 用 npm 新装（`npm i -g <包>@latest`，PATH 上那个 npm）。装完回读核对。
 pub async fn install_npm(tool: CliTool, rep: &dyn ProgressSink) -> Result<String> {
-    rep.phase(1, "找 npm");
-    let r = Roots::current();
-    let step = cli_tools::npm_install_plan(tool, &r);
-    let mut log = Vec::new();
-    let ok = run_step(&step, rep, &mut log).await?;
-    rep.phase(3, "回读核对");
-    let found = cli_tools::scan(tool, &Roots::current());
-    match cli_tools::default_install(&found).or(found.first()) {
-        Some(i) => Ok(format!(
-            "{} {} 已装好（{}）：{}",
+    #[cfg(target_os = "macos")]
+    {
+        let install = crate::install::macos_cli_tools::install_into(
+            tool,
+            &crate::install::macos_cli_tools::directory(tool),
+            rep,
+        )
+        .await?;
+        Ok(format!(
+            "{} {} 已装好（QB Gate 托管目录）：{}",
             tool.label(),
-            i.version.clone().unwrap_or_else(|| "版本读不出".into()),
-            i.source.label(),
-            i.path.display()
-        )),
-        None => Err(GateError::Other(format!(
-            "npm {}，但哪儿都找不到 {}（npm 装到了一个不在 PATH 上的前缀？）。npm 最后几行：{}",
-            if ok { "报告成功" } else { "没有成功" },
-            tool.command(),
-            tail(&log)
-        ))),
+            install.version.unwrap_or_default(),
+            install.path.display()
+        ))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        rep.phase(1, "找 npm");
+        let r = Roots::current();
+        let step = cli_tools::npm_install_plan(tool, &r);
+        let mut log = Vec::new();
+        let ok = run_step(&step, rep, &mut log).await?;
+        rep.phase(3, "回读核对");
+        let found = cli_tools::scan(tool, &Roots::current());
+        match cli_tools::default_install(&found).or(found.first()) {
+            Some(i) => Ok(format!(
+                "{} {} 已装好（{}）：{}",
+                tool.label(),
+                i.version.clone().unwrap_or_else(|| "版本读不出".into()),
+                i.source.label(),
+                i.path.display()
+            )),
+            None => Err(GateError::Other(format!(
+                "npm {}，但哪儿都找不到 {}（npm 装到了一个不在 PATH 上的前缀？）。npm 最后几行：{}",
+                if ok { "报告成功" } else { "没有成功" },
+                tool.command(),
+                tail(&log)
+            ))),
+        }
     }
 }
 

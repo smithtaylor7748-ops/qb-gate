@@ -351,6 +351,10 @@ pub fn search_dirs(tool: CliTool, r: &Roots) -> Vec<PathBuf> {
         }
     };
     let home = r.home.clone();
+    #[cfg(target_os = "macos")]
+    if tool.npm_package().is_some() {
+        push(super::macos_cli_tools::directory(tool).join("node_modules/.bin"));
+    }
 
     match tool {
         CliTool::GrokBuild => {
@@ -618,6 +622,13 @@ pub struct Install {
 
 /// 合并后的 PATH 上，命令行敲这个名字会跑哪一份。
 pub fn path_default(tool: CliTool, r: &Roots) -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    if tool.npm_package().is_some() {
+        let entry = super::macos_cli_tools::entry(tool, &super::macos_cli_tools::directory(tool));
+        if entry.is_file() {
+            return Some(entry);
+        }
+    }
     r.path_dirs
         .iter()
         .filter(|d| !is_app_alias_dir(d))
@@ -641,6 +652,14 @@ pub fn scan(tool: CliTool, r: &Roots) -> Vec<Install> {
         }
         seen.push(key.clone());
         let package_dir = tool.npm_package().and_then(|pkg| {
+            #[cfg(target_os = "macos")]
+            if super::macos_cli_tools::owns(tool, &entry) {
+                return Some(
+                    super::macos_cli_tools::directory(tool)
+                        .join("node_modules")
+                        .join(pkg),
+                );
+            }
             if cfg!(target_os = "macos") {
                 let real = std::fs::canonicalize(&entry).ok()?;
                 return real.ancestors().find_map(|directory| {
@@ -722,6 +741,16 @@ impl Step {
     pub fn shown(&self) -> String {
         match self {
             Step::Run { program, args, env } => {
+                if cfg!(target_os = "macos") {
+                    let quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+                    let mut words: Vec<String> = env
+                        .iter()
+                        .map(|(k, v)| format!("{k}={}", quote(v)))
+                        .collect();
+                    words.push(quote(&program.to_string_lossy()));
+                    words.extend(args.iter().map(|a| quote(a)));
+                    return words.join(" ");
+                }
                 let mut s = String::new();
                 for (k, v) in env {
                     s.push_str(&format!("$env:{k} = '{v}'; "));
@@ -751,6 +780,7 @@ impl Step {
 }
 
 /// 同一个目录里的某个程序（`npm.cmd`、`pnpm.exe`……），按给的扩展名顺序找第一个在的。
+#[cfg(not(target_os = "macos"))]
 fn sibling(entry: &Path, name: &str, exts: &[&str]) -> Option<PathBuf> {
     let dir = entry.parent()?;
     if cfg!(target_os = "macos") {
@@ -779,6 +809,7 @@ pub fn npm_on_path(r: &Roots) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+#[cfg(not(target_os = "macos"))]
 fn npm_args(verb: &[&str], tool: CliTool, pkg: &str, latest: bool) -> Vec<String> {
     let mut v: Vec<String> = verb.iter().map(|s| s.to_string()).collect();
     v.push(if latest {
@@ -794,10 +825,16 @@ fn npm_args(verb: &[&str], tool: CliTool, pkg: &str, latest: bool) -> Vec<String
 
 /// 新装：用 npm。没有 npm 就是 `Manual`（先装 Node.js）；Hermes 没有 npm 包，只能走官方脚本。
 pub fn npm_install_plan(tool: CliTool, r: &Roots) -> Step {
-    let Some(pkg) = tool.npm_package() else {
-        return Step::Manual(format!("{} 没有 npm 包，用官方安装脚本装。", tool.label()));
-    };
-    match npm_on_path(r) {
+    #[cfg(target_os = "macos")]
+    {
+        super::macos_cli_tools::plan(tool, &super::macos_cli_tools::directory(tool), r, false)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let Some(pkg) = tool.npm_package() else {
+            return Step::Manual(format!("{} 没有 npm 包，用官方安装脚本装。", tool.label()));
+        };
+        match npm_on_path(r) {
         Some(npm) => Step::Run {
             program: npm,
             args: npm_args(&["i", "-g"], tool, pkg, true),
@@ -807,6 +844,7 @@ pub fn npm_install_plan(tool: CliTool, r: &Roots) -> Step {
             "没找到 npm（Node.js 没装，或者不在 PATH 上）。{} 是 npm 包：先装 Node.js LTS（https://nodejs.org/），再回来点这里。",
             tool.label()
         )),
+    }
     }
 }
 
@@ -830,8 +868,25 @@ pub fn update_plan(tool: CliTool, installs: &[Install], r: &Roots) -> Step {
             )
         });
     };
-    let pkg = tool.npm_package();
-    match (inst.source, pkg) {
+    #[cfg(target_os = "macos")]
+    {
+        if super::macos_cli_tools::owns(tool, &inst.path) {
+            return super::macos_cli_tools::plan(
+                tool,
+                &super::macos_cli_tools::directory(tool),
+                r,
+                false,
+            );
+        }
+        Step::Manual(format!(
+            "这一份由外部安装，请用原安装方式更新 {}；面板只自动更新自己的托管副本。",
+            tool.label()
+        ))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let pkg = tool.npm_package();
+        match (inst.source, pkg) {
         (Source::Npm | Source::Nvm, Some(pkg)) => {
             // Node 自己目录当前缀（nvm-windows、`%ProgramFiles%\nodejs`）：同一层就有 npm.cmd，锚定到它。
             // 默认的 `%APPDATA%\npm` 前缀里没有 npm.cmd，用 PATH 上那个（它的全局前缀就是这里）。
@@ -908,17 +963,35 @@ pub fn update_plan(tool: CliTool, installs: &[Install], r: &Roots) -> Step {
             source.label()
         )),
     }
+    }
 }
 
 /// 卸载某一份：只做包管理器装的（npm / nvm-windows / pnpm / Volta）。别的给出要做什么。
 pub fn uninstall_plan(tool: CliTool, inst: &Install, r: &Roots) -> Step {
-    let Some(pkg) = tool.npm_package() else {
-        return Step::Manual(format!(
-            "{} 是 Python 装的：按它官方文档卸载（面板不替你删 Python 环境里的东西）。",
+    #[cfg(target_os = "macos")]
+    {
+        if super::macos_cli_tools::owns(tool, &inst.path) {
+            return super::macos_cli_tools::plan(
+                tool,
+                &super::macos_cli_tools::directory(tool),
+                r,
+                true,
+            );
+        }
+        Step::Manual(format!(
+            "这一份由外部安装，请用原安装方式卸载 {}。",
             tool.label()
-        ));
-    };
-    match inst.source {
+        ))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let Some(pkg) = tool.npm_package() else {
+            return Step::Manual(format!(
+                "{} 是 Python 装的：按它官方文档卸载（面板不替你删 Python 环境里的东西）。",
+                tool.label()
+            ));
+        };
+        match inst.source {
         Source::Npm | Source::Nvm => {
             match sibling(&inst.path, "npm", &["cmd", "exe"]).or_else(|| npm_on_path(r)) {
                 Some(npm) => Step::Run {
@@ -956,6 +1029,7 @@ pub fn uninstall_plan(tool: CliTool, inst: &Install, r: &Roots) -> Step {
             "这一份（{}）面板认不出是怎么装的，不替你删。用当初装它的方式卸载。",
             other.label()
         )),
+    }
     }
 }
 
