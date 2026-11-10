@@ -102,7 +102,11 @@ fn oem_decode(_: &[u8]) -> Option<String> {
 /// 退出后变成孤儿 —— 一个还在跑的 `codex.exe` 会继续替使用者烧额度。
 /// `tokio::process::Command` 的 `kill_on_drop` 只管 `Child` 被 drop 的那一刻，
 /// 面板被杀、崩溃时 drop 根本不会跑；Job 是内核层的，靠得住。
-pub struct KillOnCloseJob(#[cfg(windows)] isize);
+pub struct KillOnCloseJob(
+    #[cfg(windows)] isize,
+    // 保留终止前的进程句柄，跨 await / 取消仍能确认真正退出。
+    #[cfg(windows)] std::sync::Mutex<Vec<std::os::windows::io::OwnedHandle>>,
+);
 
 #[cfg(windows)]
 impl KillOnCloseJob {
@@ -124,7 +128,7 @@ impl KillOnCloseJob {
                     "Job 对象设不上 KILL_ON_JOB_CLOSE：{e}"
                 )));
             }
-            Ok(Self(job.0 as isize))
+            Ok(Self(job.0 as isize, std::sync::Mutex::new(Vec::new())))
         }
     }
 
@@ -151,6 +155,169 @@ impl KillOnCloseJob {
         unsafe {
             let _ = TerminateJobObject(HANDLE(self.0 as *mut core::ffi::c_void), 1);
         }
+    }
+
+    /// 安装器退出不代表它的后代已退出。确认整棵树释放后才能删除下载文件、
+    /// 恢复执行锁；否则刚重锁的文件还可能被一个迟到的子进程替换。
+    pub async fn terminate_and_wait(
+        &self,
+        timeout: std::time::Duration,
+    ) -> crate::error::Result<()> {
+        self.request_termination()?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        while self.has_active_processes()? {
+            if tokio::time::Instant::now() >= deadline {
+                return Err(crate::error::GateError::Other(
+                    "安装进程树尚未完全退出，请稍后重试更新。".into(),
+                ));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        Ok(())
+    }
+
+    /// 只给安装守卫的 Drop 使用：Future 取消时不能 await，但也不能先恢复
+    /// 执行锁、后结束仍可能写文件的安装进程。正常路径使用异步版本。
+    pub fn terminate_and_wait_blocking(
+        &self,
+        timeout: std::time::Duration,
+    ) -> crate::error::Result<()> {
+        self.request_termination()?;
+        let deadline = std::time::Instant::now() + timeout;
+        while self.has_active_processes()? {
+            if std::time::Instant::now() >= deadline {
+                return Err(crate::error::GateError::Other(
+                    "安装进程树尚未完全退出，请稍后重试更新。".into(),
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        Ok(())
+    }
+
+    fn request_termination(&self) -> crate::error::Result<()> {
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::JobObjects::TerminateJobObject;
+        // ActiveProcesses 会早于进程对象变为 signaled，不能只等待 Job 计数。
+        // 终止前持有成员句柄；即使本次异步等待被取消，同步 Drop 仍能继续等它们。
+        let tracked = self.track_processes();
+        unsafe { TerminateJobObject(HANDLE(self.0 as *mut core::ffi::c_void), 1) }
+            .map_err(|e| crate::error::GateError::Other(format!("无法结束安装进程树：{e}")))?;
+        tracked
+    }
+
+    fn track_processes(&self) -> crate::error::Result<()> {
+        use std::os::windows::io::{FromRawHandle, OwnedHandle};
+        use windows::Win32::Foundation::{BOOL, ERROR_INVALID_PARAMETER, ERROR_MORE_DATA, HANDLE};
+        use windows::Win32::System::JobObjects::{
+            IsProcessInJob, JobObjectBasicProcessIdList, QueryInformationJobObject,
+            JOBOBJECT_BASIC_PROCESS_ID_LIST,
+        };
+        use windows::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+        };
+        let failure = |e| crate::error::GateError::Other(format!("无法跟踪安装进程退出：{e}"));
+        let mut capacity = 16;
+        while capacity <= 65536 {
+            // 用 usize 数组提供正确对齐；结构末尾是变长的进程 ID 列表。
+            let mut data = vec![0usize; 2 + capacity];
+            let list = data.as_mut_ptr() as *mut JOBOBJECT_BASIC_PROCESS_ID_LIST;
+            let result = unsafe {
+                QueryInformationJobObject(
+                    HANDLE(self.0 as *mut core::ffi::c_void),
+                    JobObjectBasicProcessIdList,
+                    list as *mut _,
+                    (data.len() * std::mem::size_of::<usize>()) as u32,
+                    None,
+                )
+            };
+            if let Err(e) = result {
+                if e.code() == windows::core::HRESULT::from_win32(ERROR_MORE_DATA.0) {
+                    capacity *= 2;
+                    continue;
+                }
+                return Err(failure(e));
+            }
+            let count = unsafe { (*list).NumberOfProcessIdsInList as usize };
+            if count > capacity {
+                capacity *= 2;
+                continue;
+            }
+            let pids = unsafe { std::slice::from_raw_parts((*list).ProcessIdList.as_ptr(), count) };
+            let mut handles = self.1.lock().unwrap_or_else(|e| e.into_inner());
+            for &pid in pids {
+                let raw = match unsafe {
+                    OpenProcess(
+                        PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                        false,
+                        pid as u32,
+                    )
+                } {
+                    Ok(handle) => handle,
+                    Err(e)
+                        if e.code()
+                            == windows::core::HRESULT::from_win32(ERROR_INVALID_PARAMETER.0) =>
+                    {
+                        continue
+                    }
+                    Err(e) => return Err(failure(e)),
+                };
+                let handle = unsafe { OwnedHandle::from_raw_handle(raw.0) };
+                let mut member = BOOL::default();
+                unsafe {
+                    IsProcessInJob(raw, HANDLE(self.0 as *mut core::ffi::c_void), &mut member)
+                }
+                .map_err(failure)?;
+                // PID 可能在查询后被回收复用；只等仍属于本 Job 的进程。
+                if member.as_bool() {
+                    handles.push(handle);
+                }
+            }
+            return Ok(());
+        }
+        Err(crate::error::GateError::Other(
+            "安装进程树持续变化，无法取得完整进程列表".into(),
+        ))
+    }
+
+    fn has_active_processes(&self) -> crate::error::Result<bool> {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Foundation::{WAIT_FAILED, WAIT_OBJECT_0};
+        use windows::Win32::System::JobObjects::{
+            JobObjectBasicAccountingInformation, QueryInformationJobObject,
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        };
+        use windows::Win32::System::Threading::WaitForSingleObject;
+        let pending = {
+            let mut handles = self.1.lock().unwrap_or_else(|e| e.into_inner());
+            let mut failure = None;
+            handles.retain(|handle| {
+                let status = unsafe { WaitForSingleObject(HANDLE(handle.as_raw_handle()), 0) };
+                if status == WAIT_FAILED {
+                    failure = Some(std::io::Error::last_os_error());
+                }
+                status != WAIT_OBJECT_0
+            });
+            if let Some(e) = failure {
+                return Err(crate::error::GateError::Other(format!(
+                    "等待安装进程退出失败：{e}"
+                )));
+            }
+            !handles.is_empty()
+        };
+        let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        unsafe {
+            QueryInformationJobObject(
+                HANDLE(self.0 as *mut core::ffi::c_void),
+                JobObjectBasicAccountingInformation,
+                &mut info as *mut _ as *mut _,
+                std::mem::size_of_val(&info) as u32,
+                None,
+            )
+        }
+        .map_err(|e| crate::error::GateError::Other(format!("无法确认安装进程树已经退出：{e}")))?;
+        Ok(pending || info.ActiveProcesses != 0)
     }
 }
 
@@ -180,6 +347,18 @@ impl KillOnCloseJob {
         Ok(())
     }
     pub fn terminate_all(&self) {}
+    pub async fn terminate_and_wait(
+        &self,
+        _timeout: std::time::Duration,
+    ) -> crate::error::Result<()> {
+        Ok(())
+    }
+    pub fn terminate_and_wait_blocking(
+        &self,
+        _timeout: std::time::Duration,
+    ) -> crate::error::Result<()> {
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------- PowerShell

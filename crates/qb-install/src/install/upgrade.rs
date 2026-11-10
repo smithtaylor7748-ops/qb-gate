@@ -46,7 +46,6 @@ use std::path::{Path, PathBuf};
 use ts_rs::TS;
 
 const RELEASES_URL: &str = "https://downloads.claude.ai/claude-code-releases";
-pub const INSTALLER_URL: &str = "https://claude.ai/install.ps1";
 
 /// 残留副本的文件名前缀。
 ///

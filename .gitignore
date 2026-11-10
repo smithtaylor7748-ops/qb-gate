@@ -3,6 +3,10 @@ dist
 .DS_Store
 *.local
 
+# Embedded Python bridge adapter tests never publish bytecode caches.
+__pycache__/
+*.py[cod]
+
 # workspace 的 target 在仓库根，不再是 src-tauri/target
 /target
 src-tauri/gen

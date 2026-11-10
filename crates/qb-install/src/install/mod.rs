@@ -6,6 +6,7 @@ pub mod cli_tools_version;
 pub mod detect;
 pub mod inventory;
 pub mod managed;
+pub mod native_claude;
 pub mod purge;
 pub mod relocate;
 pub mod self_update;

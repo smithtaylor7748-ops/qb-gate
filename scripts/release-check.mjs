@@ -70,7 +70,7 @@ for (const file of files) {
     )
   )
     problems.push(`${file}: runtime or credential file`);
-  if (!/\.(?:md|rs|tsx?|m?js|json|ya?ml|toml|txt|css)$/.test(file)) continue;
+  if (!/\.(?:md|rs|py|tsx?|m?js|json|ya?ml|toml|txt|css)$/.test(file)) continue;
   const body = readFileSync(file, "utf8");
   if (body.includes("\0")) problems.push(`${file}: embedded NUL`);
   const lines = body.split(/\r?\n/);

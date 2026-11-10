@@ -626,15 +626,10 @@ fn settings_writers_invalidate_the_cache() {
 /// 开源出去之后这是每一台机器的问题，所以用测试守着，不靠自觉。
 #[test]
 fn every_powershell_call_pins_its_output_encoding() {
-    /// 两处豁免，各有各的理由 —— 加第三处之前先想清楚。
+    /// 只有统一的 PowerShell 入口可以直接创建命令。
     const ALLOWED: &[&str] = &[
         // 本体：`powershell_std` / `powershell_tokio` 就在这里。
         "process.rs",
-        // 跑的是 Anthropic 自己的 install.ps1，走 `-File`：脚本内容是第三方的，
-        // 前奏塞不进去。改成 `-Command "& '<路径>'"` 又会把一个我们控制不了的
-        // 临时路径（可能带中文用户名、带单引号）拼进脚本串里，那是更大的口子。
-        // 它的输出是英文安装日志，只进日志、不参与任何判断。
-        "install_ops.rs",
     ];
 
     let mut offenders = Vec::new();

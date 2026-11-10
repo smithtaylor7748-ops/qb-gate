@@ -32,6 +32,8 @@ pub const PLUGIN_ID: &str = "sillytavern";
 pub const PLUGIN_NAME: &str = "酒馆 SillyTavern";
 
 const BRIDGE_READY_ATTEMPTS: u32 = 40; // 40 × 500ms = 20 秒
+/// 原创启动适配器随面板编译分发；外部桥源码仍由使用者提供。
+const CLAUDE_BRIDGE_LAUNCHER: &str = include_str!("claude_bridge_launcher.py");
 
 /// 等酒馆应答 HTTP 的上限：360 × 500ms = **180 秒**。
 ///
@@ -1152,6 +1154,80 @@ pub async fn start_tavern_only(rep: &dyn ProgressSink) -> Result<String> {
     Ok(url)
 }
 
+/// 把适配器和真实桥路径作为独立参数传给 Python，保留 PID 识别所需的路径证据。
+fn claude_bridge_launch_args(
+    bridge_py: &Path,
+    claude: &Path,
+    data_dir: &Path,
+    port: u16,
+) -> Vec<String> {
+    vec![
+        "-u".into(),
+        "-B".into(),
+        "-c".into(),
+        CLAUDE_BRIDGE_LAUNCHER.into(),
+        bridge_py.display().to_string(),
+        "--claude".into(),
+        claude.display().to_string(),
+        "--data-dir".into(),
+        data_dir.display().to_string(),
+        "--port".into(),
+        port.to_string(),
+    ]
+}
+
+/// 加载模块并检查启动接口，不调用 main；适配器不主动读取账户或设置。
+/// 外部模块可能有导入时行为；stdout/stderr 一律丢弃，只解释固定退出码。
+async fn check_claude_bridge_compatibility(
+    python: &Path,
+    launch_args: &[String],
+    cwd: &Path,
+    env: &[(String, String)],
+) -> Result<()> {
+    use std::process::Stdio;
+    use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
+
+    let job = crate::process::KillOnCloseJob::new()?;
+    let mut command = crate::process::hidden_tokio(tokio::process::Command::new(python));
+    command
+        // 与正式启动使用相同的 argv / cwd / 环境；只在适配器参数前加 --check。
+        .args(&launch_args[..4])
+        .arg("--check")
+        .args(&launch_args[4..])
+        .current_dir(cwd)
+        .envs(env.iter().map(|(key, value)| (key, value)))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = command.spawn()?;
+    if let Err(error) = job.assign(&child) {
+        let _ = child.kill().await;
+        return Err(error);
+    }
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    stdin.write_all(b"QB_GATE_BRIDGE_CHECK\n").await?;
+    drop(stdin);
+    let result = tokio::time::timeout(Duration::from_secs(10), child.wait()).await;
+    let stopped = job.terminate_and_wait(Duration::from_secs(5)).await;
+    if !matches!(&result, Ok(Ok(_))) {
+        let _ = child.kill().await;
+    }
+    stopped?;
+    let status = result.map_err(|_| {
+        GateError::Other("Claude 桥接兼容性检查超时；请检查 Python 与外部桥接项目。".into())
+    })??;
+    if status.success() {
+        return Ok(());
+    }
+    Err(GateError::Other(match status.code() {
+        Some(20) => "找不到 Claude 桥接文件；请在桥接设置中检查项目目录。",
+        Some(21) => "这份 Claude 桥不支持按次设置内置插件；请更新外部 bridge.py（需提供插件名单、plugins_disabled_for_run 与 main(argv) 接口），再从面板启动。",
+        _ => "Claude 桥接模块加载失败；请检查其 Python 依赖或更新外部 bridge.py。",
+    }.into()))
+}
+
 /// 阶段 1–3：官方 Claude Code + Python + `bridge.py` → 起桥接 → 等 `/health`。
 async fn start_claude_bridge(
     rep: &dyn ProgressSink,
@@ -1190,25 +1266,14 @@ async fn start_claude_bridge(
                     "桥接端口被其他程序占用，未停止任何进程".into(),
                 ));
             }
-            start_owned(
-                "bridge",
-                &python,
-                vec![
-                    "-u".into(),
-                    bridge_py.display().to_string(),
-                    "--claude".into(),
-                    claude.display().to_string(),
-                    "--data-dir".into(),
-                    dd.display().to_string(),
-                    "--port".into(),
-                    cfg.bridge_port.to_string(),
-                ],
-                &cfg.bridge_root,
-                vec![
-                    ("CLAUDE_CONFIG_DIR".into(), official.display().to_string()),
-                    ("DISABLE_AUTOUPDATER".into(), "1".into()),
-                ],
-            )?;
+            let launch_args = claude_bridge_launch_args(&bridge_py, &claude, &dd, cfg.bridge_port);
+            let launch_env = vec![
+                ("CLAUDE_CONFIG_DIR".into(), official.display().to_string()),
+                ("DISABLE_AUTOUPDATER".into(), "1".into()),
+            ];
+            check_claude_bridge_compatibility(&python, &launch_args, &cfg.bridge_root, &launch_env)
+                .await?;
+            start_owned("bridge", &python, launch_args, &cfg.bridge_root, launch_env)?;
             attempt.created.push("bridge".into());
         }
     }
@@ -1337,6 +1402,30 @@ pub fn stop_claude_bridge() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adapted_launch_preserves_real_bridge_path_for_process_identification() {
+        let bridge = Path::new("D:/bridge 中文 with spaces/bridge.py");
+        let data = Path::new("D:/profile data");
+        let args = claude_bridge_launch_args(bridge, Path::new("D:/bin/claude.exe"), data, 5123);
+        let command_line = format!(
+            "python.exe {}",
+            args.iter()
+                .map(|arg| format!("\"{}\"", arg.replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        assert_eq!(
+            tavern_locate::bridge_root_from_cmdline(&command_line),
+            bridge.parent().map(Path::to_path_buf)
+        );
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--data-dir", "D:/profile data"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["-c", CLAUDE_BRIDGE_LAUNCHER]));
+    }
 
     /// 就绪窗口必须比一次真实冷启动长。
     ///

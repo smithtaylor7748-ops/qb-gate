@@ -235,6 +235,27 @@ fn relock_if_gated(t: InstallTarget) -> usize {
 
 // ------------------------------------------------------------------ 执行
 
+/// 进程内的 operations 锁挡不住另一份面板。锁文件保留，只有内核锁随句柄释放；
+/// 删除锁文件会让不同进程锁到不同的文件，重新引入并发。
+fn native_upgrade_lock(downloads: &std::path::Path) -> Result<std::fs::File> {
+    std::fs::create_dir_all(downloads)?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(downloads.join(".qbgate-native-install.lock"))?;
+    file.try_lock().map_err(|e| match e {
+        std::fs::TryLockError::WouldBlock => {
+            GateError::Other("另一份面板正在安装或更新 Claude Code，请等该任务结束后再试。".into())
+        }
+        std::fs::TryLockError::Error(e) => {
+            GateError::Other(format!("无法取得 Claude Code 更新锁：{e}"))
+        }
+    })?;
+    Ok(file)
+}
+
 /// 执行升级。`force` 为真时允许降级。
 pub async fn upgrade(
     ch: Channel,
@@ -242,6 +263,11 @@ pub async fn upgrade(
     state: &GateState,
     rep: &dyn ProgressSink,
 ) -> Result<String> {
+    let downloads = crate::install::inventory::native_downloads(
+        &crate::install::inventory::Roots::current(),
+    )
+    .ok_or_else(|| GateError::Other("找不到 Claude Code 下载目录：用户主目录不可用".into()))?;
+    let _install_lock = native_upgrade_lock(&downloads)?;
     rep.phase(1, "比对本机版本与渠道版本");
     let p = crate::install::upgrade::plan(ch).await;
     if !force && matches!(p.action, Action::UpToDate | Action::WouldDowngrade) {
@@ -268,17 +294,10 @@ pub async fn upgrade(
         );
     }
 
-    // 官方安装器自己做校验和验证，这里不重复实现。
-    rep.phase(3, "下载官方安装脚本");
-    let script = std::env::temp_dir().join(format!("claude-installer-{}.ps1", std::process::id()));
-    let body = reqwest::Client::new()
-        .get(crate::install::upgrade::INSTALLER_URL)
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
-    std::fs::write(&script, body)?;
+    // 官方脚本用固定的版本缓存名：旧面板退出后尚在下载/运行的安装器会占用它。
+    // 每次独立下载同一个官方 bootstrap，仍由它执行 install；不修改用户主目录。
+    rep.phase(3, "下载并校验官方安装器");
+    let installer = crate::install::native_claude::prepare(rep, 3).await?;
 
     // ---- 维护窗口开始。
     //
@@ -294,20 +313,19 @@ pub async fn upgrade(
     if !guard.did_unlock() {
         rep.log(4, "注意：这一轮没能先解开执行锁，安装器可能因此写不进去");
     }
-    let out = crate::process::hidden_tokio(tokio::process::Command::new("powershell"))
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            &script.display().to_string(),
-            ch.as_str(),
-        ])
-        .output()
+    // 固定到刚比对过的版本，避免检查和安装之间渠道移动，导致核对另一版。
+    let out = installer
+        .run(p.available.as_deref().unwrap_or(ch.as_str()))
         .await;
-    let _ = std::fs::remove_file(&script);
-
-    let out = out?;
+    drop(installer);
+    let out = match out {
+        Ok(out) => out,
+        Err(e) => {
+            let done = guard.finish(state).await;
+            rep.fail(&format!("{e} {}", done.detail));
+            return Err(e);
+        }
+    };
     for line in String::from_utf8_lossy(&out.stdout).lines() {
         if !line.trim().is_empty() {
             rep.log(4, line.trim());
@@ -315,7 +333,7 @@ pub async fn upgrade(
     }
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        let msg = format!("官方 Claude 安装程序失败：{err}");
+        let msg = format!("官方 Claude 安装程序失败（{}）：{err}", out.status);
         let done = guard.finish(state).await;
         rep.fail(&format!("{msg} {}", done.detail));
         return Err(GateError::Other(msg));
@@ -432,4 +450,23 @@ pub async fn upgrade(
     );
     rep.done(&detail);
     Ok(detail)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::native_upgrade_lock;
+
+    #[test]
+    fn native_updates_cannot_overlap_and_a_closed_owner_does_not_leave_a_stale_lock() {
+        let dir = std::env::temp_dir().join(format!("qb-native-lock-{}", uuid::Uuid::new_v4()));
+        let first = native_upgrade_lock(&dir).unwrap();
+        let err = native_upgrade_lock(&dir).unwrap_err();
+        assert!(err.to_string().contains("另一份面板"), "{err}");
+        drop(first);
+        // 文件仍在也能重新获取：崩溃/退出之后不需要手工删锁文件。
+        assert!(dir.join(".qbgate-native-install.lock").is_file());
+        let next = native_upgrade_lock(&dir).unwrap();
+        drop(next);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

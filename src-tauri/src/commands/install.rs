@@ -431,7 +431,7 @@ pub async fn upgrade_execute(
 ) -> Result<String> {
     let _guard = operations::exclusive().await?;
     // v0.9.0：面板托管的那份在，就升它 —— 从官方源下新版、核对、替换，旧的留底。
-    // 不在才走下面原来那条（官方安装脚本升 `~\.local\bin` 那份）。
+    // 不在才走下面原生那条（官方安装器升 `~\.local\bin` 那份）。
     if install::managed::is_installed(install::managed::App::ClaudeCode) {
         let plan = install::upgrade::plan(channel).await;
         if !force
@@ -452,7 +452,7 @@ pub async fn upgrade_execute(
         return Ok(r.detail);
     }
 
-    // 七段：比版本 / 清残留 / 下脚本 / 跑安装器 / 按哈希核对 / 必要时自己补完 /
+    // 七段：比版本 / 清残留 / 下载校验 / 跑安装器 / 按哈希核对 / 必要时自己补完 /
     // 重锁并恢复租约。第 5、6 两段是 v0.7.0 新增的，见 upgrade.rs 文件头。
     let rep = Reporter::new(app, events::TASK_UPGRADE, 7);
     let r = usecase::install_ops::upgrade(channel, force, &state.gate, &rep).await;

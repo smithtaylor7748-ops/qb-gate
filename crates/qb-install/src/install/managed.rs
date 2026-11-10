@@ -610,7 +610,7 @@ async fn get_text(c: &reqwest::Client, url: &str) -> Result<String> {
     r.map_err(|e| GateError::Other(format!("访问 {url} 失败：{e}")))
 }
 
-async fn claude_release(channel: &str) -> Result<Release> {
+pub(crate) async fn claude_release(channel: &str) -> Result<Release> {
     let c = http()?;
     let version = get_text(&c, &format!("{CLAUDE_RELEASES}/{channel}"))
         .await?

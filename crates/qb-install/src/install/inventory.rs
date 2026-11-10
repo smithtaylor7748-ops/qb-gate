@@ -671,7 +671,7 @@ pub fn scan(r: &Roots) -> Vec<Install> {
         // 官方安装脚本的下载缓存 `~\.claude\downloads\claude-<版本>-win32-<架构>.exe`。
         // 脚本正常跑完会删掉它，被打断就留下一份完整的二进制（本机实测一份 218 MB，
         // 2.1.263）—— 没锁的完整副本，§1 第 1 条。只收这个文件名形状，目录里别的东西不碰。
-        for e in entries(&h.join(".claude").join("downloads")) {
+        for e in entries(&native_downloads(r).expect("home is available")) {
             let p = e.path();
             let n = name_lower(&p);
             if p.is_file() && n.starts_with("claude-") && n.ends_with(".exe") {
@@ -952,6 +952,11 @@ pub fn lockable_paths(r: &Roots) -> Vec<(PathBuf, Kind)> {
         .collect();
     v.sort_by(|a, b| a.0.cmp(&b.0));
     v
+}
+
+/// 官方安装引导程序的下载目录，也供面板的独立安装下载使用。
+pub fn native_downloads(r: &Roots) -> Option<PathBuf> {
+    Some(r.home.as_ref()?.join(".claude").join("downloads"))
 }
 
 /// 官方原生安装器的落点。升级走的就是这一份，**不管它现在在不在**。
