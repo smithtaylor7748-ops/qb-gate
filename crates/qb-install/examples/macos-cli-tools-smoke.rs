@@ -62,9 +62,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         return Err("Production launch lookup did not select managed entry".into());
     }
-    let Step::Run { program, args, env } =
-        qb_install::install::cli_tools::update_plan(tool, &found, &Roots::current())
-    else {
+    if tool == CliTool::MiniMaxCode {
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("package.json"))?)?;
+        println!(
+            "Before update preparation allowScripts: {}",
+            manifest["allowScripts"]
+        );
+    }
+    // Match the application's update preparation, including its persistent npm script policy.
+    macos_cli_tools::prepare_manifest(tool, &dir)?;
+    if tool == CliTool::MiniMaxCode {
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("package.json"))?)?;
+        println!(
+            "After update preparation allowScripts: {}",
+            manifest["allowScripts"]
+        );
+    }
+    let update = qb_install::install::cli_tools::update_plan(tool, &found, &Roots::current());
+    println!("Production update command: {}", update.shown());
+    let Step::Run { program, args, env } = update else {
         return Err("Managed update plan was not runnable".into());
     };
     if args.iter().any(|a| a == "-g")
@@ -75,17 +93,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Update escaped its managed prefix".into());
     }
     let update_env: Vec<_> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let mut update_log = Vec::new();
     if !qb_install::install::winget::run_streaming_env(
         &program.display().to_string(),
         &args,
         &update_env,
         &qb_foundation::sink::Silent,
         2,
-        &mut Vec::new(),
+        &mut update_log,
     )
     .await?
     {
-        return Err("Production update failed".into());
+        return Err(format!(
+            "Production update failed for {}: {}",
+            tool.command(),
+            update_log
+                .iter()
+                .rev()
+                .take(20)
+                .rev()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" / ")
+        )
+        .into());
     }
     let updated = macos_cli_tools::inspect(tool, &dir)?;
     let version = updated
@@ -145,13 +176,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Managed uninstall plan was not runnable".into());
     };
     let env: Vec<_> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let mut uninstall_log = Vec::new();
     let ok = qb_install::install::winget::run_streaming_env(
         &program.display().to_string(),
         &args,
         &env,
         &qb_foundation::sink::Silent,
         3,
-        &mut Vec::new(),
+        &mut uninstall_log,
     )
     .await?;
     if !ok
@@ -160,7 +192,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .any(|i| i.path == installed.path)
     {
-        return Err("Managed uninstall did not remove installed entry".into());
+        return Err(format!(
+            "Managed uninstall did not remove installed entry: {}",
+            uninstall_log
+                .iter()
+                .rev()
+                .take(20)
+                .rev()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" / ")
+        )
+        .into());
     }
     if std::fs::read_to_string(external)? != "external-install-sentinel" {
         return Err("External installation changed".into());
