@@ -42,10 +42,24 @@ pub fn plan(tool: CliTool, dir: &Path, roots: &Roots, uninstall: bool) -> Step {
         Ok(path) => path.to_string_lossy().into_owned(),
         Err(e) => return Step::Manual(format!("Node.js 的 PATH 无效：{e}")),
     };
+    // npm 11.19 can retain orphan lockfile nodes when /var and /private/var
+    // identify the same prefix. Use one physical path for every operation,
+    // after the shared guard rejects user-created links and reparse points.
+    if let Err(e) = crate::config_io::ensure_plain_path(dir) {
+        return Step::Manual(format!("托管 npm 目录不安全：{e}"));
+    }
+    let prefix = if dir.exists() {
+        match std::fs::canonicalize(dir) {
+            Ok(path) => path,
+            Err(e) => return Step::Manual(format!("无法确认托管 npm 目录：{e}")),
+        }
+    } else {
+        dir.to_path_buf()
+    };
     let mut args: Vec<String> = vec![
         if uninstall { "uninstall" } else { "install" }.into(),
         "--prefix".into(),
-        dir.display().to_string(),
+        prefix.display().to_string(),
         "--global=false".into(),
         "--no-audit".into(),
         "--no-fund".into(),
@@ -78,13 +92,14 @@ pub async fn install_into(
     dir: &Path,
     rep: &dyn ProgressSink,
 ) -> Result<cli_tools::Install> {
+    crate::config_io::ensure_plain_path(dir)?;
+    std::fs::create_dir_all(dir)?;
+    prepare_manifest(tool, dir)?;
+    // Resolve the now-existing prefix before constructing npm's first command.
     let plan = plan(tool, dir, &Roots::current(), false);
     let Step::Run { program, args, env } = &plan else {
         return Err(GateError::Other(plan.shown()));
     };
-    crate::config_io::ensure_plain_path(dir)?;
-    std::fs::create_dir_all(dir)?;
-    prepare_manifest(tool, dir)?;
     let env: Vec<_> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
     rep.phase(2, &format!("安装 {} 到 QB Gate 托管目录", tool.label()));
     let mut log = Vec::new();
@@ -238,6 +253,38 @@ mod tests {
         std::fs::write(&path, denied).unwrap();
         assert!(prepare_manifest(CliTool::MiniMaxCode, &root).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), denied);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn canonical_system_alias_prefix_keeps_user_link_protection() {
+        let root = Path::new("/var/tmp").join(format!("qb-npm-prefix-{}", crate::config_io::id()));
+        let dir = root.join("managed");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::write(root.join("bin/node"), "fixture").unwrap();
+        std::fs::write(root.join("bin/npm"), "fixture").unwrap();
+        let roots = Roots {
+            path_dirs: vec![root.join("bin")],
+            ..Roots::default()
+        };
+        let canonical = std::fs::canonicalize(&dir).unwrap();
+        for uninstall in [false, true] {
+            let Step::Run { args, .. } = plan(CliTool::MiniMaxCode, &dir, &roots, uninstall) else {
+                panic!("System alias must remain supported")
+            };
+            assert!(args
+                .windows(2)
+                .any(|pair| pair == ["--prefix", canonical.to_str().unwrap()]));
+        }
+        let alias = root.join("user-link");
+        std::os::unix::fs::symlink(&dir, &alias).unwrap();
+        assert!(matches!(
+            plan(CliTool::MiniMaxCode, &alias, &roots, false),
+            Step::Manual(_)
+        ));
+        std::fs::remove_file(alias).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 }

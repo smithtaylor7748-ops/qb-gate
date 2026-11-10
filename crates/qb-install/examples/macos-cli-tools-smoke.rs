@@ -85,10 +85,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Step::Run { program, args, env } = update else {
         return Err("Managed update plan was not runnable".into());
     };
-    if args.iter().any(|a| a == "-g")
+    let canonical_dir = std::fs::canonicalize(&dir)?;
+    if !canonical_dir.starts_with(std::fs::canonicalize(&root)?)
+        || args.iter().any(|a| a == "-g")
         || !args
             .windows(2)
-            .any(|a| a == ["--prefix", dir.to_str().unwrap()])
+            .any(|a| a == ["--prefix", canonical_dir.to_str().unwrap()])
     {
         return Err("Update escaped its managed prefix".into());
     }
