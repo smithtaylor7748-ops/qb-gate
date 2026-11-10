@@ -105,7 +105,10 @@ pub fn history(app_dir: &Path, app: App, current: Option<&str>) -> Vec<VersionEn
                 .unwrap_or_default();
             Some(VersionEntry {
                 is_current: current == Some(version.as_str()),
+                #[cfg(windows)]
                 locked: crate::acl::locked(&exe).unwrap_or(false),
+                #[cfg(not(windows))]
+                locked: false,
                 version,
                 sha256: rec.sha256,
                 archived_at: rec.installed_at,

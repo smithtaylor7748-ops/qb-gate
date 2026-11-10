@@ -1028,7 +1028,7 @@ pub async fn install(app: App, channel: &str, rep: &dyn ProgressSink) -> Result<
     }
 
     rep.phase(5, "核对数字签名");
-    let (bin, helpers) = match app {
+    let (bin, helpers): (PathBuf, Vec<PathBuf>) = match app {
         App::ClaudeCode => (file.clone(), Vec::new()),
         App::Codex => {
             let out = dl.join("extract");

@@ -41,6 +41,7 @@ pub use qb_sysenv::sysenv;
 pub mod app;
 pub mod commands;
 pub mod events;
+mod macos_smoke;
 mod startup;
 mod station_login;
 
@@ -496,6 +497,7 @@ pub fn run() {
         ]))
         .setup(|app| {
             use tauri::Manager;
+            macos_smoke::install(app.handle());
             // 「界面该刷新了」在这里接上托盘。
             //
             // 装配点是全项目唯一同时认识 `app` 与 `tray` 的地方 ——

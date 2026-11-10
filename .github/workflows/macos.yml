@@ -39,6 +39,8 @@ jobs:
           targets: aarch64-apple-darwin
           components: rustfmt, clippy
       - uses: swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: npm ci
       - run: npm run release:check
       - run: npm run format:check
@@ -50,6 +52,10 @@ jobs:
       - run: npx playwright install chromium
       - run: npm run test:ui
       - run: node scripts/macos-ui-smoke.mjs
+      - name: Build native runtime smoke
+        run: cargo build --locked -p qb-platform --example macos-runtime-smoke
+      - name: Verify isolated Keychain and managed processes
+        run: node scripts/macos-runtime-smoke.mjs
       - name: Build native app and disk image
         run: npm run build:mac
       - name: Verify arm64 executable and bundle signature
@@ -57,6 +63,17 @@ jobs:
           app='target/aarch64-apple-darwin/release/bundle/macos/QB Gate.app'
           test "$(lipo -archs "$app/Contents/MacOS/qb-gate")" = arm64
           codesign --verify --deep --strict "$app"
+      - name: Mount disk image and launch real native WebView
+        run: node scripts/macos-app-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-native-validation
+          path: |
+            docs/macos-runtime-smoke.log
+            test-results/macos-native/*
+          if-no-files-found: ignore
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: qb-gate-macos-arm64

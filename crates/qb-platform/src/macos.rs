@@ -584,7 +584,27 @@ mod native {
                 && unsafe { libc::getpgid(pid as i32) } == self.pid as i32
         }
         pub(crate) fn resume(&self) -> Result<()> {
-            private_write(&self.dir.join("start"), b"start")
+            private_write(&self.dir.join("start"), b"start")?;
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                if let Ok(bytes) = read_private(&self.dir.join("spawned")) {
+                    let status = std::str::from_utf8(&bytes).unwrap_or("failed");
+                    let _ = fs::remove_dir_all(&self.dir);
+                    return if status == "started" {
+                        Ok(())
+                    } else {
+                        Err(GateError::Other(
+                            "客户端启动失败，请检查程序执行权限、安装状态和工作目录".into(),
+                        ))
+                    };
+                }
+                if !same_process(self.pid, self.created) || Instant::now() >= deadline {
+                    return Err(GateError::Other(
+                        "客户端启动回执未到达，未登记为已运行".into(),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
         }
         pub(crate) fn running(&self) -> Result<bool> {
             Ok(same_process(self.pid, self.created))
@@ -617,10 +637,13 @@ mod native {
         check_private_dir(&dir)?;
         let encrypted = read_private(&dir.join("plan"))?;
         fs::remove_file(dir.join("plan"))?;
-        let plain = crate::secret::open(
-            std::str::from_utf8(&encrypted).map_err(|_| GateError::Other("启动描述无效".into()))?,
-        )
-        .ok_or_else(|| GateError::Other("启动描述解密失败".into()))?;
+        let encoded =
+            std::str::from_utf8(&encrypted).map_err(|_| GateError::Other("启动描述无效".into()))?;
+        if !encoded.starts_with("keychain-aes-gcm-v1:") {
+            return Err(GateError::Other("启动描述必须为已认证的加密内容".into()));
+        }
+        let plain = crate::secret::open(encoded)
+            .ok_or_else(|| GateError::Other("启动描述解密失败".into()))?;
         let plain = crate::credentials::Secret::new(plain.into_bytes());
         let plan: Plan = serde_json::from_slice(plain.as_bytes())?;
         let own_exe = std::env::current_exe()?.canonicalize()?;
@@ -656,7 +679,6 @@ mod native {
             }
             std::thread::sleep(Duration::from_millis(30));
         }
-        let _ = fs::remove_dir_all(&dir);
         if plan.kill_on_close {
             let parent = plan.parent;
             let parent_created = plan.parent_created;
@@ -680,7 +702,19 @@ mod native {
                 Ok(())
             });
         }
-        let status = cmd.status();
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                let _ = private_write(&dir.join("spawned"), b"failed");
+                return Err(error.into());
+            }
+        };
+        if let Err(error) = private_write(&dir.join("spawned"), b"started") {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        let status = child.wait();
         // The supervisor remains the group leader until descendants have been stopped.
         stop_members(pid, &group_members(pid));
         Ok(status?.code().unwrap_or(1))
