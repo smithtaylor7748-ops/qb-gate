@@ -1484,7 +1484,11 @@
   font-size: var(--text-xs);
 }
 .quota-source strong {
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text);
   font-weight: 600;
 }
