@@ -5,7 +5,7 @@
 实现层面的「为什么这么写」在 [docs/DESIGN-NOTES.zh-CN.md](docs/DESIGN-NOTES.zh-CN.md)，
 修不掉的缺口在 [docs/KNOWN-ISSUES.zh-CN.md](docs/KNOWN-ISSUES.zh-CN.md)。
 
-2026-11-09 发版：续接基线为已推送 main 的 `36b723d`，更新前基线 `2eac5b3`。使用者已明确授权发布 GitHub 正式版并选择 **0.25.12**，由 GitHub Actions 构建安装包、生成更新清单，使用者通过软件内置更新安装。此前工作区补修与质量检测集成纳入本版；本机安装版仍是 0.25.11，不由开发会话重启或替换。后续需求继续使用未发布段，出包才提版本。
+2026-11-10 Mac 发版准备：使用者已明确授权更新两平台安装包，指定 Mac **macos-v0.25.14-preview.1**，应用版本 **0.25.14**；Windows 0.25.14 在独立主线准备。本分支基于已通过 Mac / Windows 回归的 `b963a96` 补充检测源码，保留 Mac 适配，明确排除出口变化历史。由 GitHub Actions 构建 DMG 并验证原生 WKWebView；构建与验收成功后才发布标签和附件，不安装或重启使用者的本机面板。
 
 2026-11-09 依赖漏洞修复：源码构建最低 Rust 为 **1.89**（`rusqlite` 0.41.1 的要求），本机核查工具链 1.98.1，CI 使用 stable。这项构建要求不等于产品发版；`rmcp` / SQLite 依赖更新纳入 0.25.12。
 

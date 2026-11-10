@@ -1,20 +1,18 @@
-<!-- release-notes: 0.25.12 -->
+<!-- release-notes: 0.25.14 -->
 <!-- zh -->
 
-## 更新内容（相对 v0.25.11）
+## Mac 0.25.14 预览版 1
 
-- 同一对话的并行请求超过线路并发上限时，可按独立开关分流到明确授权的其他线路；手动选线、调度和故障备用的行为统一，并修复切站后仍走旧站等问题。
-- IP 锁巡检间隔支持 1–30 秒调整，默认 5 秒；官方账户额度增加重置倒计时，断网时保留已有快照，Gemini 4 等独立额度池分别显示。
-- GPT 质量检查新增糖果题、离线模型指纹和动画人工复核，绑定所选账户或线路，支持取消和历史比较。结果仅供判断本次表现，不认证模型身份。
-- 修复 GPT / Gemini 酒馆适配，增加反重力原生文本桥接与可选 Codex 会话修复，Claude 专用关闭不再影响其他客户端。
-- 用量统计改用完整请求记录，新增明确时间的柱状图，修复请求数受 2000 条日志上限影响；完善 CC Switch 链接导入和依赖安全更新。
+- 出口一致性详情新增四项手动检测：原生 IPv4 / IPv6 UDP 与同族 HTTP 出口对照、Mihomo / Clash 运行规则核验、指定 IP 的 ASN 网络类型以及 Claude 桌面语言配置。
+- 修复浏览器 WebRTC 不支持、异常、超时和旧报告可能被误判通过的问题；未知与部分完成独立显示，保留 Mac 原有系统代理、DNS、路由与 IPv6 适配。
+- 检测结果只保存在本次面板内存，不记录出口变化历史、不改变网络设置、不用于门禁放行。控制密钥仅用于当次本机请求。
+- 适用 Apple Silicon、macOS 13.3+。应用版本为 0.25.14，预览标签为 macos-v0.25.14-preview.1；安装包保持 ad-hoc 签名，尚未 Apple 公证。安装及更新方法见 Mac 安装说明。
 
 <!-- en -->
 
-## What's new (since v0.25.11)
+## Mac 0.25.14 preview 1
 
-- Add an explicit switch to distribute concurrent conversation requests beyond a route's capacity across approved routes. Align manual selection, scheduling and failover, and fix stale route selection.
-- Allow IP checks every 1–30 seconds (5 seconds by default). Show cached quota reset countdowns and separate quota pools, including Gemini 4 when returned by the upstream.
-- Add opt-in GPT quality sampling with a math task, an offline model fingerprint and manual animation review, with pinned targets, cancellation and history. Results do not authenticate model identity.
-- Improve GPT / Gemini tavern compatibility, add a native Antigravity text bridge and optional Codex session recovery, and keep Claude-only shutdown scoped to Claude.
-- Aggregate complete usage records with timestamped bars, remove the 2,000-log limit from request totals, improve CC Switch link import, and update vulnerable dependencies.
+- Add four explicit diagnostics: native IPv4/IPv6 UDP versus HTTP exits, active Mihomo/Clash routing rules, ASN network categories for a specified IP, and Claude Desktop locale configuration.
+- Keep unsupported, failed, timed-out and legacy WebRTC results unknown, while preserving Mac system proxy, DNS, routing and IPv6 behavior.
+- Keep results in memory only, with no exit-change history, network changes or gate decisions. Controller credentials are used only for the current local request.
+- Requires Apple Silicon and macOS 13.3+. Application version 0.25.14; preview tag macos-v0.25.14-preview.1. The app is ad-hoc signed and not Apple-notarized. See the Mac installation guide for manual updates.

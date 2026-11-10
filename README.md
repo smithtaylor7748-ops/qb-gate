@@ -11,7 +11,7 @@
 | 平台    | 系统要求                                    | 安装包                                                                                                                                                                                                                                   |
 | ------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Windows | Windows 10 / 11，x64                        | [下载 EXE](https://github.com/smithtaylor7748-ops/qb-gate/releases/latest/download/QB-Gate-Windows-x64-setup.exe) · [稳定版发布页](https://github.com/smithtaylor7748-ops/qb-gate/releases/latest)                                       |
-| macOS   | Apple Silicon（M1 及更新芯片），macOS 13.3+ | [下载 DMG](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.12-preview.2/QB-Gate-macOS-arm64.dmg) · [Mac 预览版发布页](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.12-preview.2) |
+| macOS   | Apple Silicon（M1 及更新芯片），macOS 13.3+ | [下载 DMG](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.14-preview.1/QB-Gate-macOS-arm64.dmg) · [Mac 预览版发布页](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.14-preview.1) |
 
 Windows 运行安装包即可安装，后续可在「设置」中检查更新。Mac 打开 DMG，将应用拖入 Applications；首次打开、系统授权与更新步骤见 [Mac 安装说明](docs/MACOS.zh-CN.md)。
 

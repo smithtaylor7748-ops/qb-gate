@@ -1,14 +1,14 @@
 # QB Gate · Mac 安装与使用
 
-适用于 **Apple Silicon（M1 及更新芯片）、macOS 13.3 及以上**。当前 Mac 预览版为 **macos-v0.25.12-preview.2**，应用内版本号为 **0.25.12**。
+适用于 **Apple Silicon（M1 及更新芯片）、macOS 13.3 及以上**。本次发布目标为 **macos-v0.25.14-preview.1**，应用内版本号为 **0.25.14**。安装包正在构建与验收，下列下载入口在正式上传附件后生效。
 
-[下载 Mac 安装包](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.12-preview.2/QB-Gate-macOS-arm64.dmg) · [查看本版发布说明](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.12-preview.2) · [下载 SHA256SUMS.txt](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.12-preview.2/SHA256SUMS.txt)
+[下载 Mac 安装包](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.14-preview.1/QB-Gate-macOS-arm64.dmg) · [查看本版发布说明](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.14-preview.1) · [下载 SHA256SUMS.txt](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.14-preview.1/SHA256SUMS.txt)
 
-## 尚未发布：补充环境检测
+## 本版补充环境检测
 
 本地开发分支已同步 STUN / 同族 HTTP 出口对照、代理运行规则、ASN 网络类型及 Claude 客户端语言检测，入口为「出口一致性 → 补充环境检测」。均由按钮手动启动，结果不保存历史，不修改网络设置或参与门禁；WebRTC 未完成采集保持未知，UA-CH 与本次请求 UA 的平台声明比较。语言配置从 `~/Library/Application Support/Claude/config.json` 读取，多份或缺失证据不猜测。
 
-这组改动尚未包含在下列已发布的 preview.2 DMG 中，应用版本保持 0.25.12。源码 `b963a96` 已通过 [Mac 原生回归](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42868567916) 和 [Windows CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42868568031)：Mac Rust 3160 项、Windows 3206 项，均 0 失败；两端前端 388 项、IPC 362、UI 151 + 28 通过，Mac 另有原生运行时和专门界面 smoke。没有出新包或运行本轮新增的打包 WKWebView smoke；详细边界见 CHANGELOG 未发布段。
+本版纳入已通过 [Mac 原生回归](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42868567916) 和 [Windows CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42868568031) 的 `b963a96` 检测源码：Mac Rust 3160 项、Windows 3206 项，均 0 失败；两端前端 388 项、IPC 362、UI 151 + 28 通过。0.25.14 的新 DMG 与原生 WKWebView 检查由本次完整构建重新验证，完成前不将旧源码回归视为新安装包已通过。
 
 ## 安装与首次打开
 
@@ -67,9 +67,9 @@ Claude Code 的登录信息由 macOS Keychain 保存。QB Gate 为每个槽位�
 
 删除槽位前先切到另一个账户。**删除槽位会保留官方 Keychain 登录信息；如需退出账户，先在 Claude Code 内退出。** 删除过的名称不再用于新建，大小写或 Unicode 等价写法也算同名；新账户请使用新名字，例如 `work-02`，以免关联到旧身份。
 
-## 更新到 preview2
+## 更新到 0.25.14 预览版 1
 
-Mac 预览版通过本页或发布页 **手动下载更新**。从 preview1 更新时，应用内仍显示 0.25.12，可按下载来源确认预览批次。
+Mac 预览版通过本页或发布页 **手动下载更新**。从 0.25.12 预览版更新后，应用内显示 0.25.14。
 
 1. 保存工作，结束正在运行的受管会话，并退出 QB Gate。
 2. 下载并打开本版 DMG，将 QB Gate 拖入“应用程序”，选择 **替换**。
@@ -77,7 +77,7 @@ Mac 预览版通过本页或发布页 **手动下载更新**。从 preview1 更�
 
 替换应用会保留用户资料和 Keychain；账户槽位、配置等资料存放在当前用户的 `Library/Application Support` 下。退出面板会结束由它管理的会话，更新前请先保存。
 
-Windows 继续使用 Windows 稳定版的更新提示或 [v0.25.12 发布页](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/v0.25.12)中的 Windows 安装包。Mac 预览版使用独立下载入口。
+Windows 使用 Windows 稳定版的更新提示或 [稳定版发布页](https://github.com/smithtaylor7748-ops/qb-gate/releases/latest)中的 Windows 安装包。Mac 预览版使用独立下载入口。
 
 ## 其他功能与验证记录
 
@@ -85,7 +85,7 @@ Mac 版还提供中转线路与模型路由、用量统计、MCP、Skills、提�
 
 已发布 preview.2 的核心修复已通过 [Mac 原生 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42810788872)与 [Windows 回归 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42810788907)。Mac 验证环境为 Apple Silicon / macOS 15，Rust 3114 项、前端 370 项、IPC 353 个类型、UI 151 个布局与主题场景及 27 个交互流程通过；另有 2 项既有文档示例忽略。原生验证覆盖系统网络采样、隔离 Keychain、受管进程启动与回收、Finder 环境下的 nvm 工具发现。
 
-真实账户登录、首次 Terminal 系统授权和实际 VPN 换网属于使用者环境下的交互验证；以上 CI 使用隔离测试资料。进一步的平台说明与排查信息见 [本版已知问题](https://github.com/smithtaylor7748-ops/qb-gate/blob/macos-v0.25.12-preview.2/docs/KNOWN-ISSUES.zh-CN.md)。
+真实账户登录、首次 Terminal 系统授权和实际 VPN 换网属于使用者环境下的交互验证；以上 CI 使用隔离测试资料。进一步的平台说明与排查信息见 [本版已知问题](https://github.com/smithtaylor7748-ops/qb-gate/blob/macos-v0.25.14-preview.1/docs/KNOWN-ISSUES.zh-CN.md)。
 
 ## 从源码构建
 
@@ -93,7 +93,7 @@ Mac 版还提供中转线路与模型路由、用量统计、MCP、Skills、提�
 
 ```sh
 xcode-select --install
-git checkout macos-v0.25.12-preview.2
+git checkout macos-v0.25.14-preview.1
 npm ci
 npm run build:mac
 ```
