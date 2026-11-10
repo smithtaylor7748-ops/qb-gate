@@ -8,7 +8,7 @@
 
 本地开发分支已同步 STUN / 同族 HTTP 出口对照、代理运行规则、ASN 网络类型及 Claude 客户端语言检测，入口为「出口一致性 → 补充环境检测」。均由按钮手动启动，结果不保存历史，不修改网络设置或参与门禁；WebRTC 未完成采集保持未知，UA-CH 与本次请求 UA 的平台声明比较。语言配置从 `~/Library/Application Support/Claude/config.json` 读取，多份或缺失证据不猜测。
 
-这组改动尚未包含在下列已发布的 preview.2 DMG 中。应用版本保持 0.25.12；验证进度见 CHANGELOG 的未发布段，Windows 本地检查不代表 Mac 原生验收。
+这组改动尚未包含在下列已发布的 preview.2 DMG 中，应用版本保持 0.25.12。源码 `b963a96` 已通过 [Mac 原生回归](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42868567916) 和 [Windows CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42868568031)：Mac Rust 3160 项、Windows 3206 项，均 0 失败；两端前端 388 项、IPC 362、UI 151 + 28 通过，Mac 另有原生运行时和专门界面 smoke。没有出新包或运行本轮新增的打包 WKWebView smoke；详细边界见 CHANGELOG 未发布段。
 
 ## 安装与首次打开
 

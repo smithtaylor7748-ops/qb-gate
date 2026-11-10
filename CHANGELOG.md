@@ -8,7 +8,9 @@
 
 本地检查（Windows 主机运行 Mac 分支）：十项收工检查全部通过。Rust 全 workspace **3206 通过、0 失败、2 个既有忽略**；前端 **388 项 / 75 个文件**；UI **151 个响应式 / 主题组合 + 28 个交互流程**；另有 Mac 平台模拟 smoke，核对四项手动动作、输入传递、未知结果、密钥清空与不持久化。构建、IPC **362 个导出类型**、Clippy、Rust / 前端格式、发布一致性与公开源码扫描、cargo deny 均通过，npm audit **0 漏洞**。首轮完整运行中一项未改动的路由测试触发既有 500ms 时限；原断言与时限单独重跑通过，随后全量复跑通过，未调整测试或产品路由逻辑。
 
-原生验证边界：以上本机结果不等于 Apple Silicon / WKWebView 验收。本轮 Mac 原生 CI 尚未运行；已准备现有 macOS core 工作流覆盖此开发分支，不构建安装包。新原生应用 smoke 另备有隔离语言配置和回环控制器 fixture，需后续原生应用运行时验收。未访问真实 STUN / ASN / 用户代理控制接口、用户 Claude 配置或真实账户；尚未推送、出包或部署。
+远程验证：使用者授权后，源码提交 `b963a963b0f508705a4c9e288e37be9cb7df05a0` 已推至 `codex/macos-detection-20261110`，同提交的 [Mac 原生回归](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42868567916) 与 [Windows / 供应链 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42868568031) 全部成功。Apple Silicon / macOS 15：Rust **3160 通过、0 失败、2 个既有忽略**；Windows：**3206 / 0 / 2**；两平台前端 **388 / 75 文件**、IPC **362**、UI **151 + 28** 均通过。Mac 另通过隔离原生运行时及四项补充检测的 Mac 界面 smoke。
+
+验证边界：原生 CI 只运行源码、系统运行时与浏览器界面回归，没有构建或安装新的 DMG；新增真实 WKWebView IPC fixture 已准备，但本轮未执行打包应用 smoke。未访问真实 STUN / ASN / 用户代理控制接口、用户 Claude 配置或真实账户；未发布安装包或部署。已发布 preview.2 保持原样，最新文档提交仅补记本次已验证源码的结果。
 
 ## 0.25.12 macOS 预览版 2 — 2026-11-10
 
