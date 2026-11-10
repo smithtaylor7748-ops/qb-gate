@@ -445,7 +445,7 @@ fn script_bytes(target: &std::path::Path) -> Vec<u8> {
     {
         let _ = target;
         // Failure to determine our own executable must fail closed, never run another PATH entry.
-        return std::env::current_exe()
+        std::env::current_exe()
             .map(|exe| {
                 format!(
                     "#!/bin/sh\nexec '{}' --qb-gate-check\n",
@@ -455,7 +455,7 @@ fn script_bytes(target: &std::path::Path) -> Vec<u8> {
             })
             .unwrap_or_else(|_| {
                 b"#!/bin/sh\necho 'QB Gate executable unavailable' >&2\nexit 2\n".to_vec()
-            });
+            })
     }
     #[cfg(not(target_os = "macos"))]
     {

@@ -21,6 +21,7 @@ import {
   type VersionEntry,
 } from "../../lib/api";
 import { AFTER, R } from "../../lib/resources";
+import { usePlatform } from "../../lib/platform";
 import { invalidate, useResource, useSession } from "../../lib/store";
 import {
   Bullet,
@@ -46,6 +47,8 @@ export function ManagedDirControl({
   disabled?: boolean;
 }) {
   const toast = useToast();
+  const platform = usePlatform();
+  const canLock = platform?.system_execution_lock === true;
   const managed = useResource("managed", R.managed);
   const [open, setOpen] = useState(false);
   const [path, setPath] = useState("");
@@ -61,7 +64,14 @@ export function ManagedDirControl({
     if (!open) return;
     const p = path.trim();
     setProbe(null);
-    if (!p || (st && p.toLowerCase() === st.root.toLowerCase())) return;
+    if (
+      !p ||
+      (st &&
+        (platform?.os === "windows"
+          ? p.toLowerCase() === st.root.toLowerCase()
+          : p === st.root))
+    )
+      return;
     setProbing(true);
     const t = setTimeout(() => {
       void api
@@ -156,23 +166,32 @@ export function ManagedDirControl({
         />
         <p className="notice mt-2">
           {probing
-            ? "正在实测这个目录能不能上锁……"
+            ? canLock
+              ? "正在实测这个目录能不能上锁……"
+              : "正在检查目录读写权限……"
             : probe === null
-              ? "选一个目录，面板会当场放一个探针文件试着上锁再解锁 —— 锁不住的目录选不进来。"
+              ? canLock
+                ? "选一个目录，面板会当场放一个探针文件试着上锁再解锁 —— 锁不住的目录选不进来。"
+                : "选择托管目录，面板会检查读写权限；macOS 使用受管会话监督。"
               : probe.ok
-                ? `可以用${probe.filesystem ? `（${probe.filesystem}）` : ""}：锁得上，也解得开。`
+                ? `可以用${probe.filesystem ? `（${probe.filesystem}）` : ""}：${canLock ? "锁得上，也解得开。" : "读写检查通过。"}`
                 : ""}
         </p>
         {probe && !probe.ok && (
           <p className="notice notice--danger mt-1">{probe.reason}</p>
         )}
-        {anyInstalled && (
+        {anyInstalled && canLock && (
           <p className="notice mt-2">
             已经装在旧目录里的 Claude Code / Codex 会<strong>一起搬过去</strong>
             ，并在新位置重新上锁。 如果托管的 Claude Code 正在运行，会先关闭全部
             Claude（未保存的对话会丢）； 托管的 Codex 正在运行就请先自己关掉 ——
             面板不按进程名杀进程，这时会拒绝迁移、一个文件都不动。
             中途哪一步没成，已经搬过去的会搬回来，不会两边各留一半。
+          </p>
+        )}
+        {anyInstalled && !canLock && (
+          <p className="notice mt-2">
+            旧目录里的托管工具会一起迁移。请先关闭正在使用这些工具的会话；迁移失败时会恢复原位置。
           </p>
         )}
       </Modal>
@@ -198,6 +217,8 @@ export function ManagedDirControl({
  */
 export function ExternalsBlock({ disabled = false }: { disabled?: boolean }) {
   const toast = useToast();
+  const platform = usePlatform();
+  const canLock = platform?.system_execution_lock === true;
   const managed = useResource("managed", R.managed);
   const externals = useResource("externals", R.externals);
   const [kept, setKept] = useSession("env.externals.kept", false);
@@ -211,6 +232,8 @@ export function ExternalsBlock({ disabled = false }: { disabled?: boolean }) {
 
   const list = externals.data ?? [];
   const byApp = (a: ManagedApp) => list.filter((e) => e.app === a);
+  const automatic = (a: ManagedApp) =>
+    byApp(a).filter((e) => e.method !== "manual");
 
   async function cleanup(which: ManagedApp) {
     setBusy(true);
@@ -220,10 +243,12 @@ export function ExternalsBlock({ disabled = false }: { disabled?: boolean }) {
         toast.error(
           `清除 ${MANAGED_APP_LABEL[which]} 外部副本：${r.done.length} 项做完，${r.failed.length} 项没成 —— ${r.failed.join("；")}`,
         );
-      } else {
+      } else if (r.done.length) {
         toast.ok(
-          `已彻底清除 ${MANAGED_APP_LABEL[which]} 的外部副本（${r.done.length} 项）。`,
+          `已完成 ${MANAGED_APP_LABEL[which]} 外部副本清理 ${r.done.length} 项。`,
         );
+      } else {
+        toast.info("未清除任何副本，请按扫描结果中的卸载说明操作。");
       }
       for (const n of r.notes) toast.info(n);
       invalidate(...AFTER.install);
@@ -239,7 +264,9 @@ export function ExternalsBlock({ disabled = false }: { disabled?: boolean }) {
   if (kept) {
     return (
       <p className="notice mt-3">
-        外部副本已选择保留，它们照样被执行锁锁住。
+        {canLock
+          ? "外部副本已选择保留，它们照样被执行锁锁住。"
+          : "外部副本已选择保留；从其他入口启动的程序不受面板监督。"}
         <Button
           size="sm"
           variant="ghost"
@@ -274,8 +301,10 @@ export function ExternalsBlock({ disabled = false }: { disabled?: boolean }) {
       {!externals.data ? (
         <p className="notice">
           托管那份装好之后，本机其它 Claude Code / Codex
-          副本就是多余的了。点「扫描」看看有哪些 ——
-          只看不动。不清的话它们照样被执行锁锁住。
+          副本就是多余的了。点「扫描」看看有哪些 —— 只看不动。
+          {canLock
+            ? "不清的话它们照样被执行锁锁住。"
+            : "由包管理器安装的副本会显示对应卸载说明。"}
         </p>
       ) : list.length === 0 ? (
         <p className="notice">没有多余的副本，本机只剩面板托管的那份。</p>
@@ -299,14 +328,21 @@ export function ExternalsBlock({ disabled = false }: { disabled?: boolean }) {
                 </Row>
               ))}
               <div className="mt-2 flex flex-wrap gap-2">
-                <Button
-                  variant="danger"
-                  size="sm"
-                  disabled={busy || disabled || !installed(a)}
-                  onClick={() => setAsk(a)}
-                >
-                  彻底清除 {MANAGED_APP_LABEL[a]} 的这些副本
-                </Button>
+                {!!automatic(a).length && (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    disabled={busy || disabled || !installed(a)}
+                    onClick={() => setAsk(a)}
+                  >
+                    清除 {MANAGED_APP_LABEL[a]} 的可自动清理副本
+                  </Button>
+                )}
+                {!automatic(a).length && (
+                  <span className="notice">
+                    请按上方说明使用原安装方式卸载。
+                  </span>
+                )}
                 {!installed(a) && (
                   <span className="notice">
                     先把托管的 {MANAGED_APP_LABEL[a]} 装好才能清。
@@ -320,7 +356,7 @@ export function ExternalsBlock({ disabled = false }: { disabled?: boolean }) {
 
       {!!list.length && (
         <Button size="sm" variant="ghost" onClick={() => setKept(true)}>
-          保留，照样上锁
+          {canLock ? "保留，照样上锁" : "保留外部副本"}
         </Button>
       )}
 
@@ -338,7 +374,7 @@ export function ExternalsBlock({ disabled = false }: { disabled?: boolean }) {
           下面这些会被卸载或删除，<strong>不可恢复</strong>：
         </p>
         <div className="mt-2">
-          {(ask ? byApp(ask) : []).map((e) => (
+          {(ask ? automatic(ask) : []).map((e) => (
             <Bullet key={`${e.method}:${e.target}`} tone="danger">
               {e.action}
             </Bullet>
@@ -382,6 +418,7 @@ export function VersionHistoryBlock({
   disabled?: boolean;
 }) {
   const toast = useToast();
+  const canLock = usePlatform()?.system_execution_lock === true;
   // ⛔ 走资源层，不要在这里 `useState` + `useEffect` 自己取。
   //
   // 自己取的那一版有两个毛病：升级是在同一页的另一张卡上按的，
@@ -416,8 +453,7 @@ export function VersionHistoryBlock({
     <>
       <p className="notice mb-2">
         每次升级都会把旧版本收进版本库，最多留 3 份。新版本有问题时可以退回去 ——
-        <strong>回滚不影响正在跑的会话</strong>，Windows 不会卸掉已加载的映像，
-        下次启动才生效。
+        <strong>回滚不影响正在跑的会话</strong>， 下次启动才生效。
       </p>
 
       {history.error ? (
@@ -454,7 +490,7 @@ export function VersionHistoryBlock({
             <span className="notice">{v.archived_at || "归档时间未知"}</span>
             {/* 版本库里的每一份都是完整可执行的 claude.exe。没锁上就是
                 现成的绕过入口，必须显眼 —— 不能只在日志里提一句。 */}
-            {!v.locked && <Pill tone="danger">未上锁</Pill>}
+            {canLock && !v.locked && <Pill tone="danger">未上锁</Pill>}
           </Row>
         ))
       )}
@@ -473,7 +509,7 @@ export function VersionHistoryBlock({
         </p>
         <p className="notice notice--warn mt-2">
           正在跑的 {MANAGED_APP_LABEL[app]} 会话<strong>不受影响</strong>，
-          换的是下一次启动用的那个文件。换完面板会重新上锁。
+          换的是下一次启动用的那个文件。{canLock && "换完面板会重新上锁。"}
         </p>
       </ConfirmDialog>
     </>
