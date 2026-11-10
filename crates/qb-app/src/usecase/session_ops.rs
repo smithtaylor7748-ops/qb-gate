@@ -1195,7 +1195,19 @@ pub fn reveal(id: &str) -> Result<()> {
             .spawn()?;
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("/usr/bin/open")
+            .arg("-R")
+            .arg(path)
+            .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(GateError::Other("Finder 无法显示会话文件".into()))
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = path;
         Err(GateError::Other("只在 Windows 上能打开所在位置".into()))

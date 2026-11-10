@@ -106,6 +106,7 @@ impl Roots {
         }
         let home = dirs::home_dir();
         let scoop = env_dir("SCOOP").or_else(|| home.as_ref().map(|h| h.join("scoop")));
+        #[cfg(not(target_os = "macos"))]
         let path_dirs = std::env::var_os("PATH")
             .map(|v| {
                 std::env::split_paths(&v)
@@ -113,6 +114,8 @@ impl Roots {
                     .collect()
             })
             .unwrap_or_default();
+        #[cfg(target_os = "macos")]
+        let path_dirs = super::macos_install::path_dirs();
         Self {
             home,
             roaming: dirs::config_dir(),
@@ -212,6 +215,9 @@ pub struct Install {
 
 /// 统一成小写反斜杠，只用于比较。
 pub fn norm(p: &Path) -> String {
+    if cfg!(target_os = "macos") {
+        return p.to_string_lossy().into_owned();
+    }
     p.to_string_lossy().to_lowercase().replace('/', "\\")
 }
 
@@ -330,6 +336,10 @@ pub fn refresh_desktop_real_dir() {
 /// 再用 `-like` 比，用户名带 `'` 就是语法错误、带 `[` `]` 就被当成通配符，
 /// 而错误全被丢掉 —— 日志写着「收摊」，桌面端其实还开着。
 pub fn is_desktop_process_path(path: &Path, local: Option<&Path>) -> bool {
+    if cfg!(target_os = "macos") {
+        return super::macos_install::bundle("Claude")
+            .is_some_and(|bundle| path.starts_with(bundle.join("Contents")));
+    }
     let p = norm(path);
     if let Some(l) = local {
         // 原位置，和它解析联结点之后的真实位置（桌面端被面板搬走之后，两条都算桌面端）。
@@ -616,6 +626,10 @@ pub fn managed_codex_copies(r: &Roots) -> Vec<PathBuf> {
 /// 同一个文件经不同路径（`%APPDATA%\Claude` 联结点与它指向的 `Claude-<标签>`）
 /// 只算一次。
 pub fn scan(r: &Roots) -> Vec<Install> {
+    #[cfg(target_os = "macos")]
+    if cfg!(target_os = "macos") {
+        return scan_macos(r);
+    }
     let mut found: Vec<(Kind, PathBuf)> = Vec::new();
 
     // 面板托管的那份放最前面：去重时先扫到的留下，它得保住 `Managed` 这个身份。
@@ -882,6 +896,91 @@ pub fn scan(r: &Roots) -> Vec<Install> {
     out
 }
 
+#[cfg(target_os = "macos")]
+fn scan_macos(r: &Roots) -> Vec<Install> {
+    let mut found = Vec::new();
+    if let Some(dir) = &r.managed_claude {
+        found.push((Kind::Managed, dir.join("claude")));
+        for entry in entries(&dir.join("versions")) {
+            found.push((Kind::ManagedVersion, entry.path().join("claude")));
+        }
+    }
+    if let Some(home) = &r.home {
+        found.push((Kind::Native, home.join(".local/bin/claude")));
+        for entry in entries(&home.join(".local/share/claude/versions")) {
+            found.push((Kind::NativeVersion, entry.path()));
+        }
+    }
+    for dir in &r.path_dirs {
+        found.push((Kind::Path, dir.join("claude")));
+    }
+    if let Some(roaming) = &r.roaming {
+        for profile in subdirs(roaming).into_iter().filter(|p| {
+            let name = name_lower(p);
+            name == "claude" || name.starts_with("claude-")
+        }) {
+            for version in subdirs(&profile.join("claude-code")) {
+                found.push((Kind::DesktopManaged, version.join("claude")));
+            }
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for (kind, path) in found {
+        if !path.is_file() {
+            continue;
+        }
+        let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if !seen.insert(key) {
+            continue;
+        }
+        out.push(Install {
+            kind,
+            path,
+            lockable: false,
+            launchable: kind.launchable(),
+            preferred: false,
+        });
+    }
+    if let Some(i) = preferred_index(r, &out) {
+        out[i].preferred = true;
+    }
+    out
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_inventory_tests {
+    use super::*;
+    #[test]
+    fn macos_native_inventory_prefers_managed_and_deduplicates_links_without_claiming_locks() {
+        let root = std::env::temp_dir().join(format!(
+            "qb-inventory 用户 O'Brien {}",
+            crate::config_io::id()
+        ));
+        let managed = root.join("managed");
+        let native = root.join("home/.local/bin");
+        let path = root.join("path");
+        for dir in [&managed, &native, &path] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(managed.join("claude"), "managed").unwrap();
+        std::fs::write(native.join("claude"), "native").unwrap();
+        std::os::unix::fs::symlink(native.join("claude"), path.join("claude")).unwrap();
+        let roots = Roots {
+            home: Some(root.join("home")),
+            managed_claude: Some(managed.clone()),
+            path_dirs: vec![path],
+            ..Default::default()
+        };
+        let installs = scan(&roots);
+        assert_eq!(installs.len(), 2);
+        assert_eq!(preferred_exe(&roots), Some(managed.join("claude")));
+        assert!(installs.iter().all(|i| !i.lockable));
+        assert!(lockable_paths(&roots).is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
 /// 启动 Claude Code 该用哪一份。
 ///
 /// 按 [`Kind::launch_rank`] 挑；桌面端带的副本只从**当前**那个资料目录
@@ -956,9 +1055,11 @@ pub fn lockable_paths(r: &Roots) -> Vec<(PathBuf, Kind)> {
 
 /// 官方原生安装器的落点。升级走的就是这一份，**不管它现在在不在**。
 pub fn native_bin(r: &Roots) -> Option<PathBuf> {
-    r.home
-        .as_ref()
-        .map(|h| h.join(".local").join("bin").join("claude.exe"))
+    r.home.as_ref().map(|h| {
+        h.join(".local")
+            .join("bin")
+            .join(super::managed::App::ClaudeCode.exe_name())
+    })
 }
 
 /// 升级残留：`claude.exe.old.<时间戳>`。
@@ -1019,7 +1120,7 @@ pub fn npm_version(r: &Roots) -> Option<String> {
     v.get("version")?.as_str().map(String::from)
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 

@@ -1,3 +1,4 @@
+import type { PlatformCapabilities } from "./generated/PlatformCapabilities";
 import { call } from "./ipc";
 import type { Ipv6Status } from "./generated/Ipv6Status";
 
@@ -307,9 +308,12 @@ export type {
 // `call` 在 `ipc.ts` 里 —— 全项目只有那一个。
 
 export const api = {
+  platformCapabilities: () =>
+    call<PlatformCapabilities>("platform_capabilities"),
   // 门禁
   gateStatus: () => call<GateStatus>("gate_status"),
-  gateCheckIntervalSave: (seconds: number) => call<Settings>("gate_check_interval_save", { seconds }),
+  gateCheckIntervalSave: (seconds: number) =>
+    call<Settings>("gate_check_interval_save", { seconds }),
   gateLockAll: () => call<number>("gate_lock_all"),
   gateUnlockAll: () => call<number>("gate_unlock_all"),
   /**
@@ -674,7 +678,8 @@ export const api = {
   ) => call<void>("tavern_antigravity_save", { config }),
   tavernAntigravityModels: (accountId: string) =>
     call<import("./generated/AntigravityBridgeModel").AntigravityBridgeModel[]>(
-      "tavern_antigravity_models", { accountId },
+      "tavern_antigravity_models",
+      { accountId },
     ),
   tavernAntigravityToken: () => call<string>("tavern_antigravity_token"),
   tavernAntigravityStart: () =>

@@ -104,9 +104,16 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let status = MenuItem::with_id(
         app,
         "status",
-        match &holder {
-            Some(h) => format!("执行锁 {} / {} · 已放行给 {h}", locked, targets.len()),
-            None => format!("执行锁 {} / {} · 门禁关闭中", locked, targets.len()),
+        if cfg!(target_os = "macos") {
+            match &holder {
+                Some(h) => format!("受管启动已放行给 {h} · 无系统执行锁"),
+                None => "受管启动待检查 IP · 无系统执行锁".into(),
+            }
+        } else {
+            match &holder {
+                Some(h) => format!("执行锁 {} / {} · 已放行给 {h}", locked, targets.len()),
+                None => format!("执行锁 {} / {} · 门禁关闭中", locked, targets.len()),
+            }
         },
         false,
         None::<&str>,

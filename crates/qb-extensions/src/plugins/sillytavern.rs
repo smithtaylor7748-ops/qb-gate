@@ -512,7 +512,8 @@ fn node_path_env() -> Vec<(String, String)> {
         return Vec::new();
     };
     let path = std::env::var("PATH").unwrap_or_default();
-    vec![("PATH".into(), format!("{};{path}", dir.display()))]
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    vec![("PATH".into(), format!("{}{separator}{path}", dir.display()))]
 }
 
 // ------------------------------------------------------------------ 端口
@@ -564,6 +565,11 @@ pub fn find_official_claude() -> Result<PathBuf> {
 }
 
 fn find_python() -> Result<PathBuf> {
+    if cfg!(target_os = "macos") {
+        return crate::install::macos_install::command("python3").ok_or_else(|| {
+            GateError::Other("找不到 Python 3，请先安装并确认它在 PATH 里。".into())
+        });
+    }
     for exe in ["python.exe", "python3.exe", "py.exe"] {
         if let Ok(out) = crate::process::hidden_std(std::process::Command::new("where"))
             .arg(exe)
@@ -1245,6 +1251,16 @@ async fn start_tavern(
         if !cfg.st_launcher.is_file() {
             return Err(GateError::NotFound(cfg.st_launcher.display().to_string()));
         }
+        #[cfg(target_os = "macos")]
+        start_owned(
+            "sillytavern",
+            &crate::install::detect::node_exe()
+                .ok_or_else(|| GateError::Other("请先安装 Node.js LTS。".into()))?,
+            vec![cfg.sillytavern_root.join("server.js").display().to_string()],
+            &cfg.sillytavern_root,
+            node_path_env(),
+        )?;
+        #[cfg(not(target_os = "macos"))]
         start_owned(
             "sillytavern",
             &cfg.st_launcher,
@@ -1515,7 +1531,10 @@ mod tests {
         let dir = Path::new(r"x:\apps\sillytavern");
         let (cfg, note) = adopted(TavernConfig::default(), dir, None);
         assert_eq!(cfg.sillytavern_root, dir);
-        assert_eq!(cfg.st_launcher, dir.join("Start.bat"));
+        assert_eq!(
+            cfg.st_launcher,
+            crate::install::sillytavern::launcher_in(&dir)
+        );
         assert_eq!((cfg.st_port, note), (8000, None));
 
         let (cfg, note) = adopted(TavernConfig::default(), dir, Some(8123));

@@ -268,8 +268,8 @@ pub fn parse(body: &Value, label: &str) -> Result<ClaudeQuota> {
 
 /// 读槽位里 Claude Code 存的访问令牌与到期毫秒数。令牌装进 [`Secret`]：只许放进请求头。
 fn credential(slot_dir: &Path) -> Option<(Secret, Option<i64>)> {
-    let text = std::fs::read_to_string(slot_dir.join(".credentials.json")).ok()?;
-    let v: Value = serde_json::from_str(&text).ok()?;
+    let text = crate::accounts::credential_store::read(slot_dir)?;
+    let v: Value = serde_json::from_slice(text.as_bytes()).ok()?;
     let o = v
         .get("claudeAiOauth")
         .or_else(|| v.get("claude.ai_oauth"))?;
@@ -374,10 +374,11 @@ async fn fetch_at(
     http: &reqwest::Client,
     url: &str,
 ) -> Result<ClaudeQuota> {
+    crate::accounts::credential_store::read_checked(slot_dir)?;
     let before = login_health::fingerprint(&slot_dir.join(".credentials.json"));
     let Some((token, expires)) = credential(slot_dir) else {
         return Err(GateError::Other(format!(
-            "Claude 槽位「{label}」还没登录过（读不到 .credentials.json 里的 OAuth 凭证）"
+            "读不到 Claude 槽位「{label}」的 OAuth 凭证；请从此槽位启动官方客户端完成登录，Mac 上还需允许读取对应钥匙串项目。"
         )));
     };
     if let Some(exp) = expires {
@@ -410,15 +411,22 @@ async fn fetch_at(
             .any(|c| body.contains(c));
     if status.as_u16() == 401 || revoked_403 {
         let reason = rejected(status.as_u16());
-        login_health::record_kind(
-            &login_health::claude_key(label),
-            &cred,
-            "access_rejected",
-            &reason,
-        );
+        if !cfg!(target_os = "macos") {
+            login_health::record_kind(
+                &login_health::claude_key(label),
+                &cred,
+                "access_rejected",
+                &reason,
+            );
+        }
         return Err(GateError::Other(format!("Claude 槽位「{label}」{reason}")));
     }
-    if login_health::fingerprint(&cred) != before {
+    let changed = if cfg!(target_os = "macos") {
+        credential(slot_dir).is_none_or(|(current, _)| current.as_bytes() != token.as_bytes())
+    } else {
+        login_health::fingerprint(&cred) != before
+    };
+    if changed {
         return Err(GateError::Other(format!(
             "Claude 槽位「{label}」的登录在这次刷新途中变了，这次结果丢掉了，再点一次"
         )));
@@ -474,13 +482,15 @@ fn overlay_slots(slots: &mut [crate::accounts::Slot]) {
     let now = chrono::Utc::now().timestamp_millis();
     for s in slots {
         let cred = std::path::Path::new(&s.dir).join(".credentials.json");
-        if let Some((kind, reason)) =
-            login_health::check_kind(&login_health::claude_key(&s.label), &cred)
-        {
-            if kind == "relogin" {
-                s.logged_in = false;
+        if !cfg!(target_os = "macos") {
+            if let Some((kind, reason)) =
+                login_health::check_kind(&login_health::claude_key(&s.label), &cred)
+            {
+                if kind == "relogin" {
+                    s.logged_in = false;
+                }
+                s.login_problem = Some(reason);
             }
-            s.login_problem = Some(reason);
         }
         let identity = account_identity(Path::new(&s.dir));
         if let Some(official) =

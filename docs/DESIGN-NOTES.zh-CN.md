@@ -1,5 +1,9 @@
 > 历史设计记录：涉及旧版导航、单租约或 CLI 宽限的段落不代表 v0.12 行为。当前架构见 [ARCHITECTURE.zh-CN.md](ARCHITECTURE.zh-CN.md)，当前限制见 [KNOWN-ISSUES.zh-CN.md](KNOWN-ISSUES.zh-CN.md)。
 
+## macOS 平台适配（未发布）
+
+平台层提供结构化能力 `PlatformCapabilities`；前端不根据浏览器 UA 假定安全能力。Windows ACL 的公开操作与受管启动的租约协调分开：Mac 不实现 NTFS 执行锁，但受管启动仍检查 IP。Mac 密钥由钥匙串中的主密钥保护，进程通过原生 helper 与进程组托管。Tauri 用平台配置合并 `.app` / `.dmg` 目标，Apple Silicon 构建固定 `aarch64-apple-darwin`；更新镜像经 SHA-256 校验后交给 Finder，用户手动替换应用。详见 [macOS 说明](MACOS.zh-CN.md)。
+
 # 实现笔记
 
 2026-11-09 发版说明：本日下列“未发布”条目记录的是实现阶段，现统一纳入使用者确认的 GitHub 正式版 **0.25.12**；安装仍由使用者通过软件更新执行。源码测试不等于真实账户验收。

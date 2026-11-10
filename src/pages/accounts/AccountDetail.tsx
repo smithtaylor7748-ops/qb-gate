@@ -415,13 +415,24 @@ function Body({ slot: s, onClose }: { slot: Slot; onClose: () => void }) {
             v={s.plan_fetched_at}
             hint="官方客户端上次刷新这份档案的时刻。这是缓存，可能已经旧了。"
           />
-          <Fact k="本地登录记录" v={s.logged_in ? "有" : "没有"} />
+          <Fact
+            k="本地登录记录"
+            v={
+              s.login_problem?.startsWith("登录状态未知：")
+                ? "未知（无法读取凭据）"
+                : s.logged_in
+                  ? "有"
+                  : "没有"
+            }
+          />
           <Fact
             k="凭证到期"
             v={
-              s.logged_in
-                ? (s.expires_at ?? "读不出到期时间")
-                : "还没在这个槽位里登录过"
+              s.login_problem?.startsWith("登录状态未知：")
+                ? "未知（无法读取凭据）"
+                : s.logged_in
+                  ? (s.expires_at ?? "读不出到期时间")
+                  : "还没在这个槽位里登录过"
             }
             hint={s.logged_in ? fmtDaysLeft(s.cli_days_left) : undefined}
           />

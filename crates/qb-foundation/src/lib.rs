@@ -31,3 +31,4 @@ pub mod error;
 pub mod json_canonical;
 pub mod paths;
 pub mod sink;
+pub mod test_context;

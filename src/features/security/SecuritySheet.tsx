@@ -1,3 +1,4 @@
+import { usePlatform } from "../../lib/platform";
 /**
  * 安全项的小窗。**全局只挂一份**，在 `Shell` 里。
  *
@@ -22,6 +23,7 @@ export function openSecurity(id: ObjectId): void {
 }
 
 export default function SecuritySheet() {
+  const platform = usePlatform();
   const [open, setOpen] = useSession<ObjectId | null>(KEY, null);
   const current = OBJECTS.find((o) => o.id === open);
   return (
@@ -29,7 +31,11 @@ export default function SecuritySheet() {
       open={current !== undefined}
       onClose={() => setOpen(null)}
       size="wide"
-      headerActions={current?.id === "purity" ? <Ipv6Panel /> : undefined}
+      headerActions={
+        current?.id === "purity" && platform?.os === "windows" ? (
+          <Ipv6Panel />
+        ) : undefined
+      }
       title={
         current ? (
           <span className="qb-modal-title">

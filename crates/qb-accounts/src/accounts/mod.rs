@@ -378,9 +378,21 @@ fn make_junction(link: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
-fn make_junction(_link: &Path, _target: &Path) -> Result<()> {
-    Err(GateError::Other("仅 Windows 支持".into()))
+#[cfg(unix)]
+fn make_junction(link: &Path, target: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(target, link)?;
+    Ok(())
+}
+
+fn remove_junction(link: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        std::fs::remove_dir(link)
+    }
+    #[cfg(unix)]
+    {
+        std::fs::remove_file(link)
+    }
 }
 
 // ---------------------------------------------------------------- 读状态
@@ -420,9 +432,14 @@ pub fn slots_in(r: &AccountRoots) -> Vec<Slot> {
             let dir = e.path();
             let profile = read_profile(&dir);
             let expiry = refresh_token_expiry(&dir);
+            let credential = credential_store::read_checked(&dir);
+            let login_problem = credential
+                .as_ref()
+                .err()
+                .map(|error| format!("登录状态未知：{error}"));
             Some(Slot {
                 active: active.as_deref() == Some(label.as_str()),
-                logged_in: dir.join(".credentials.json").exists(),
+                logged_in: credential.is_ok_and(|value| value.is_some()),
                 cli_days_left: expiry.map(days_from),
                 account_uuid: profile
                     .as_ref()
@@ -448,7 +465,7 @@ pub fn slots_in(r: &AccountRoots) -> Vec<Slot> {
                         .and_then(|v| v.get("organizationUuid"))
                         .and_then(|v| v.as_str()),
                 ),
-                login_problem: None,
+                login_problem,
                 label,
             })
         })
@@ -502,8 +519,8 @@ pub fn desktop_state(r: &AccountRoots) -> DesktopState {
 /// **只看 refreshToken，不看 accessToken。** accessToken 8–12 小时过期是正常的，
 /// 客户端自己拿 refreshToken 静默换新，用户无感 —— 因此故意不为它报警。
 fn refresh_token_expiry(dir: &std::path::Path) -> Option<i64> {
-    let text = std::fs::read_to_string(dir.join(".credentials.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let text = credential_store::read(dir)?;
+    let v: serde_json::Value = serde_json::from_slice(text.as_bytes()).ok()?;
     v.get("claudeAiOauth")?
         .get("refreshTokenExpiresAt")?
         .as_i64()
@@ -1482,3 +1499,4 @@ pub fn slots_checked(r: &AccountRoots) -> Result<Vec<Slot>> {
         ))),
     }
 }
+pub mod credential_store;

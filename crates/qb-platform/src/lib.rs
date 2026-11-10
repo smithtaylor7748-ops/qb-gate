@@ -42,11 +42,13 @@ pub use qb_foundation::{audit, error, paths, sink};
 #[cfg(windows)]
 pub mod acl;
 pub mod autostart;
+pub mod capabilities;
 pub mod config_io;
 pub mod credentials;
 pub mod endpoint;
 pub mod firewall;
 pub mod logging;
+pub mod macos;
 pub mod operations;
 pub mod panic_hook;
 pub mod process;

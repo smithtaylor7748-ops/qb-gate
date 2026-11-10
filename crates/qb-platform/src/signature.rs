@@ -31,7 +31,26 @@ pub async fn signer_of(path: &std::path::Path) -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub async fn signer_of(path: &std::path::Path) -> Option<String> {
+    if status_of(path).await.as_deref() != Some("Valid") {
+        return None;
+    }
+    let out = tokio::process::Command::new("/usr/bin/codesign")
+        .args(["-dv", "--verbose=4"])
+        .arg(path)
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .find_map(|line| line.strip_prefix("Authority=").map(str::to_owned))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub async fn signer_of(_path: &std::path::Path) -> Option<String> {
     None
 }
@@ -58,7 +77,25 @@ pub async fn status_of(path: &std::path::Path) -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub async fn status_of(path: &std::path::Path) -> Option<String> {
+    let out = tokio::process::Command::new("/usr/bin/codesign")
+        .args(["--verify", "--strict"])
+        .arg(path)
+        .output()
+        .await
+        .ok()?;
+    Some(
+        if out.status.success() {
+            "Valid"
+        } else {
+            "Invalid"
+        }
+        .into(),
+    )
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub async fn status_of(_path: &std::path::Path) -> Option<String> {
     None
 }

@@ -17,5 +17,6 @@ pub mod antigravity;
 pub mod antigravity_setup;
 pub mod codex_desktop;
 pub mod codex_store;
+pub mod macos_install;
 pub mod sillytavern;
 pub mod sillytavern_setup;

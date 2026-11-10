@@ -46,7 +46,11 @@ pub fn hooks_dir() -> PathBuf {
 }
 
 pub fn script_path() -> PathBuf {
-    hooks_dir().join("gate-check.ps1")
+    hooks_dir().join(if cfg!(target_os = "macos") {
+        "gate-check.sh"
+    } else {
+        "gate-check.ps1"
+    })
 }
 
 pub fn blocked_log() -> PathBuf {
@@ -90,6 +94,12 @@ pub struct HookStatus {
 }
 
 fn hook_command() -> String {
+    #[cfg(target_os = "macos")]
+    return format!(
+        "/bin/sh '{}'",
+        script_path().display().to_string().replace('\'', "'\\''")
+    );
+    #[cfg(not(target_os = "macos"))]
     format!(
         "powershell -NoProfile -ExecutionPolicy Bypass -File \"{}\"",
         script_path().display()
@@ -431,15 +441,35 @@ pub fn follow_active_slot(scope: &Scope) {
 }
 
 fn script_bytes(target: &std::path::Path) -> Vec<u8> {
-    let body = SCRIPT.replace(
-        "__SETTINGS_PATH__",
-        &target.display().to_string().replace('\'', "''"),
-    );
-    let mut bytes = vec![0xEF, 0xBB, 0xBF];
-    bytes.extend_from_slice(body.as_bytes());
-    bytes
+    #[cfg(target_os = "macos")]
+    {
+        let _ = target;
+        // Failure to determine our own executable must fail closed, never run another PATH entry.
+        return std::env::current_exe()
+            .map(|exe| {
+                format!(
+                    "#!/bin/sh\nexec '{}' --qb-gate-check\n",
+                    exe.display().to_string().replace('\'', "'\\''")
+                )
+                .into_bytes()
+            })
+            .unwrap_or_else(|_| {
+                b"#!/bin/sh\necho 'QB Gate executable unavailable' >&2\nexit 2\n".to_vec()
+            });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let body = SCRIPT.replace(
+            "__SETTINGS_PATH__",
+            &target.display().to_string().replace('\'', "''"),
+        );
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(body.as_bytes());
+        bytes
+    }
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 const SCRIPT: &str = r#"# QB Gate 会话内门禁 —— 由面板生成，别手改（改了下次装会被覆盖）。
 #
 # 这里**没有判定逻辑**：只读面板落下的裁决文件。判定全在 Rust 侧的
@@ -501,6 +531,30 @@ if (-not $v.allowed) {
 
 exit 0
 "#;
+
+/// Dispatch before app/database initialization; this only reads the existing verdict.
+pub fn handle_helper_args() -> Option<i32> {
+    if !cfg!(target_os = "macos") || std::env::args().nth(1).as_deref() != Some("--qb-gate-check") {
+        return None;
+    }
+    let intent = crate::config_io::read_object(&crate::paths::state_dir().join("gate-intent.json"));
+    let reason = match intent {
+        Err(_) => Some("无法核验门禁意图文件".to_string()),
+        Ok(intent) if intent["paused"].as_bool().unwrap_or(false) => Some("受管门禁已暂停".into()),
+        _ => match super::cached_verdict() {
+            Some(v) if v.allowed && super::verdict_fresh(&v) => None,
+            Some(v) if !v.allowed => Some(v.reason),
+            _ => Some("门禁裁决缺失或已过期，请打开 QB Gate 并重新验证 IP".into()),
+        },
+    };
+    Some(match reason {
+        None => 0,
+        Some(reason) => {
+            eprintln!("QB Gate 拦下了这次请求：{reason}\n临时停用：面板 → 会话内门禁 → 停用；面板无法打开时，从 Claude settings.json 的 hooks 中移除带 _qb_gate 标记的条目。");
+            2
+        }
+    })
+}
 
 #[cfg(test)]
 mod tests {

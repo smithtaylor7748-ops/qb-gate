@@ -3114,6 +3114,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dirs 5.0.1",
+ "hex",
  "qb-contract",
  "qb-foundation",
  "qb-install",
@@ -3121,8 +3122,10 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "toml_edit 0.22.27",
  "ts-rs",
+ "unicode-normalization",
  "windows 0.58.0",
 ]
 
@@ -3284,6 +3287,7 @@ dependencies = [
  "tokio",
  "ts-rs",
  "windows 0.58.0",
+ "zip",
 ]
 
 [[package]]
@@ -3332,10 +3336,14 @@ dependencies = [
  "chrono",
  "dirs 5.0.1",
  "hex",
+ "libc",
+ "plist",
  "qb-contract",
  "qb-foundation",
  "reqwest 0.12.28",
+ "ring",
  "rusqlite",
+ "security-framework",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -5566,6 +5574,15 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75cd3fb03d5288b3ba9a1ee103ac7e9cbb59f0b03d64f8ddfcc04dd42758a85d"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-segmentation"

@@ -791,6 +791,12 @@ pub async fn download_and_unpack(
 
 /// node.exe 旁边的 npm 本体（官方安装包、nvm-windows 都是这个布局）。
 fn npm_cli_beside(node: &Path) -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        return super::macos_install::npm_roots()
+            .into_iter()
+            .map(|p| p.join("npm/bin/npm-cli.js"))
+            .find(|p| p.is_file());
+    }
     let p = node
         .parent()?
         .join("node_modules")
@@ -811,7 +817,11 @@ async fn npm_install(
         .parent()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
-    let path = format!("{node_dir};{}", std::env::var("PATH").unwrap_or_default());
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    let path = format!(
+        "{node_dir}{separator}{}",
+        std::env::var("PATH").unwrap_or_default()
+    );
     let env = [("PATH", path.as_str()), ("NODE_ENV", "production")];
     let mut common: Vec<String> = vec![
         "install".into(),
@@ -827,9 +837,26 @@ async fn npm_install(
                 .await?
         }
         None => {
-            let mut args = vec!["/c".to_string(), "npm".to_string()];
-            args.extend(common);
-            super::winget::run_streaming_env("cmd", &args, &env, rep, 6, log).await?
+            #[cfg(target_os = "macos")]
+            {
+                let npm = super::macos_install::command("npm")
+                    .ok_or_else(|| GateError::Other("请先安装包含 npm 的 Node.js LTS。".into()))?;
+                super::winget::run_streaming_env(
+                    &npm.display().to_string(),
+                    &common,
+                    &env,
+                    rep,
+                    6,
+                    log,
+                )
+                .await?
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let mut args = vec!["/c".to_string(), "npm".to_string()];
+                args.extend(common);
+                super::winget::run_streaming_env("cmd", &args, &env, rep, 6, log).await?
+            }
         }
     };
     if !ok {

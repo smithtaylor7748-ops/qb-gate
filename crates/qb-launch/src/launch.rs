@@ -174,6 +174,12 @@ pub fn claude_code_env_with(
 /// **必须是 `AnthropicClaude\claude.exe` 这个根下的存根**，不能是 `app-*` 下那份：
 /// 后者是运行时副本，我们既不给它上锁，也不该绕过存根直接拉它 ——
 /// 存根负责挑当前版本，跳过去会在升级后指向旧版。
+#[cfg(target_os = "macos")]
+pub fn desktop_stub() -> Option<PathBuf> {
+    crate::install::macos_install::executable("Claude")
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn desktop_stub() -> Option<PathBuf> {
     let p = dirs::data_local_dir()?
         .join("AnthropicClaude")
@@ -195,6 +201,11 @@ pub fn resolve(target: LaunchTarget) -> Result<PathBuf> {
                 })
         }
         LaunchTarget::ClaudeDesktop => desktop_stub().ok_or_else(|| {
+            if cfg!(target_os = "macos") {
+                return GateError::Other(
+                    "找不到 Claude.app，请将官方 Mac 应用放进「应用程序」目录。".into(),
+                );
+            }
             GateError::Other(
                 "找不到 Claude 桌面端的启动存根（%LOCALAPPDATA%\\AnthropicClaude\\claude.exe）。\
                  没装的话先在「环境与安装」里装好；如果是 MSIX 方式装的，请从开始菜单打开 ——\
@@ -208,7 +219,11 @@ pub fn resolve(target: LaunchTarget) -> Result<PathBuf> {
             .executable
             .map(PathBuf::from)
             .ok_or_else(|| {
-                GateError::Other("未找到 Codex 桌面端，请先安装 Microsoft Store 桌面应用。".into())
+                GateError::Other(if cfg!(target_os = "macos") {
+                    "未找到 Codex.app，请将官方 Mac 应用放进「应用程序」目录。".into()
+                } else {
+                    "未找到 Codex 桌面端，请先安装 Microsoft Store 桌面应用。".into()
+                })
             }),
         // 跟检测、上锁共用 `install::antigravity` 那一张表。
         LaunchTarget::Antigravity | LaunchTarget::AntigravityIde => {

@@ -1,3 +1,4 @@
+import { usePlatform } from "../../lib/platform";
 /**
  * 门禁本体，拆成三个对象：白名单 / 执行锁 / 会话内门禁。
  *
@@ -77,6 +78,7 @@ function useGateAction() {
 // ------------------------------------------------------------------ 白名单
 
 export function AllowlistPanel() {
+  const systemLock = usePlatform()?.system_execution_lock === true;
   const { gate, busy, act } = useGateAction();
   const check = useChecks().iplock;
   const [removing, setRemoving] = useState<string | null>(null);
@@ -155,7 +157,9 @@ export function AllowlistPanel() {
           ) : undefined}
         </Metric>
         <Metric label="执行锁" loading={gate.loading && !st} error={gate.error}>
-          {st ? (
+          {!systemLock ? (
+            "当前平台不提供"
+          ) : st ? (
             lease ? (
               <span title={lease.title}>{lease.text}</span>
             ) : (
@@ -422,10 +426,22 @@ type LockDialog = null | "unlock" | "clean";
  * 日志是出了事才去翻的东西，翻它的人本来就已经在门禁这一档里了。
  */
 export function LockPanel() {
+  const systemLock = usePlatform()?.system_execution_lock === true;
   const { gate, busy, act } = useGateAction();
   const [dialog, setDialog] = useState<LockDialog>(null);
   const st = gate.data;
   const emptyAllowlist = !!st && st.allowlist.length === 0;
+
+  if (!systemLock)
+    return (
+      <Card as="h3" title="受管启动与 IP 检查">
+        <p className="notice">
+          macOS 不提供 Windows 执行锁。只有从 QB Gate 启动的受管会话在启动前检查
+          IP 并由看门狗监督，Finder 和其他终端的启动不受限制。
+        </p>
+        <GateCheckInterval />
+      </Card>
+    );
 
   return (
     <>

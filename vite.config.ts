@@ -10,7 +10,7 @@ export default defineConfig({
   // Tailwind v4 用到 oklch() / color-mix()，需要 Chrome 111+。
   // 本机 WebView2 实测 152.0.4191.66（Evergreen 自动更新），远高于门槛。
   build: {
-    target: "chrome114",
+    target: ["chrome114", "safari16.4"],
     sourcemap: false,
     // 两个入口（2026-09-24）：面板本身，与真实浏览器采集页 `probe.html` ——
     // 后者由 `qb-app::browser_probe` 在 127.0.0.1 上临时供给系统默认浏览器，

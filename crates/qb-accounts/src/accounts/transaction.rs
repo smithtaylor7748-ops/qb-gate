@@ -85,7 +85,7 @@ fn cleanup(journal: &Journal) -> Result<()> {
             if !metadata(&s.backup)?.is_some_and(|m| is_reparse_point(&m)) {
                 return Err(GateError::Other("账户旧指向备份类型改变，保留现场".into()));
             }
-            std::fs::remove_dir(&s.backup)?;
+            remove_junction(&s.backup)?;
         }
     }
     Ok(())
@@ -107,7 +107,7 @@ fn rollback(path: &Path, journal: &mut Journal) -> Result<()> {
                         s.link.display()
                     )));
                 }
-                std::fs::remove_dir(&s.link)?;
+                remove_junction(&s.link)?;
             }
             std::fs::rename(&s.backup, &s.link)?;
         } else if !s.had_original {
@@ -115,7 +115,7 @@ fn rollback(path: &Path, journal: &mut Journal) -> Result<()> {
                 if !matches(&s.link, &s.target) {
                     return Err(GateError::Other("新账户指向被外部修改".into()));
                 }
-                std::fs::remove_dir(&s.link)?;
+                remove_junction(&s.link)?;
             }
         } else if metadata(&s.link)?.is_none()
             || s.original_target
@@ -326,8 +326,8 @@ mod tests {
         .is_err());
         assert!(matches(&a, &old));
         assert!(matches(&b, &old));
-        std::fs::remove_dir(&a).unwrap();
-        std::fs::remove_dir(&b).unwrap();
+        remove_junction(&a).unwrap();
+        remove_junction(&b).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

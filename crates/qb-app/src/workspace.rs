@@ -1395,6 +1395,13 @@ fn launch_relay_only(
 
 /// 在 `PATH` 里找第一个存在的文件（按 `names` 的先后、目录的先后）。
 fn find_on_path(names: &[&str]) -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        return names.iter().find_map(|name| {
+            crate::install::macos_install::command(
+                name.trim_end_matches(".exe").trim_end_matches(".cmd"),
+            )
+        });
+    }
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .flat_map(|dir| names.iter().map(move |n| dir.join(n)))

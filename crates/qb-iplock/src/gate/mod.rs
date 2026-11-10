@@ -90,11 +90,6 @@ fn with_sid<T>(f: impl FnOnce(&crate::acl::SidBuf) -> Result<T>) -> Result<T> {
     f(&sid)
 }
 
-#[cfg(not(windows))]
-fn with_sid<T>(_f: impl FnOnce(&()) -> Result<T>) -> Result<T> {
-    Err(GateError::Other("IP 锁只在 Windows 上可用".into()))
-}
-
 #[cfg(windows)]
 pub fn is_locked(p: &Path) -> Result<bool> {
     crate::acl::locked(p)
@@ -171,6 +166,24 @@ pub fn unlock_all() -> Result<usize> {
 #[cfg(not(windows))]
 pub fn unlock_all() -> Result<usize> {
     Err(GateError::Other("IP 锁只在 Windows 上可用".into()))
+}
+
+/// Apply the platform execution mechanism as part of an already managed workflow.
+/// macOS has no global execution ACL: zero means zero files locked, not global protection.
+/// Callers still validate IP, revoke leases and terminate owned sessions independently.
+pub fn lock_for_managed() -> Result<usize> {
+    #[cfg(target_os = "macos")]
+    return Ok(0);
+    #[cfg(not(target_os = "macos"))]
+    lock_all()
+}
+
+/// Platform execution preparation after the shared IP judgement has allowed a launch.
+pub fn unlock_for_managed() -> Result<usize> {
+    #[cfg(target_os = "macos")]
+    return Ok(0);
+    #[cfg(not(target_os = "macos"))]
+    unlock_all()
 }
 
 /// 摘掉指定几个文件上的 Deny ACE。
@@ -408,11 +421,11 @@ pub async fn open_authorized_with_mode(
     }
     match verdict {
         Err(GateError::IpUnknown) => {
-            let _ = lock_all();
+            let _ = lock_for_managed();
             Err(GateError::IpUnknown)
         }
         Err(e @ (GateError::IpNotAllowed { .. } | GateError::GateRejected(_))) => {
-            let _ = lock_all();
+            let _ = lock_for_managed();
             crate::audit::write(&format!("拒绝放行：{e}"));
             Err(e)
         }
@@ -426,7 +439,7 @@ pub async fn open_authorized_with_mode(
                 Some(b"{\"paused\":false}"),
             )?;
             let granted = targets::lockable();
-            unlock_all()?;
+            unlock_for_managed()?;
             lease_grant(state, holder, granted, mode);
             state.clear_needs_reopen();
             crate::audit::write(&format!("公网 IP 在白名单内（{ip}），已放行 {holder}"));
@@ -444,7 +457,7 @@ pub fn release_holder(state: &GateState, holder: &str) -> Result<()> {
         lease.is_held()
     };
     if !held {
-        lock_all()?;
+        lock_for_managed()?;
     }
     Ok(())
 }
@@ -481,8 +494,12 @@ pub fn release_lease(state: &GateState) -> Result<()> {
     let paused = pause(state);
     lease_release(state);
     state.clear_needs_reopen();
-    finish_pause(paused, lock_all())?;
-    crate::audit::write("租约已收回，全部副本重新上锁");
+    finish_pause(paused, lock_for_managed())?;
+    crate::audit::write(if cfg!(target_os = "macos") {
+        "受管启动租约已收回；macOS 不提供全局执行锁"
+    } else {
+        "租约已收回，全部副本重新上锁"
+    });
     Ok(())
 }
 
@@ -517,6 +534,9 @@ pub struct MaintenanceOutcome {
 
 /// 收尾成功时给使用者看的那句话。
 fn reopened_detail(relocked: usize, ip: &str, holder: &str) -> String {
+    if cfg!(target_os = "macos") {
+        return format!("已确认出口 IP {ip} 仍在白名单内，已把托管启动租约重新放行给 {holder}；macOS 不提供全局执行锁。");
+    }
     format!(
         "重新上锁 {relocked} 个可执行文件，随后确认出口 IP {ip} 仍在白名单内，已把租约重新放行给 {holder}。"
     )
@@ -531,6 +551,9 @@ fn reopened_detail(relocked: usize, ip: &str, holder: &str) -> String {
 /// —— 那时候他根本不会把它和几分钟前点过的「升级」联系起来。
 /// 有单测钉着这句话里带着「重新放行」四个字。
 fn restore_failed_detail(relocked: usize, holder: &str, why: &str) -> String {
+    if cfg!(target_os = "macos") {
+        return format!("放行给 {holder} 的托管启动租约没能恢复：{why}。请到总览点「重新放行」；macOS 不提供全局执行锁。");
+    }
     format!(
         "重新上锁 {relocked} 个可执行文件。原来放行给 {holder} 的租约没能恢复：{why}。Claude 桌面端现在开新会话会失败，到总览点一次「重新放行」即可。"
     )
@@ -578,7 +601,7 @@ impl Maintenance {
     /// 开窗口并解锁。给要写 claude.exe 的操作用。
     pub fn with_unlock(state: &GateState) -> Self {
         let prior = Self::prior_of(state);
-        let unlocked = match unlock_all() {
+        let unlocked = match unlock_for_managed() {
             Ok(_) => true,
             Err(e) => {
                 // 解不开也要继续 —— 后面那个操作自己会失败并报出真正的原因，
@@ -614,7 +637,7 @@ impl Maintenance {
 
         // 先关门，再决定要不要重新开。顺序不能反 —— 反过来会在
         // 「验 IP 的那几秒」里留一扇没有重锁过的门。
-        let relocked = match lock_all() {
+        let relocked = match lock_for_managed() {
             Ok(n) => n,
             Err(e) => {
                 crate::audit::write(&format!("维护窗口：重锁失败：{e}"));
@@ -636,7 +659,11 @@ impl Maintenance {
             return MaintenanceOutcome {
                 relocked,
                 reopened: false,
-                detail: format!("重新上锁 {relocked} 个可执行文件。"),
+                detail: if cfg!(target_os = "macos") {
+                    "维护已完成；macOS 不提供全局执行锁。".into()
+                } else {
+                    format!("重新上锁 {relocked} 个可执行文件。")
+                },
             };
         };
 
@@ -645,14 +672,14 @@ impl Maintenance {
         match verified_ip().await {
             Ok(ip) => {
                 let granted = targets::lockable();
-                match unlock_all() {
+                match unlock_for_managed() {
                     Ok(_) => {
                         if state.generation.load(std::sync::atomic::Ordering::SeqCst) != generation
                             || state
                                 .manual_paused
                                 .load(std::sync::atomic::Ordering::SeqCst)
                         {
-                            let _ = lock_all();
+                            let _ = lock_for_managed();
                             return MaintenanceOutcome {
                                 relocked,
                                 reopened: false,
@@ -709,7 +736,7 @@ impl Drop for Maintenance {
         }
         // 走到这里说明中途提前返回或者 panic 了。
         // 同步兜底，只关门，不尝试重新放行（那需要 await）。
-        match lock_all() {
+        match lock_for_managed() {
             Ok(n) => crate::audit::write(&format!(
                 "维护窗口异常结束，已兜底重新上锁 {n} 个可执行文件"
             )),
@@ -742,7 +769,7 @@ pub async fn try_restore_lease(state: &GateState) -> Option<WatchMode> {
     match verdict {
         Ok(ip) => {
             let granted = targets::lockable();
-            if let Err(e) = unlock_all() {
+            if let Err(e) = unlock_for_managed() {
                 crate::audit::write(&format!("面板重启：上次的租约（{holder}）解锁失败：{e}"));
                 lease::forget();
                 return None;
@@ -919,7 +946,14 @@ mod tests {
             text.contains("查不到当前出口 IP"),
             "得带上真正的原因：{text}"
         );
-        assert!(text.contains("12"), "得说重锁了几个：{text}");
+        if cfg!(target_os = "macos") {
+            assert!(
+                text.contains("不提供全局执行锁"),
+                "不能声称全局上锁：{text}"
+            );
+        } else {
+            assert!(text.contains("12"), "得说重锁了几个：{text}");
+        }
         assert!(
             !text.contains("**"),
             "传给界面的是纯文本，写 ** 会显示成两个星号"

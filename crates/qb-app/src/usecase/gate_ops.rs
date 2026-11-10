@@ -32,8 +32,8 @@ use std::time::Duration;
 
 use crate::error::{GateError, Result};
 use crate::gate::{
-    collect_targets, judge, judge_now, lease_grant, lease_release, lock_all, release_holder,
-    targets, unlock_all, watchdog, GateState,
+    collect_targets, judge, judge_now, lease_grant, lease_release, lock_for_managed as lock_all,
+    release_holder, targets, unlock_for_managed as unlock_all, watchdog, GateState,
 };
 use watchdog::WatchMode;
 

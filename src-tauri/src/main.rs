@@ -4,5 +4,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    if let Some(code) = qb_platform::macos::handle_helper_args() {
+        std::process::exit(code);
+    }
+    if let Some(code) = qb_iplock::gate::hook::handle_helper_args() {
+        std::process::exit(code);
+    }
     qb_gate_lib::run()
 }

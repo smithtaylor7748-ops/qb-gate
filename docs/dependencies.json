@@ -5351,6 +5351,19 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "unicode-normalization",
+      "version": "0.1.26",
+      "license": "(MIT OR Apache-2.0) AND Unicode-3.0",
+      "source": "https://github.com/unicode-rs/unicode-normalization",
+      "licenseFiles": [
+        "COPYRIGHT",
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "LICENSE-UNICODE"
+      ]
+    },
+    {
+      "ecosystem": "cargo",
       "name": "unicode-segmentation",
       "version": "1.13.3",
       "license": "MIT OR Apache-2.0",

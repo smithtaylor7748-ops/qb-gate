@@ -1,3 +1,4 @@
+import { usePlatform } from "../../lib/platform";
 /**
  * 环境变量清理（2026-10-27，中转站重构阶段 7 · X5，照 cc-switch 的环境变量冲突检查）。
  *
@@ -37,7 +38,12 @@ const SCOPE_LABEL: Record<EnvScope, string> = {
 
 /** 体检卡与修复中心都放这一颗按钮，点开同一个弹窗。 */
 export default function EnvCleanup() {
+  const platform = usePlatform();
   const [open, setOpen] = useState(false);
+  if (!platform?.persistent_env_cleanup)
+    return (
+      <p className="notice">当前平台请在终端配置文件中手动处理环境变量。</p>
+    );
   return (
     <>
       <Button

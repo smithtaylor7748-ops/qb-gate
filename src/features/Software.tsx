@@ -1,3 +1,5 @@
+import { usePlatform } from "../lib/platform";
+import MacSoftware from "./MacSoftware";
 /**
  * 软件与安装 —— 检测 / 安装 / 升级 / 版本回滚 / 外部副本清理。
  *
@@ -8,6 +10,9 @@
 import Environment from "../pages/Environment";
 
 export default function Software() {
+  const platform = usePlatform();
+  if (!platform) return <p>正在读取平台能力…</p>;
+  if (platform.os === "macos") return <MacSoftware />;
   return (
     <section className="qb-legacy-detail qb-software">
       <Environment />

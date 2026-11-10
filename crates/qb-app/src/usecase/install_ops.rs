@@ -38,6 +38,34 @@ pub async fn winget_install(
     target: InstallTarget,
     rep: &dyn ProgressSink,
 ) -> Result<InstallResult> {
+    if cfg!(target_os = "macos") {
+        let app = match target {
+            InstallTarget::ClaudeCode => crate::install::managed::App::ClaudeCode,
+            InstallTarget::Codex => crate::install::managed::App::Codex,
+            InstallTarget::ClaudeDesktop => {
+                return Err(GateError::Other(
+                    "请从 Claude 官方下载页安装 Mac 版本，并将 Claude.app 拖入「应用程序」。"
+                        .into(),
+                ))
+            }
+        };
+        let outcome = crate::install::managed::install(app, "latest", rep).await?;
+        let detail = format!(
+            "{} {} 已安装；macOS 使用托管 IP 检查，不提供系统执行锁。",
+            app.label(),
+            outcome.version
+        );
+        rep.done(&detail);
+        return Ok(InstallResult {
+            target,
+            ok: true,
+            method: Method::Managed,
+            relocked: 0,
+            signature_ok: None,
+            detail,
+            log: outcome.log,
+        });
+    }
     let mut log: Vec<String> = Vec::new();
     let mut method = Method::Winget;
 
@@ -248,7 +276,25 @@ pub async fn upgrade(
         rep.done(&p.detail);
         return Ok(p.detail);
     }
-
+    if cfg!(target_os = "macos") {
+        let guard = crate::gate::Maintenance::observing(state);
+        let result = crate::install::managed::install(
+            crate::install::managed::App::ClaudeCode,
+            ch.as_str(),
+            rep,
+        )
+        .await;
+        let done = guard.finish(state).await;
+        let installed = result?;
+        let detail = format!(
+            "Claude Code {} 已安装到 {}。{}",
+            installed.version,
+            installed.path.display(),
+            done.detail
+        );
+        rep.done(&detail);
+        return Ok(detail);
+    }
     // 先清上一次留下的残留 —— 见 gate::clean_stale_copies 的说明，
     // 本次安装新产生的那一份很可能正被占用，留到下次开头再清。
     rep.phase(2, "清理上一次升级留下的残留副本");

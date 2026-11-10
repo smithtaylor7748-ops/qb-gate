@@ -1,3 +1,5 @@
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "../lib/store";
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -68,6 +70,8 @@ beforeEach(() => {
   showDeepLink(null);
   mock.call.mockReset();
   mock.call.mockImplementation(async (command: string) => {
+    if (command === "platform_capabilities")
+      return { os: "windows", system_execution_lock: true };
     if (command === "deeplink_peek") return pending;
     if (command === "deeplink_paste") return provider;
     if (command === "deeplink_handler_status")
@@ -98,7 +102,10 @@ beforeEach(() => {
     return null;
   });
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  queryClient.clear();
+});
 
 it("only takes over CC Switch web links after the explicit button and explains the previous handler", async () => {
   mount(<DeepLinkPasteButton />);
@@ -123,12 +130,14 @@ it("only takes over CC Switch web links after the explicit button and explains t
 
 function mount(extra?: React.ReactNode) {
   render(
-    <MemoryRouter>
-      <ToastProvider>
-        <DeepLinkHost />
-        {extra}
-      </ToastProvider>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <ToastProvider>
+          <DeepLinkHost />
+          {extra}
+        </ToastProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

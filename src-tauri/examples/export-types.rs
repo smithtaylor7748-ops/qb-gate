@@ -31,6 +31,7 @@ fn main() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/lib/generated");
     let out = || -> std::result::Result<(), ts_rs::ExportError> {
         qb_gate_lib::domain::export_types(&root)?;
+        qb_platform::capabilities::PlatformCapabilities::export_all_to(&root)?;
         qb_app::usecase::quality_check::QualityCheckRequest::export_all_to(&root)?;
         qb_app::usecase::quality_check::QualityCheckResult::export_all_to(&root)?;
         qb_accounts::codex::CodexAccounts::export_all_to(&root)?;

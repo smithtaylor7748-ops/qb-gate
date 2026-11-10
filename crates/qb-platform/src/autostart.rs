@@ -32,6 +32,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use crate::error::{GateError, Result};
+#[cfg(not(target_os = "macos"))]
 use crate::registry::{self, Hive, Value};
 
 /// 开机自启登记在哪。
@@ -114,26 +115,31 @@ fn this_exe() -> Result<PathBuf> {
 
 /// 读现状。
 pub fn status() -> Result<AutostartStatus> {
-    let command = registry::read(Hive::CurrentUser, RUN_KEY, VALUE_NAME)?
-        .and_then(|v| v.as_text().map(str::to_string));
-    let disabled_by_user = match registry::read(Hive::CurrentUser, APPROVED_KEY, VALUE_NAME)? {
-        Some(Value::Binary(b)) => disabled_by(&b),
-        _ => false,
-    };
-    let here = this_exe()?;
-    let points_here = command
-        .as_deref()
-        .and_then(exe_in)
-        .is_some_and(|p| same_exe(&p, &here));
-    let registered = command.is_some();
-    Ok(AutostartStatus {
-        registered,
-        disabled_by_user: registered && disabled_by_user,
-        points_here,
-        effective: registered && !disabled_by_user && points_here,
-        command,
-        dev_build: dev_build(),
-    })
+    #[cfg(target_os = "macos")]
+    return mac_autostart::status();
+    #[cfg(not(target_os = "macos"))]
+    {
+        let command = registry::read(Hive::CurrentUser, RUN_KEY, VALUE_NAME)?
+            .and_then(|v| v.as_text().map(str::to_string));
+        let disabled_by_user = match registry::read(Hive::CurrentUser, APPROVED_KEY, VALUE_NAME)? {
+            Some(Value::Binary(b)) => disabled_by(&b),
+            _ => false,
+        };
+        let here = this_exe()?;
+        let points_here = command
+            .as_deref()
+            .and_then(exe_in)
+            .is_some_and(|p| same_exe(&p, &here));
+        let registered = command.is_some();
+        Ok(AutostartStatus {
+            registered,
+            disabled_by_user: registered && disabled_by_user,
+            points_here,
+            effective: registered && !disabled_by_user && points_here,
+            command,
+            dev_build: dev_build(),
+        })
+    }
 }
 
 /// 登记成「开机起这一份」。已经登记了别的路径（另一份 QB Gate）就改成这一份。
@@ -144,18 +150,137 @@ pub fn enable() -> Result<AutostartStatus> {
                 .into(),
         ));
     }
-    let exe = this_exe()?;
-    registry::write_user(RUN_KEY, VALUE_NAME, &Value::Text(command_for(&exe)))?;
-    // 任务管理器里点过「禁用」的话，那条记录还在 —— 不删，`Run` 写了也不起。
-    registry::delete_user(APPROVED_KEY, VALUE_NAME)?;
-    status()
+    #[cfg(target_os = "macos")]
+    return mac_autostart::enable();
+    #[cfg(not(target_os = "macos"))]
+    {
+        let exe = this_exe()?;
+        registry::write_user(RUN_KEY, VALUE_NAME, &Value::Text(command_for(&exe)))?;
+        // 任务管理器里点过「禁用」的话，那条记录还在 —— 不删，`Run` 写了也不起。
+        registry::delete_user(APPROVED_KEY, VALUE_NAME)?;
+        status()
+    }
 }
 
 /// 取消登记。`StartupApproved` 里的同名记录一起清掉，不留残渣。
 pub fn disable() -> Result<AutostartStatus> {
-    registry::delete_user(RUN_KEY, VALUE_NAME)?;
-    registry::delete_user(APPROVED_KEY, VALUE_NAME)?;
-    status()
+    #[cfg(target_os = "macos")]
+    return mac_autostart::disable();
+    #[cfg(not(target_os = "macos"))]
+    {
+        registry::delete_user(RUN_KEY, VALUE_NAME)?;
+        registry::delete_user(APPROVED_KEY, VALUE_NAME)?;
+        status()
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod mac_autostart {
+    use super::*;
+    use std::{fs, os::unix::fs::PermissionsExt};
+    const LABEL: &str = "com.qbgate.panel.autostart";
+
+    fn path() -> Result<PathBuf> {
+        dirs::home_dir()
+            .map(|p| {
+                p.join("Library/LaunchAgents")
+                    .join(format!("{LABEL}.plist"))
+            })
+            .ok_or_else(|| GateError::Other("无法确定用户主目录".into()))
+    }
+    fn program(path: &Path) -> Result<Option<PathBuf>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        let value = plist::Value::from_file(path)
+            .map_err(|e| GateError::Other(format!("登录启动配置不可读：{e}")))?;
+        Ok(value
+            .as_dictionary()
+            .and_then(|d| d.get("ProgramArguments"))
+            .and_then(plist::Value::as_array)
+            .and_then(|a| a.first())
+            .and_then(plist::Value::as_string)
+            .map(PathBuf::from))
+    }
+    pub(super) fn status() -> Result<AutostartStatus> {
+        let command = program(&path()?)?;
+        let here = this_exe()?;
+        let points_here = command.as_ref().is_some_and(|p| p == &here);
+        let registered = command.is_some();
+        let out = std::process::Command::new("/bin/launchctl")
+            .args([
+                "print-disabled",
+                &format!("gui/{}", unsafe { libc::geteuid() }),
+            ])
+            .output()?;
+        if !out.status.success() {
+            return Err(GateError::Other("无法核验系统登录项禁用状态".into()));
+        }
+        let disabled_by_user = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .any(|line| line.contains(&format!("\"{LABEL}\"")) && line.contains("=> true"));
+        Ok(AutostartStatus {
+            registered,
+            disabled_by_user,
+            command: command.map(|p| command_for(&p)),
+            points_here,
+            effective: registered && points_here && !disabled_by_user,
+            dev_build: dev_build(),
+        })
+    }
+    pub(super) fn enable() -> Result<AutostartStatus> {
+        let here = this_exe()?;
+        if !here
+            .components()
+            .any(|c| c.as_os_str().to_string_lossy().ends_with(".app"))
+        {
+            return Err(GateError::Other(
+                "请将 QB Gate.app 安装到应用程序目录后再开启登录启动".into(),
+            ));
+        }
+        let path = path()?;
+        fs::create_dir_all(path.parent().unwrap())?;
+        let mut d = plist::Dictionary::new();
+        d.insert("Label".into(), plist::Value::String(LABEL.into()));
+        d.insert(
+            "ProgramArguments".into(),
+            plist::Value::Array(vec![
+                plist::Value::String(here.to_string_lossy().into()),
+                plist::Value::String(ARG.into()),
+            ]),
+        );
+        d.insert("RunAtLoad".into(), plist::Value::Boolean(true));
+        d.insert(
+            "ProcessType".into(),
+            plist::Value::String("Interactive".into()),
+        );
+        let mut bytes = Vec::new();
+        plist::Value::Dictionary(d)
+            .to_writer_xml(&mut bytes)
+            .map_err(|e| GateError::Other(e.to_string()))?;
+        crate::config_io::replace(&path, Some(&bytes))?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        let result = std::process::Command::new("/bin/launchctl")
+            .args([
+                "enable",
+                &format!("gui/{}/{LABEL}", unsafe { libc::geteuid() }),
+            ])
+            .status()?;
+        if !result.success() {
+            return Err(GateError::Other("系统拒绝启用登录项".into()));
+        }
+        status()
+    }
+    pub(super) fn disable() -> Result<AutostartStatus> {
+        let path = path()?;
+        if let Some(program) = program(&path)? {
+            if program != this_exe()? {
+                return Err(GateError::Other("登录项指向另一份 QB Gate，未移除".into()));
+            }
+            fs::remove_file(path)?;
+        }
+        status()
+    }
 }
 
 #[cfg(test)]

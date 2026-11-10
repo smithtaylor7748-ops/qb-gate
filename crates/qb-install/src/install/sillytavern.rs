@@ -37,7 +37,11 @@ pub const DIR: &str = "sillytavern";
 pub const PREVIOUS: &str = "sillytavern.previous";
 pub const STAGING: &str = "sillytavern.staging";
 pub const WORK: &str = "sillytavern.work";
-pub const LAUNCHER: &str = "Start.bat";
+pub const LAUNCHER: &str = if cfg!(target_os = "macos") {
+    "server.js"
+} else {
+    "Start.bat"
+};
 pub const MARKER: &str = ".qb-managed.json";
 
 /// 某个托管根下，面板装的那份酒馆该在哪。
@@ -191,24 +195,13 @@ mod tests {
     #[test]
     fn the_working_directories_are_siblings_of_the_install() {
         // 就位与回滚都是同一个父目录下的改名 —— 不跨盘，不会停在复制到一半。
-        let dir = PathBuf::from(r"D:\apps\sillytavern");
-        assert_eq!(
-            previous_of(&dir),
-            PathBuf::from(r"D:\apps\sillytavern.previous")
-        );
-        assert_eq!(
-            staging_of(&dir),
-            PathBuf::from(r"D:\apps\sillytavern.staging")
-        );
-        assert_eq!(work_of(&dir), PathBuf::from(r"D:\apps\sillytavern.work"));
-        assert_eq!(
-            launcher_in(&dir),
-            PathBuf::from(r"D:\apps\sillytavern\Start.bat")
-        );
-        assert_eq!(
-            managed_dir_in(Path::new(r"D:\apps")),
-            PathBuf::from(r"D:\apps\sillytavern")
-        );
+        let root = std::env::temp_dir().join("qb-tavern-path-fixture");
+        let dir = root.join("sillytavern");
+        assert_eq!(previous_of(&dir), root.join("sillytavern.previous"));
+        assert_eq!(staging_of(&dir), root.join("sillytavern.staging"));
+        assert_eq!(work_of(&dir), root.join("sillytavern.work"));
+        assert_eq!(launcher_in(&dir), dir.join(LAUNCHER));
+        assert_eq!(managed_dir_in(&root), dir);
     }
 
     #[test]

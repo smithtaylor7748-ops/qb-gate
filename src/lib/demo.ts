@@ -3592,6 +3592,19 @@ const stationModels = [
 const demoQualityCancelled = new Set<string>();
 const demoQualityPending = new Map<string, () => void>();
 const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
+  platform_capabilities: () => {
+    const mac =
+      new URLSearchParams(location.search).get("platform") === "macos";
+    return {
+      os: mac ? "macos" : "windows",
+      arch: mac ? "aarch64" : "x86_64",
+      system_execution_lock: !mac,
+      firewall: !mac,
+      persistent_env_cleanup: !mac,
+      managed_launch: true,
+      autostart: true,
+    };
+  },
   quality_check_run: async (args) => {
     const request = args?.request as QualityCheckRequest;
     const began = Date.now();
@@ -4680,7 +4693,22 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   },
   probe_dns: () => dns,
   purity_criteria: () => criteria,
-  detect_software: () => software,
+  detect_software: () => {
+    if (new URLSearchParams(location.search).get("platform") !== "macos") return software;
+    const copy = structuredClone(software);
+    for (const [key, path] of Object.entries({
+      claudeCode: "/Users/demo/Library/Application Support/ClaudeIpGate/apps/claude-code/claude",
+      codex: "/Users/demo/Library/Application Support/ClaudeIpGate/apps/codex/codex",
+      claudeDesktop: "/Applications/Claude.app/Contents/MacOS/Claude",
+      codexDesktop: "/Applications/Codex.app/Contents/MacOS/Codex",
+      geminiCli: "/opt/homebrew/lib/node_modules/@google/gemini-cli/dist/index.js",
+      antigravityIde: "/Applications/Antigravity.app/Contents/MacOS/Electron",
+    })) {
+      const item = copy[key as keyof typeof copy];
+      if (item && !Array.isArray(item) && "path" in item) item.path = path;
+    }
+    return copy;
+  },
   // 其他命令行工具（阶段 7 · X3）：OpenClaw npm 装了一份、Pi 装了两份（版本对不上）、Grok 是官方安装器装的、
   // 其余没装。路径都是虚构的演示用户。装 / 升 / 卸 / 跑脚本没有演示（只在装好的面板里可用）。
   cli_tools_status: () => demoCliTools(),

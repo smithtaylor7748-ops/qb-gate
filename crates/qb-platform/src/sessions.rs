@@ -25,6 +25,7 @@ pub fn sanitized_environment(
 ) -> Vec<(String, String)> {
     const CONFLICTS: &[&str] = &[
         "CLAUDE_CONFIG_DIR",
+        "CLAUDE_SECURESTORAGE_CONFIG_DIR",
         "CLAUDE_USER_DATA_DIR",
         "ELECTRON_RUN_AS_NODE",
         "CODEX_HOME",
@@ -56,10 +57,26 @@ pub fn sanitized_environment(
         .filter(|(k, _)| !CONFLICTS.contains(&k.to_ascii_uppercase().as_str()))
         .map(|(k, v)| (k.to_ascii_uppercase(), (k, v)))
         .collect();
+    #[cfg(target_os = "macos")]
+    let secure_dir = additions
+        .iter()
+        .find(|(k, _)| k == "CLAUDE_CONFIG_DIR")
+        .map(|(_, value)| value.clone());
     for (k, v) in additions {
         out.insert(k.to_ascii_uppercase(), (k, v));
     }
-    out.into_values().collect()
+    #[cfg(target_os = "macos")]
+    if let Some(dir) = secure_dir {
+        out.insert(
+            "CLAUDE_SECURESTORAGE_CONFIG_DIR".into(),
+            ("CLAUDE_SECURESTORAGE_CONFIG_DIR".into(), dir),
+        );
+    }
+    let env: Vec<_> = out.into_values().collect();
+    #[cfg(target_os = "macos")]
+    return crate::macos::environment_with_path(env);
+    #[cfg(not(target_os = "macos"))]
+    env
 }
 
 /// Surface official Windows setup separately from a successful process spawn.
@@ -151,7 +168,7 @@ pub fn start(
         Repository::open()?.put("sessions", &id, &session)?;
         return Err(GateError::Other(session.detail));
     }
-    if session.context.client == Client::Codex {
+    if cfg!(windows) && session.context.client == Client::Codex {
         if let Some(notice) = codex_setup_notice(Path::new(&session.context.config_dir)) {
             session.detail = notice;
             Repository::open()?.put("sessions", &session.id, &session)?;
@@ -250,7 +267,10 @@ pub fn refresh() -> Result<bool> {
             m.session.detail = "进程已退出".into();
             db.put("sessions", &m.session.id, &m.session)?;
         }
-        if m.session.state == "running" && m.session.context.client == Client::Codex {
+        if cfg!(windows)
+            && m.session.state == "running"
+            && m.session.context.client == Client::Codex
+        {
             let detail = codex_setup_notice(Path::new(&m.session.context.config_dir))
                 .unwrap_or_else(|| "进程已登记".into());
             if m.session.detail != detail {
@@ -333,11 +353,19 @@ pub fn creation_time(pid: u32) -> Result<u64> {
 pub fn terminate_verified(pid: u32, time: u64) -> Result<()> {
     native::terminate_verified(pid, time)
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn creation_time(pid: u32) -> Result<u64> {
+    crate::macos::creation_time(pid)
+}
+#[cfg(target_os = "macos")]
+pub fn terminate_verified(pid: u32, time: u64) -> Result<()> {
+    crate::macos::terminate_verified(pid, time)
+}
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn creation_time(_: u32) -> Result<u64> {
     Err(GateError::Other("需要 Windows".into()))
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn terminate_verified(_: u32, _: u64) -> Result<()> {
     Err(GateError::Other("需要 Windows".into()))
 }
@@ -521,6 +549,7 @@ impl OwnedProgram {
 ///   （每个参数一个 argv，隐藏窗口，逐行回显）；
 /// * 要给使用者一个看得见的窗口 → 把脚本写成 `.cmd` / `.bat` 文件，把**那个文件**
 ///   当成 `exe` 传进来（走本函数的 batch 分支，开关由我们自己拼、不经过 `quote_argument`）。
+#[cfg(any(windows, test))]
 fn reject_shell_entrypoint(exe: &str, args: &[String]) -> Result<()> {
     let name = exe
         .rsplit(['\\', '/'])
@@ -542,6 +571,7 @@ fn reject_shell_entrypoint(exe: &str, args: &[String]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(windows, test))]
 fn quote_argument(arg: &str) -> String {
     let mut out = String::from("\"");
     let mut slashes = 0;
@@ -1004,15 +1034,17 @@ mod native {
         }
     }
 }
+#[cfg(target_os = "macos")]
+use crate::macos::NativeProcess;
 #[cfg(windows)]
 use native::NativeProcess;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 struct NativeProcess {
     pid: u32,
     created: u64,
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 impl NativeProcess {
     #[allow(clippy::too_many_arguments)]
     fn create(

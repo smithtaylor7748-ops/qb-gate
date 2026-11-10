@@ -1,3 +1,4 @@
+import { usePlatform } from "../lib/platform";
 import { useEffect, useState } from "react";
 import { NavLink, useParams } from "react-router-dom";
 import {
@@ -68,6 +69,7 @@ export default function SettingsCenter() {
 /** 一行开关：设置里的那个键、标题、底下那行小字。 */
 type Toggle = [keyof Preferences, string, string];
 function General() {
+  const platform = usePlatform();
   const settings = useResource("settings", R.settings);
   const action = useAction();
   const [theme, setTheme] = useSession("theme", "system");
@@ -188,29 +190,33 @@ function General() {
           ],
         ] as Toggle[]
       ).map(row)}
-      <h2 className="qb-subheading">启动时对齐</h2>
-      <p className="qb-muted">
-        面板启动时把系统对齐到出口 IP 的归属地；已经一致就不做任何动作。
-      </p>
-      {(
-        [
-          [
-            "align_timezone_on_start",
-            "系统时区",
-            "只在与出口 IP 不一致时切换，那一次需要管理员确认。",
-          ],
-          [
-            "align_locale_on_start",
-            "区域格式",
-            "日期、数字与货币的显示方式，之后启动的程序才读到新值。",
-          ],
-          [
-            "align_display_language_on_start",
-            "系统显示语言",
-            "需要先装好对应语言包，而且要注销后才生效，因此默认关闭。",
-          ],
-        ] as Toggle[]
-      ).map(row)}
+      {platform?.os === "windows" && (
+        <>
+          <h2 className="qb-subheading">启动时对齐</h2>
+          <p className="qb-muted">
+            面板启动时把系统对齐到出口 IP 的归属地；已经一致就不做任何动作。
+          </p>
+          {(
+            [
+              [
+                "align_timezone_on_start",
+                "系统时区",
+                "只在与出口 IP 不一致时切换，那一次需要管理员确认。",
+              ],
+              [
+                "align_locale_on_start",
+                "区域格式",
+                "日期、数字与货币的显示方式，之后启动的程序才读到新值。",
+              ],
+              [
+                "align_display_language_on_start",
+                "系统显示语言",
+                "需要先装好对应语言包，而且要注销后才生效，因此默认关闭。",
+              ],
+            ] as Toggle[]
+          ).map(row)}
+        </>
+      )}
       <h2 className="qb-subheading">软件更新</h2>
       {(
         [
@@ -259,6 +265,7 @@ function General() {
  * 不在设置文件里另存 —— 使用者在任务管理器里关掉它，这里要跟着变成没勾。
  */
 function AutostartRow() {
+  const platform = usePlatform();
   const status = useResource("autostart", R.autostart);
   const action = useAction();
   const s = status.data;
@@ -270,7 +277,9 @@ function AutostartRow() {
         ? "已登记，但在任务管理器 / 设置 › 启动应用里被禁用了；在这里重新勾上会解除禁用。"
         : s.registered && !s.points_here
           ? `登记的是另一份 QB Gate：${s.command ?? "（读不出命令）"}。在这里勾上会改成这一份。`
-          : "登录 Windows 后自动打开面板并收在托盘里。写的是当前用户的启动项「QB Gate」，卸载面板时一起删。";
+          : platform?.os === "macos"
+            ? "登录 macOS 后自动打开面板并收在菜单栏；此开关管理当前用户的 LaunchAgent。"
+            : "登录 Windows 后自动打开面板并收在托盘里。写的是当前用户的启动项「QB Gate」，卸载面板时一起删。";
   const warn = !!s && (s.disabled_by_user || (s.registered && !s.points_here));
   return (
     <label className="qb-setting-row">

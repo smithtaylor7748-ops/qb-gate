@@ -1,3 +1,4 @@
+import { usePlatform } from "../lib/platform";
 /**
  * 导入链接的确认框（中转站重构阶段 5，cc-switch 的 X4 Deep Link 的 `DeepLinkImportDialog`）。
  *
@@ -444,6 +445,7 @@ export function DeepLinkPasteButton() {
 }
 
 function DeepLinkWebImport() {
+  const platform = usePlatform();
   const [status, setStatus] = useState<Awaited<
     ReturnType<typeof deeplinkApi.handlerStatus>
   > | null>(null);
@@ -463,6 +465,12 @@ function DeepLinkWebImport() {
       dropped = true;
     };
   }, []);
+  if (platform?.os === "macos")
+    return (
+      <p className="qb-st-note">
+        macOS 请复制站点的导入链接，在下方粘贴后预览并确认导入。
+      </p>
+    );
   const change = async (enabled: boolean) => {
     setBusy(true);
     setError(null);

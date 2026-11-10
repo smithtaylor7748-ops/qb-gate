@@ -1,3 +1,4 @@
+import { usePlatform } from "../../lib/platform";
 /** A reviewable repair plan built from measured evidence, never from score alone. */
 import { useState } from "react";
 import { ListChecks, Wrench } from "lucide-react";
@@ -11,6 +12,7 @@ import { openSecurity } from "./SecuritySheet";
 import type { ObjectId } from "./objects";
 
 export default function RepairCenter() {
+  const platform = usePlatform();
   const [open, setOpen] = useState(false);
   const [fixing, setFixing] = useState(false);
   const [results, setResults] = useState<
@@ -24,10 +26,14 @@ export default function RepairCenter() {
   const gate = useResource("gate", R.gate);
   const egress = useResource("egress", R.egress);
   const fixes = (egress.data?.items ?? []).filter(
-    (it) => it.fixable && ["browser_webrtc", "browser_doh"].includes(it.id),
+    (it) =>
+      platform?.os === "windows" &&
+      it.fixable &&
+      ["browser_webrtc", "browser_doh"].includes(it.id),
   );
   const g = gate.data;
   const repairLocks =
+    platform?.system_execution_lock === true &&
     !!g &&
     !gate.error &&
     g.allowlist.length > 0 &&
@@ -107,15 +113,17 @@ export default function RepairCenter() {
           "当前用户的相关环境变量不在一键修复里：点「详细处理」，在「本机体检」末尾逐个勾选，先备份再删，能还原。",
         ]
       : ["尚未扫描本地环境信号。"],
-    iplock: g
-      ? [
-          `已锁 ${g.targets.filter((t) => t.locked).length}/${g.targets.length} 份；白名单 ${g.allowlist.length} 条；残留 ${g.stale_copies.length} 份`,
-          describeLease(g.lease, "有效租约")?.text ?? "没有有效租约",
-          repairLocks
-            ? "可补齐已发现副本的执行锁。"
-            : "租约中的放行会保留；空白名单和残留文件需要单独处理。",
-        ]
-      : ["尚未读到执行锁状态。"],
+    iplock: !platform?.system_execution_lock
+      ? ["当前平台不提供系统执行锁；仅监督从面板启动的受管会话。"]
+      : g
+        ? [
+            `已锁 ${g.targets.filter((t) => t.locked).length}/${g.targets.length} 份；白名单 ${g.allowlist.length} 条；残留 ${g.stale_copies.length} 份`,
+            describeLease(g.lease, "有效租约")?.text ?? "没有有效租约",
+            repairLocks
+              ? "可补齐已发现副本的执行锁。"
+              : "租约中的放行会保留；空白名单和残留文件需要单独处理。",
+          ]
+        : ["尚未读到执行锁状态。"],
     egress: egress.data?.items.map((it) => `${it.label}：${it.detail}`) ?? [
       "尚未比较直连、系统代理与浏览器策略。",
     ],

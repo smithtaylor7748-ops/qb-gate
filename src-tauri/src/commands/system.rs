@@ -70,6 +70,11 @@ pub fn relay_presets(target: relay::RelayTarget) -> Vec<relay::presets::Preset> 
     relay::presets::for_target(target)
 }
 
+#[tauri::command]
+pub fn platform_capabilities() -> qb_platform::capabilities::PlatformCapabilities {
+    qb_platform::capabilities::current()
+}
+
 // ------------------------------------------------------------------ 设置
 
 #[tauri::command]
@@ -140,7 +145,7 @@ pub async fn settings_save(mut next: settings::Settings) -> Result<settings::Set
                 .filter(|t| t.kind != gate::targets::TargetKind::CodexCli)
                 .all(|t| t.locked);
             if gate_closed {
-                let _ = gate::lock_all();
+                let _ = gate::lock_for_managed();
             }
             audit::write("设置：GPT（Codex）已纳回 IP 门禁");
         } else {
@@ -162,7 +167,7 @@ pub async fn settings_save(mut next: settings::Settings) -> Result<settings::Set
                 .filter(|t| t.kind != gate::targets::TargetKind::Antigravity)
                 .all(|t| t.locked);
             if gate_closed {
-                let _ = gate::lock_all();
+                let _ = gate::lock_for_managed();
             }
             audit::write("设置：反重力（Hub + IDE）已纳回 IP 门禁");
         } else {

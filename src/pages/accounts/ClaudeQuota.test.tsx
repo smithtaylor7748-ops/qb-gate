@@ -117,6 +117,21 @@ it("says the server rejected the login apart from never logged in, and labels th
   expect(refresh).toHaveBeenCalledTimes(1);
 });
 
+it("does not report a denied Keychain read as a failed login", () => {
+  wrap(
+    <SlotRow
+      slot={{
+        ...base,
+        logged_in: false,
+        login_problem: "登录状态未知：无法访问登录钥匙串",
+      }}
+    />,
+  );
+  expect(screen.getByText("状态未知")).toBeTruthy();
+  expect(screen.queryByText("登录已失效")).toBeNull();
+  expect(screen.queryByText("未登录")).toBeNull();
+});
+
 it("opening the detail only reads the last answer; asking goes out once and shows every window", async () => {
   mock.call.mockImplementation(
     async (command: string, args?: { refresh?: boolean }) => {

@@ -1,3 +1,4 @@
+import { usePlatform } from "../../lib/platform";
 /**
  * 第五个安全对象：**出口一致性**。
  *
@@ -166,13 +167,14 @@ function Row({
   undoable: boolean;
   onFix: (undo: boolean) => void;
 }) {
+  const platform = usePlatform();
   return (
     <div className="slotrow">
       <div className="slotrow-main">
         <span className="slotrow-label">{it.label}</span>
         <span className="slotrow-side">
           <Pill tone={TONE[it.state]}>{WORD[it.state]}</Pill>
-          {it.fixable && (
+          {it.fixable && platform?.os === "windows" && (
             <Button
               size="sm"
               variant="primary"

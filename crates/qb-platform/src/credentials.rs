@@ -91,6 +91,27 @@ pub fn read_generic(_target: &str) -> Result<Option<Secret>> {
     Ok(None)
 }
 
+/// Read exactly one explicitly named macOS generic-password item.
+/// No global search, updates, migration, copying or credential contents in errors.
+#[cfg(target_os = "macos")]
+pub fn read_keychain(service: &str, account: &str) -> Result<Option<Secret>> {
+    use security_framework::passwords::{generic_password, PasswordOptions};
+    if qb_foundation::test_context::running_in_a_test_binary(
+        std::env::current_exe().ok().as_deref(),
+    ) {
+        return Err(crate::error::GateError::Other(
+            "测试程序不读取真实钥匙串".into(),
+        ));
+    }
+    match generic_password(PasswordOptions::new_generic_password(service, account)) {
+        Ok(bytes) => Ok(Some(Secret::new(bytes))),
+        Err(e) if e.code() == -25300 => Ok(None),
+        Err(_) => Err(crate::error::GateError::Other(
+            "无法读取所选账户的 macOS 钥匙串项，请解锁登录钥匙串并检查访问许可".into(),
+        )),
+    }
+}
+
 #[cfg(windows)]
 fn read_raw(target: &str) -> Result<Option<Secret>> {
     use windows::core::PCWSTR;

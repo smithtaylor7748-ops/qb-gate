@@ -49,7 +49,12 @@ pub const REPO: &str = "smithtaylor7748-ops/qb-gate";
 /// `release.yml` 生成的更新清单。
 pub const MANIFEST: &str = "update.json";
 /// 固定文件名的安装包。README 的「一键下载」也链它，`release.yml` 每版都放一份。
+#[cfg(not(target_os = "macos"))]
 pub const INSTALLER: &str = "QB-Gate-Windows-x64-setup.exe";
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub const INSTALLER: &str = "QB-Gate-macOS-arm64.dmg";
+#[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
+pub const INSTALLER: &str = "QB-Gate-macOS-x64.dmg";
 /// 同一个 Release 里的哈希清单。
 pub const SUMS: &str = "SHA256SUMS.txt";
 
@@ -182,6 +187,25 @@ fn is_sha256_hex(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+fn versioned_installer_names(version: &str) -> [String; 2] {
+    if cfg!(target_os = "macos") {
+        let arch = if cfg!(target_arch = "aarch64") {
+            "aarch64"
+        } else {
+            "x64"
+        };
+        [
+            format!("QB Gate_{version}_{arch}.dmg"),
+            format!("QB.Gate_{version}_{arch}.dmg"),
+        ]
+    } else {
+        [
+            format!("QB Gate_{version}_x64-setup.exe"),
+            format!("QB.Gate_{version}_x64-setup.exe"),
+        ]
+    }
+}
+
 /// 从 `SHA256SUMS.txt` 里找出固定名安装包那一行的哈希（小写）。纯函数。
 ///
 /// 行的形状是 `sha256sum` 那种：`<64 位十六进制><空白><可选的 *><文件名>`。
@@ -192,10 +216,7 @@ fn is_sha256_hex(s: &str) -> bool {
 pub fn expected_sha256(sums: &str, version: &str) -> Result<String> {
     let mut fixed: Option<String> = None;
     let mut versioned: Option<String> = None;
-    let versioned_names = [
-        format!("QB Gate_{version}_x64-setup.exe"),
-        format!("QB.Gate_{version}_x64-setup.exe"),
-    ];
+    let versioned_names = versioned_installer_names(version);
     for line in sums.lines() {
         let line = line.trim();
         let Some((hash, rest)) = line.split_once(char::is_whitespace) else {
@@ -289,7 +310,7 @@ pub async fn download(info: &UpdateInfo, rep: &dyn ProgressSink) -> Result<(Path
     let dir = download_dir();
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir)?;
-    let dest = dir.join(format!("QB-Gate-{}-setup.exe", info.version));
+    let dest = dir.join(INSTALLER);
 
     rep.phase(2, &format!("下载 QB Gate {}", info.version));
     let got = super::managed::download(&asset_url(&info.tag, INSTALLER), &dest, None, rep, 2)
@@ -417,7 +438,8 @@ mod tests {
     #[test]
     fn sums_as_the_release_workflow_writes_them() {
         let sums = format!(
-            "{H1}  QB Gate_0.25.4_x64-setup.exe\r\n{H1}  QB-Gate-Windows-x64-setup.exe\r\n"
+            "{H1}  {}\r\n{H1}  {INSTALLER}\r\n",
+            versioned_installer_names("0.25.4")[0]
         );
         assert_eq!(expected_sha256(&sums, "0.25.4").unwrap(), H1);
     }
@@ -425,8 +447,9 @@ mod tests {
     #[test]
     fn sums_accept_the_binary_marker_uppercase_hex_and_the_dotted_asset_name() {
         let sums = format!(
-            "{}  *QB-Gate-Windows-x64-setup.exe\n{H1} QB.Gate_0.25.4_x64-setup.exe\n",
-            H1.to_ascii_uppercase()
+            "{}  *{INSTALLER}\n{H1} {}\n",
+            H1.to_ascii_uppercase(),
+            versioned_installer_names("0.25.4")[1]
         );
         assert_eq!(expected_sha256(&sums, "0.25.4").unwrap(), H1);
     }
@@ -441,8 +464,10 @@ mod tests {
     /// 固定名那份跟这一版的安装包哈希不一样 = 固定名指着别的版本，不下载。
     #[test]
     fn sums_where_the_fixed_name_points_at_another_build_refuse() {
-        let sums =
-            format!("{H2}  QB Gate_0.25.4_x64-setup.exe\n{H1}  QB-Gate-Windows-x64-setup.exe\n");
+        let sums = format!(
+            "{H2}  {}\n{H1}  {INSTALLER}\n",
+            versioned_installer_names("0.25.4")[0]
+        );
         assert!(expected_sha256(&sums, "0.25.4").is_err());
     }
 
@@ -450,7 +475,7 @@ mod tests {
     #[test]
     fn sums_lines_for_other_versions_and_garbage_are_ignored() {
         let sums = format!(
-            "# comment\n{H2}  QB Gate_0.25.3_x64-setup.exe\nnot-a-hash  QB-Gate-Windows-x64-setup.exe\n{H1}  QB-Gate-Windows-x64-setup.exe\n"
+            "# comment\n{H2}  QB Gate_0.25.3_x64-setup.exe\nnot-a-hash  {INSTALLER}\n{H1}  {INSTALLER}\n"
         );
         assert_eq!(expected_sha256(&sums, "0.25.4").unwrap(), H1);
     }
@@ -463,7 +488,7 @@ mod tests {
         );
         assert_eq!(
             asset_url("v0.25.4", INSTALLER),
-            "https://github.com/smithtaylor7748-ops/qb-gate/releases/download/v0.25.4/QB-Gate-Windows-x64-setup.exe"
+            format!("https://github.com/smithtaylor7748-ops/qb-gate/releases/download/v0.25.4/{INSTALLER}")
         );
     }
 }

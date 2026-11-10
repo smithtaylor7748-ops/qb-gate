@@ -153,7 +153,7 @@ pub fn classify(
     // ③ npm 装的 Claude Code：进程是 node.exe **并且**命令行指进那个包。
     //    两条缺一不可 —— 光是 node.exe 满地都是；光是命令行里有这串字，
     //    可能只是别的程序把它当参数传了一下。
-    if p.name.eq_ignore_ascii_case("node.exe") {
+    if p.name.eq_ignore_ascii_case("node.exe") || (cfg!(target_os = "macos") && p.name == "node") {
         if let Some(cmd) = &p.cmdline {
             let c = cmd.to_lowercase().replace('/', "\\");
             if c.contains("\\node_modules\\@anthropic-ai\\claude-code\\") {
@@ -350,7 +350,54 @@ async fn enumerate() -> Result<Snapshot> {
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+async fn enumerate() -> Result<Snapshot> {
+    let processes = qb_platform::macos::processes()?;
+    let mut self_chain = Vec::new();
+    let mut next = std::process::id();
+    while next != 0 && !self_chain.contains(&next) {
+        self_chain.push(next);
+        next = processes
+            .iter()
+            .find(|p| p.pid == next)
+            .map(|p| p.ppid)
+            .unwrap_or(0);
+    }
+    let mut procs = Vec::new();
+    for p in processes {
+        let name = p
+            .path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let relevant = name == "claude"
+            || name == "Claude"
+            || name == "node"
+            || p.cmdline.contains("bridge.py")
+            || p.path.to_string_lossy().contains("Antigravity");
+        if !relevant {
+            continue;
+        }
+        let signer = if name == "claude" || name == "Claude" {
+            qb_platform::signature::signer_of(&p.path).await
+        } else {
+            None
+        };
+        procs.push(RawProcess {
+            created: p.created,
+            pid: p.pid,
+            ppid: p.ppid,
+            name,
+            path: Some(p.path.display().to_string()),
+            cmdline: Some(p.cmdline),
+            signer,
+        });
+    }
+    Ok(Snapshot { self_chain, procs })
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 async fn enumerate() -> Result<Snapshot> {
     Ok(Snapshot::default())
 }
@@ -484,7 +531,17 @@ pub fn desktop_processes() -> Result<Vec<(u32, String)>> {
     parse_desktop_rows(&stdout, dirs::data_local_dir().as_deref())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn desktop_processes() -> Result<Vec<(u32, String)>> {
+    let local = dirs::data_local_dir();
+    Ok(qb_platform::macos::processes()?
+        .into_iter()
+        .filter(|p| crate::install::inventory::is_desktop_process_path(&p.path, local.as_deref()))
+        .map(|p| (p.pid, p.path.display().to_string()))
+        .collect())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn desktop_processes() -> Result<Vec<(u32, String)>> {
     Ok(Vec::new())
 }
@@ -526,7 +583,20 @@ pub fn close_desktop() -> Result<usize> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn close_desktop() -> Result<usize> {
+    let local = dirs::data_local_dir();
+    let processes: Vec<_> = qb_platform::macos::processes()?
+        .into_iter()
+        .filter(|p| crate::install::inventory::is_desktop_process_path(&p.path, local.as_deref()))
+        .collect();
+    for p in &processes {
+        qb_platform::macos::terminate_verified(p.pid, p.created)?;
+    }
+    Ok(processes.len())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn close_desktop() -> Result<usize> {
     Ok(0)
 }
@@ -702,7 +772,7 @@ async fn execute_scoped(scope: Scope) -> Result<KillReport> {
         }
     }
     if scope == Scope::Everything {
-        report.relocked = crate::gate::lock_all()?;
+        report.relocked = crate::gate::lock_for_managed()?;
     }
     Ok(report)
 }

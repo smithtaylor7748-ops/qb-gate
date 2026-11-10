@@ -40,8 +40,12 @@ pub async fn managed_rollback(which: install::managed::App, version: String) -> 
     let msg = install::versions::rollback(&dir, which, &version, current.as_ref())?;
     // 换上来的那份此刻是从版本库拷过来的，ACL 跟着源文件走 —— 必须重锁一遍，
     // 否则回滚等于顺手把门禁摘了。
-    let n = gate::lock_all()?;
-    Ok(format!("{msg}，已重新上锁 {n} 个副本"))
+    let n = gate::lock_for_managed()?;
+    if cfg!(target_os = "macos") {
+        Ok(format!("{msg}；受管启动仍需通过 IP 检查"))
+    } else {
+        Ok(format!("{msg}，已重新上锁 {n} 个副本"))
+    }
 }
 
 // ------------------------------------------------------------------ 环境

@@ -1,3 +1,4 @@
+import { usePlatform } from "../../lib/platform";
 /**
  * 总览第一段：综合评分。
  *
@@ -84,6 +85,8 @@ export default function ScoreBand({
   checkupBusy,
   checkupPhase,
 }: Props) {
+  const platform = usePlatform();
+  const systemLock = platform?.system_execution_lock === true;
   const progress = useProgress();
 
   const ip = useResource("ip", R.ip);
@@ -101,7 +104,7 @@ export default function ScoreBand({
     ipError: ip.error,
     dns: dns.data,
     signals: signals.data,
-    gate: gate.data,
+    gate: systemLock ? gate.data : undefined,
     egress: egress.data,
   });
 
@@ -168,6 +171,8 @@ export default function ScoreBand({
         return [it.detail, when ? `${head} · ${when}` : head];
       }
       case "iplock": {
+        if (!systemLock)
+          return ["此平台不提供系统执行锁", "受管会话启动前检查 IP"];
         const g = gate.data;
         if (!g) return [it.detail, ""];
         const head =
@@ -244,7 +249,11 @@ export default function ScoreBand({
               }
             >
               <Lock size={12} aria-hidden="true" />
-              {gate.data ? `${locked}/${total} 已锁` : "—"}
+              {systemLock
+                ? gate.data
+                  ? `${locked}/${total} 已锁`
+                  : "—"
+                : "无系统执行锁"}
             </span>
 
             <span

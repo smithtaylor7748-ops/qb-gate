@@ -63,6 +63,8 @@ beforeEach(() => {
     };
   mock.call.mockReset();
   mock.call.mockImplementation(async (command: string) => {
+    if (command === "platform_capabilities")
+      return { os: "windows", persistent_env_cleanup: true };
     if (command === "env_vars_scan") return list;
     if (command === "env_backups") return [backup];
     if (command === "env_vars_remove")
@@ -87,7 +89,7 @@ afterEach(() => {
   queryClient.clear();
 });
 
-function open() {
+async function open() {
   render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
@@ -95,11 +97,11 @@ function open() {
       </ToastProvider>
     </QueryClientProvider>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "清理环境变量…" }));
+  fireEvent.click(await screen.findByRole("button", { name: "清理环境变量…" }));
 }
 
 it("ticks nothing up front, only offers the current-user ones, and deletes exactly the ticked names after confirming", async () => {
-  open();
+  await open();
   const base = await screen.findByRole("checkbox", {
     name: "ANTHROPIC_BASE_URL",
   });
@@ -131,7 +133,7 @@ it("ticks nothing up front, only offers the current-user ones, and deletes exact
 });
 
 it("restoring reports a value that changed since instead of overwriting it", async () => {
-  open();
+  await open();
   fireEvent.click(await screen.findByRole("button", { name: "还原" }));
   await waitFor(() =>
     expect(mock.call).toHaveBeenCalledWith("env_backup_restore", {

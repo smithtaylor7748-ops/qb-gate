@@ -77,9 +77,10 @@ pub async fn refresh(slot_id: &str) -> Result<OfficialRefreshOutcome> {
         }
     }
     let exe = crate::plugins::sillytavern::find_official_codex()?;
-    if !exe
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+    if cfg!(windows)
+        && !exe
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
     {
         return Err(GateError::Other(
             "只找到 codex.cmd，没找到原生的 codex.exe —— 到「软件」页装托管的 Codex CLI 再试。"

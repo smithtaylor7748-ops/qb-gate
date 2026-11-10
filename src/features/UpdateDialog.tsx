@@ -1,3 +1,4 @@
+import { usePlatform } from "../lib/platform";
 import { useEffect, useState, type ReactNode } from "react";
 import { ArrowUpCircle, Download } from "lucide-react";
 import { api, type UpdateStatus } from "../lib/api";
@@ -81,6 +82,7 @@ function when(iso: string | null): string {
 }
 
 export default function UpdateDialog() {
+  const mac = usePlatform()?.os === "macos";
   const [status, setStatus] = useSession<UpdateStatus | null>(KEY, null);
   const task = useTask("self-update");
   const [busy, setBusy] = useState<"install" | "skip" | null>(null);
@@ -175,7 +177,7 @@ export default function UpdateDialog() {
             disabled={busy === "skip"}
             onClick={() => void install()}
           >
-            一键更新
+            {mac ? "下载并打开安装镜像" : "一键更新"}
           </Button>
         </>
       }
@@ -195,9 +197,9 @@ export default function UpdateDialog() {
         </ExternalLink>
       )}
       <p className="notice notice--warn mt-2">
-        点「一键更新」：从 GitHub 下载安装包，对照同一个发布里的 SHA256SUMS.txt
-        核对无误才安装。安装时面板会先退出 —— 由面板启动的 Claude
-        桌面端、对话、酒馆与桥接会一起关掉，没保存的内容会丢；装完面板会自己重新打开。
+        {mac
+          ? "下载 macOS 安装镜像并校验 SHA256SUMS.txt，面板退出后打开镜像。请将 QB Gate 拖入 Applications 替换旧版，再手动打开。由面板启动的会话会结束，请先保存。"
+          : "点「一键更新」：从 GitHub 下载安装包，对照同一个发布里的 SHA256SUMS.txt 核对无误才安装。安装时面板会先退出，由面板启动的桌面端、对话、酒馆与桥接会一起关掉，没保存的内容会丢；装完面板会自己重新打开。"}
       </p>
       {(installing || task.finished) && (
         <div className="mt-2">

@@ -400,21 +400,7 @@ const TABLES: &[&str] = &[
 /// `workspace.sqlite3` 迁到了开发分支的结构版本 9，装着的面板（只认 3）当场停在「需要完成数据恢复」，
 /// 靠手工核验才救回来。「单测不许碰真实的运行期状态」写在 CLAUDE.md 里没拦住 —— 间接调用读源码看不出来。
 /// 现在测试程序里打开真实目录的库直接报错：漏网的那条单测当场红，真实的库一个字节不动。
-fn running_in_a_test_binary(exe: Option<&Path>) -> bool {
-    let Some(exe) = exe else {
-        return false;
-    };
-    let in_deps = exe
-        .parent()
-        .and_then(Path::file_name)
-        .is_some_and(|d| d == "deps");
-    let hashed = exe
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .and_then(|s| s.rsplit_once('-'))
-        .is_some_and(|(_, h)| h.len() == 16 && h.bytes().all(|b| b.is_ascii_hexdigit()));
-    in_deps && hashed
-}
+use qb_foundation::test_context::running_in_a_test_binary;
 
 impl Repository {
     pub fn open() -> Result<Self> {

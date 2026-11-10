@@ -69,6 +69,14 @@ impl Product {
     /// 自己装到别处），读不到再用默认的 `Programs\…`。注册表那条只对本机真实的 `%LOCALAPPDATA%`
     /// 生效 —— 单测传进来的临时目录永远走默认，不受这台机器装没装反重力影响。
     pub fn dir(self, local: &Path) -> PathBuf {
+        if cfg!(target_os = "macos") {
+            let name = match self {
+                Product::Hub => "Antigravity",
+                Product::Ide => "Antigravity IDE",
+            };
+            return super::macos_install::bundle(name)
+                .unwrap_or_else(|| PathBuf::from("/Applications").join(format!("{name}.app")));
+        }
         let real_local = dirs::data_local_dir();
         let registered = real_local
             .as_deref()
@@ -90,6 +98,14 @@ impl Product {
     /// IDE 那份就是 `Antigravity IDE.exe` —— 使用者装了第三方汉化壳的话它就是那层壳，
     /// 照样起它：壳会自己拉起 `*.original.exe`，汉化跟着走。面板不替使用者绕过他自己装的东西。
     pub fn launcher(self, local: &Path) -> PathBuf {
+        if cfg!(target_os = "macos") {
+            let name = match self {
+                Product::Hub => "Antigravity",
+                Product::Ide => "Antigravity IDE",
+            };
+            return super::macos_install::executable(name)
+                .unwrap_or_else(|| self.dir(local).join("Contents/MacOS").join(name));
+        }
         match self {
             Product::Hub => self.dir(local).join("Antigravity.exe"),
             Product::Ide => self.dir(local).join("Antigravity IDE.exe"),
@@ -108,6 +124,12 @@ impl Product {
 
     /// 语言服务器所在目录。
     fn language_server_dir(self, local: &Path) -> PathBuf {
+        if cfg!(target_os = "macos") {
+            return self.dir(local).join(match self {
+                Product::Hub => "Contents/Resources/bin",
+                Product::Ide => "Contents/Resources/app/extensions/antigravity/bin",
+            });
+        }
         match self {
             Product::Hub => self.dir(local).join("resources").join("bin"),
             Product::Ide => self
@@ -305,6 +327,11 @@ pub fn product_installed(product: Product) -> bool {
 /// 一键关闭 / 看门狗拿它当证据：在这两个目录下的进程就是反重力的进程。
 /// 不按进程名认 —— 叫 `language_server.exe` 的东西别的 IDE 也有。
 pub fn product_of(path: &Path, local: &Path) -> Option<Product> {
+    if cfg!(target_os = "macos") {
+        return Product::ALL
+            .into_iter()
+            .find(|product| path.starts_with(product.dir(local)));
+    }
     let p = super::inventory::norm(path);
     Product::ALL.into_iter().find(|product| {
         let mut d = super::inventory::norm(&product.dir(local));
@@ -317,6 +344,11 @@ pub fn product_of(path: &Path, local: &Path) -> Option<Product> {
 
 /// IDE 的 `product.json`。联网额度的请求形状照官方 IDE，版本号从这里读（2026-09-23）。
 pub fn ide_product_json(local: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        return Product::Ide
+            .dir(local)
+            .join("Contents/Resources/app/product.json");
+    }
     Product::Ide
         .dir(local)
         .join("resources")
@@ -409,7 +441,7 @@ pub fn login_seen_in_log(roaming: &Path) -> Option<bool> {
     Some(text.contains("Auth succeeded"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 

@@ -1,3 +1,4 @@
+import PlatformNotice from "./PlatformNotice";
 import { CHANNELS } from "../lib/channels";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -89,7 +90,14 @@ const ExtensionCenter = lazy(PAGES.extensions);
 const Software = lazy(PAGES.software);
 const Subscription = lazy(PAGES.subscription);
 const SettingsCenter = lazy(PAGES.settings);
-requestIdleCallback(
+(
+  window.requestIdleCallback ??
+  ((callback: IdleRequestCallback) =>
+    window.setTimeout(
+      () => callback({ didTimeout: false, timeRemaining: () => 0 }),
+      0,
+    ))
+)(
   () => {
     // 预取失败不在这里报：真点进那一页时 lazy 会再 import 一次，
     // 失败会落到 Boundary 上，带着原因显示出来。
@@ -481,6 +489,7 @@ function Layout() {
         <div className="qb-content">
           <main id="main-content" className="qb-main" ref={main} tabIndex={-1}>
             <div className="qb-page">
+              <PlatformNotice />
               {/* Suspense 必须在带 key 的 Boundary 外面。Boundary 按一级路径换 key，
                   切页时整棵子树重建；Suspense 若在里面，每次都是「新挂上的」边界，
                   React 会直接亮出 fallback。放在外面它一直在，路由自带的

@@ -319,7 +319,6 @@ pub async fn run_streaming(
 /// 两条管道**同时**读。原来先读完 stdout 再读 stderr：子进程往 stderr 写满管道缓冲就卡住，
 /// 而这边还在等它的 stdout 结束 —— 两边互等。按字节读、有损解码：PowerShell 在设好输出编码
 /// 之前报的错走系统代码页，按行读 UTF-8 的话那一行一出错，后面的输出就一句都收不到了。
-#[cfg(windows)]
 pub async fn run_streaming_env(
     program: &str,
     args: &[String],
@@ -389,18 +388,6 @@ pub async fn run_streaming_env(
         .await
         .map_err(|e| GateError::Other(format!("等待 {program} 结束失败：{e}")))?;
     Ok(status.success())
-}
-
-#[cfg(not(windows))]
-pub async fn run_streaming_env(
-    _program: &str,
-    _args: &[String],
-    _env: &[(&str, &str)],
-    _rep: &dyn ProgressSink,
-    _step: u32,
-    _log: &mut Vec<String>,
-) -> Result<bool> {
-    Err(GateError::Other("安装功能只在 Windows 上可用".into()))
 }
 
 /// 桌面端卸载登记里写的安装位置（`HKCU\…\Uninstall\AnthropicClaude` 的 `InstallLocation`）。

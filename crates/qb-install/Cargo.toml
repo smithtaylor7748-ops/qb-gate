@@ -19,6 +19,7 @@ chrono.workspace = true
 sha2.workspace = true
 hex.workspace = true
 flate2.workspace = true
+zip.workspace = true
 dirs.workspace = true
 ts-rs.workspace = true
 

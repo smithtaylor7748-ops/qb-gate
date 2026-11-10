@@ -122,6 +122,9 @@ impl CliTool {
     }
 
     pub fn script(self) -> Option<InstallScript> {
+        if cfg!(target_os = "macos") {
+            return None;
+        }
         match self {
             CliTool::GrokBuild => Some(InstallScript {
                 url: "https://x.ai/cli/install.ps1",
@@ -225,6 +228,12 @@ impl Roots {
 }
 
 /// 进程 PATH + 注册表里当前用户与整机的 `Path`（`%VAR%` 展开），保序去重。
+#[cfg(target_os = "macos")]
+fn effective_path_dirs() -> Vec<PathBuf> {
+    super::macos_install::path_dirs()
+}
+
+#[cfg(not(target_os = "macos"))]
 fn effective_path_dirs() -> Vec<PathBuf> {
     use qb_platform::registry::{read, Hive};
     const MACHINE: &str = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment";
@@ -442,6 +451,10 @@ pub fn search_dirs(tool: CliTool, r: &Roots) -> Vec<PathBuf> {
 /// 一个目录里这个工具的入口：`.exe` 先于 `.cmd`（跟 Windows 按 PATHEXT 找的顺序一样）；两个都在只算一份。
 /// 没扩展名的那种是给 POSIX shell 的脚本，Windows 上跑不起来，不收。
 pub fn entry_in(tool: CliTool, dir: &Path) -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        let entry = dir.join(tool.command());
+        return entry.is_file().then_some(entry);
+    }
     ["exe", "cmd"]
         .iter()
         .map(|ext| dir.join(format!("{}.{ext}", tool.command())))
@@ -628,6 +641,17 @@ pub fn scan(tool: CliTool, r: &Roots) -> Vec<Install> {
         }
         seen.push(key.clone());
         let package_dir = tool.npm_package().and_then(|pkg| {
+            if cfg!(target_os = "macos") {
+                let real = std::fs::canonicalize(&entry).ok()?;
+                return real.ancestors().find_map(|directory| {
+                    let json: serde_json::Value = serde_json::from_slice(
+                        &std::fs::read(directory.join("package.json")).ok()?,
+                    )
+                    .ok()?;
+                    (json.get("name").and_then(|v| v.as_str()) == Some(pkg))
+                        .then(|| directory.to_path_buf())
+                });
+            }
             let ext = entry.extension().and_then(|e| e.to_str()).unwrap_or("");
             let from_shim = ext
                 .eq_ignore_ascii_case("cmd")
@@ -729,6 +753,10 @@ impl Step {
 /// 同一个目录里的某个程序（`npm.cmd`、`pnpm.exe`……），按给的扩展名顺序找第一个在的。
 fn sibling(entry: &Path, name: &str, exts: &[&str]) -> Option<PathBuf> {
     let dir = entry.parent()?;
+    if cfg!(target_os = "macos") {
+        let path = dir.join(name);
+        return path.is_file().then_some(path);
+    }
     exts.iter()
         .map(|ext| dir.join(format!("{name}.{ext}")))
         .find(|p| p.is_file())
@@ -736,6 +764,13 @@ fn sibling(entry: &Path, name: &str, exts: &[&str]) -> Option<PathBuf> {
 
 /// PATH 上的 `npm.cmd`（没有就看 `%ProgramFiles%\nodejs`）。新装、以及默认 `%APPDATA%\npm` 前缀那一份的升级用它。
 pub fn npm_on_path(r: &Roots) -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        return r
+            .path_dirs
+            .iter()
+            .map(|p| p.join("npm"))
+            .find(|p| p.is_file());
+    }
     let nodejs: Vec<PathBuf> = r.program_files.iter().map(|p| p.join("nodejs")).collect();
     r.path_dirs
         .iter()
@@ -924,7 +959,7 @@ pub fn uninstall_plan(tool: CliTool, inst: &Install, r: &Roots) -> Step {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 

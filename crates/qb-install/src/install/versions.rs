@@ -288,13 +288,7 @@ pub fn rollback(app_dir: &Path, app: App, to: &str, current: Option<&Record>) ->
         return Err(GateError::Other("版本库清单不匹配".into()));
     }
     for (name, hash) in &unit.files {
-        if !matches!(
-            name.as_str(),
-            "claude.exe"
-                | "codex.exe"
-                | "codex-command-runner.exe"
-                | "codex-windows-sandbox-setup.exe"
-        ) {
+        if !allowed_member(app, name) {
             return Err(GateError::Other("版本库含不允许的文件名".into()));
         }
         let p = source.join(name);
@@ -495,13 +489,7 @@ fn recover_stage(app_dir: &Path, stage: &Path) -> Result<()> {
         let name = value
             .as_str()
             .ok_or_else(|| GateError::Other("恢复文件名无效".into()))?;
-        if !matches!(
-            name,
-            "claude.exe"
-                | "codex.exe"
-                | "codex-command-runner.exe"
-                | "codex-windows-sandbox-setup.exe"
-        ) {
+        if !allowed_member(app, name) {
             return Err(GateError::Other("恢复路径不合法".into()));
         }
         let before = stage.join(format!("{name}.before"));
@@ -608,8 +596,11 @@ mod tests {
     fn fixture_unit(root: &Path, version: &str, helper: bool) -> (Vec<(String, PathBuf)>, Record) {
         let dir = root.join(format!("source-{version}"));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("codex.exe"), version).unwrap();
-        let mut files = vec![("codex.exe".into(), dir.join("codex.exe"))];
+        std::fs::write(dir.join(App::Codex.exe_name()), version).unwrap();
+        let mut files = vec![(
+            App::Codex.exe_name().into(),
+            dir.join(App::Codex.exe_name()),
+        )];
         if helper {
             for name in [
                 "codex-command-runner.exe",
@@ -621,7 +612,7 @@ mod tests {
         }
         let record = Record {
             version: version.into(),
-            sha256: crate::install::managed::sha256_file(&dir.join("codex.exe")).unwrap(),
+            sha256: crate::install::managed::sha256_file(&dir.join(App::Codex.exe_name())).unwrap(),
             source: "fixture".into(),
             installed_at: version.into(),
         };
@@ -675,7 +666,7 @@ mod tests {
         });
         assert!(result.is_err());
         assert_eq!(
-            std::fs::read_to_string(app_dir.join("codex.exe")).unwrap(),
+            std::fs::read_to_string(app_dir.join(App::Codex.exe_name())).unwrap(),
             "1"
         );
         assert!(!app_dir.join("codex-command-runner.exe").exists());

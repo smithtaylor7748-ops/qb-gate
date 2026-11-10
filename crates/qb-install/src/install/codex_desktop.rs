@@ -60,6 +60,42 @@ if ($exe) { $processes = @(Get-CimInstance Win32_Process | Where-Object { $_.Exe
 @{ executable = $exe; version = $(if ($pkg) { [string]$pkg.Version } else { $null }); processes = @($processes) } | ConvertTo-Json -Compress -Depth 4
 "#;
 
+#[cfg(target_os = "macos")]
+pub fn detect() -> Result<CodexDesktop> {
+    let Some(executable) = super::macos_install::executable("Codex") else {
+        return Ok(CodexDesktop::default());
+    };
+    let matching: Vec<_> = qb_platform::macos::processes()?
+        .into_iter()
+        .filter(|p| p.path == executable)
+        .collect();
+    let running = !matching.is_empty();
+    let state = qb_foundation::paths::state_dir();
+    let home = dirs::home_dir().unwrap_or_default();
+    let processes = matching
+        .into_iter()
+        .filter_map(|p| {
+            let profile = main_profile_args(&p.argv)?;
+            let ours = profile
+                .as_deref()
+                .is_some_and(|dir| is_panel_profile(dir, &state, &home));
+            Some(CodexDesktopProcess {
+                pid: p.pid,
+                started: p.created.to_string(),
+                profile,
+                ours,
+            })
+        })
+        .collect();
+    Ok(CodexDesktop {
+        executable: Some(executable.display().to_string()),
+        version: super::macos_install::version("Codex"),
+        running,
+        processes,
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn detect() -> Result<CodexDesktop> {
     let out = crate::process::powershell_std(INVENTORY).output()?;
     if !out.status.success() {
@@ -144,6 +180,10 @@ fn split_command_line(line: &str) -> Vec<String> {
 /// 返回 `None` = 子进程；`Some(None)` = 主进程、默认资料；`Some(Some(dir))` = 主进程、指定资料。
 pub fn main_profile(command_line: &str) -> Option<Option<String>> {
     let args = split_command_line(command_line);
+    main_profile_args(&args)
+}
+
+fn main_profile_args(args: &[String]) -> Option<Option<String>> {
     if args.iter().skip(1).any(|a| a.starts_with("--type=")) {
         return None;
     }
@@ -165,6 +205,9 @@ pub fn main_profile(command_line: &str) -> Option<Option<String>> {
 }
 
 fn normalize_dir(p: &str) -> String {
+    if cfg!(target_os = "macos") {
+        return p.trim().trim_matches('"').trim_end_matches('/').to_string();
+    }
     p.trim()
         .trim_matches('"')
         .replace('/', "\\")
@@ -182,7 +225,8 @@ pub fn is_panel_profile(profile: &str, state_dir: &Path, home: &Path) -> bool {
     let p = normalize_dir(profile);
     let root = normalize_dir(&state_dir.display().to_string());
     let fallback = normalize_dir(&home.join(".codex").join("desktop").display().to_string());
-    (!root.is_empty() && p.starts_with(&(root + "\\"))) || p == fallback
+    let separator = if cfg!(target_os = "macos") { "/" } else { "\\" };
+    (!root.is_empty() && p.starts_with(&(root + separator))) || p == fallback
 }
 
 fn quote(s: &str) -> String {
@@ -243,6 +287,11 @@ pub fn registration_repair_message() -> String {
 /// `0x80073D28`。这跟 §7.41 里官方沙箱初始化要提权是同一类：本机安装态修复，
 /// 不是账号或接口问题，也不能靠换 API Key 绕过。
 pub fn repair_registration() -> Result<()> {
+    if cfg!(target_os = "macos") {
+        return Err(GateError::Other(
+            "macOS 无需 Microsoft Store 注册修复；请重新安装官方 Codex.app。".into(),
+        ));
+    }
     // 提权子进程里跑的注册命令：成功 exit 0，失败 exit 1。
     let inner = format!(
         "try {{ Add-AppxPackage -RegisterByFamilyName -MainPackage {PACKAGE_FAMILY} -ErrorAction Stop; exit 0 }} catch {{ exit 1 }}"
@@ -280,6 +329,12 @@ Write-Output ('REPAIR=' + $p.ExitCode)
 
 /// Only called after the user explicitly confirms stopping desktop tasks.
 /// Recheck path + creation time before killing; refuse our own ancestor chain.
+#[cfg(target_os = "macos")]
+pub fn close() -> Result<()> {
+    close_where(|_| true).map(|_| ())
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn close() -> Result<()> {
     let Some(exe) = detect()?.executable else {
         return Ok(());
@@ -355,6 +410,21 @@ pub fn close_ours() -> Result<usize> {
 ///
 /// 「设为中文」只改**官方槽位**与默认那几份 `config.toml`，中转环境起的桌面端不改它的配置，
 /// 就不该为这件事被关掉 —— 原来整份 `close_ours` 一起关了，事后还按当前槽位重开一个。
+#[cfg(target_os = "macos")]
+pub fn close_where(pick: impl Fn(&CodexDesktopProcess) -> bool) -> Result<usize> {
+    let inventory = detect()?;
+    let targets: Vec<_> = inventory.processes.iter().filter(|p| pick(p)).collect();
+    for process in &targets {
+        let created = process
+            .started
+            .parse::<u64>()
+            .map_err(|_| GateError::Other("Codex 进程创建时间无效，未关闭进程。".into()))?;
+        qb_platform::macos::terminate_verified(process.pid, created)?;
+    }
+    Ok(targets.len())
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn close_where(pick: impl Fn(&CodexDesktopProcess) -> bool) -> Result<usize> {
     let d = detect()?;
     let Some(exe) = d.executable else {

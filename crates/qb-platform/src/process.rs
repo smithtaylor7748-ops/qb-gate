@@ -39,7 +39,13 @@ pub fn hidden_tokio(mut cmd: tokio::process::Command) -> tokio::process::Command
     cmd
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn hidden_tokio(mut cmd: tokio::process::Command) -> tokio::process::Command {
+    cmd.process_group(0);
+    cmd
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn hidden_tokio(cmd: tokio::process::Command) -> tokio::process::Command {
     cmd
 }
@@ -102,7 +108,10 @@ fn oem_decode(_: &[u8]) -> Option<String> {
 /// 退出后变成孤儿 —— 一个还在跑的 `codex.exe` 会继续替使用者烧额度。
 /// `tokio::process::Command` 的 `kill_on_drop` 只管 `Child` 被 drop 的那一刻，
 /// 面板被杀、崩溃时 drop 根本不会跑；Job 是内核层的，靠得住。
-pub struct KillOnCloseJob(#[cfg(windows)] isize);
+pub struct KillOnCloseJob(
+    #[cfg(windows)] isize,
+    #[cfg(target_os = "macos")] std::sync::Mutex<Vec<(u32, u64)>>,
+);
 
 #[cfg(windows)]
 impl KillOnCloseJob {
@@ -171,7 +180,34 @@ unsafe impl Send for KillOnCloseJob {}
 #[cfg(windows)]
 unsafe impl Sync for KillOnCloseJob {}
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+impl KillOnCloseJob {
+    pub fn new() -> crate::error::Result<Self> {
+        Ok(Self(std::sync::Mutex::new(Vec::new())))
+    }
+    pub fn assign(&self, child: &tokio::process::Child) -> crate::error::Result<()> {
+        let pid = child
+            .id()
+            .ok_or_else(|| crate::error::GateError::Other("子进程已退出".into()))?;
+        let created = crate::macos::watch_child(pid)?;
+        self.0.lock().unwrap().push((pid, created));
+        Ok(())
+    }
+    pub fn terminate_all(&self) {
+        for (pid, created) in self.0.lock().unwrap().drain(..) {
+            let _ = crate::macos::stop_owned_group(pid, created);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for KillOnCloseJob {
+    fn drop(&mut self) {
+        self.terminate_all();
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 impl KillOnCloseJob {
     pub fn new() -> crate::error::Result<Self> {
         Ok(Self())

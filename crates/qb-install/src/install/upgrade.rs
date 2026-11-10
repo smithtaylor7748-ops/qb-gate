@@ -262,8 +262,26 @@ pub(crate) async fn file_version(path: &std::path::Path) -> Option<String> {
 }
 
 #[cfg(not(windows))]
-pub(crate) async fn file_version(_path: &std::path::Path) -> Option<String> {
-    None
+pub(crate) async fn file_version(path: &std::path::Path) -> Option<String> {
+    for app in super::managed::App::ALL {
+        if let Some(record) = path
+            .parent()
+            .and_then(|p| super::managed::record_of(p, app))
+        {
+            return Some(record.version);
+        }
+    }
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::process::Command::new(path).arg("--version").output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 /// 升级的对象：**官方原生安装器的落点** `~\.local\bin\claude.exe`，不在就是 `None`。

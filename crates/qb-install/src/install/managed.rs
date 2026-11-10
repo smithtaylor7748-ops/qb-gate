@@ -78,6 +78,12 @@ impl App {
     }
 
     pub fn exe_name(self) -> &'static str {
+        if cfg!(target_os = "macos") {
+            return match self {
+                App::ClaudeCode => "claude",
+                App::Codex => "codex",
+            };
+        }
         match self {
             App::ClaudeCode => "claude.exe",
             App::Codex => "codex.exe",
@@ -97,6 +103,12 @@ impl App {
     /// Claude Code 那个**必须是 `claude.exe.old.`** —— 跟 `inventory::stale_copies` 认的一致，
     /// 名字一漂，这份没有 Deny 的完整 exe 就永远不会被清掉（档案 §7.9）。
     fn backup_prefix(self) -> &'static str {
+        if cfg!(target_os = "macos") {
+            return match self {
+                App::ClaudeCode => "claude.old.",
+                App::Codex => "codex.old.",
+            };
+        }
         match self {
             App::ClaudeCode => "claude.exe.old.",
             App::Codex => "codex.exe.old.",
@@ -480,6 +492,9 @@ fn is_sha256_hex(s: &str) -> bool {
 /// 本机是不是 ARM64。64 位面板在 ARM64 Windows 上跑在模拟层里，
 /// 进程自己看到的 `PROCESSOR_ARCHITECTURE` 可能是 AMD64 —— 那时装 x64 版，照样能跑（慢一点）。
 fn is_arm64() -> bool {
+    if cfg!(target_arch = "aarch64") {
+        return true;
+    }
     ["PROCESSOR_ARCHITEW6432", "PROCESSOR_ARCHITECTURE"]
         .iter()
         .filter_map(|k| std::env::var(k).ok())
@@ -487,6 +502,9 @@ fn is_arm64() -> bool {
 }
 
 pub fn claude_platform(arm64: bool) -> &'static str {
+    if cfg!(target_os = "macos") {
+        return if arm64 { "darwin-arm64" } else { "darwin-x64" };
+    }
     if arm64 {
         "win32-arm64"
     } else {
@@ -495,6 +513,13 @@ pub fn claude_platform(arm64: bool) -> &'static str {
 }
 
 pub fn codex_asset(arm64: bool) -> &'static str {
+    if cfg!(target_os = "macos") {
+        return if arm64 {
+            "codex-aarch64-apple-darwin.tar.gz"
+        } else {
+            "codex-x86_64-apple-darwin.tar.gz"
+        };
+    }
     if arm64 {
         "codex-aarch64-pc-windows-msvc.exe.zip"
     } else {
@@ -518,7 +543,14 @@ pub fn parse_claude_manifest(json: &str, version: &str, platform: &str) -> Resul
         .ok_or_else(|| GateError::Other("官方清单里的 checksum 不是一个 SHA-256".into()))?;
     Ok(Release {
         version: version.to_string(),
-        url: format!("{CLAUDE_RELEASES}/{version}/{platform}/claude.exe"),
+        url: format!(
+            "{CLAUDE_RELEASES}/{version}/{platform}/{}",
+            if platform.starts_with("win32-") {
+                "claude.exe"
+            } else {
+                "claude"
+            }
+        ),
         sha256: Some(sha),
         size: p.get("size").and_then(|s| s.as_u64()),
     })
@@ -758,8 +790,55 @@ pub async fn unzip(zip: &Path, out: &Path) -> Result<()> {
 }
 
 #[cfg(not(windows))]
-pub async fn unzip(_zip: &Path, _out: &Path) -> Result<()> {
-    Err(GateError::Other("只在 Windows 上可用".into()))
+pub async fn unzip(zip: &Path, out: &Path) -> Result<()> {
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(zip)?)
+        .map_err(|e| GateError::Other(format!("ZIP 读取失败：{e}")))?;
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|e| GateError::Other(format!("ZIP 条目读取失败：{e}")))?;
+        let relative = entry
+            .enclosed_name()
+            .ok_or_else(|| GateError::Other("ZIP 包含越界路径".into()))?;
+        if entry.is_symlink() {
+            return Err(GateError::Other("ZIP 包含不受支持的符号链接".into()));
+        }
+        let destination = out.join(relative);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&destination)?;
+        } else {
+            if let Some(parent) = destination.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(destination)?;
+            std::io::copy(&mut entry, &mut file)?;
+        }
+    }
+    Ok(())
+}
+
+/// Extract only the expected executable. Archive paths, links and other members
+/// never become filesystem destinations.
+#[cfg(target_os = "macos")]
+async fn extract_codex_macos(archive: &Path, out: &Path) -> Result<PathBuf> {
+    let member = codex_asset(is_arm64()).trim_end_matches(".tar.gz");
+    let output = tokio::process::Command::new("/usr/bin/tar")
+        .arg("-xOf")
+        .arg(archive)
+        .arg(member)
+        .output()
+        .await?;
+    if !output.status.success() || output.stdout.is_empty() {
+        return Err(GateError::Other(
+            "Codex 归档中没有当前 Mac 架构的程序".into(),
+        ));
+    }
+    let binary = out.join("codex");
+    std::fs::write(&binary, output.stdout)?;
+    Ok(binary)
 }
 
 /// 解压目录里的全部 exe（往下最多两层）。
@@ -939,6 +1018,12 @@ pub async fn install(app: App, channel: &str, rep: &dyn ProgressSink) -> Result<
                 "下载下来的文件跟官方给的 SHA-256 对不上（应为 {want}，实际 {got}），已删除，没有装。"
             )));
         }
+        None if cfg!(target_os = "macos") => {
+            let _ = std::fs::remove_dir_all(&dl);
+            return Err(GateError::Other(
+                "官方未提供这个 Mac 发布包的 SHA-256，未安装。".into(),
+            ));
+        }
         None => log.push("GitHub 没给这个文件的 SHA-256，只能靠下面的数字签名核对".into()),
     }
 
@@ -948,12 +1033,30 @@ pub async fn install(app: App, channel: &str, rep: &dyn ProgressSink) -> Result<
         App::Codex => {
             let out = dl.join("extract");
             std::fs::create_dir_all(&out)?;
-            unzip(&file, &out).await?;
-            split_codex_exes(&exes_in(&out))
-                .ok_or_else(|| GateError::Other("解压出来的东西里找不到 Codex 主程序".into()))?
+            #[cfg(target_os = "macos")]
+            {
+                (extract_codex_macos(&file, &out).await?, Vec::new())
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                unzip(&file, &out).await?;
+                split_codex_exes(&exes_in(&out))
+                    .ok_or_else(|| GateError::Other("解压出来的东西里找不到 Codex 主程序".into()))?
+            }
         }
     };
+    #[cfg(target_os = "macos")]
+    let signer = {
+        use std::os::unix::fs::PermissionsExt;
+        // macOS releases may be ad-hoc signed. The official SHA-256 above is
+        // mandatory; do not misrepresent it as a publisher signature.
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755))?;
+        log.push("已按官方发布摘要验证 Mac 程序，并设置执行权限".into());
+        Some("官方 SHA-256（非发布者签名）".to_string())
+    };
+    #[cfg(not(target_os = "macos"))]
     let signer = crate::signature::signer_of(&bin).await;
+    #[cfg(not(target_os = "macos"))]
     match crate::install::winget::signature_matches(signer.as_deref(), app.signer()) {
         Some(true) => log.push(format!("签名主体：{}", signer.clone().unwrap_or_default())),
         Some(false) => {
@@ -991,7 +1094,8 @@ pub async fn install(app: App, channel: &str, rep: &dyn ProgressSink) -> Result<
             h.clone(),
         ));
     }
-    if app == App::Codex
+    if cfg!(windows)
+        && app == App::Codex
         && ![
             "codex-command-runner.exe",
             "codex-windows-sandbox-setup.exe",
@@ -1049,6 +1153,9 @@ pub async fn install(app: App, channel: &str, rep: &dyn ProgressSink) -> Result<
 
 /// `a` 在 `b` 里面（或者就是 `b`）吗。大小写与斜杠不敏感。
 pub fn is_inside(a: &Path, b: &Path) -> bool {
+    if cfg!(target_os = "macos") && a.is_absolute() && b.is_absolute() {
+        return a.starts_with(b);
+    }
     use crate::install::inventory::norm;
     let a = format!("{}\\", norm(a).trim_end_matches('\\'));
     let b = format!("{}\\", norm(b).trim_end_matches('\\'));
@@ -1927,6 +2034,38 @@ fn same_path(a: &Path, b: &Path) -> bool {
 mod tests {
 
     #[test]
+    fn macos_official_manifest_keeps_unix_filename_and_requires_checksum() {
+        let manifest =
+            serde_json::json!({"platforms":{"darwin-arm64":{"checksum":"a".repeat(64),"size":12}}});
+        let release =
+            parse_claude_manifest(&manifest.to_string(), "2.1.268", "darwin-arm64").unwrap();
+        assert_eq!(
+            release.url,
+            "https://downloads.claude.ai/claude-code-releases/2.1.268/darwin-arm64/claude"
+        );
+        assert_eq!(release.sha256, Some("a".repeat(64)));
+        assert!(parse_claude_manifest(
+            r#"{"platforms":{"darwin-arm64":{}}}"#,
+            "2.1.268",
+            "darwin-arm64"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn macos_codex_release_requires_the_exact_architecture_asset() {
+        let json = serde_json::json!({"tag_name":"rust-v1.0.0","assets":[
+            {"name":"codex-aarch64-apple-darwin.tar.gz","digest":format!("sha256:{}","b".repeat(64)),
+             "browser_download_url":"https://github.com/openai/codex/releases/download/rust-v1.0.0/codex-aarch64-apple-darwin.tar.gz"}]});
+        assert!(
+            parse_codex_release(&json.to_string(), "codex-aarch64-apple-darwin.tar.gz").is_ok()
+        );
+        assert!(
+            parse_codex_release(&json.to_string(), "codex-x86_64-apple-darwin.tar.gz").is_err()
+        );
+    }
+
+    #[test]
     fn relocating_to_the_same_directory_short_circuits() {
         // 不短路的话会走完整条迁移路径：清场、关进程、搬文件 ——
         // 使用者只是在设置里点了一下确认，对话全没了。
@@ -2041,14 +2180,14 @@ mod tests {
              "browser_download_url":"https://github.com/openai/codex/releases/download/rust-v0.154.0/codex-x86_64-pc-windows-msvc.exe.zip"},
             {"name":"codex-aarch64-pc-windows-msvc.exe.zip","size":1,
              "browser_download_url":"https://evil.example.com/codex.zip"}]}"#;
-        let r = parse_codex_release(json, codex_asset(false)).unwrap();
+        let r = parse_codex_release(json, "codex-x86_64-pc-windows-msvc.exe.zip").unwrap();
         assert_eq!(r.version, "0.154.0");
         assert_eq!(
             r.sha256.as_deref(),
             Some("53685f9f6bd171d4bd7d6c2be724fc04f6737a4001eb8471ec59824e5adc8042")
         );
         // 下载地址不在 openai/codex 下就不跟。
-        assert!(parse_codex_release(json, codex_asset(true)).is_err());
+        assert!(parse_codex_release(json, "codex-aarch64-pc-windows-msvc.exe.zip").is_err());
         assert!(parse_codex_release(json, "nope.zip").is_err());
     }
 
@@ -2073,7 +2212,7 @@ mod tests {
             .file_name()
             .unwrap()
             .to_string_lossy()
-            .starts_with("claude.exe.old."));
+            .starts_with(App::ClaudeCode.backup_prefix()));
 
         // 哈希对不上：回滚，旧的回到原位。
         let src2 = dir.join(".download").join("x.exe");

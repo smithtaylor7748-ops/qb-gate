@@ -21,8 +21,8 @@
 //!
 //! # 非 Windows
 //!
-//! 退回明文并在密文前打 `plain:` 前缀。本项目只发 Windows 版，
-//! 这条分支纯粹是为了 `cargo test` 能在别的平台上跑起来。
+//! macOS 使用 Keychain 保存随机主密钥，以 AES-256-GCM 加密配置与恢复记录。
+//! Keychain 不可访问时拒绝保存；其他未支持的平台也不退回明文。
 
 use crate::error::Result;
 
@@ -30,6 +30,7 @@ use crate::error::Result;
 /// 「这是早期版本留下的明文」，升级时不至于把明文当密文去解。
 const SEALED: &str = "dpapi:";
 const PLAIN: &str = "plain:";
+const KEYCHAIN: &str = "keychain-aes-gcm-v1:";
 
 /// 加密。返回值可以安全地写进 `relay.json`。
 pub fn seal(plain: &str) -> Result<String> {
@@ -47,6 +48,15 @@ pub fn open(stored: &str) -> Option<String> {
     }
     if let Some(hexed) = stored.strip_prefix(SEALED) {
         return open_impl(hexed);
+    }
+    if let Some(hexed) = stored.strip_prefix(KEYCHAIN) {
+        #[cfg(target_os = "macos")]
+        return mac::open(hexed);
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = hexed;
+            return None;
+        }
     }
     if let Some(p) = stored.strip_prefix(PLAIN) {
         return Some(p.to_string());
@@ -128,15 +138,134 @@ fn open_impl(hexed: &str) -> Option<String> {
 
 // -------------------------------------------------------- 非 Windows
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn seal_impl(plain: &str) -> Result<String> {
-    Ok(format!("{PLAIN}{plain}"))
+    mac::seal(plain)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn seal_impl(plain: &str) -> Result<String> {
+    let _ = plain;
+    Err(crate::error::GateError::Other(
+        "当前平台没有安全密钥存储，拒绝明文保存".into(),
+    ))
 }
 
 #[cfg(not(windows))]
 fn open_impl(_hexed: &str) -> Option<String> {
     // 非 Windows 上根本产不出 dpapi: 前缀的东西。
     None
+}
+
+#[cfg(target_os = "macos")]
+mod mac {
+    use super::*;
+    use crate::error::GateError;
+    use ring::{
+        aead,
+        rand::{SecureRandom, SystemRandom},
+    };
+    use security_framework::os::macos::keychain::SecKeychain;
+    use security_framework::passwords::{generic_password, PasswordOptions};
+    use std::sync::{Mutex, OnceLock};
+
+    const SERVICE: &str = "com.qbgate.panel.secrets";
+    const ACCOUNT: &str = "configuration-master-v1";
+    const AAD: &[u8] = b"QB Gate configuration v1";
+    static ACCESS: Mutex<()> = Mutex::new(());
+
+    fn failure() -> GateError {
+        GateError::Other(
+            "无法访问 macOS 钥匙串，未保存密钥；请解锁登录钥匙串并允许 QB Gate 访问".into(),
+        )
+    }
+
+    fn key(create: bool) -> Result<crate::credentials::Secret> {
+        // Downstream crate tests also pass through here: never access the user's real Keychain.
+        if qb_foundation::test_context::running_in_a_test_binary(
+            std::env::current_exe().ok().as_deref(),
+        ) {
+            static TEST_KEY: OnceLock<[u8; 32]> = OnceLock::new();
+            let value = TEST_KEY.get_or_init(|| {
+                let mut bytes = [0; 32];
+                SystemRandom::new()
+                    .fill(&mut bytes)
+                    .expect("test random key");
+                bytes
+            });
+            return Ok(crate::credentials::Secret::new(value.to_vec()));
+        }
+        let _guard = ACCESS.lock().map_err(|_| failure())?;
+        match generic_password(PasswordOptions::new_generic_password(SERVICE, ACCOUNT)) {
+            Ok(bytes) if bytes.len() == 32 => Ok(crate::credentials::Secret::new(bytes)),
+            Err(e) if e.code() == -25300 && create => {
+                let mut bytes = [0; 32];
+                SystemRandom::new()
+                    .fill(&mut bytes)
+                    .map_err(|_| failure())?;
+                let secret = crate::credentials::Secret::new(bytes.to_vec());
+                bytes.fill(0);
+                // Add-only: a simultaneous helper must never overwrite an existing master key.
+                match SecKeychain::default()
+                    .map_err(|_| failure())?
+                    .add_generic_password(SERVICE, ACCOUNT, secret.as_bytes())
+                {
+                    Ok(()) => Ok(secret),
+                    Err(e) if e.code() == -25299 => {
+                        let existing = generic_password(PasswordOptions::new_generic_password(
+                            SERVICE, ACCOUNT,
+                        ))
+                        .map_err(|_| failure())?;
+                        if existing.len() != 32 {
+                            return Err(failure());
+                        }
+                        Ok(crate::credentials::Secret::new(existing))
+                    }
+                    Err(_) => Err(failure()),
+                }
+            }
+            _ => Err(failure()),
+        }
+    }
+
+    pub(super) fn seal(plain: &str) -> Result<String> {
+        let master = key(true)?;
+        let key =
+            aead::UnboundKey::new(&aead::AES_256_GCM, master.as_bytes()).map_err(|_| failure())?;
+        let mut nonce = [0; 12];
+        SystemRandom::new()
+            .fill(&mut nonce)
+            .map_err(|_| failure())?;
+        let mut body = plain.as_bytes().to_vec();
+        aead::LessSafeKey::new(key)
+            .seal_in_place_append_tag(
+                aead::Nonce::assume_unique_for_key(nonce),
+                aead::Aad::from(AAD),
+                &mut body,
+            )
+            .map_err(|_| failure())?;
+        let mut envelope = nonce.to_vec();
+        envelope.extend(body);
+        Ok(format!("{KEYCHAIN}{}", hex::encode(envelope)))
+    }
+
+    pub(super) fn open(hexed: &str) -> Option<String> {
+        let mut bytes = hex::decode(hexed).ok()?;
+        if bytes.len() < 28 {
+            return None;
+        }
+        let master = key(false).ok()?;
+        let key = aead::UnboundKey::new(&aead::AES_256_GCM, master.as_bytes()).ok()?;
+        let nonce: [u8; 12] = bytes[..12].try_into().ok()?;
+        let plain = aead::LessSafeKey::new(key)
+            .open_in_place(
+                aead::Nonce::assume_unique_for_key(nonce),
+                aead::Aad::from(AAD),
+                &mut bytes[12..],
+            )
+            .ok()?;
+        String::from_utf8(plain.to_vec()).ok()
+    }
 }
 
 #[cfg(test)]
@@ -168,6 +297,21 @@ mod tests {
         // 换机器 / 换 Windows 用户会走到这里。panic 意味着面板直接崩。
         assert_eq!(open("dpapi:not-hex-at-all"), None);
         assert_eq!(open("dpapi:00112233"), None);
+        assert_eq!(open("keychain-aes-gcm-v1:00"), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn authenticated_envelopes_reject_changes_and_use_unique_nonces() {
+        let first = seal("test-secret").unwrap();
+        let second = seal("test-secret").unwrap();
+        assert_ne!(first, second);
+        assert!(first.starts_with(KEYCHAIN));
+        let mut damaged = first.into_bytes();
+        let last = damaged.last_mut().unwrap();
+        *last = if *last == b'0' { b'1' } else { b'0' };
+        assert_eq!(open(std::str::from_utf8(&damaged).unwrap()), None);
+        assert_eq!(open(&second).as_deref(), Some("test-secret"));
     }
 
     #[cfg(windows)]

@@ -109,6 +109,20 @@ pub fn claude_code_installs() -> Vec<super::inventory::Install> {
         .collect()
 }
 
+#[cfg(target_os = "macos")]
+pub async fn claude_desktop() -> Software {
+    let path = super::macos_install::executable("Claude");
+    Software {
+        id: "claude-desktop",
+        name: "Claude 桌面端",
+        installed: path.is_some(),
+        version: super::macos_install::version("Claude"),
+        path,
+        advisory: None,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
 pub async fn claude_desktop() -> Software {
     let dir = local().join("AnthropicClaude");
     let stub = dir.join("claude.exe");
@@ -202,6 +216,15 @@ async fn msix_desktop() -> Option<MsixPackage> {
 /// nvm-windows / MSI 装的 Node 把全局包放进 `%ProgramFiles%\nodejs`。**一个都不能假设**
 /// —— 这是「开源兼容性」那条规矩（别人的 npm 前缀跟你的不一样）。
 /// 顺序 = 优先级：面板托管目录（2026-11-05 起排最前）→ 显式前缀 → npm 默认 → Node 安装目录。
+#[cfg(target_os = "macos")]
+pub fn gemini_cli_roots() -> Vec<PathBuf> {
+    super::macos_install::npm_roots()
+        .into_iter()
+        .map(|p| p.join("@google/gemini-cli"))
+        .collect()
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn gemini_cli_roots() -> Vec<PathBuf> {
     let pkg = |prefix: PathBuf| {
         prefix
@@ -371,6 +394,12 @@ pub fn gemini_cli_searched() -> String {
 }
 
 /// `node.exe`：先 `where`，再 `%ProgramFiles%\nodejs`。
+#[cfg(target_os = "macos")]
+pub fn node_exe() -> Option<PathBuf> {
+    super::macos_install::command("node")
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn node_exe() -> Option<PathBuf> {
     if let Ok(out) = crate::process::hidden_std(std::process::Command::new("where"))
         .arg("node.exe")
@@ -446,6 +475,21 @@ pub fn gemini_cli() -> Software {
 ///
 /// `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe` 的 `<hash>` 是随版本
 /// 变的目录名，所以那一层要枚举，不能拼死。
+#[cfg(target_os = "macos")]
+pub fn codex_candidates() -> Vec<PathBuf> {
+    let mut paths = vec![super::managed::exe(super::managed::App::Codex)];
+    paths.extend(
+        super::macos_install::path_dirs()
+            .into_iter()
+            .map(|p| p.join("codex")),
+    );
+    for root in super::macos_install::npm_roots() {
+        paths.push(root.join("@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex"));
+    }
+    paths
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn codex_candidates() -> Vec<PathBuf> {
     let mut out = vec![
         // 面板托管的那份排第一（v0.9.0）：面板自己装的，位置由面板说了算。

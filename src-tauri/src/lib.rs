@@ -124,6 +124,7 @@ pub fn run() {
         })
         .manage(AppState::default())
         .invoke_handler(main_window_commands(tauri::generate_handler![
+            commands::system::platform_capabilities,
             startup::startup_status,
             startup::startup_retry,
             startup::startup_discard_blocked,
@@ -565,7 +566,7 @@ pub fn run() {
             // 先重建执行锁，再等待网卡切换；UAC 等待不能留下一扇无监督的门。
             let restore_lease = match gate::allowlist::read() {
                 Ok(list) if !list.is_empty() => {
-                    let _ = gate::lock_all();
+                    let _ = gate::lock_for_managed();
                     true
                 }
                 _ => {
@@ -694,6 +695,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("启动 QB Gate 失败")
         .run(|_app, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                window::reveal(_app, None);
+            }
             // 轻量模式（阶段 7 · X7）把最后一个窗口关掉时，Tauri 默认会退出整个程序。
             // `code` 是 `None` 的只有这一种（「最后一个窗口关了」）；托盘的「退出」、一键更新走的是
             // `app.exit(…)`，带着退出码，照常退。托盘没建起来就不拦 —— 那时候关窗口本来就该退出。
@@ -721,7 +726,7 @@ pub fn run() {
             // 已加载的映像），挡住的是**下一次启动**。
             if matches!(event, tauri::RunEvent::Exit) {
                 if readiness::status().ready {
-                    match gate::lock_all() {
+                    match gate::lock_for_managed() {
                         Ok(n) => audit::write(&format!("面板退出，已重新上锁 {n} 个可执行文件")),
                         Err(e) => audit::write(&format!("面板退出时重锁失败：{e}")),
                     }

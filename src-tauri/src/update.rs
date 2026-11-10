@@ -181,7 +181,7 @@ pub fn launch_pending() {
     }
     match spawn_installer(&path) {
         Ok(pid) => audit::write(&format!(
-            "更新：面板已退出，启动安装包 {}（PID {pid}，/P /UPDATE /R）",
+            "更新：面板已退出，启动安装包 {}（PID {pid}）",
             path.display()
         )),
         Err(e) => audit::write(&format!(
@@ -193,12 +193,17 @@ pub fn launch_pending() {
 
 /// 上一次更新留下的安装包。启动时顺手清掉；删不掉（安装包还在收尾）就等下次。
 pub fn clean_leftovers() {
+    // A mounted DMG may still be in use after relaunch; retain it until the next download.
+    if cfg!(target_os = "macos") {
+        return;
+    }
     let dir = self_update::download_dir();
     if dir.exists() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
+#[cfg(any(windows, test))]
 const INSTALLER_ARGS: [&str; 3] = ["/P", "/UPDATE", "/R"];
 
 #[cfg(windows)]
@@ -221,7 +226,16 @@ fn spawn_installer(path: &Path) -> std::io::Result<u32> {
     Ok(child.id())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn spawn_installer(path: &Path) -> std::io::Result<u32> {
+    // Finder mounts the verified disk image; the user replaces the app in Applications.
+    let child = std::process::Command::new("/usr/bin/open")
+        .arg(path)
+        .spawn()?;
+    Ok(child.id())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn spawn_installer(_path: &Path) -> std::io::Result<u32> {
     Err(std::io::Error::other("只在 Windows 上可用"))
 }
@@ -295,7 +309,9 @@ mod tests {
             .split_once("tauri::RunEvent::Exit")
             .expect("lib.rs 里没有 RunEvent::Exit 的处理")
             .1;
-        let lock = body.find("gate::lock_all()").expect("退出处理里没有重锁");
+        let lock = body
+            .find("gate::lock_for_managed()")
+            .expect("退出处理里没有重锁");
         let launch = body
             .find("update::launch_pending()")
             .expect("退出处理里没有启动安装包");
