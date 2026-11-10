@@ -56,7 +56,7 @@ struct Response {
     risk: Option<Risk>,
 }
 
-fn parse_target(raw: &str) -> Result<IpAddr> {
+pub(crate) fn parse_target(raw: &str) -> Result<IpAddr> {
     let ip = raw.trim().parse::<IpAddr>().map_err(|_| {
         GateError::Other("请输入有效的 IPv4 或 IPv6 地址，不要填写网址、端口或代理账号。".into())
     })?;

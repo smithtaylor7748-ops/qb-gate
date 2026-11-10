@@ -24,6 +24,17 @@
     report.platform = await invoke("platform_capabilities");
     check(report.platform.os === "macos" && report.platform.arch === "aarch64", "The installed application is not native macOS arm64.");
     await until(() => invoke("startup_status"), (status) => status.ready, "Native startup recovery did not complete");
+    check(config.diagnostics?.endpoint && config.diagnostics?.secret, "Isolated supplementary-diagnostic fixtures were not initialized");
+    const locale = await invoke("environment_client_locale", { expected: "ja-JP" });
+    check(locale.items.length === 1 && locale.items[0].state === "pass" && locale.items[0].detail.includes("ja-jp"), "Native Mac locale IPC did not read the isolated Application Support/Claude/config.json");
+    check(!JSON.stringify(locale).includes("native-locale-fixture-only"), "Locale IPC exposed an unrelated configuration field");
+    const runtime = await invoke("environment_proxy_runtime", config.diagnostics);
+    check(runtime.items.length >= 16 && runtime.items.every((item) => item.state === "pass"), "Native local-controller IPC did not verify the fixture's effective rules and group UDP support");
+    check(!JSON.stringify(runtime).includes(config.diagnostics.secret), "Runtime-rule IPC exposed its transient controller secret");
+    let asnError = "";
+    try { await invoke("environment_asn", { ip: "127.0.0.1" }); } catch (error) { asnError = String(error?.message || error); }
+    check(asnError.includes("公网 IP"), "ASN IPC failed to reject a local target before making a network request");
+    pass("Native supplementary IPC: isolated Mac locale, authenticated loopback controller, rejected local ASN target; no public STUN/ASN requests");
     await invoke("settings_load");
     await invoke("workspace_state");
     for (const [path, selector, title] of [

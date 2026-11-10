@@ -35,6 +35,8 @@ export interface DetectOutcome {
   raw: string;
   /** 0..1，「有多像中国用户」。 */
   score: number;
+  /** 未完成的探测不作为零风险计入评分。 */
+  status?: WebRtcStatus;
 }
 
 export interface SignalDef {
@@ -410,26 +412,92 @@ function detectEmoji(): DetectOutcome {
  * 单独导出（2026-09-24）：真实浏览器采集那一页要把地址本身交回面板，
  * 面板拿它跟出口 IP 比 —— 候选地址就是出口的话不算泄露，是别的地址才算。
  */
-export function webrtcCandidates(): Promise<string[]> {
+export type WebRtcStatus =
+  "completed" | "timeout" | "unsupported" | "error" | "unknown";
+
+export interface WebRtcReport {
+  status: WebRtcStatus;
+  addresses: string[];
+}
+
+export const WEBRTC_TIMEOUT_MS = 5_000;
+
+/** 只接受字面 IP；IPv6 由浏览器标准 URL 解析器校验、规整。 */
+export function normalizeIceAddress(value: string): string | null {
+  if (value.includes(":")) {
+    if (!/^[0-9a-f:.]+$/i.test(value)) return null;
+    try {
+      return new URL(`http://[${value}]/`).hostname.slice(1, -1);
+    } catch {
+      return null;
+    }
+  }
+  const parts = value.split(".");
+  return parts.length === 4 &&
+    parts.every(
+      (part) => /^(0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255,
+    )
+    ? parts.join(".")
+    : null;
+}
+
+/** ICE 地址是第 5 个字段，不从整行中搜索数字（会误读 foundation / raddr）。 */
+export function iceCandidateAddress(
+  candidate: Pick<RTCIceCandidate, "candidate"> & { address?: string | null },
+): string | null {
+  const address =
+    candidate.address ?? candidate.candidate.trim().split(/\s+/)[4];
+  return typeof address === "string" ? normalizeIceAddress(address) : null;
+}
+
+/** 旧报告没有完成状态，不能把空数组解释成通过。 */
+export function parseWebRtcReport(value: unknown): WebRtcReport {
+  const unknown: WebRtcReport = { status: "unknown", addresses: [] };
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return unknown;
+  const report = value as Record<string, unknown>;
+  if (
+    !["completed", "timeout", "unsupported", "error"].includes(
+      String(report.status),
+    )
+  )
+    return unknown;
+  if (!Array.isArray(report.addresses) || report.addresses.length > 64)
+    return unknown;
+  const addresses = report.addresses.map((address) =>
+    typeof address === "string" ? normalizeIceAddress(address) : null,
+  );
+  if (addresses.some((address) => address === null)) return unknown;
+  return {
+    status: report.status as WebRtcStatus,
+    addresses: [...new Set(addresses as string[])],
+  };
+}
+
+export function webrtcCandidates(): Promise<WebRtcReport> {
   return new Promise((resolve) => {
     if (typeof window === "undefined" || !window.RTCPeerConnection) {
-      resolve([]);
+      resolve({ status: "unsupported", addresses: [] });
       return;
     }
 
     let resolved = false;
     const ips: string[] = [];
     let pc: RTCPeerConnection | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let serverFailed = false;
+    let serverAnswered = false;
 
-    const finish = () => {
+    const finish = (status: WebRtcStatus) => {
       if (resolved) return;
       resolved = true;
+      clearTimeout(timer);
       try {
         pc?.close();
       } catch {
         /* 已经关了 */
       }
-      resolve(ips);
+      resolve({ status, addresses: ips });
     };
 
     try {
@@ -437,36 +505,59 @@ export function webrtcCandidates(): Promise<string[]> {
         iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
       });
       pc.onicecandidate = (e) => {
+        if (resolved) return;
         if (!e.candidate?.candidate) {
-          finish();
+          finish(serverFailed && !serverAnswered ? "error" : "completed");
           return;
         }
-        const m =
-          /([0-9]{1,3}(\.[0-9]{1,3}){3}|[a-f0-9]{1,4}(:[a-f0-9]{1,4}){7})/i.exec(
-            e.candidate.candidate,
-          );
-        if (m?.[1] && !ips.includes(m[1])) ips.push(m[1]);
+        const address = iceCandidateAddress(e.candidate);
+        if (/\styp\s(?:srflx|relay)(?:\s|$)/.test(e.candidate.candidate))
+          serverAnswered = true;
+        if (address && !ips.includes(address) && ips.length < 64)
+          ips.push(address);
       };
+      pc.onicecandidateerror = () => {
+        serverFailed = true;
+      };
+      pc.onicegatheringstatechange = () => {
+        if (pc?.iceGatheringState === "complete")
+          finish(serverFailed && !serverAnswered ? "error" : "completed");
+      };
+      timer = setTimeout(() => finish("timeout"), WEBRTC_TIMEOUT_MS);
       pc.createDataChannel("");
       pc.createOffer()
-        .then((sdp) => pc?.setLocalDescription(sdp))
-        .catch(() => finish());
+        .then((sdp) => (resolved ? undefined : pc?.setLocalDescription(sdp)))
+        .catch(() => finish("error"));
     } catch {
-      finish();
+      finish("error");
     }
-
-    setTimeout(finish, 1000);
   });
 }
 
-/** WebRTC ICE 候选泄露。 */
-async function detectWebrtcLeak(): Promise<DetectOutcome> {
-  const ips = await webrtcCandidates();
-  if (ips.length === 0) return { raw: "未发现泄露", score: 0 };
-  return {
-    raw: `候选地址泄露（${ips.slice(0, 2).join(", ")}）`,
-    score: 0.5,
+export function webrtcOutcome(report: WebRtcReport): DetectOutcome {
+  const reasons = {
+    timeout: "采集超时",
+    unsupported: "浏览器不支持 WebRTC",
+    error: "采集失败",
+    unknown: "报告缺少有效的采集状态，请重新检测",
   };
+  if (report.status !== "completed")
+    return { raw: reasons[report.status], score: 0, status: report.status };
+  if (report.addresses.length === 0)
+    return {
+      raw: "本次采集完成，未返回 IP 候选；不代表所有网络路径均安全",
+      score: 0,
+      status: "completed",
+    };
+  return {
+    raw: `候选地址可见（${report.addresses.slice(0, 2).join(", ")}）；是否与出口一致见出口检查`,
+    score: 0.5,
+    status: "completed",
+  };
+}
+
+async function detectWebrtcLeak(): Promise<DetectOutcome> {
+  return webrtcOutcome(await webrtcCandidates());
 }
 
 export const SIGNALS: SignalDef[] = [
@@ -505,10 +596,10 @@ export const SIGNALS: SignalDef[] = [
   },
   {
     id: "webrtcLeak",
-    label: "WebRTC 泄露",
+    label: "WebRTC 候选地址",
     weight: 10,
     fixable: true,
-    hint: "收 ICE 候选看有没有暴露真实地址。浏览器策略或扩展可以关掉。",
+    hint: "采集 ICE 候选；地址可见不等于泄露真实 IP，需在出口检查中对比。",
     detect: detectWebrtcLeak,
   },
   {
@@ -574,7 +665,7 @@ export interface SignalResult extends SignalDef {
   score: number;
   /** 该项实际贡献的分数（四舍五入到整数）。 */
   points: number;
-  verdict: RiskBand;
+  verdict: RiskBand | "unknown";
 }
 
 export interface ScanResult {
@@ -597,19 +688,30 @@ export interface RawSignal {
   id: SignalId;
   raw: string;
   score: number;
+  status?: WebRtcStatus;
 }
 
 /** 在**当前这个浏览器**里跑一遍十项采集。 */
-export async function collectSignals(): Promise<RawSignal[]> {
+export async function collectSignals(
+  webrtc?: Promise<WebRtcReport>,
+): Promise<RawSignal[]> {
   const out: RawSignal[] = [];
   for (const def of SIGNALS) {
     let outcome: DetectOutcome;
     try {
-      outcome = await def.detect();
+      outcome =
+        def.id === "webrtcLeak" && webrtc
+          ? webrtcOutcome(await webrtc)
+          : await def.detect();
     } catch {
-      outcome = { raw: "检测失败", score: 0 };
+      outcome = { raw: "检测失败", score: 0, status: "error" };
     }
-    out.push({ id: def.id, raw: outcome.raw, score: outcome.score });
+    out.push({
+      id: def.id,
+      raw: outcome.raw,
+      score: outcome.score,
+      ...(outcome.status ? { status: outcome.status } : {}),
+    });
   }
   return out;
 }
@@ -623,20 +725,30 @@ export function scanFrom(raw: RawSignal[]): ScanResult {
   const signals: SignalResult[] = SIGNALS.map((def) => {
     const r = byId.get(def.id);
     const score = Math.min(1, Math.max(0, Number(r?.score) || 0));
+    const unknown =
+      (def.id === "webrtcLeak" && r?.status !== "completed") ||
+      (r?.status !== undefined && r.status !== "completed");
     return {
       ...def,
       raw: typeof r?.raw === "string" ? r.raw.slice(0, 200) : "没有采到",
       score,
-      points: Math.round(score * def.weight),
-      verdict: signalVerdict(score),
+      points: unknown ? 0 : Math.round(score * def.weight),
+      verdict: unknown ? "unknown" : signalVerdict(score),
     };
   });
-  const total = Math.round(signals.reduce((s, x) => s + x.score * x.weight, 0));
+  const measured = signals.filter((s) => s.verdict !== "unknown");
+  const measuredWeight = measured.reduce((sum, s) => sum + s.weight, 0);
+  const total = measuredWeight
+    ? Math.round(
+        (100 * measured.reduce((s, x) => s + x.score * x.weight, 0)) /
+          measuredWeight,
+      )
+    : 0;
   return {
     total,
     band: riskBand(total),
     signals,
-    hits: signals.filter((s) => s.score >= 0.25),
+    hits: measured.filter((s) => s.score >= 0.25),
   };
 }
 

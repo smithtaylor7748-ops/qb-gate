@@ -4,6 +4,12 @@
 
 [下载 Mac 安装包](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.12-preview.2/QB-Gate-macOS-arm64.dmg) · [查看本版发布说明](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.12-preview.2) · [下载 SHA256SUMS.txt](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.12-preview.2/SHA256SUMS.txt)
 
+## 尚未发布：补充环境检测
+
+本地开发分支已同步 STUN / 同族 HTTP 出口对照、代理运行规则、ASN 网络类型及 Claude 客户端语言检测，入口为「出口一致性 → 补充环境检测」。均由按钮手动启动，结果不保存历史，不修改网络设置或参与门禁；WebRTC 未完成采集保持未知，UA-CH 与本次请求 UA 的平台声明比较。语言配置从 `~/Library/Application Support/Claude/config.json` 读取，多份或缺失证据不猜测。
+
+这组改动尚未包含在下列已发布的 preview.2 DMG 中。应用版本保持 0.25.12；验证进度见 CHANGELOG 的未发布段，Windows 本地检查不代表 Mac 原生验收。
+
 ## 安装与首次打开
 
 1. 下载 `QB-Gate-macOS-arm64.dmg`，双击打开。
@@ -77,7 +83,7 @@ Windows 继续使用 Windows 稳定版的更新提示或 [v0.25.12 发布页](ht
 
 Mac 版还提供中转线路与模型路由、用量统计、MCP、Skills、提示词、项目、备份和会话历史。附加 CLI 与 SillyTavern 可在“软件与安装”管理；Hermes 按官方文档手动安装。开机登录启动使用当前用户的 LaunchAgent。`qbgate://` 链接会先显示导入预览，确认后导入；`ccswitch://` 链接可复制到面板预览。
 
-本次核心修复已通过 [Mac 原生 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42810788872)与 [Windows 回归 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42810788907)。Mac 验证环境为 Apple Silicon / macOS 15，Rust 3114 项、前端 370 项、IPC 353 个类型、UI 151 个布局与主题场景及 27 个交互流程通过；另有 2 项既有文档示例忽略。原生验证覆盖系统网络采样、隔离 Keychain、受管进程启动与回收、Finder 环境下的 nvm 工具发现。
+已发布 preview.2 的核心修复已通过 [Mac 原生 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42810788872)与 [Windows 回归 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42810788907)。Mac 验证环境为 Apple Silicon / macOS 15，Rust 3114 项、前端 370 项、IPC 353 个类型、UI 151 个布局与主题场景及 27 个交互流程通过；另有 2 项既有文档示例忽略。原生验证覆盖系统网络采样、隔离 Keychain、受管进程启动与回收、Finder 环境下的 nvm 工具发现。
 
 真实账户登录、首次 Terminal 系统授权和实际 VPN 换网属于使用者环境下的交互验证；以上 CI 使用隔离测试资料。进一步的平台说明与排查信息见 [本版已知问题](https://github.com/smithtaylor7748-ops/qb-gate/blob/macos-v0.25.12-preview.2/docs/KNOWN-ISSUES.zh-CN.md)。
 

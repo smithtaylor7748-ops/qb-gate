@@ -9,11 +9,19 @@
  * 逐项检查形状，认不出的丢掉，字符串截短，分数夹在 0–1（`scanFrom` 里再夹一次）。
  */
 import type { BrowserReport } from "./generated/BrowserReport";
-import { SIGNALS, scanFrom, type RawSignal, type ScanResult } from "./signals";
+import {
+  SIGNALS,
+  scanFrom,
+  parseWebRtcReport,
+  webrtcOutcome,
+  type RawSignal,
+  type ScanResult,
+  type WebRtcReport,
+} from "./signals";
 
 export interface ProbePage {
   signals: RawSignal[];
-  webrtc: string[];
+  webrtc: WebRtcReport;
   languages: string[];
   timezone: string | null;
   locale: string | null;
@@ -42,24 +50,33 @@ export function parsePage(json: string): ProbePage | null {
   }
   if (!v || typeof v !== "object") return null;
   const o = v as Record<string, unknown>;
+  const webrtc = parseWebRtcReport(o.webrtc);
   const ids = new Set<string>(SIGNALS.map((s) => s.id));
   const signals: RawSignal[] = Array.isArray(o.signals)
     ? o.signals.flatMap((s): RawSignal[] => {
         if (!s || typeof s !== "object") return [];
         const r = s as Record<string, unknown>;
         if (typeof r.id !== "string" || !ids.has(r.id)) return [];
+        if (r.id === "webrtcLeak")
+          return [{ id: "webrtcLeak", ...webrtcOutcome(webrtc) }];
         return [
           {
             id: r.id as RawSignal["id"],
             raw: str(r.raw) ?? "",
             score: typeof r.score === "number" ? r.score : 0,
+            ...(r.status === "error" ||
+            r.status === "timeout" ||
+            r.status === "unsupported" ||
+            r.status === "unknown"
+              ? { status: r.status }
+              : {}),
           },
         ];
       })
     : [];
   return {
     signals,
-    webrtc: strs(o.webrtc, 16, 64),
+    webrtc,
     languages: strs(o.languages, 16, 32),
     timezone: str(o.timezone, 64),
     locale: str(o.locale, 32),
@@ -116,12 +133,45 @@ export function primaryLang(list: string | null | undefined): string | null {
   return first ? first.split("-")[0].toLowerCase() : null;
 }
 
+function platformFromUa(ua: string | null | undefined): string | null {
+  if (!ua) return null;
+  if (/Android/i.test(ua)) return "Android";
+  if (/iPhone|iPad|iPod/i.test(ua)) return "iOS";
+  if (/Windows NT/i.test(ua)) return "Windows";
+  if (/Macintosh|Mac OS X/i.test(ua)) return "macOS";
+  if (/CrOS/i.test(ua)) return "ChromeOS";
+  if (/Linux/i.test(ua)) return "Linux";
+  return null;
+}
+
+function platformFromHint(hint: string): string | null {
+  const value = hint.trim().replace(/^"|"$/g, "").toLowerCase();
+  switch (value) {
+    case "windows":
+      return "Windows";
+    case "macos":
+    case "mac os x":
+      return "macOS";
+    case "linux":
+      return "Linux";
+    case "android":
+      return "Android";
+    case "ios":
+      return "iOS";
+    case "chromeos":
+    case "chrome os":
+      return "ChromeOS";
+    default:
+      return null;
+  }
+}
+
 /**
  * 两条不进 100 分的补充（参照 CheckClaude 的「HTTP 语言首标」「Client Hints」）：
  *
  * - 请求头里的 `Accept-Language` 首选，跟页面里 `navigator.languages` 首选是不是同一个语言 ——
  *   不一样通常是装了改请求头的扩展，网站两边一对就对出矛盾；
- * - UA-CH 报的平台是不是 Windows —— 不是的话多半是改 UA 的扩展。
+ * - UA-CH 与本次请求 UA 报的平台是否一致；不把 macOS 或其他平台当成异常。
  *
  * 只报告：它们说明的是「浏览器里装了什么」，跟出口无关，也不该动 FuckClaude 那张权重表。
  */
@@ -153,27 +203,30 @@ export function extraChecks(r: BrowserReport): ExtraCheck[] {
           },
   );
   const platform = r.ch_platform ?? page?.ua_platform ?? null;
+  const hintPlatform = platform ? platformFromHint(platform) : null;
+  const uaPlatform = platformFromUa(r.user_agent ?? page?.ua);
   out.push(
-    !platform
+    !hintPlatform || !uaPlatform
       ? {
           id: "client_hints",
           label: "Client Hints",
           state: "unknown",
-          detail:
-            "这个浏览器不发 UA-CH（Firefox、Safari 就不发），这一项不适用。",
+          detail: !platform
+            ? "这个浏览器不发 UA-CH（Firefox、Safari 就不发），这一项不适用。"
+            : "UA-CH 或请求 UA 的平台无法识别，本次不能比较。",
         }
-      : platform.toLowerCase().includes("windows")
+      : hintPlatform === uaPlatform
         ? {
             id: "client_hints",
             label: "Client Hints",
             state: "pass",
-            detail: `UA-CH 报的平台是 ${platform}，跟这台机器一致。`,
+            detail: `UA-CH 与本次请求 UA 均报告 ${hintPlatform}；这只说明两份浏览器声明一致。`,
           }
         : {
             id: "client_hints",
             label: "Client Hints",
             state: "warn",
-            detail: `UA-CH 报的平台是 ${platform}，不是 Windows：多半是改 UA 的扩展，网站两边一对就对出矛盾。`,
+            detail: `UA-CH 报告 ${hintPlatform}，请求 UA 报告 ${uaPlatform}；两份声明不同，请核对浏览器设置。`,
           },
   );
   return out;

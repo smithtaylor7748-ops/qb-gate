@@ -37,6 +37,7 @@ import {
   DnsWhy,
 } from "./DnsPanel";
 import { EgressResult, EgressRunButton, EgressWhy } from "./EgressPanel";
+import EnvironmentDiagnostics from "./EnvironmentDiagnostics";
 import {
   BrowserProbeCard,
   LocalCheckup,
@@ -128,6 +129,7 @@ export function ObjectDetail({ id }: { id: ObjectId }) {
       return (
         <>
           <EgressResult />
+          <EnvironmentDiagnostics />
           <EgressWhy />
         </>
       );

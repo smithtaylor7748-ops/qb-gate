@@ -159,3 +159,32 @@ pub async fn egress_checks_undo(id: String) -> Result<String> {
     let _guard = operations::exclusive().await?;
     usecase::egress_checks::undo(&id)
 }
+
+/// Supplementary diagnostics are explicit actions, never startup/background work.
+#[tauri::command]
+pub async fn environment_stun() -> Result<usecase::environment_diagnostics::EnvironmentDiagnostics>
+{
+    usecase::environment_diagnostics::stun().await
+}
+
+#[tauri::command]
+pub async fn environment_proxy_runtime(
+    endpoint: String,
+    secret: Option<String>,
+) -> Result<usecase::environment_diagnostics::EnvironmentDiagnostics> {
+    usecase::environment_diagnostics::proxy(&endpoint, secret.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn environment_asn(
+    ip: String,
+) -> Result<usecase::environment_diagnostics::EnvironmentDiagnostics> {
+    usecase::environment_diagnostics::asn(&ip).await
+}
+
+#[tauri::command]
+pub async fn environment_client_locale(
+    expected: Option<String>,
+) -> Result<usecase::environment_diagnostics::EnvironmentDiagnostics> {
+    usecase::environment_diagnostics::locale(expected).await
+}

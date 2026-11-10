@@ -72,6 +72,9 @@ fn main() {
         qb_gate_lib::accounts::CreateOutcome::export_all_to(&root)?;
         qb_gate_lib::accounts::DeleteOutcome::export_all_to(&root)?;
         qb_gate_lib::usecase::egress_checks::EgressChecks::export_all_to(&root)?;
+        qb_app::usecase::environment_diagnostics::EnvironmentDiagnostics::export_all_to(&root)?;
+        qb_probe::probe::stun::StunReport::export_all_to(&root)?;
+        qb_probe::probe::proxy_runtime::RuntimeReport::export_all_to(&root)?;
         qb_gate_lib::accounts::tokens::TokenUsage::export_all_to(&root)?;
         qb_gate_lib::usecase::token_summary::TokenSummary::export_all_to(&root)?;
         qb_gate_lib::usecase::token_summary::TokenDay::export_all_to(&root)?;

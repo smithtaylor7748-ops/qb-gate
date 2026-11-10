@@ -71,9 +71,45 @@ try {
       recent_log: ["2026-11-10 12:00:00 受管门禁已暂停，等待重新验证"],
       needs_reopen: "受管门禁已暂停，等待重新验证",
     };
+    const diagnostic = (id, detail, state = "unknown") => ({
+      checked_at: "2026-11-10 12:04:00",
+      scope: "Mac smoke fixture only; no external requests or saved history.",
+      items: [{ id, label: id, detail, state, fixable: false, manual: null }],
+    });
     window.__qbMacGateSmoke = {
       commands: [],
       fixtures: {
+        environment_stun: () =>
+          diagnostic("mac-udp", "Mac smoke：UDP 未完成，不能判为通过。"),
+        environment_proxy_runtime: (args) => {
+          if (
+            args.endpoint !== "http://127.0.0.1:19090" ||
+            args.secret !== "mac-controller-fixture"
+          ) {
+            throw new Error(
+              "Mac smoke controller input did not reach IPC unchanged",
+            );
+          }
+          return diagnostic("mac-rules", "Mac smoke：复杂运行规则未确认。");
+        },
+        environment_asn: (args) => {
+          if (args.ip !== "203.0.113.7")
+            throw new Error("Mac smoke ASN target changed");
+          return diagnostic(
+            "mac-asn",
+            "Mac smoke：AS64500 示例运营商，住宅属性未验证。",
+            "pass",
+          );
+        },
+        environment_client_locale: (args) => {
+          if (args.expected !== "ja-JP")
+            throw new Error("Mac smoke locale expectation changed");
+          return diagnostic(
+            "mac-locale",
+            "Mac smoke：locale=ja-jp，仅为配置值。",
+            "pass",
+          );
+        },
         gate_status: () => structuredClone(gate),
         gate_check: () => {
           gate.current_ip = "203.0.113.9";
@@ -261,9 +297,113 @@ try {
     ),
     false,
   );
+  await page.keyboard.press("Escape");
+  await expect(lock).not.toBeVisible();
+  const diagnosticCommands = [
+    "environment_stun",
+    "environment_proxy_runtime",
+    "environment_asn",
+    "environment_client_locale",
+  ];
+  for (const command of diagnosticCommands)
+    assert.equal(await commandCount(command), 0);
+  await page.locator(".scorecell").filter({ hasText: "出口一致性" }).click();
+  const diagnostics = page.getByRole("dialog", { name: /^出口一致性/ });
+  await expect(
+    diagnostics.getByRole("heading", { name: "补充环境检测", exact: true }),
+  ).toBeVisible();
+  // Mounting or expanding a section must not initiate any of the new probes.
+  for (const command of diagnosticCommands)
+    assert.equal(await commandCount(command), 0);
+  await diagnostics
+    .getByRole("button", { name: "检测 UDP 出口", exact: true })
+    .click();
+  await expect(
+    diagnostics.getByText("Mac smoke：UDP 未完成，不能判为通过。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    diagnostics.getByText("未确认", { exact: true }).first(),
+  ).toBeVisible();
+  await diagnostics
+    .getByRole("button", { name: "代理运行规则", exact: true })
+    .click();
+  assert.equal(await commandCount("environment_proxy_runtime"), 0);
+  await diagnostics
+    .getByLabel("本机控制接口", { exact: true })
+    .fill("http://127.0.0.1:19090");
+  await diagnostics
+    .getByLabel("控制接口密钥（可选）", { exact: true })
+    .fill("mac-controller-fixture");
+  await diagnostics
+    .getByRole("button", { name: "核验运行规则", exact: true })
+    .click();
+  await expect(
+    diagnostics.getByText("Mac smoke：复杂运行规则未确认。", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    diagnostics.getByLabel("控制接口密钥（可选）", { exact: true }),
+  ).toHaveValue("");
+  await diagnostics
+    .getByRole("button", { name: "ASN 网络类型", exact: true })
+    .click();
+  await diagnostics
+    .getByLabel("查询公网 IP", { exact: true })
+    .fill("203.0.113.7");
+  await diagnostics
+    .getByRole("button", { name: "查询 ASN 类型", exact: true })
+    .click();
+  await expect(
+    diagnostics.getByText("Mac smoke：AS64500 示例运营商，住宅属性未验证。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await diagnostics
+    .getByRole("button", { name: "Claude 客户端语言", exact: true })
+    .click();
+  await diagnostics
+    .getByLabel("期望语言（可选）", { exact: true })
+    .fill("ja-JP");
+  await diagnostics
+    .getByRole("button", { name: "读取客户端语言", exact: true })
+    .click();
+  await expect(
+    diagnostics.getByText("Mac smoke：locale=ja-jp，仅为配置值。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  for (const command of diagnosticCommands)
+    assert.equal(await commandCount(command), 1);
+  assert.equal(
+    await page.evaluate(() =>
+      [localStorage, sessionStorage].some((storage) =>
+        Object.entries(storage).some(
+          ([key, value]) =>
+            key.includes("environment.diagnostics") ||
+            value.includes("mac-controller-fixture"),
+        ),
+      ),
+    ),
+    false,
+  );
+  await page.screenshot({
+    path: "test-results/macos-environment-diagnostics.png",
+    fullPage: true,
+  });
+  await page.keyboard.press("Escape");
+  await page.locator(".scorecell").filter({ hasText: "出口一致性" }).click();
+  await diagnostics
+    .getByRole("button", { name: "代理运行规则", exact: true })
+    .click();
+  await expect(
+    diagnostics.getByLabel("控制接口密钥（可选）", { exact: true }),
+  ).toHaveValue("");
+  for (const command of diagnosticCommands)
+    assert.equal(await commandCount(command), 1);
   assert.deepEqual(errors, []);
   console.log(
-    "macOS UI: software, capability limits, login item text, WebKit idle fallback, IP inspection, explicit reopen, logs and cancellable close confirmation passed (isolated demo; external requests blocked).",
+    "macOS UI: software, capability limits, login item text, WebKit idle fallback, IP inspection, explicit reopen, logs, cancellable close and four manual supplementary diagnostics passed (isolated demo; external requests blocked; no secret/history persistence).",
   );
 } finally {
   await browser?.close();

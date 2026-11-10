@@ -23,6 +23,7 @@ pub mod deeplink_ops;
 /// Claude 桌面端直连档的开关（中转站重构阶段 4，写真 Key）。
 pub mod desktop_direct_ops;
 pub mod egress_checks;
+pub mod environment_diagnostics;
 /// MCP / Skills / 提示词共用的根目录与目标（中转站重构阶段 5）。
 pub(crate) mod ext_place;
 pub mod gate_ops;

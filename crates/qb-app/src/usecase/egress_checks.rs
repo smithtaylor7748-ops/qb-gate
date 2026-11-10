@@ -189,19 +189,21 @@ pub fn browser_name(ua: Option<&str>) -> String {
 }
 
 fn is_public(ip: std::net::IpAddr) -> bool {
-    match ip {
+    match ip.to_canonical() {
         std::net::IpAddr::V4(a) => {
             let o = a.octets();
             !(a.is_private()
                 || a.is_loopback()
                 || a.is_link_local()
                 || a.is_unspecified()
+                || a.is_multicast()
                 || (o[0] == 100 && (64..128).contains(&o[1])))
         }
         std::net::IpAddr::V6(a) => {
             let s = a.segments()[0];
             !(a.is_loopback()
                 || a.is_unspecified()
+                || a.is_multicast()
                 || (s & 0xfe00) == 0xfc00
                 || (s & 0xffc0) == 0xfe80)
         }
@@ -210,21 +212,42 @@ fn is_public(ip: std::net::IpAddr) -> bool {
 
 /// 默认浏览器**实测**的 WebRTC 候选地址对出口（2026-09-24，参照 CheckClaude 的「WebRTC 出口」）。
 ///
-/// 只看公网地址：局域网地址与 mDNS 名字不出本机。公网地址就是出口 = 同一条路，通过；
-/// 有**不是出口**的公网地址 = UDP 绕过了代理，网页看得到那个地址（关键项）。
-pub fn webrtc_measured(ips: &[String], exits: &[String], browser: &str) -> CheckItem {
-    let public: Vec<&String> = ips
+/// 只在 ICE 完成时判断；地址不同可以来自 UDP/TCP 分流，不能据此认证真实 ISP 出口。
+pub fn webrtc_measured(report: &WebRtcReport, exits: &[String], browser: &str) -> CheckItem {
+    if report.status != WebRtcStatus::Completed {
+        let reason = match report.status {
+            WebRtcStatus::Timeout => "采集超时",
+            WebRtcStatus::Unsupported => "浏览器不支持 WebRTC",
+            WebRtcStatus::Error => "采集失败",
+            _ => "报告缺少有效的采集状态，请重新检测",
+        };
+        return item(
+            "browser_webrtc",
+            "WebRTC 出口",
+            State::Unknown,
+            format!("{browser}：{reason}；本次不能判定是否存在其他公网出口。"),
+        );
+    }
+    let public: Vec<std::net::IpAddr> = report
+        .addresses
         .iter()
-        .filter(|ip| ip.parse().is_ok_and(is_public))
+        .filter_map(|ip| ip.parse::<std::net::IpAddr>().ok())
+        .map(|ip| ip.to_canonical())
+        .filter(|ip| is_public(*ip))
         .collect();
     if public.is_empty() {
         return item(
             "browser_webrtc",
             "WebRTC 出口",
             State::Pass,
-            format!("{browser}实测：WebRTC 没有暴露公网地址（只有局域网 / mDNS 候选，或者一个都没有）。"),
+            format!("{browser}本次 ICE 采集已完成，未观察到公网地址；这不证明其他应用或所有网络路径都安全。"),
         );
     }
+    let exits: Vec<std::net::IpAddr> = exits
+        .iter()
+        .filter_map(|ip| ip.parse::<std::net::IpAddr>().ok())
+        .map(|ip| ip.to_canonical())
+        .collect();
     if exits.is_empty() {
         return item(
             "browser_webrtc",
@@ -234,53 +257,77 @@ pub fn webrtc_measured(ips: &[String], exits: &[String], browser: &str) -> Check
                 "{browser}实测到 WebRTC 公网地址 {}，但这一轮没测出出口 IP，比不了。",
                 public
                     .iter()
-                    .map(|s| s.as_str())
+                    .map(|s| s.to_string())
                     .collect::<Vec<_>>()
                     .join("、")
             ),
         );
     }
-    let others: Vec<&str> = public
+    let others: Vec<String> = public
         .iter()
-        .filter(|ip| !exits.iter().any(|e| e == **ip))
-        .map(|s| s.as_str())
+        .filter(|ip| !exits.contains(ip))
+        .map(|s| s.to_string())
         .collect();
+    let exit_text = exits
+        .iter()
+        .map(|ip| ip.to_string())
+        .collect::<Vec<_>>()
+        .join("、");
     if others.is_empty() {
         item(
             "browser_webrtc",
             "WebRTC 出口",
             State::Pass,
-            format!(
-                "{browser}实测：WebRTC 暴露的就是出口（{}），走的是同一条路。",
-                exits.join("、")
-            ),
+            format!("{browser}实测：WebRTC 公网候选与本次 HTTP 出口一致（{exit_text}）。"),
         )
     } else {
-        fixable(item(
+        item(
             "browser_webrtc",
             "WebRTC 出口",
-            State::Fail,
+            State::Warn,
             format!(
-                "{browser}实测：WebRTC 暴露了 {}，不是出口 {} —— UDP 绕过了代理，网页看得到这个地址。\
-                 代理开 TUN 全局接管 UDP，或者把 Chrome 的 WebRtcIPHandling 收紧到 disable_non_proxied_udp。",
+                "{browser}实测：WebRTC 公网候选 {} 与本次 HTTP 出口 {exit_text} 不同。\
+                 可能是 UDP/TCP 分流、代理或双栈路径差异；仅凭地址不同不能认定是真实 IP 泄露，请核对所用代理的 UDP 路由。",
                 others.join("、"),
-                exits.join("、")
             ),
-        ))
+        )
     }
 }
 
-/// 从真实浏览器的报告里取出页面交回的 WebRTC 地址。页面交回的是不可信数据：只收字符串、最多 16 个。
-fn report_webrtc(page_json: &str) -> Option<Vec<String>> {
-    let v: serde_json::Value = serde_json::from_str(page_json).ok()?;
-    let arr = v.get("webrtc")?.as_array()?;
-    Some(
-        arr.iter()
-            .filter_map(|x| x.as_str())
-            .take(16)
-            .map(|s| s.chars().take(64).collect())
-            .collect(),
-    )
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebRtcStatus {
+    Completed,
+    Timeout,
+    Unsupported,
+    Error,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct WebRtcReport {
+    pub status: WebRtcStatus,
+    pub addresses: Vec<String>,
+}
+
+/// 缺字段、旧数组、无效 IP 和超长列表都不能伪装成一次成功的空采集。
+fn report_webrtc(page_json: &str) -> WebRtcReport {
+    let read = || -> Option<WebRtcReport> {
+        let v: serde_json::Value = serde_json::from_str(page_json).ok()?;
+        let report: WebRtcReport = serde_json::from_value(v.get("webrtc")?.clone()).ok()?;
+        if report.addresses.len() > 64
+            || report
+                .addresses
+                .iter()
+                .any(|ip| ip.parse::<std::net::IpAddr>().is_err())
+        {
+            return None;
+        }
+        Some(report)
+    };
+    read().unwrap_or_default()
 }
 
 /// 读 Chrome 各个 Profile 的 `intl.accept_languages`，去重后拼成一串。
@@ -485,10 +532,7 @@ pub async fn scan(country: Option<String>) -> EgressChecks {
         _ => browser_locale(chrome_languages(), country.as_deref()),
     };
     let webrtc_row = match (&report, &browser) {
-        (Some(r), Some(b)) => match report_webrtc(&r.page_json) {
-            Some(ips) => webrtc_measured(&ips, &checkup.exit_ips, b),
-            None => policy_webrtc,
-        },
+        (Some(r), Some(b)) => webrtc_measured(&report_webrtc(&r.page_json), &checkup.exit_ips, b),
         _ => policy_webrtc,
     };
 
@@ -569,27 +613,83 @@ mod tests {
         }
     }
 
-    /// 真实浏览器实测的 WebRTC：候选地址就是出口不算泄露；有别的公网地址才算（关键项）。
+    fn rtc(status: WebRtcStatus, addresses: &[&str]) -> WebRtcReport {
+        WebRtcReport {
+            status,
+            addresses: addresses.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    /// 完成状态与出口比较分别判断，UDP/TCP 分流只能报告为待核对。
     #[test]
     fn measured_webrtc_is_judged_against_the_exit() {
         let exits = vec!["203.0.113.7".to_string()];
         let b = "默认浏览器（Chrome 128）";
-        assert_eq!(webrtc_measured(&[], &exits, b).state, State::Pass);
         assert_eq!(
-            webrtc_measured(&["192.168.1.9".into(), "10.0.0.2".into()], &exits, b).state,
+            webrtc_measured(&rtc(WebRtcStatus::Completed, &[]), &exits, b).state,
+            State::Pass
+        );
+        assert_eq!(
+            webrtc_measured(
+                &rtc(WebRtcStatus::Completed, &["192.168.1.9", "10.0.0.2"]),
+                &exits,
+                b
+            )
+            .state,
             State::Pass,
             "局域网地址不出本机"
         );
         assert_eq!(
-            webrtc_measured(&["203.0.113.7".into()], &exits, b).state,
+            webrtc_measured(&rtc(WebRtcStatus::Completed, &["203.0.113.7"]), &exits, b).state,
             State::Pass
         );
-        let leak = webrtc_measured(&["198.51.100.4".into()], &exits, b);
-        assert_eq!(leak.state, State::Fail);
+        let leak = webrtc_measured(&rtc(WebRtcStatus::Completed, &["198.51.100.4"]), &exits, b);
+        assert_eq!(leak.state, State::Warn);
         assert!(leak.detail.contains("198.51.100.4"));
+        assert!(!leak.fixable, "地址差异不能直接触发修改浏览器策略");
         assert_eq!(
-            webrtc_measured(&["198.51.100.4".into()], &[], b).state,
+            webrtc_measured(&rtc(WebRtcStatus::Completed, &["198.51.100.4"]), &[], b).state,
             State::Unknown
+        );
+        for status in [
+            WebRtcStatus::Timeout,
+            WebRtcStatus::Unsupported,
+            WebRtcStatus::Error,
+            WebRtcStatus::Unknown,
+        ] {
+            for addresses in [&[][..], &["203.0.113.7"][..]] {
+                assert_eq!(
+                    webrtc_measured(&rtc(status, addresses), &exits, b).state,
+                    State::Unknown
+                );
+            }
+        }
+        assert_eq!(
+            webrtc_measured(
+                &rtc(WebRtcStatus::Completed, &["2001:db8::1"]),
+                &["2001:0db8:0000:0000:0000:0000:0000:0001".into()],
+                b
+            )
+            .state,
+            State::Pass
+        );
+        assert_eq!(
+            webrtc_measured(
+                &rtc(WebRtcStatus::Completed, &["::ffff:203.0.113.7"]),
+                &exits,
+                b
+            )
+            .state,
+            State::Pass
+        );
+        assert_eq!(
+            webrtc_measured(
+                &rtc(WebRtcStatus::Completed, &["::ffff:192.168.1.1"]),
+                &exits,
+                b
+            )
+            .state,
+            State::Pass
         );
     }
 
@@ -623,11 +723,27 @@ mod tests {
     #[test]
     fn the_report_webrtc_list_is_read_defensively() {
         assert_eq!(
-            report_webrtc(r#"{"webrtc":["203.0.113.7",5,"x"]}"#),
-            Some(vec!["203.0.113.7".to_string(), "x".to_string()])
+            report_webrtc(
+                r#"{"webrtc":{"status":"completed","addresses":["203.0.113.7","2001:db8::1"]}}"#
+            ),
+            rtc(WebRtcStatus::Completed, &["203.0.113.7", "2001:db8::1"])
         );
-        assert_eq!(report_webrtc(r#"{"v":1}"#), None);
-        assert_eq!(report_webrtc("not json"), None);
+        for raw in [
+            r#"{"webrtc":["203.0.113.7"]}"#,
+            r#"{"webrtc":[]}"#,
+            r#"{"v":1}"#,
+            "not json",
+            r#"{"webrtc":{"status":"completed","addresses":[5]}}"#,
+            r#"{"webrtc":{"status":"completed","addresses":["x"]}}"#,
+            r#"{"webrtc":{"addresses":[]}}"#,
+        ] {
+            assert_eq!(report_webrtc(raw).status, WebRtcStatus::Unknown);
+        }
+        let oversized = serde_json::json!({"webrtc": {"status": "completed", "addresses": vec!["203.0.113.7"; 65]}});
+        assert_eq!(
+            report_webrtc(&oversized.to_string()).status,
+            WebRtcStatus::Unknown
+        );
     }
 
     /// ⛔ 查不出来的项从分子分母里一起去掉 —— 跟 `score.ts` 顶上那条同理。

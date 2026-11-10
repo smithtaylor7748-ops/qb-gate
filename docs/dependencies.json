@@ -4,6 +4,17 @@
   "packages": [
     {
       "ecosystem": "bundled",
+      "name": "claude-switcher",
+      "version": "1.7.1-cb6a72b255fde20f44d5157d5d6538c759458ae5",
+      "source": "https://github.com/YOURSJEYO/claude-switcher/tree/cb6a72b255fde20f44d5157d5d6538c759458ae5",
+      "license": "MIT",
+      "licenseFiles": [
+        "https://github.com/YOURSJEYO/claude-switcher/blob/cb6a72b255fde20f44d5157d5d6538c759458ae5/LICENSE",
+        "https://github.com/YOURSJEYO/claude-switcher/blob/cb6a72b255fde20f44d5157d5d6538c759458ae5/core/claude-switch.sh"
+      ]
+    },
+    {
+      "ecosystem": "bundled",
       "name": "codex-windows-cn",
       "version": "unversioned",
       "source": "https://github.com/chrichuang218/codex-windows-cn",

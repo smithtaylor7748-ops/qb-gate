@@ -81,6 +81,11 @@ for (const p of metadata.packages) {
 }
 for (const [name, version, source, dir] of [
   [
+    "claude-switcher",
+    "1.7.1-cb6a72b255fde20f44d5157d5d6538c759458ae5",
+    "https://github.com/YOURSJEYO/claude-switcher/tree/cb6a72b255fde20f44d5157d5d6538c759458ae5",
+  ],
+  [
     "lmfpd-sdk",
     "0.2.0",
     "https://registry.npmjs.org/lmfpd-sdk/-/lmfpd-sdk-0.2.0.tgz",

@@ -38,7 +38,12 @@ import { useChecks } from "./useChecks";
 import EnvCleanup from "./EnvCleanup";
 
 const BAND_LABEL = { low: "低", medium: "中", high: "高" } as const;
-const BAND_TONE = { low: "ok", medium: "warn", high: "danger" } as const;
+const BAND_TONE = {
+  low: "ok",
+  medium: "warn",
+  high: "danger",
+  unknown: "default",
+} as const;
 
 /** 右上角那个按钮，详情标题栏和评分格子共用。 */
 export function SignalsRunButton({ compact = false }: { compact?: boolean }) {
@@ -82,7 +87,7 @@ export function SignalsScore() {
           }
         >
           检测浏览器语言、已装字体、WebRTC、Emoji 渲染这些浏览器能读到的信号，
-          以及系统时区。其中 WebRTC 那一项有 1 秒超时，整体大约两三秒。
+          以及系统时区。WebRTC 最多等待 5 秒；超时或检测失败会显示为查不出。
         </EmptyState>
       </Card>
     );
@@ -134,6 +139,7 @@ export function SignalsScore() {
       )}
       <p className="notice mt-2">
         分档：低 0–30、中 31–60、高 61–100；单项 score ≥ 0.25 计为命中。
+        查不出的项目不计入分子或分母，其余项目按有效权重折算为 100 分。
         全部在本地算，不上传任何数据。
       </p>
     </Card>
@@ -305,7 +311,9 @@ export function SignalsBreakdown() {
               <span className="notice max-w-[16ch] truncate" title={s.raw}>
                 {s.raw}
               </span>
-              <Pill tone={BAND_TONE[s.verdict]}>+{s.points}</Pill>
+              <Pill tone={BAND_TONE[s.verdict]}>
+                {s.verdict === "unknown" ? "查不出" : `+${s.points}`}
+              </Pill>
             </>
           }
         >
@@ -318,8 +326,7 @@ export function SignalsBreakdown() {
       {/* 逐项的 points 是各自四舍五入的，加起来不等于上面那个总分
           （总分是先求和再取整）。所以这里不给「小计」，免得对不上。 */}
       <p className="notice mt-2">
-        逐项分数各自取整，相加与上方总分可能差 1–2 分 ——
-        总分是先求和再取整的，以总分为准。
+        逐项分数是原权重下的贡献；总分剔除查不出的项目后折算为 100 分，再取整。
       </p>
     </Card>
   );

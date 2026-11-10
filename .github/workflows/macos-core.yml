@@ -1,7 +1,7 @@
 name: macOS core regressions
 on:
   push:
-    branches: ["codex/macos-core-*"]
+    branches: ["codex/macos-core-*", "codex/macos-detection-*"]
   workflow_dispatch:
 permissions:
   contents: read

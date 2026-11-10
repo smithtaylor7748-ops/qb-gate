@@ -217,10 +217,30 @@ pub async fn reading_via_system_proxy() -> Reading {
 }
 
 async fn reading_with(c: &reqwest::Client) -> Reading {
+    reading_and_evidence(c).await.0
+}
+
+/// Per-source IP observations for explicit diagnostics, without changing the
+/// gate's established address priority or comparing IPv4 text with IPv6 text.
+pub async fn evidence() -> Vec<(String, String)> {
+    match client() {
+        Ok(c) => reading_and_evidence(&c).await.1,
+        Err(_) => Vec::new(),
+    }
+}
+
+async fn reading_and_evidence(c: &reqwest::Client) -> (Reading, Vec<(String, String)>) {
     let (pure, cf, info) = tokio::join!(ip_info_with(c), cf_trace(c), ipinfo(c));
 
     let mut out = Reading::default();
+    let mut observations = Vec::new();
     let mut push = |src: &str, ip: Option<String>, country: Option<String>| {
+        if let Some(address) = ip
+            .as_deref()
+            .and_then(|s| s.parse::<std::net::IpAddr>().ok())
+        {
+            observations.push((src.to_string(), address.to_string()));
+        }
         if out.ip.is_none() {
             out.ip = ip.filter(|s| !s.is_empty());
         }
@@ -243,8 +263,15 @@ async fn reading_with(c: &reqwest::Client) -> Reading {
 
     if out.ip.is_none() {
         out.ip = fallback_ip(c).await;
+        if let Some(address) = out
+            .ip
+            .as_deref()
+            .and_then(|s| s.parse::<std::net::IpAddr>().ok())
+        {
+            observations.push(("fallback".into(), address.to_string()));
+        }
     }
-    out
+    (out, observations)
 }
 
 async fn fallback_ip(c: &reqwest::Client) -> Option<String> {

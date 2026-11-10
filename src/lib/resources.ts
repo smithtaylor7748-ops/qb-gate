@@ -7,7 +7,7 @@
  * 策略的取舍：
  *   - 打第三方接口的（ip / purity）给 stale，不轮询：省额度，切页回来才刷。
  *   - 本机状态（gate / plugins）可以轮询，反正是本地 ACL 和进程查询。
- *   - 慢的（dns 约 6 秒、signals 含 1 秒 WebRTC 超时）一律手动。
+ *   - 慢的（dns 约 6 秒、signals 含 5 秒 WebRTC 超时）一律手动。
  */
 
 import { api, type Channel, type IpInfo } from "./api";
@@ -69,7 +69,8 @@ export const R = {
   egress: res(() => api.egressChecks(peek<IpInfo>("ip")?.countryCode ?? null), {
     auto: false,
     persist: true,
-    persistVersion: 1,
+    // Mac preview.2 已使用版本 1；本轮旧 WebRTC 空结果不得继续显示为通过。
+    persistVersion: 2,
   }),
 
   /**
@@ -86,9 +87,13 @@ export const R = {
 
   /**
    * 中文环境识别。纯本地计算，但 `runScan()` 是串行 `for await`，
-   * WebRTC 那项自带 1 秒超时，所以也别自动跑。
+   * WebRTC 那项最多等待 5 秒，所以也别自动跑。
    */
-  signals: res(() => runScan(), { auto: false, persist: true }),
+  signals: res(() => runScan(), {
+    auto: false,
+    persist: true,
+    persistVersion: 1,
+  }),
 
   /**
    * 本机环境体检。要跑几个 `reg query` 子进程、还要读一遍配置文件，
