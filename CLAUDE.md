@@ -5,7 +5,7 @@
 实现层面的「为什么这么写」在 [docs/DESIGN-NOTES.zh-CN.md](docs/DESIGN-NOTES.zh-CN.md)，
 修不掉的缺口在 [docs/KNOWN-ISSUES.zh-CN.md](docs/KNOWN-ISSUES.zh-CN.md)。
 
-2026-11-10 检测补全发版：使用者已明确要求更新 Windows 与 Mac 两个安装包，并指定 Windows **0.25.14**、Mac **0.25.14-preview.1**，Mac 应用内也为 0.25.14。Windows 同时纳入先前未打包的原生更新与酒馆插件兼容修复；Mac 使用独立已验证分支。只构建发布，不安装或重启本机面板；继续排除出口变化历史。
+2026-11-10 检测补全发版：使用者已明确要求更新 Windows 与 Mac 两个安装包，并指定 Windows **0.25.14**、Mac **0.25.14-preview.1**，Mac 应用内也为 0.25.14。Windows 同时纳入先前未打包的原生更新与酒馆插件兼容修复；Mac 使用独立已验证分支。只构建发布，不安装或重启本机面板；继续排除出口变化历史。两个版本已完成发布与公开附件核验；Windows latest/update.json 为 0.25.14，Mac 保持独立 prerelease。
 
 2026-11-10 发版：基线为已发布的 `v0.25.12`（`a965a52`）。使用者已明确授权更新 GitHub、构建安装包并选择 **0.25.13**，本版新增 Claude 酒馆的 `claude-fable-5-2` 模型选项，由 GitHub Actions 构建安装包、生成更新清单。外部桥需自行支持该模型，Claude Code 至少 2.1.321；不自动切换当前模型或升级 CLI。开发会话不重启或替换本机安装版。后续需求继续使用未发布段，出包才提版本。
 

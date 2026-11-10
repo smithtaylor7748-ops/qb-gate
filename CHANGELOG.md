@@ -11,6 +11,11 @@
 
 验证边界：新增检测使用离线夹具与本机回环模拟，未请求真实 STUN / ASN 服务、未访问使用者的代理控制接口或实际 Claude 配置，未发真实模型请求。此前真实外部桥的隔离接口验证已确认 CLI / SDK 均应用按次插件设置；本机旧更新任务自行完成不作为新安装流程的实机验收。使用者随后明确授权更新两个安装包，指定 Windows **0.25.14**、Mac **0.25.14-preview.1**（应用内同为 0.25.14）。本版通过 GitHub Actions 构建发布，不由开发会话安装或重启本机面板；Mac 使用独立发布源码与原生验证，此段检测数仅代表 Windows 主线。
 
+
+发布完成：`v0.25.14` 指向源码 `cc6cb2c3bc6067d86159f97e9b1cf9df278683ea`，[源码 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42872361798)及[安装包构建发布](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42875161636)全部成功。公开 9 个附件的大小与 SHA-256 核验一致，固定名及版本化 EXE 为同一文件：**13,687,985 字节**，SHA-256 `3e2d224bfb28669d78aaff740b36a8079d74562364d7ef63140b3c6af911dd14`。`latest/update.json` 为 0.25.14，现有检查工具实测 0.25.13 能发现更新、0.25.14 不重复提示；未执行安装。
+
+[Mac 0.25.14-preview.1](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.14-preview.1) 同步发布，使用独立源码 `fa2ef63386f34dcf76a122bba7e5ce6722bbfbce`；完整10项原生作业及同源码Windows CI全部通过，真实DMG/WKWebView和9附件核验完成，详见 [Mac安装说明](docs/MACOS.zh-CN.md)。Mac 为 prerelease，Windows latest 仍为 `v0.25.14`。
+
 ## 0.25.13 — 2026-11-10
 
 - **Claude 酒馆模型列表补入 Fable 5.2**：桥接设置新增 `claude-fable-5-2`，保留既有模型与桥当前所选值；保存时原样交给外部 `bridge.py`。使用该模型需外部桥支持，以及 Claude Code 2.1.321 或更新版本；本版不自动升级 CLI 或切换当前模型。
