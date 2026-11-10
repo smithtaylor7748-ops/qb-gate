@@ -415,6 +415,16 @@ pub async fn update(tool: CliTool, rep: &dyn ProgressSink) -> Result<String> {
     let r = Roots::current();
     let installs = cli_tools::scan(tool, &r);
     let before = cli_tools::default_install(&installs).cloned();
+    #[cfg(target_os = "macos")]
+    if before
+        .as_ref()
+        .is_some_and(|i| crate::install::macos_cli_tools::owns(tool, &i.path))
+    {
+        crate::install::macos_cli_tools::prepare_manifest(
+            tool,
+            &crate::install::macos_cli_tools::directory(tool),
+        )?;
+    }
     let step = cli_tools::update_plan(tool, &installs, &r);
     let mut log = Vec::new();
     let ok = run_step(&step, rep, &mut log).await?;

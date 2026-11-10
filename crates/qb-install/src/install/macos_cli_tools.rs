@@ -59,7 +59,11 @@ pub fn plan(tool: CliTool, dir: &Path, roots: &Roots, uninstall: bool) -> Step {
             "--ignore-scripts=false".into(),
             format!("{package}@latest"),
         ]);
-        args.extend(tool.npm_extra_args().iter().map(|s| s.to_string()));
+        if tool == CliTool::MiniMaxCode {
+            // npm 11.19 rejects CLI --allow-scripts for project-scoped installs.
+            // The exact package policy lives in this managed prefix's manifest.
+            args.push("--strict-allow-scripts".into());
+        }
     }
     Step::Run {
         program: npm,
@@ -80,6 +84,7 @@ pub async fn install_into(
     };
     crate::config_io::ensure_plain_path(dir)?;
     std::fs::create_dir_all(dir)?;
+    prepare_manifest(tool, dir)?;
     let env: Vec<_> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
     rep.phase(2, &format!("安装 {} 到 QB Gate 托管目录", tool.label()));
     let mut log = Vec::new();
@@ -107,6 +112,39 @@ pub async fn install_into(
     }
     rep.phase(3, "回读包名称、版本和启动入口");
     inspect(tool, dir)
+}
+
+/// Preserve project metadata while enabling only MiniMax's required native install hooks.
+pub fn prepare_manifest(tool: CliTool, dir: &Path) -> Result<()> {
+    if tool != CliTool::MiniMaxCode {
+        return Ok(());
+    }
+    let path = dir.join("package.json");
+    crate::config_io::ensure_plain_path(&path)?;
+    let before = crate::config_io::read_optional(&path)?;
+    let mut manifest = crate::config_io::parse_object(before.as_deref())?;
+    let object = manifest.as_object_mut().unwrap();
+    object
+        .entry("private")
+        .or_insert(serde_json::Value::Bool(true));
+    let policy = object
+        .entry("allowScripts")
+        .or_insert_with(|| serde_json::json!({}));
+    let policy = policy.as_object_mut().ok_or_else(|| {
+        GateError::Other("托管 package.json 的 allowScripts 格式不正确，未覆盖。".into())
+    })?;
+    for package in ["@minimax-ai/code", "better-sqlite3"] {
+        if policy
+            .get(package)
+            .is_some_and(|v| v != &serde_json::Value::Bool(true))
+        {
+            return Err(GateError::Other(format!(
+                "托管安装策略不允许 {package} 的构建脚本，原策略未改动。"
+            )));
+        }
+        policy.insert(package.into(), serde_json::Value::Bool(true));
+    }
+    crate::config_io::replace(&path, Some(&serde_json::to_vec_pretty(&manifest)?))
 }
 
 pub fn inspect(tool: CliTool, dir: &Path) -> Result<cli_tools::Install> {
@@ -174,6 +212,32 @@ mod tests {
             assert!(!args.iter().any(|a| a == "-g"));
             assert!(env.iter().any(|(k, _)| k == "PATH"));
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scoped_minimax_policy_preserves_dependencies_and_rejects_explicit_denials() {
+        let root =
+            std::env::temp_dir().join(format!("qb-minimax-policy-{}", crate::config_io::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("package.json");
+        std::fs::write(
+            &path,
+            br#"{"dependencies":{"@minimax-ai/code":"0.7.6"},"allowScripts":{"unrelated":false}}"#,
+        )
+        .unwrap();
+        prepare_manifest(CliTool::MiniMaxCode, &root).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(manifest["dependencies"]["@minimax-ai/code"], "0.7.6");
+        assert_eq!(
+            manifest["allowScripts"],
+            serde_json::json!({"unrelated":false,"@minimax-ai/code":true,"better-sqlite3":true})
+        );
+        let denied = br#"{"allowScripts":{"better-sqlite3":false}}"#;
+        std::fs::write(&path, denied).unwrap();
+        assert!(prepare_manifest(CliTool::MiniMaxCode, &root).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), denied);
         std::fs::remove_dir_all(root).unwrap();
     }
 }
