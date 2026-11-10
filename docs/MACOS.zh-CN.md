@@ -1,99 +1,95 @@
-# QB Gate · macOS Apple Silicon
+# QB Gate · Mac 安装与使用
 
-浏览器最低要求依据：[Tailwind CSS 官方兼容性说明](https://tailwindcss.com/docs/compatibility)（Safari 16.4）。
+适用于 **Apple Silicon（M1 及更新芯片）、macOS 13.3 及以上**。当前 Mac 预览版为 **macos-v0.25.12-preview.2**，应用内版本号为 **0.25.12**。
 
-**已于 2026-11-10 发布 [macos-v0.25.12-preview.1](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.12-preview.1)**，应用版本保持 0.25.12，标签指向已验收源码 `5f9703d19ab6602c2704ad704f282757d58190c3`。适用 Apple Silicon（M1 及更新芯片），最低 macOS 13.3；实际原生运行验证使用 macOS 15，未在 13.3 实机验收，不支持 Intel Mac。
+[下载 Mac 安装包](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.12-preview.2/QB-Gate-macOS-arm64.dmg) · [查看本版发布说明](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.12-preview.2) · [下载 SHA256SUMS.txt](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.12-preview.2/SHA256SUMS.txt)
 
-同一提交的 [Mac 十项作业](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42788560066)与 [Windows 回归](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42788560193)全部通过。**自动验证不等于所有真实账号和首次系统授权流程正常**，待验范围见下文。
+## 安装与首次打开
 
-## 当前源码修复（2026-11-10，未发布）
+1. 下载 `QB-Gate-macOS-arm64.dmg`，双击打开。
+2. 将 **QB Gate** 拖入 **Applications（应用程序）**。
+3. 从“应用程序”打开 QB Gate，安装完成后可推出 DMG。
+4. 进入 **软件与安装**，安装需要的 Claude Code、Codex CLI 或 Gemini CLI。Claude、Codex 等桌面应用点“官方下载”，安装到“应用程序”后回面板点“重新检测”。
 
-应用版本仍为 0.25.12。以下修复尚不在上面的 `preview.1` 下载包中。源码 `ed2f59e` 的 [Mac 原生 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42810788872)全部通过：Rust 3114 项（2 项既有忽略）、前端 370 项、IPC 353 个类型、UI 151 个布局 / 主题场景与 27 个交互流程，以及构建、格式、Clippy 和原生运行时。Windows 本地完整回归为 Rust 3160 项（2 项既有忽略），前端、IPC、UI 同数且依赖审查通过。下文发布包的测试数量只代表原发布提交。
+预览包使用 ad-hoc 签名。首次打开如被 macOS 拦下，确认下载自上面的发布页后，到 **系统设置 → 隐私与安全性 → 仍要打开**，按系统提示确认即可。
 
-- **各项检测**：读取 Mac 系统代理、默认路由及系统 DNS 解析器路由；“跟随系统代理”使用启用系统配置支持的 HTTP 客户端。PAC / 自动发现代理不执行，SOCKS / 接口限定代理不能准确复现时显示未知。DNS 路由缺证据不报通过或满分；IPv6 服务异常、无有效回显或返回 IPv4 均不能证明本机没有 IPv6。Mac 浏览器管理策略未读取时明确未知；环境变量仅代表面板进程，不声称已检查终端启动文件。旧 DNS / 体检 / 出口一致性持久报告需重测。
-- **IP 锁**：“检测当前出口”会真正探测，但只更新观察结果，不授权启动、不解除手动暂停。首装可检测后添加当前 IP；Mac 页可查看监督状态、复验重开、确认关闭和拦截日志。继续使用受管启动检查与看门狗，仍不具备 Windows 全局执行锁。
-- **登录与打开**：Claude 主动账户检测和凭据状态统一读取当前托管槽位的官方 Keychain；读不出时显示原因。Terminal 或系统授权等待结束后，客户端运行前再次检查当前出口及门禁是否已变更。工具查找与子进程使用同一 PATH，纳入用户 nvm 目录；原生 Claude 的版本命名入口也纳入候选识别，回收仍核对签名及既有范围。
-- **删除槽位**：Mac 删除后保留官方 Keychain，不等于退出 Claude 登录。为避免同名新槽位继承旧身份，删除成功的名称及其大小写 / Unicode 规范化变体不再用于新建；旧版残留的关联凭据也会阻止同名新建。需要新账户时使用新槽位名，官方退出在 Claude Code 中完成。
-
-同一源码提交的 [Windows CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42810788907)也已全部通过，包含完整测试、UI 回归与供应链检查。本轮的两个 CI 均针对 `ed2f59e`，不是沿用旧预览标签的结论。
-
-系统代理例外清单、绕过简单主机名或面板进程中的代理变量改变选路时，也不会仅凭相同回显就宣称浏览器出口一致；结果显示未知，提示只列相关变量名，不显示代理凭据。
-
-新增原生只读检查实际执行 `scutil`、`route`、`ifconfig` 与 `networksetup`，核对真实 OS 输出及接口限定路由；每条采集命令有超时和输出上限，不修改网络。受管启动验证使用隔离临时资料和测试程序。以上测试即使通过，也不能替代双真实账户、首次 Terminal 授权和实际换网验收。
-
-本轮原生测试已实际通过网络采集、命令超时、受管进程准备 / 取消 / 恢复、宿主崩溃回收、启动失败、Finder PATH 下的 nvm，以及隔离 Keychain 跨进程解密 / 锁定 / 错误钥匙串拒绝。首次原生执行还发现进程参数缓冲区超过 XNU 上限，已改用 `KERN_ARGMAX`，补修后真实辅助进程参数读取断言通过。测试未登录真实官方账户，也未切换真实 VPN / TUN。
-
-`.github/workflows/macos-core.yml` 提供仅做回归的 Apple Silicon 工作流，触发分支为 `codex/macos-core-*`。它执行源码、网络只读采集、隔离 Keychain、准备 / 取消 / 开始受管进程与 nvm 解释器验证，不生成安装包或发布 Release。
-
-## 安装
-
-[下载 DMG](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.12-preview.1/QB-Gate-macOS-arm64.dmg)，打开后将 QB Gate 拖入 Applications，再从 Applications 打开。发布页另附应用归档、`SHA256SUMS.txt`、中文安装说明及许可证。
-
-DMG 为 16,710,185 字节，SHA-256：`2afd5b20b270b9f28a26ea889bca159233deb4474ff89af46c4c859821ee93b0`。仅下载 DMG 时运行 `shasum -a 256 QB-Gate-macOS-arm64.dmg` 并与此值核对；下载两份二进制与清单后可运行下方完整清单校验。
-
-当前构建使用 ad-hoc 签名，尚无 Apple Developer ID 签名与公证。如果 macOS 阻止首次打开，请先确认来源并核对 SHA-256，再到“系统设置 → 隐私与安全性”使用“仍要打开”。不需要关闭 Gatekeeper。需要无警告分发时，应在正式发布流程配置开发者证书与公证，当前开发构建不读取这些凭据。
-
-Mac 终端校验下载文件：
+需要校验文件时，将本版 `SHA256SUMS.txt` 和 DMG 放在同一目录，打开终端进入该目录，运行：
 
 ```sh
-shasum -a 256 -c SHA256SUMS.txt
+shasum -a 256 QB-Gate-macOS-arm64.dmg
 ```
 
-## 平台范围
+将输出与清单中同名文件的 SHA-256 比较。若同时下载了发布页的 `.app.tar.gz` 归档，也可运行 `shasum -a 256 -c SHA256SUMS.txt` 一次核对两份文件。
 
-- 本地中转线路、模型路由与统计沿用现有跨平台核心。应用资料存于当前用户的 `Library/Application Support`，QB Gate 自己保存的密钥由登录钥匙串保护。各官方客户端的登录与账户切换需要分别验证，不能将 QB Gate 密钥存储等同于官方凭据迁移。
-- 原生实际安装验证覆盖 Claude Code 2.1.311 / 2.1.322（升级及双向回滚）、Codex CLI 0.167.0、Gemini CLI 0.67.0；OpenCode 1.19.5、Grok Build 1.0.77、Pi 1.5.1、MiniMax Code 0.7.6、OpenClaw 2026.11.2 的生产安装、检测、更新、真实版本执行、卸载及外部安装保持均通过。附加 CLI 使用独立用户目录，不修改终端全局 PATH。
-- SillyTavern 1.19.0 官方安装、依赖安装、实际本地 HTTP、控制台、复用、停止及进程清理通过；模型桥接推理未验。Hermes 自动安装、升级和卸载暂不支持，使用官方文档手动安装；桌面应用也从各自官方渠道安装。
-- Codex 版本信息来自 GitHub 公开发布 API，匿名请求按出口 IP 共享额度。触发限流时界面报告可重试时间，下载仍必须通过官方 SHA-256 校验；CI 的只读认证请求成功不代表所有网络环境都能下载。
-- 从面板启动的受管会话在启动前检查出口 IP，并由看门狗监督。Finder、其他终端或外部工具自行启动的程序不经过启动前检查，但门禁失效时，看门狗仍可能按官方程序路径识别规则关闭检测到的官方进程。
-- macOS 没有 Windows 的 NTFS Deny ACE 执行锁、Windows 防火墙规则或注册表环境清理。界面明确显示这些机制不适用，不宣称整机已保护。
-- 开机登录使用当前用户 LaunchAgent；Claude 会话内门禁使用原生辅助命令。真实账户登录、系统钥匙串授权、Terminal 交互以及断网时会话回收仍需 Mac 实机验收。
-- 安装包登记 `qbgate://` 导入链接，macOS 打开链接后只显示预览确认，不自动导入或启动。CC Switch 的默认协议处理者不在 Mac 上改动，`ccswitch://` 链接可复制到面板预览并确认。
+## 先完成各项检测
 
-## 更新
+在 **官方账户** 页点击 **一键全面体检**，完成后点击顶部各项查看明细。换网络、换代理或更新本预览版后，重新测一次即可。
 
-本次发布是独立 prerelease，通过上述发布页手动下载安装，不进入稳定版自动更新通道；Windows latest 仍为 `v0.25.12`。不要把本预览标签写入 `update.json`：现有更新器只接受 `v` 加三段数字，并从 stable latest 获取清单。
+| 检测项     | 怎么使用                                                                                                                          |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| IP 纯净度  | 查看当前出口，按页面入口打开 IPQS、ippure，核对后记录人工复核结果。                                                               |
+| DNS 泄露   | 查看真实 DNS 查询回显，以及 Mac 系统解析器和路由检查结果；配置代理或 VPN 后可重新检测。                                           |
+| 中文环境   | 点开“环境体检”查看语言、时区、WebRTC 等信号。登录网站前，点“用默认浏览器测”；使用其他浏览器时，将一次性链接复制到那个浏览器打开。 |
+| IP 锁      | 点击“检测当前出口”，核对当前 IP、白名单和门禁状态。添加与放行步骤见下一节。                                                       |
+| 出口一致性 | 查看直连、系统代理与浏览器观测的出口信息，并按明细处理差异。                                                                      |
 
-Mac 更新器按同一发布的 `SHA256SUMS.txt` 核验 arm64 DMG，再退出并打开镜像，需手动替换应用。原生自动验证已通过**同版本**真实镜像校验、退出打开、复制替换和重启资料保留；互联网在线升级及跨版本资料迁移尚未验收。
+Mac 检测读取系统代理、DNS 和实际路由。遇到复杂代理配置、缺失路由或无效 IPv6 回显时，明细会显示“未知”或“待确认”及原因；按提示检查网络和代理后，重测对应项目即可。
 
-## 在 Mac 构建
+## 配置 IP 锁
 
-需要 Xcode Command Line Tools、Node.js 24、Rust stable（至少 1.89），以及足够的磁盘空间。只在 Mac 运行以下命令：
+1. 在 **官方账户** 页打开 **IP 锁**，点 **检测当前出口**。
+2. 确认出口后，点 **加入当前 IP**；首次配置也可点 **把当前 IP 加进白名单**。如需限定国家，在同页设置允许地区。
+3. 从 QB Gate 启动官方客户端。面板会在启动前检查 IP，运行期间按设定间隔巡检，默认 5 秒。
+4. 如门禁已暂停或关闭，先恢复合格网络，再到 **执行锁 → 受管启动与 IP 检查** 点 **验证并重新放行**。单独检测只更新读数，暂停状态会保留。
+5. 需要主动暂停时，先保存工作，再点 **关闭受管门禁** 并确认。原因和处理记录可在同页的 `ip-gate.log` 查看。
+
+出口不在白名单、地区不合格或无法确认出口时，受门禁管理的官方会话会关闭，因此换网前请先保存工作。Mac 采用启动检查与进程监督；从 Finder 或其他终端启动的程序不经过面板的启动前检查，巡检发现的官方进程仍可能被关闭。Windows 的系统执行锁仅在 Windows 提供。
+
+## Claude 官方账户：登录、切换和打开
+
+1. 在 **软件与安装** 确认 Claude Code 已安装，并完成上面的 IP 白名单配置。
+2. 打开 **官方账户 → Claude**，点 **新建**，填写一个槽位名，例如 `work-01`，保留“建好之后立刻登录”，点 **建好并登录**。
+3. 在打开的 Claude Code 终端中按官方提示完成登录。首次启动若出现控制 Terminal 的系统授权，允许后继续；曾拒绝时可到 **系统设置 → 隐私与安全性 → 自动化** 调整 QB Gate 的 Terminal 权限，再从面板重试。
+4. 登录完成后回到账户页刷新，查看账户身份、登录状态与额度。日常使用时点右侧 **Claude Code** 打开当前槽位。
+5. 使用另一个账户时，新建另一槽位，或在已有账户行点 **切换／切换并登录**。切换前保存正在进行的 Claude 工作，并按确认框完成切换。
+
+如显示登录已失效，在当前槽位重新打开 Claude Code，按官方流程重新登录；如显示钥匙串读取问题，先按 macOS 提示解锁或授权，再刷新。Terminal 或授权等待结束后，面板会再次核对出口和门禁状态，再启动客户端。
+
+**Claude 桌面端**从右侧对应入口打开，并在官方窗口中完成它自己的登录。Claude Code 的槽位操作按以上步骤进行。
+
+Claude Code 的登录信息由 macOS Keychain 保存。QB Gate 为每个槽位使用独立目录，并让配置目录与安全存储目录保持一致；面板读取当前托管槽位的官方凭据来显示身份和额度，登录、令牌刷新与退出由 Claude Code 完成。
+
+删除槽位前先切到另一个账户。**删除槽位会保留官方 Keychain 登录信息；如需退出账户，先在 Claude Code 内退出。** 删除过的名称不再用于新建，大小写或 Unicode 等价写法也算同名；新账户请使用新名字，例如 `work-02`，以免关联到旧身份。
+
+## 更新到 preview2
+
+Mac 预览版通过本页或发布页 **手动下载更新**。从 preview1 更新时，应用内仍显示 0.25.12，可按下载来源确认预览批次。
+
+1. 保存工作，结束正在运行的受管会话，并退出 QB Gate。
+2. 下载并打开本版 DMG，将 QB Gate 拖入“应用程序”，选择 **替换**。
+3. 从“应用程序”重新打开，重新运行一次全面体检，再按需要启动客户端。
+
+替换应用会保留用户资料和 Keychain；账户槽位、配置等资料存放在当前用户的 `Library/Application Support` 下。退出面板会结束由它管理的会话，更新前请先保存。
+
+Windows 继续使用 Windows 稳定版的更新提示或 [v0.25.12 发布页](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/v0.25.12)中的 Windows 安装包。Mac 预览版使用独立下载入口。
+
+## 其他功能与验证记录
+
+Mac 版还提供中转线路与模型路由、用量统计、MCP、Skills、提示词、项目、备份和会话历史。附加 CLI 与 SillyTavern 可在“软件与安装”管理；Hermes 按官方文档手动安装。开机登录启动使用当前用户的 LaunchAgent。`qbgate://` 链接会先显示导入预览，确认后导入；`ccswitch://` 链接可复制到面板预览。
+
+本次核心修复已通过 [Mac 原生 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42810788872)与 [Windows 回归 CI](https://github.com/smithtaylor7748-ops/qb-gate/actions/runs/42810788907)。Mac 验证环境为 Apple Silicon / macOS 15，Rust 3114 项、前端 370 项、IPC 353 个类型、UI 151 个布局与主题场景及 27 个交互流程通过；另有 2 项既有文档示例忽略。原生验证覆盖系统网络采样、隔离 Keychain、受管进程启动与回收、Finder 环境下的 nvm 工具发现。
+
+真实账户登录、首次 Terminal 系统授权和实际 VPN 换网属于使用者环境下的交互验证；以上 CI 使用隔离测试资料。进一步的平台说明与排查信息见 [本版已知问题](https://github.com/smithtaylor7748-ops/qb-gate/blob/macos-v0.25.12-preview.2/docs/KNOWN-ISSUES.zh-CN.md)。
+
+## 从源码构建
+
+在 Apple Silicon Mac 上准备 Xcode Command Line Tools、Node.js 24 和 Rust stable（至少 1.89）。Mac 源码随预览标签提供，在项目目录切换到本版标签后构建：
 
 ```sh
 xcode-select --install
+git checkout macos-v0.25.12-preview.2
 npm ci
 npm run build:mac
 ```
 
-`build:mac` 固定目标 `aarch64-apple-darwin`，调用 Tauri 生成真实 `.app` 与 `.dmg`，复制安装镜像、应用归档、哈希和许可证到 `dist-installers`。支持通过 `CARGO_TARGET_DIR` 将 Rust 构建缓存放到其他磁盘。Windows 运行此脚本会明确说明需要 Mac，不生成伪安装包。
-
-## 自动验证与构建
-
-`.github/workflows/macos.yml` 在标准 `macos-15` arm64 runner 上运行，开头核对 `uname -m`。源码检查、应用打包、原生运行时与官方 CLI 安装分为独立任务。检查包括格式、前端、类型契约、Rust 单测、Clippy、浏览器回归、真实 Keychain 加解密与受管进程、CLI 官方哈希/架构/启动/回滚，以及挂载 DMG、安装并启动真实 WKWebView、调用原生 IPC 和切换主要页面。使用临时目录、隔离的临时钥匙串和测试密钥，不登录真实用户账号。
-
-已发布包来自上述同一提交成功构建，公开 Release 的二进制与构建产物一致。Rust 测试 Mac 3,084 / Windows 3,132 通过，各有 2 项既有文档示例忽略；两平台前端 355、IPC 契约 353、UI 151 个布局/主题场景与 27 个交互流程通过。
-
-实际应用内还验证了 MCP、Skills、提示词、工具文件、线路、项目、备份、会话历史的合成资料生命周期与重启持久化；系统 URL 确认/取消、窗口关闭唤回、原生退出、LaunchAgent 启停、Keychain 锁定/错误钥匙串拒绝均通过。LaunchAgent 注册成功不等于已执行真实系统注销/登录。
-
-## Mac 实机验收
-
-1. 首次 Gatekeeper 打开、Terminal 自动化授权的允许/拒绝，以及实际菜单和键盘交互。
-2. 用新的测试槽位验证真实 Claude / Codex / Gemini 登录、切换、额度与刷新；Claude Desktop、Codex Desktop、Antigravity 的身份隔离分别验收。
-3. 配置白名单，验证不合格 IP 阻止受管启动，以及断网/切换 IP 时真实官方进程的监督回收。
-4. 使用自己的中转服务和酒馆桥接核对真实模型请求、流式输出与费用。
-5. 实际系统注销/登录自动启动；未来正式 Mac Release 的在线升级及跨版本资料迁移。
-
-验收当前源码修复时，还须覆盖：首次检测不会自动开门；Terminal 等待授权期间关门或换网后不能继续启动；Finder 启动下 nvm 的 Node 可发现并可执行；两个真实 Claude 槽位的主动检测、钥匙串拒绝、删除后同名新建拒绝，以及 DNS / PAC / IPv6 缺证据时不会显示通过。
-
-这些步骤包含真实系统交互，不能用 Windows 检查或浏览器演示代替。
-
-## Claude 官方账户兼容性证据
-
-CLI 启动同时传入同一槽位的 `CLAUDE_CONFIG_DIR` 与 `CLAUDE_SECURESTORAGE_CONFIG_DIR`，并清理继承的旧值；传入的是槽位本体路径，不将切换用的符号链接路径参与钥匙串键名计算。前者是[官方设置文档](https://code.claude.com/docs/en/settings)公开的配置目录选项，后者及钥匙串命名是发行代码的兼容细节，不属于官方稳定接口承诺。
-
-只读核对了[官方 npm 2.1.63 发行包](https://registry.npmjs.org/@anthropic-ai/claude-code/-/claude-code-2.1.63.tgz)与本机官方 2.1.299.0 程序中的嵌入实现：非默认目录经 NFC 规范化，再取 SHA-256 前 8 位，service 为 `Claude Code-credentials-<摘要>`。旧版 account 使用当前用户名；新版使用 `claude-code-user`，也支持同 service 的 `#m` 元数据和 `#0` 等分片。读取只针对 QB Gate 自己管理的槽位，不查询无后缀的全局 service，不新建、复制、覆盖或删除官方钥匙串凭据。
-
-登录读取被系统拒绝或分片不完整时显示「登录状态未知」及原因；额度读取失败原样报告，不因此覆盖身份。Windows 文件存储保持原有路径。Mac 上额度请求完成后重新比较当前访问令牌，防止刷新期间换号把结果记到旧身份；文件时间戳型失败缓存不用于 Mac 钥匙串。
-
-已发布预览版构建时实际下载并执行 Claude Code 2.1.311 / 2.1.322，核对官方摘要和 arm64，但没有登录真实账户，也没有完整审计这些版本内部的 Keychain 协议。当前未发布修复统一了主动检测与状态读取，并防止已删除槽名再次使用旧凭据；Mac 自动回归和隔离原生运行时已通过，真实登录验证仍待完成。必须用两个新测试槽位分别登录，验证切换后的账号、额度和退出/重开隔离；Claude Desktop 的系统钥匙串行为单独验收，不能用 CLI 安装成功代替。
+构建目标为 `aarch64-apple-darwin`，安装镜像、应用归档、校验清单和许可证输出到 `dist-installers`。可用 `CARGO_TARGET_DIR` 指定 Rust 构建缓存目录。
