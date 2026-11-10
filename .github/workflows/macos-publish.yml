@@ -1,0 +1,145 @@
+name: Upload verified macOS release assets
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Build macOS Apple Silicon run
+        required: true
+        type: string
+      tag:
+        description: Existing macos-vX.Y.Z-preview.N tag and draft release
+        required: true
+        type: string
+      source_sha:
+        description: Full source commit verified by the build
+        required: true
+        type: string
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: macos-assets-${{ inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  upload-draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      BUILD_RUN_ID: ${{ inputs.run_id }}
+      BUILD_SOURCE_SHA: ${{ inputs.source_sha }}
+    steps:
+      - name: Check build, tag and draft identity
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re, subprocess
+          repo = os.environ['GITHUB_REPOSITORY']
+          tag = os.environ['RELEASE_TAG']
+          run_id = os.environ['BUILD_RUN_ID']
+          sha = os.environ['BUILD_SOURCE_SHA']
+          assert re.fullmatch(r'macos-v\d+\.\d+\.\d+-preview\.\d+', tag), 'Invalid Mac preview tag'
+          assert re.fullmatch(r'[0-9]+', run_id), 'Invalid build run'
+          assert re.fullmatch(r'[0-9a-f]{40}', sha), 'Invalid source commit'
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/{path}'], text=True))
+          run = api(f'actions/runs/{run_id}')
+          assert run['status'] == 'completed' and run['conclusion'] == 'success', 'Build must pass'
+          assert run['head_sha'] == sha and run['path'] == '.github/workflows/macos.yml', 'Wrong build source'
+          assert run['head_repository']['full_name'] == repo, 'Build must belong to this repository'
+          jobs = api(f'actions/runs/{run_id}/jobs?per_page=100')
+          assert jobs['total_count'] == len(jobs['jobs']) == 10, 'Expected complete Mac validation'
+          expected_jobs = {'source-checks', 'apple-silicon', 'native-runtime', 'official-cli-install',
+                           'sillytavern-install'} | {f'additional-cli-install ({tool})' for tool in
+                           ['opencode', 'grok', 'pi', 'mcode', 'openclaw']}
+          assert {j['name'] for j in jobs['jobs']} == expected_jobs, 'Unexpected build jobs'
+          assert all(j['conclusion'] == 'success' for j in jobs['jobs']), 'Every build job must pass'
+          artifacts = api(f'actions/runs/{run_id}/artifacts?per_page=100')
+          matches = [a for a in artifacts['artifacts'] if a['name'] == 'qb-gate-macos-arm64']
+          assert len(matches) == 1 and not matches[0]['expired'], 'Expected one available installer artifact'
+          assert matches[0]['workflow_run']['head_sha'] == sha, 'Wrong artifact source'
+          ref = api(f'git/ref/tags/{tag}')['object']
+          for _ in range(8):
+              if ref['type'] != 'tag':
+                  break
+              ref = api(f"git/tags/{ref['sha']}")['object']
+          assert ref['type'] == 'commit' and ref['sha'] == sha, 'Tag must select the verified source'
+          release = api(f'releases/tags/{tag}')
+          assert release['draft'] and release['prerelease'], 'Upload requires a preview draft'
+          with pathlib.Path(os.environ['GITHUB_ENV']).open('a') as stream:
+              stream.write(f"DRAFT_RELEASE_ID={release['id']}\n")
+          print(f'Verified build {run_id}, source {sha}, draft {tag}')
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: qb-gate-macos-arm64
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: installers
+      - name: Verify files and upload the draft
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, subprocess, tarfile, time
+          root = pathlib.Path('installers')
+          repo = os.environ['GITHUB_REPOSITORY']
+          tag = os.environ['RELEASE_TAG']
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/{path}'], text=True))
+          def digest(path):
+              with path.open('rb') as stream:
+                  return hashlib.file_digest(stream, 'sha256').hexdigest()
+          binaries = {'QB-Gate-macOS-arm64.dmg', 'QB-Gate-macOS-arm64.app.tar.gz'}
+          verified = set()
+          for line in (root / 'SHA256SUMS.txt').read_text().splitlines():
+              match = re.fullmatch(r'([0-9a-f]{64})  (.+)', line)
+              assert match and match[2] in binaries and match[2] not in verified, 'Invalid checksum entry'
+              assert digest(root / match[2]) == match[1], 'Binary checksum mismatch'
+              verified.add(match[2])
+          assert verified == binaries, 'Both binary hashes are required'
+          with tarfile.open(root / 'QB-Gate-macOS-arm64.app.tar.gz') as archive:
+              assert 'QB Gate.app/Contents/MacOS/qb-gate' in archive.getnames(), 'Missing app executable'
+          guide = root / 'macOS-安装说明.md'
+          guide.rename(root / 'macOS-install.zh-CN.md')
+          names = binaries | {'SHA256SUMS.txt', 'macOS-install.zh-CN.md', 'dependencies.json',
+                              'LICENSE', 'LICENSE-ADDITIONAL-TERMS.md', 'LICENSE-COMMERCIAL.md',
+                              'THIRD_PARTY_NOTICES.txt'}
+          assert {p.name for p in root.iterdir()} == names, 'Unexpected release artifact contents'
+          manifest = {'tag': tag, 'source': os.environ['BUILD_SOURCE_SHA'],
+                      'run': os.environ['BUILD_RUN_ID'], 'assets': []}
+          for name in sorted(names):
+              path = root / name
+              assert path.is_file() and not path.is_symlink(), 'Expected regular release file'
+              sha = digest(path)
+              size = path.stat().st_size
+              release = api(f'releases/tags/{tag}')
+              assert str(release['id']) == os.environ['DRAFT_RELEASE_ID'] and release['tag_name'] == tag, 'Draft identity changed'
+              assert release['draft'] and release['prerelease'], 'Release must remain a draft'
+              existing = next((a for a in release['assets'] if a['name'] == name), None)
+              if existing:
+                  assert existing['digest'] == f'sha256:{sha}' and existing['size'] == size, 'Existing asset differs'
+              else:
+                  subprocess.run(['gh', 'release', 'upload', tag, str(path), '--repo', repo], check=True, timeout=300)
+              for attempt in range(10):
+                  assets = api(f'releases/tags/{tag}')['assets']
+                  asset = next((a for a in assets if a['name'] == name), None)
+                  if asset and asset['state'] == 'uploaded' and asset['digest'] == f'sha256:{sha}' and asset['size'] == size:
+                      break
+                  time.sleep(2)
+              else:
+                  raise RuntimeError('Uploaded asset verification failed: ' + name)
+              manifest['assets'].append({'name': name, 'bytes': size, 'sha256': sha, 'url': asset['browser_download_url']})
+              print(f'Verified {name}: {size} bytes, sha256 {sha}')
+          release = api(f'releases/tags/{tag}')
+          assert str(release['id']) == os.environ['DRAFT_RELEASE_ID'] and release['tag_name'] == tag, 'Draft identity changed'
+          assert release['draft'] and release['prerelease'] and {a['name'] for a in release['assets']} == names, 'Draft contents changed'
+          for row in manifest['assets']:
+              asset = next(a for a in release['assets'] if a['name'] == row['name'])
+              assert asset['state'] == 'uploaded' and asset['digest'] == 'sha256:' + row['sha256'] and asset['size'] == row['bytes'], 'Final asset verification failed'
+          pathlib.Path('macos-upload-manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-upload-manifest
+          path: macos-upload-manifest.json
+          if-no-files-found: error
+          retention-days: 14
