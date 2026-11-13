@@ -101,7 +101,7 @@ url = "2"
 # 共存型工具的配置（中转站重构阶段 4，照搬 cc-switch v4.0.14 的 `jsonc_document.rs`）：OpenCode 的 `opencode.jsonc`、
 # OpenClaw 的 `openclaw.json` 是带注释的 JSONC / JSON5。`json5`（ISC）读语义，`json-five`（Apache-2.0）按原样改写 ——
 # 只改点名的键，注释、空行、键的写法照原文件。两个都是 cc-switch 用的同一个版本。
-json5 = "0.4.1"
+json5 = "1.3.7"
 json-five = "0.3.1"
 # Skills 从 ZIP 装（2026-10-26，中转站重构阶段 5，cc-switch 的 `install_from_zip`）。只开 deflate（走已有的 flate2），不要加密、bzip2 这些；9.0 以下有解压越界的公告（RUSTSEC-2026-0367～0369）。
 zip = { version = "=9.0.2", default-features = false, features = ["deflate-flate2"] }
