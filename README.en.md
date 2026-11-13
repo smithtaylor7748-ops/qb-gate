@@ -17,6 +17,8 @@ Items marked 🆕 are new or changed in 0.25.15.
 
 On Windows, run the installer; check for updates in Settings, and existing installations are notified when they open the panel. On Mac, open the DMG and drag the app into Applications; see the [Mac installation guide](docs/MACOS.zh-CN.md) for first launch, permissions and updates. The app interface is currently in Simplified Chinese.
 
+> The Mac preview is still 0.25.14-preview.1 and does **not** include the 0.25.15 changes marked 🆕 below yet; it will be updated separately.
+
 ## Features
 
 | Feature                      | What you can do                                                                                                                                                                                                                                                                                            |

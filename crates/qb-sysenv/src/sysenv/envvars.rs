@@ -514,14 +514,18 @@ mod tests {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
+    /// 同一个测试进程里并行的几条单测各要一个目录。只用「进程号 + 纳秒」会撞：两条测试在同一刻建目录，
+    /// 先跑完的那条把整个目录删了，另一条读备份时一份都不剩（2026-11-13 发版构建上撞到一次）。加一个进程内计数。
     fn uuid_like() -> String {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         format!(
-            "{}-{:?}",
+            "{}-{:?}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         )
     }
     fn at(h: u32) -> chrono::DateTime<chrono::Local> {
