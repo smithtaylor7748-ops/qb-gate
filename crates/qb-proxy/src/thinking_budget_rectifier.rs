@@ -66,11 +66,7 @@ pub fn should_rectify_thinking_budget(
     let has_1024_constraint = lower.contains("greater than or equal to 1024")
         || lower.contains(">= 1024")
         || (lower.contains("1024") && lower.contains("input should be"));
-    if has_budget_tokens_reference && has_thinking_reference && has_1024_constraint {
-        return true;
-    }
-
-    false
+    has_budget_tokens_reference && has_thinking_reference && has_1024_constraint
 }
 
 /// 对请求体执行 budget 整流
