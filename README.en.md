@@ -4,7 +4,9 @@
 
 **A local AI workspace for Windows and Mac.**
 
-Manage Claude, GPT (Codex) and Antigravity accounts, connect API routes, install CLI tools, and inspect usage and network conditions in one desktop app. The IP gate checks your network exit before managed launches and monitors it while apps run.
+Manage official Claude, GPT (Codex) and Antigravity accounts, connect API routes, install CLI tools, and inspect usage and network conditions in one desktop app. Official accounts sit behind the IP gate, which checks your network exit before launch and keeps monitoring it while apps run; API routes use your own keys and are not subject to the gate.
+
+Items marked 🆕 are new or changed in 0.25.15.
 
 ## Download
 
@@ -13,30 +15,40 @@ Manage Claude, GPT (Codex) and Antigravity accounts, connect API routes, install
 | Windows  | Windows 10 / 11, x64                     | [Download EXE](https://github.com/smithtaylor7748-ops/qb-gate/releases/latest/download/QB-Gate-Windows-x64-setup.exe) · [Stable release](https://github.com/smithtaylor7748-ops/qb-gate/releases/latest)                                        |
 | macOS    | Apple Silicon (M1 or newer), macOS 13.3+ | [Download DMG](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.14-preview.1/QB-Gate-macOS-arm64.dmg) · [Mac preview release](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.14-preview.1) |
 
-On Windows, run the installer and check for future updates in Settings. On Mac, open the DMG and drag the app into Applications; see the [Mac installation guide](docs/MACOS.zh-CN.md) for first launch, permissions and updates. The app interface is currently in Simplified Chinese.
+On Windows, run the installer; check for updates in Settings, and existing installations are notified when they open the panel. On Mac, open the DMG and drag the app into Applications; see the [Mac installation guide](docs/MACOS.zh-CN.md) for first launch, permissions and updates. The app interface is currently in Simplified Chinese.
 
 ## Features
 
-| Feature                     | What you can do                                                                                                                                                                                                                         |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Official accounts**       | Manage account slots for Claude, Codex and Antigravity IDE, switch accounts manually, open official clients to sign in, and view credential status, quotas and usage.                                                                   |
-| **IP gate**                 | Configure IP and country allowlists, check before launch, monitor running apps, inspect logs, verify and reopen the gate, or pause it and close managed sessions. Set the polling interval from 1–30 seconds; the default is 5 seconds. |
-| **Network diagnostics**     | Inspect IP quality, DNS resolution, proxies and routes, IPv6, browser environment signals and exit consistency, with detailed results and actions.                                                                                      |
-| **API routes**              | Manage providers, API keys, models and routes. Use a selected route or configure fallback and scheduling within a route pool, then inspect request history, latency and costs.                                                          |
-| **Software management**     | Discover, install and update CLIs such as Claude Code, Codex CLI and Gemini CLI, track versions and installation progress, and roll back managed Claude Code versions.                                                                  |
-| **Extensions and projects** | Manage MCP, Skills, prompts and project configuration, connect SillyTavern bridges, and preview configuration changes before applying them.                                                                                             |
-| **Usage and pricing**       | Explore usage by date, model and account, estimate equivalent official API costs, and compare subscription plans and API route prices.                                                                                                  |
+| Feature                      | What you can do                                                                                                                                                                                                                                                                                            |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Official accounts**        | Manage account slots for Claude, Codex and Antigravity IDE, switch accounts manually, open official clients to sign in, and view credential status, quotas and usage.                                                                                                                                      |
+| **IP gate**                  | Configure IP and country allowlists for official accounts: check before launch, poll every 1–30 seconds while apps run (5 seconds by default), and close managed sessions when the exit is not allowed or cannot be verified. Inspect logs, re-verify, or pause the gate.                                  |
+| **Close all Claude** 🆕      | Now leans toward closing too much rather than too little: processes named claude.exe and the MCP servers, terminals and tools Claude started are closed together, and processes that are already exiting no longer show as errors. GPT, Gemini, Antigravity and the shared tavern keep running.            |
+| **API routes**               | Manage providers, API keys, models and routes. Use a selected route or configure fallback and scheduling within a route pool, then inspect request history, latency and costs. 🆕 Routes are no longer bound by the IP gate: they start without a proxy, and an exit change does not close relay sessions. |
+| **Chrome browser helper** 🆕 | After pairing the extension with the panel, turn on IP protection for the current Chrome profile and send browser check results to the panel; the plan checker can reuse New API / Sub2API accounts already signed in to Chrome and read public model prices.                                              |
+| **Network diagnostics**      | Inspect IP quality, DNS resolution, proxies and routes, IPv6, browser environment signals and exit consistency; compare UDP / HTTP exits, proxy runtime rules and ASN network types on demand.                                                                                                             |
+| **Software management**      | Discover, install and update CLIs such as Claude Code, Codex CLI and Gemini CLI, track versions and installation progress, and roll back managed Claude Code versions.                                                                                                                                     |
+| **Extensions and projects**  | Manage MCP, Skills, prompts and project configuration, connect SillyTavern bridges, and preview configuration changes before applying them.                                                                                                                                                                |
+| **Usage and pricing**        | Explore usage by date, model and account, estimate equivalent official API costs, and compare subscription plans and API route prices.                                                                                                                                                                     |
 
 On Windows, the IP gate combines system execution locks with a watchdog. On Mac, it checks launches made through QB Gate and supervises running apps with a watchdog. Software installation and system settings adapt to each platform.
 
 ## Get started
 
-1. **Prepare your tools.** Open Software to discover existing installations or install CLI tools. Links to official desktop app downloads are available on the same page.
+1. **Prepare your tools.** Open Software to discover existing installations or install CLI tools. Links to official desktop app downloads are on the same page.
 2. **Check your network.** Run diagnostics from Official Accounts, open IP Lock, and check and add an approved exit IP.
 3. **Sign in and launch.** Create an account slot and open its official client to sign in. Use the panel to launch, switch accounts and view quotas.
-4. **Connect an API service.** Add the service URL and key under API Routes, choose a model and route, then start the client. Configure a route pool and scheduling rules when you want multiple fallback routes.
+4. **Connect an API route.** Add the service URL and key under API Routes, choose a model and route, then start the client. Configure a route pool and scheduling rules when you want fallback routes. 🆕 Route launches do not go through the IP gate.
+5. 🆕 **Connect Chrome (optional).** Download the source code archive from the release page, open `chrome://extensions` in Chrome, turn on Developer mode, choose "Load unpacked" and select the `browser-extension` folder. Then generate a pairing code under "Chrome 插件联动" in the panel's environment check and paste it into the extension.
 
 The usage page shows today, the last 7 days and the last 30 days. Dollar values use official API prices to help compare usage.
+
+## Usage boundaries
+
+- **Account switching is always manual.** The panel never reads rate-limit state to switch accounts, never rotates accounts based on quota or errors, and keeps only one account active at a time.
+- **Every account must be your own.**
+- **The IP gate guards against your exit changing while apps run, not against you.** Emergency unlock or deliberately running the dedicated relay copy of Claude Code bypasses it.
+- 🆕 **"Close all Claude" also ends the processes Claude started** (for example a dev server it launched for you); unsaved work in them is lost.
 
 ## Screenshots
 
@@ -54,7 +66,7 @@ Screenshots use demo data.
 
 ## Documentation and community
 
-- [Mac installation and builds](docs/MACOS.zh-CN.md) · [Windows installation help](docs/ANTIVIRUS.zh-CN.md) · [Releases](https://github.com/smithtaylor7748-ops/qb-gate/releases)
+- [Mac installation and builds](docs/MACOS.zh-CN.md) · [Windows installation help](docs/ANTIVIRUS.zh-CN.md) · [Known limitations](docs/KNOWN-ISSUES.zh-CN.md) · [Releases](https://github.com/smithtaylor7748-ops/qb-gate/releases)
 - [Contributing](CONTRIBUTING.md) · [Architecture](docs/ARCHITECTURE.zh-CN.md) · [Report an issue](https://github.com/smithtaylor7748-ops/qb-gate/issues)
 - QQ group: `1109462206` · [LINUX DO community](https://linux.do/)
 

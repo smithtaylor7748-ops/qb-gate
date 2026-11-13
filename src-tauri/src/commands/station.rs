@@ -1116,12 +1116,12 @@ pub(crate) fn sync_aggregate_config(state: &AppState, client: Client) -> Result<
 /// 然后回终端敲 `claude` —— 那个 claude 的 base_url 还指着官方,
 /// 整条中转链路一次都没被用到,而界面上一切正常。
 ///
-/// # 中转会话不归门禁的关停策略管
+/// # 中转会话不归 IP 锁管（2026-11-13）
 ///
-/// 但它照样要**起之前验 IP、起完持租约**（`LaunchTarget::gated()`）——
-/// Deny ACE 是按文件加的,不认身份;让中转绕过解锁,就等于拿中转会话
-/// 把 claude.exe 解锁、再从终端起官方的。所以这里跟 `session_launch`
-/// 走的是同一个 `workspace::launch`,看门狗也照样挂上。
+/// 不验 IP、不解锁、不持租约、不挂看门狗，IP 变了也不收（`LaunchTarget::gated_for`）。
+/// 它起的是不上锁的那一份文件（`launch::resolve_relay`：Claude Code 的中转专用副本、
+/// 桌面端的 `app-<版本>`），官方那份照旧锁着 —— 中转不会顺手把官方的门打开。
+/// 原来这里要先过 IP 锁：不开代理就打不开中转，IP 一变中转会话里的搜索也跟着坏。
 #[tauri::command]
 pub async fn station_launch(
     app: tauri::AppHandle,
@@ -1179,7 +1179,7 @@ pub async fn station_launch(
             return task.finish(Err(e));
         }
     }
-    task.phase("检查身份、配置与门禁", 20)?;
+    task.phase("检查配置，准备中转用的可执行文件", 20)?;
     let result = crate::workspace::launch(
         client,
         qb_contract::domain::IdentityKind::Relay,
@@ -1189,11 +1189,7 @@ pub async fn station_launch(
     )
     .await;
     let session = task.finish(result)?;
-    if let Some(target) = crate::launch::LaunchTarget::of(client) {
-        if target.gated() {
-            crate::app::start_watchdog(target.watch_mode(), &state, Some(app.clone()));
-        }
-    }
+    // 中转不挂看门狗：它不持租约，IP 变了也不收（2026-11-13）。
     crate::operations::changed(&crate::events::ui(&app), "session", &session.id);
     Ok(session)
 }

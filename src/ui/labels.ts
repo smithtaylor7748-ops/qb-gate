@@ -81,9 +81,12 @@ export const CHANNEL_LABEL: Record<Channel, string> = {
 
 export const EVIDENCE_LABEL: Record<Evidence, string> = {
   AnthropicSigned: "Anthropic 签名",
-  BridgeAndDataDir: "桥接 + 数据目录",
+  BridgeAndDataDir: "Claude 酒馆桥接",
   NpmPackage: "node + claude-code 包",
   AntigravityInstall: "反重力安装目录",
+  // 宁可错杀（2026-11-13）：签名读不出也收；Claude 拉起的子孙一起收。
+  NameOrLocation: "claude.exe / Claude 目录",
+  Descendant: "Claude 拉起的子进程",
 };
 
 export const UPGRADE_ACTION_LABEL: Record<UpgradeAction, string> = {

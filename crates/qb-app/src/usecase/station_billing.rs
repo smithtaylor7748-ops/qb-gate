@@ -738,7 +738,7 @@ pub async fn connect(
     )
 }
 
-/// Browser capture is accepted only by the native, station-bound login window.
+/// Browser capture from the native, station-bound login window.
 pub async fn connect_browser(
     station_id: &str,
     expected_base: &str,
@@ -808,6 +808,183 @@ pub async fn connect_browser(
         amount,
         currency,
     )
+}
+
+/// A paired Chrome extension can import only a short-lived site session, never a password
+/// or refresh token. The local bridge authenticates the extension before calling this.
+pub async fn connect_extension(
+    station_id: &str,
+    expected_origin: &str,
+    backend: &str,
+    captured: Value,
+    cookie: String,
+) -> Result<StationBillingSettings> {
+    let provider: Provider = Repository::open()?.get("providers", station_id)?;
+    let base = origin(&provider.base_url).map_err(GateError::Other)?;
+    if base != expected_origin {
+        return Err(GateError::Other("网页与所选站点不同源".into()));
+    }
+    let mut auth = extension_auth(backend, &captured, &cookie)?;
+    let client = http_client()?;
+    // Bind the label and user ID to the authenticated response, not page storage.
+    let profile = extension_profile(&base, &auth, &client)
+        .await
+        .map_err(GateError::Other)?;
+    let user = data(&profile).get("user").unwrap_or(data(&profile));
+    let verified_id = identifier(&user["id"]);
+    if verified_id.is_empty() || (!auth.user_id.is_empty() && auth.user_id != verified_id) {
+        return Err(GateError::Other(
+            "页面账户与实际登录会话不一致，请刷新网页后重新读取".into(),
+        ));
+    }
+    auth.user_id = verified_id;
+    auth.account = user
+        .get("username")
+        .or_else(|| user.get("email"))
+        .and_then(Value::as_str)
+        .filter(|s| s.len() <= 512 && !s.chars().any(char::is_control))
+        .unwrap_or("")
+        .to_string();
+    let (amount, currency) = balance(&base, &auth, &client)
+        .await
+        .map_err(GateError::Other)?;
+    usage(&base, &auth, &client)
+        .await
+        .map_err(GateError::Other)?;
+    let _guard = crate::operations::exclusive().await?;
+    persist_extension(
+        &Repository::open()?,
+        station_id,
+        &provider,
+        &auth,
+        amount,
+        currency,
+    )
+}
+
+async fn extension_profile(
+    base: &str,
+    auth: &LedgerAuth,
+    client: &reqwest::Client,
+) -> std::result::Result<Value, String> {
+    let path = if auth.backend == "newapi" {
+        "/api/user/self"
+    } else {
+        "/api/v1/auth/me"
+    };
+    let profile = json(
+        authorize(client.get(format!("{base}{path}")), base, auth),
+        "后台账单账户",
+    )
+    .await;
+    if auth.backend == "sub2" && profile.as_ref().is_err_and(|e| e.contains("404")) {
+        json(
+            authorize(
+                client.get(format!("{base}/api/v1/user/profile")),
+                base,
+                auth,
+            ),
+            "后台账单账户",
+        )
+        .await
+    } else {
+        profile
+    }
+}
+
+fn persist_extension(
+    db: &Repository,
+    station_id: &str,
+    provider: &Provider,
+    auth: &LedgerAuth,
+    amount: Option<f64>,
+    currency: String,
+) -> Result<StationBillingSettings> {
+    let current: Provider = db.get("providers", station_id)?;
+    if current.base_url != provider.base_url || current.revision != provider.revision {
+        return Err(GateError::Other(
+            "连接期间站点配置已变更，请重新读取".into(),
+        ));
+    }
+    let base = origin(&provider.base_url).map_err(GateError::Other)?;
+    persist_auth(db, station_id, &base, auth, amount, currency)
+}
+
+fn extension_auth(backend: &str, captured: &Value, cookie: &str) -> Result<LedgerAuth> {
+    if !["newapi", "sub2"].contains(&backend) {
+        return Err(GateError::Other("仅支持 New API 与 Sub2API".into()));
+    }
+    let values = captured
+        .as_array()
+        .filter(|v| v.len() <= 16)
+        .ok_or_else(|| GateError::Other("浏览器登录数据格式无效".into()))?;
+    let mut auth = LedgerAuth {
+        backend: backend.into(),
+        ..Default::default()
+    };
+    let safe = |s: &str, max: usize| s.len() <= max && !s.chars().any(char::is_control);
+    // Cookies are restricted to New API's own session cookie. Never copy analytics,
+    // clearance, external SSO, or a whole cookie jar into the desktop application.
+    if !cookie.is_empty() {
+        let valid = backend == "newapi"
+            && cookie.starts_with("session=")
+            && cookie.len() > "session=".len()
+            && safe(cookie, 16 * 1024)
+            && !cookie.contains(';');
+        if !valid {
+            return Err(GateError::Other(
+                "仅接收本站的 New API session Cookie".into(),
+            ));
+        }
+        auth.cookie = cookie.into();
+    }
+    for value in values {
+        let info = data(value);
+        let user = info.get("user").unwrap_or(info);
+        if info.get("password").is_some() || info.get("refresh_token").is_some() {
+            return Err(GateError::Other("浏览器导入不接收密码或刷新令牌".into()));
+        }
+        let id = identifier(
+            user.get("id")
+                .or_else(|| info.get("user_id"))
+                .unwrap_or(&Value::Null),
+        );
+        if !id.is_empty() {
+            if id.len() > 32 || !id.bytes().all(|c| c.is_ascii_digit()) {
+                return Err(GateError::Other("浏览器账户 ID 无效".into()));
+            }
+            auth.user_id = id;
+        }
+        if let Some(token) = info
+            .get("access_token")
+            .or_else(|| info.get("token"))
+            .and_then(Value::as_str)
+        {
+            if !safe(token, 32 * 1024) {
+                return Err(GateError::Other("浏览器会话令牌无效".into()));
+            }
+            if !token.is_empty() {
+                auth.token = token.into();
+            }
+        }
+        if let Some(name) = user
+            .get("username")
+            .or_else(|| user.get("email"))
+            .and_then(Value::as_str)
+        {
+            if safe(name, 512) {
+                auth.account = name.into();
+            }
+        }
+    }
+    if (backend == "newapi" && auth.user_id.is_empty())
+        || (auth.token.is_empty() && auth.cookie.is_empty())
+    {
+        return Err(GateError::Other(
+            "当前网页没有完整登录会话，请先登录该站点".into(),
+        ));
+    }
+    Ok(auth)
 }
 
 pub async fn refresh(station_id: &str) -> Result<StationBillingSettings> {
@@ -1233,6 +1410,111 @@ mod tests {
         assert!(!settings(&db, "s").unwrap().configured);
         assert!(load(&db, "s", &p.base_url).is_err());
         assert!(save(&db, "s", "newapi", "12", None).is_err());
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn extension_import_limits_session_scope_and_never_accepts_long_lived_secrets() {
+        let newapi = serde_json::json!([{"user":{"id":12,"username":"fixture"}}]);
+        let auth = extension_auth("newapi", &newapi, "session=fixture-session").unwrap();
+        assert_eq!(auth.user_id, "12");
+        assert!(auth.password.is_empty() && auth.refresh_token.is_empty());
+        assert!(extension_auth("newapi", &newapi, "session=x; other=y").is_err());
+        assert!(extension_auth("newapi", &newapi, "session=x\r\nHost: other.invalid").is_err());
+        assert!(extension_auth("sub2", &newapi, "session=x").is_err());
+        assert!(extension_auth("other", &newapi, "").is_err());
+        for secret in ["password", "refresh_token"] {
+            let captured = serde_json::json!([{secret:"fixture", "access_token":"fixture-access"}]);
+            assert!(extension_auth("sub2", &captured, "").is_err());
+        }
+        let auth = extension_auth(
+            "sub2",
+            &serde_json::json!([
+                {"user":{"id":12,"email":"fixture@example.invalid"}},
+                {"access_token":"fixture-access"}
+            ]),
+            "",
+        )
+        .unwrap();
+        assert_eq!(auth.account, "fixture@example.invalid");
+        assert!(!format!("{auth:?}").contains("fixture-access"));
+        assert!(extension_auth(
+            "newapi",
+            &serde_json::json!([{"access_token":"fixture-access"}]),
+            ""
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn extension_login_rechecks_full_endpoint_and_revision_before_replacing_credentials() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        let provider = Provider {
+            id: "extension-fixture".into(),
+            name: "fixture".into(),
+            base_url: "https://fixture.invalid/v1".into(),
+            website: String::new(),
+            note: String::new(),
+            tags: vec![],
+            favorite: false,
+            revision: 1,
+            topup_per_usd: None,
+        };
+        db.put("providers", &provider.id, &provider).unwrap();
+        save(
+            &db,
+            &provider.id,
+            "newapi",
+            "12",
+            Some("fixture-old-access"),
+        )
+        .unwrap();
+        let before = db.meta("station-billing:extension-fixture").unwrap();
+        let auth = extension_auth(
+            "newapi",
+            &serde_json::json!([
+                {"user_id":"12","access_token":"fixture-new-access"}
+            ]),
+            "",
+        )
+        .unwrap();
+        let mut changed = provider.clone();
+        changed.base_url = "https://fixture.invalid/another/v1".into();
+        db.put("providers", &provider.id, &changed).unwrap();
+        assert!(
+            persist_extension(&db, &provider.id, &provider, &auth, None, "USD".into()).is_err()
+        );
+        assert_eq!(
+            db.meta("station-billing:extension-fixture").unwrap(),
+            before
+        );
+        changed.base_url = provider.base_url.clone();
+        changed.revision = 2;
+        db.put("providers", &provider.id, &changed).unwrap();
+        assert!(
+            persist_extension(&db, &provider.id, &provider, &auth, None, "USD".into()).is_err()
+        );
+        assert_eq!(
+            db.meta("station-billing:extension-fixture").unwrap(),
+            before
+        );
+        db.put("providers", &provider.id, &provider).unwrap();
+        let result =
+            persist_extension(&db, &provider.id, &provider, &auth, Some(2.0), "USD".into())
+                .unwrap();
+        assert!(result.configured);
+        assert_eq!(result.balance, Some(2.0));
+        let stored = load(
+            &db,
+            &provider.id,
+            &crate::endpoint::endpoint_base(&provider.base_url).unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(stored.token, "fixture-new-access");
+        assert!(stored.refresh_token.is_empty() && stored.password.is_empty());
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -1429,7 +1429,21 @@ pub async fn launch(
     let target = crate::launch::LaunchTarget::of(client).ok_or_else(|| {
         GateError::Other("这个软件只走中转，从中转站页启动（它不经门禁、不持租约）".into())
     })?;
-    let exe = crate::launch::resolve(target)?;
+    // 中转起的是不上锁的那一份（2026-11-13，见 `LaunchTarget::gated_for`）：
+    // Claude Code 的中转专用副本第一次要复制几百 MB，放到阻塞线程池里做。
+    let exe = if kind == IdentityKind::Relay {
+        let exe = tokio::task::spawn_blocking(move || crate::launch::resolve_relay(target))
+            .await
+            .map_err(|e| GateError::Other(format!("准备中转可执行文件的线程异常退出：{e}")))??;
+        // 复制出来的文件不带官方那份的 Deny（实测），这里再兜一道：中转专用副本永远不许是锁着的。
+        // （没有我们那条 Deny 时 `acl::unlock` 一个字都不改。）
+        if client == Client::ClaudeCode {
+            crate::gate::unlock_paths(std::slice::from_ref(&exe));
+        }
+        exe
+    } else {
+        crate::launch::resolve(target)?
+    };
     // ⛔ 桌面端是 Electron 单实例：已经在跑的时候再起一遍，只会把旧窗口
     // 拉到前面，**新给的环境变量一个都不生效**。不拦的话症状是
     // 「点了启动，窗口是弹出来了，可它走的还是官方」—— 没有任何报错，
@@ -1647,9 +1661,9 @@ pub async fn launch(
         }
     }
     let holder = format!("launch-{}", config_io::id());
-    // 解锁与租约看的是可执行文件（Deny ACE 按文件加，不认身份）；
-    // 判不过时收不收这个会话，看的是身份。两件事分开，见 `stops_with_gate`。
-    let gated = target.gated();
+    // 归不归 IP 锁看身份：官方要先验 IP 解锁、持租约；中转一样都不碰（2026-11-13），
+    // 它起的是上面挑好的不上锁的那一份。见 `LaunchTarget::gated_for`。
+    let gated = target.gated_for(kind);
     let stops_with_gate = target.stops_with_gate(kind);
     if gated {
         crate::gate::open_authorized_with_mode(&holder, Some(target.watch_mode()), gate_state)

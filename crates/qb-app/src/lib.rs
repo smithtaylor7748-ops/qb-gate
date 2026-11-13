@@ -53,6 +53,7 @@ pub use qb_sysenv::sysenv;
 
 /// 本机路由发布的聚合模型，记在库里给写客户端配置那一步看（中转站重构阶段 4）。
 pub mod aggregate_published;
+pub mod browser_link;
 pub mod browser_probe;
 /// Claude 桌面端直连档（中转站重构阶段 4，写真 Key）：直连谁、地址和 Key 是什么。只读库。
 pub mod desktop_direct;

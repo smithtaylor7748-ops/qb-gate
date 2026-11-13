@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "QB Gate 浏览器助手",
+  "version": "0.1.0",
+  "minimum_chrome_version": "116",
+  "description": "联动 QB Gate 的 IP 锁、浏览器检查与中转站账单账户。",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "cookies",
+    "privacy",
+    "proxy",
+    "alarms"
+  ],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "QB Gate 浏览器助手"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  },
+  "incognito": "spanning"
+}

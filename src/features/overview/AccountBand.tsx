@@ -204,7 +204,7 @@ export default function AccountBand() {
     try {
       // **必须**走 workspaceApi.launch，不是 api.launchClaude。
       // 后者拿不到身份参数（起不了指定槽位），而且无条件挂看门狗；
-      // 前者才是 `if target.gated()` —— 中转会话不归门禁的关停策略管。
+      // 前者才是 `if target.gated_for(kind)` —— 中转会话不归 IP 锁管（2026-11-13）。
       const active = slots.find((s) => s.active);
       await workspaceApi.launch(
         target as Client,

@@ -151,7 +151,14 @@ pub async fn session_launch(
 ) -> Result<Session> {
     let _guard = operations::exclusive().await?;
     let mut task = operations::Run::start(events::sink(&app), "启动会话", &id)?;
-    task.phase("检查身份、配置与门禁", 20)?;
+    task.phase(
+        if kind == IdentityKind::Relay {
+            "检查配置，准备中转用的可执行文件"
+        } else {
+            "检查身份、配置与门禁"
+        },
+        20,
+    )?;
     let result = workspace::launch(client, kind, &id, working_dir, &state.gate).await;
     let session = task.finish(result)?;
     // Claude 行上的「重新登录」走的就是这里：起来了就把上一次问出来的「令牌被拒 / 失效」那一笔清掉
@@ -161,11 +168,11 @@ pub async fn session_launch(
     {
         qb_app::usecase::login_health::forget(&qb_app::usecase::login_health::claude_key(&id));
     }
-    // 只要这个可执行文件归门禁管（= 起的时候拿了租约），就得有看门狗盯着 ——
-    // 中转会话不收，但它持着的租约同样要在 IP 变了之后被收回并重新上锁。
+    // 只要这次启动归门禁管（= 起的时候拿了租约），就得有看门狗盯着。
+    // 中转不归（2026-11-13）：不持租约，也就不挂看门狗（`LaunchTarget::gated_for`）。
     // 只走中转的两档（阶段 4）没有启动目标，`workspace::launch` 已经拒绝了，走不到这里。
     if let Some(target) = crate::launch::LaunchTarget::of(client) {
-        if target.gated() {
+        if target.gated_for(kind) {
             // 档位跟着启动目标走，不能硬写 Cli —— 桌面端那一档的口径不一样。
             crate::app::start_watchdog(target.watch_mode(), &state, Some(app.clone()));
         }

@@ -966,6 +966,18 @@ pub fn native_bin(r: &Roots) -> Option<PathBuf> {
         .map(|h| h.join(".local").join("bin").join("claude.exe"))
 }
 
+/// 中转专用的 Claude Code 副本放在哪（2026-11-13）：`<面板数据目录>\relay-runtime\claude-code\<版本戳>\claude.exe`。
+///
+/// ⛔ **这是硬约束 1「每一个完整可执行的 claude.exe 副本都必须锁上」唯一的例外**，使用者定的：
+/// 「中转站并不需要 IP 锁，请你删除这个联接」。中转会话不验 IP、不持租约，就不能跟官方共用一个会被
+/// 上锁的文件 —— Claude Code 的搜索（内置 ripgrep）是拿自己的 exe 再起一个进程，锁一上搜索就坏。
+///
+/// 所以这一份：**不进 [`scan`]**（不上锁、不当启动候选、不算外部副本、清副本也不碰它），
+/// 只由面板带着中转环境变量起；不在 PATH 上。会被拿去当官方用的唯一途径是有人专门去双击它。
+pub fn relay_cli_root(state_dir: &Path) -> PathBuf {
+    state_dir.join("relay-runtime").join("claude-code")
+}
+
 /// 升级残留：`claude.exe.old.<时间戳>`。
 ///
 /// 这些副本没有 Deny ACL，是能绕过门禁的执行副本。扫每一份副本所在的目录，

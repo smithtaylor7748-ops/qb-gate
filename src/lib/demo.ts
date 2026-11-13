@@ -649,6 +649,7 @@ const demoEnv: EnvHit[] = [
 
 /** 演示的真实浏览器报告：点过「用默认浏览器测」才有。 */
 let demoProbeReport: BrowserReport | null = null;
+let demoBrowserLinkRunning = false;
 function demoBrowserReport(): BrowserReport {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -4720,6 +4721,25 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     return demoProbeReport;
   },
   browser_probe_last: () => demoProbeReport,
+  browser_companion_start: () => {
+    demoBrowserLinkRunning = true;
+    const endpoint = "http://127.0.0.1:53124";
+    const token = "0".repeat(64);
+    return { endpoint, token, pairing: JSON.stringify({ endpoint, token }) };
+  },
+  browser_companion_status: () => ({
+    running: demoBrowserLinkRunning,
+    connected: false,
+    armed: false,
+    safe: false,
+    ip: null,
+    reason: demoBrowserLinkRunning ? "演示模式：等待插件连接" : "联动未开启",
+    checked_at: 0,
+    enhancement_json: null,
+  }),
+  browser_companion_stop: () => {
+    demoBrowserLinkRunning = false;
+  },
   // 克隆一份：额度演示会就地改槽位（盖上「官方接口」那份），同一个引用 React Query 看不出变了。
   accounts_list: () => structuredClone(accounts),
   accounts_tokens: () => tokenUsage,

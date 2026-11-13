@@ -325,20 +325,86 @@ pub fn owns_pid(pid: u32, kind: IdentityKind) -> bool {
             && m.process.contains(pid)
     })
 }
+/// 两个进程创建时间（FILETIME）是不是同一次启动：**比到微秒**。
+///
+/// 一键关闭的枚举拿的是 `Win32_Process.CreationDate`，它只精确到微秒；
+/// `GetProcessTimes` 精确到 100 纳秒（实测两者差 0–9 个 100 纳秒）。原来要求逐位相等，
+/// 枚举那边只好另起一次 `Get-Process` 去取精确值 —— 进程正在退出、或者读不到时
+/// 那一步拿到 0，执行时就报「缺少进程创建时间，拒绝仅凭 PID 终止」（2026-11-13）。
+/// PID 被复用的新进程不可能跟原进程在同一微秒里创建，比到微秒足够认身份。
+pub fn same_start(a: u64, b: u64) -> bool {
+    a / 10 == b / 10
+}
+
+/// 进程此刻的身份。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessIdentity {
+    /// 创建时间（FILETIME，精确值）。
+    pub created: u64,
+    /// 可执行文件的完整路径；读不出来是 `None`。
+    pub image: Option<String>,
+}
+
+/// 按 PID 看一眼进程：还在就回它的身份，**已经退出（或正在被回收）回 `None`**。
+///
+/// 只要 `PROCESS_QUERY_LIMITED_INFORMATION`：以管理员身份跑的进程也能这样看。
+#[cfg(windows)]
+pub fn identify(pid: u32) -> Result<Option<ProcessIdentity>> {
+    native::identify(pid)
+}
+#[cfg(not(windows))]
+pub fn identify(_: u32) -> Result<Option<ProcessIdentity>> {
+    Err(GateError::Other("需要 Windows".into()))
+}
+
 #[cfg(windows)]
 pub fn creation_time(pid: u32) -> Result<u64> {
     native::creation_time(pid)
 }
-#[cfg(windows)]
+/// 按 PID + 创建时间结束一个进程。见 [`terminate_verified_many`]。
 pub fn terminate_verified(pid: u32, time: u64) -> Result<()> {
-    native::terminate_verified(pid, time)
+    terminate_verified_many(&[(pid, time)])
+        .pop()
+        .map(|(_, r)| r)
+        .unwrap_or(Ok(()))
 }
+
+/// 一批进程：**先逐个下结束指令，再一起等它们退出**（共用一个期限）。
+///
+/// # 「已经不在了」不是失败（2026-11-13）
+///
+/// 一键关闭与 IP 锁关停都是先按会话收整棵进程树、再按证据补收剩下的。补收那一步扫到的，
+/// 常常是**刚被收、还在退出**的进程：对它再调一次 `TerminateProcess`，Windows 回
+/// 「拒绝访问」（`STATUS_PROCESS_IS_TERMINATING`），原来照单记成「没关掉」——
+/// 界面上一排 `Access is denied. (0x80070005)`，看门狗再拿它重试到它自己退完。
+/// 现在按「要的结果」判：
+///
+/// * 已经退出、PID 已经没了 → 成功；
+/// * PID 被别的进程用了（创建时间对不上）→ 原进程已经不在，成功，**新进程一根指头不碰**；
+/// * 结束指令发出去了（或它本来就在退出）→ 等它退；期限内没退完也算成功 ——
+///   正在退出的进程不会再回到用户态执行任何代码，只是 Windows 回收得慢（多半卡在驱动 I/O）；
+/// * 连结束权限都拿不到（多半是以管理员身份运行）→ 也先等一等（正在退出的进程有时也这样），
+///   到期还活着才算失败，并说清原因。
+pub fn terminate_verified_many(targets: &[(u32, u64)]) -> Vec<(u32, Result<()>)> {
+    #[cfg(windows)]
+    {
+        native::terminate_verified_many(targets, KILL_WAIT)
+    }
+    #[cfg(not(windows))]
+    {
+        targets
+            .iter()
+            .map(|(pid, _)| (*pid, Err(GateError::Other("需要 Windows".into()))))
+            .collect()
+    }
+}
+
+/// 一批结束指令发完之后，最多等这么久看它们退出。
+#[cfg(windows)]
+const KILL_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
 #[cfg(not(windows))]
 pub fn creation_time(_: u32) -> Result<u64> {
-    Err(GateError::Other("需要 Windows".into()))
-}
-#[cfg(not(windows))]
-pub fn terminate_verified(_: u32, _: u64) -> Result<()> {
     Err(GateError::Other("需要 Windows".into()))
 }
 
@@ -869,17 +935,30 @@ mod native {
                     return Err(GateError::Other("进程身份已改变，停止操作被阻断".into()));
                 }
                 TerminateJobObject(handle(self.job), 1).map_err(err)?;
-                if self.process != 0 {
-                    let _ = WaitForSingleObject(handle(self.process), 3000);
-                }
             }
-            for _ in 0..30 {
+            // 结束指令已经发给作业里的每一个进程，回收要一点时间（Electron 一棵树十几个进程）。
+            // 每秒补发一次：赶在第一次指令前后刚被拉起来的子进程也收进去。
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+            let mut resend = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            loop {
                 if !self.running()? {
                     return Ok(());
                 }
+                let now = std::time::Instant::now();
+                if now >= deadline {
+                    break;
+                }
+                if now >= resend {
+                    unsafe {
+                        let _ = TerminateJobObject(handle(self.job), 1);
+                    }
+                    resend = now + std::time::Duration::from_secs(1);
+                }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            Err(GateError::Other("会话进程树退出超时".into()))
+            Err(GateError::Other(
+                "会话进程树退出超时：结束指令已经发出，Windows 还没回收完".into(),
+            ))
         }
         pub fn reopen(pid: u32, time: u64, id: &str) -> Result<Option<Self>> {
             unsafe {
@@ -959,38 +1038,195 @@ mod native {
             time
         }
     }
-    pub fn terminate_verified(pid: u32, time: u64) -> Result<()> {
-        if time == 0 {
-            return Err(GateError::Other(
-                "缺少进程创建时间，拒绝仅凭 PID 终止".into(),
-            ));
+    /// `OpenProcess` 对已经不存在的 PID 回 `ERROR_INVALID_PARAMETER`。
+    fn is_gone(e: &windows::core::Error) -> bool {
+        e.code().0 as u32 == 0x80070057
+    }
+    fn is_denied(e: &windows::core::Error) -> bool {
+        e.code().0 as u32 == 0x80070005
+    }
+    fn image_path(p: HANDLE) -> Option<String> {
+        let mut buf = vec![0u16; 32768];
+        let mut len = buf.len() as u32;
+        unsafe {
+            QueryFullProcessImageNameW(p, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len)
+                .ok()?;
         }
+        Some(String::from_utf16_lossy(&buf[..len as usize]))
+    }
+    pub fn identify(pid: u32) -> Result<Option<ProcessIdentity>> {
         unsafe {
             let p = match OpenProcess(
-                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE,
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
                 false,
                 pid,
             ) {
                 Ok(p) => p,
-                Err(e) if e.code().0 as u32 == 0x80070057 => return Ok(()),
+                Err(e) if is_gone(&e) => return Ok(None),
                 Err(e) => return Err(err(e)),
             };
-            let result = (|| -> Result<()> {
-                if created(p)? != time {
-                    return Err(GateError::Other("PID 已被其他进程复用，未终止".into()));
-                }
+            let result = (|| -> Result<Option<ProcessIdentity>> {
                 if WaitForSingleObject(p, 0) == WAIT_OBJECT_0 {
-                    return Ok(());
+                    return Ok(None);
                 }
-                TerminateProcess(p, 1).map_err(err)?;
-                if WaitForSingleObject(p, 3000) != WAIT_OBJECT_0 {
-                    return Err(GateError::Other("等待进程退出超时".into()));
-                }
-                Ok(())
+                Ok(Some(ProcessIdentity {
+                    created: created(p)?,
+                    image: image_path(p),
+                }))
             })();
             let _ = CloseHandle(p);
             result
         }
+    }
+
+    /// 一个目标走到哪一步了。
+    enum Kill {
+        /// 已经有结论。
+        Done(Result<()>),
+        /// 句柄在手，等它退出。`issued` = 结束指令已经发出（或它本来就在退出）。
+        Waiting {
+            handle: HANDLE,
+            issued: bool,
+            denied: String,
+        },
+    }
+
+    fn denied_message(e: &str) -> String {
+        format!(
+            "Windows 拒绝面板结束这个进程（{e}）：它多半是以管理员身份运行的。\
+             请在它自己的窗口里退出，或以管理员身份运行面板后再试"
+        )
+    }
+
+    /// 第一步：认身份、下结束指令。不在这里等。
+    fn begin_kill(pid: u32, time: u64) -> Kill {
+        if time == 0 {
+            return Kill::Done(Err(GateError::Other(
+                "缺少进程创建时间，拒绝仅凭 PID 终止".into(),
+            )));
+        }
+        unsafe {
+            let (p, can_terminate, denied) = match OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE,
+                false,
+                pid,
+            ) {
+                Ok(p) => (p, true, String::new()),
+                Err(e) if is_gone(&e) => return Kill::Done(Ok(())),
+                // 拿不到结束权限：先只要「看」和「等」的权限 —— 正在退出的进程也可能这样回。
+                Err(first) => match OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                    false,
+                    pid,
+                ) {
+                    Ok(p) => (p, false, first.to_string()),
+                    Err(e) if is_gone(&e) => return Kill::Done(Ok(())),
+                    Err(_) => {
+                        return Kill::Done(Err(GateError::Other(denied_message(
+                            &first.to_string(),
+                        ))))
+                    }
+                },
+            };
+            let close = |r: Result<()>| {
+                let _ = CloseHandle(p);
+                Kill::Done(r)
+            };
+            match created(p) {
+                // 原进程已经不在，这个 PID 现在是别人的：不碰它，原目标算收完了。
+                Ok(c) if !same_start(c, time) => return close(Ok(())),
+                Ok(_) => {}
+                Err(e) => return close(Err(e)),
+            }
+            if WaitForSingleObject(p, 0) == WAIT_OBJECT_0 {
+                return close(Ok(()));
+            }
+            if !can_terminate {
+                return Kill::Waiting {
+                    handle: p,
+                    issued: false,
+                    denied,
+                };
+            }
+            match TerminateProcess(p, 1) {
+                Ok(()) => Kill::Waiting {
+                    handle: p,
+                    issued: true,
+                    denied,
+                },
+                // 它已经在退出了：对正在退出的进程再结束一次，Windows 回的就是「拒绝访问」
+                // （STATUS_PROCESS_IS_TERMINATING）。句柄是带结束权限开出来的，不会是权限不够。
+                Err(e) if is_denied(&e) => Kill::Waiting {
+                    handle: p,
+                    issued: true,
+                    denied,
+                },
+                Err(e) => close(Err(err(e))),
+            }
+        }
+    }
+
+    pub fn terminate_verified_many(
+        targets: &[(u32, u64)],
+        wait: std::time::Duration,
+    ) -> Vec<(u32, Result<()>)> {
+        let mut states: Vec<(u32, Kill)> = targets
+            .iter()
+            .map(|&(pid, time)| (pid, begin_kill(pid, time)))
+            .collect();
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            let mut waiting = false;
+            for (_, state) in states.iter_mut() {
+                if let Kill::Waiting { handle, .. } = state {
+                    if unsafe { WaitForSingleObject(*handle, 0) } == WAIT_OBJECT_0 {
+                        unsafe {
+                            let _ = CloseHandle(*handle);
+                        }
+                        *state = Kill::Done(Ok(()));
+                    } else {
+                        waiting = true;
+                    }
+                }
+            }
+            if !waiting || std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let mut slow = Vec::new();
+        let out = states
+            .into_iter()
+            .map(|(pid, state)| {
+                let result = match state {
+                    Kill::Done(r) => r,
+                    Kill::Waiting {
+                        handle,
+                        issued,
+                        denied,
+                    } => {
+                        unsafe {
+                            let _ = CloseHandle(handle);
+                        }
+                        if issued {
+                            slow.push(pid.to_string());
+                            Ok(())
+                        } else {
+                            Err(GateError::Other(denied_message(&denied)))
+                        }
+                    }
+                };
+                (pid, result)
+            })
+            .collect();
+        if !slow.is_empty() {
+            crate::audit::write(&format!(
+                "已向 PID {} 发出结束指令，{} 秒内 Windows 还没回收完（正在退出的进程不会再执行任何代码）",
+                slow.join("、"),
+                wait.as_secs()
+            ));
+        }
+        out
     }
     impl Drop for NativeProcess {
         fn drop(&mut self) {
@@ -1047,6 +1283,18 @@ impl NativeProcess {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 枚举拿到的创建时间（`Win32_Process.CreationDate`）只到微秒，`GetProcessTimes` 到 100 纳秒：
+    /// 两边要认成同一次启动，而早一微秒、晚一微秒的就不是（2026-11-13 本机实测差 0–9 个 100 纳秒）。
+    #[test]
+    fn creation_times_match_to_the_microsecond() {
+        let exact = 134_390_631_015_106_837u64;
+        let from_cim = 134_390_631_015_106_830u64;
+        assert!(same_start(exact, from_cim));
+        assert!(same_start(exact, exact));
+        assert!(!same_start(exact, from_cim - 1));
+        assert!(!same_start(exact, from_cim + 10));
+    }
 
     #[test]
     fn codex_setup_is_not_misreported_as_relay_authentication() {

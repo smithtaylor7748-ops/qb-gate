@@ -1,16 +1,21 @@
 //! 一键关闭所有 Claude。
 //!
-//! 沿用现有 ClaudeKillSwitch.ps1 的**双重证据**判定，这是这个文件的全部要点：
+//! # 宁可错杀，不可放过（2026-11-13，使用者定的）
 //!
-//!   一个进程只有满足下面之一才会被收：
-//!     ① 可执行文件由 Anthropic 签名（Authenticode 主体含 Anthropic）
-//!     ② 命令行**同时**命中 `bridge.py` 与本项目的数据目录
-//!     ③ 进程是 `node.exe`，**并且**命令行指进 `node_modules\@anthropic-ai\claude-code\`
-//!        —— npm 装的 Claude Code。node.exe 是 OpenJS 签名的，①永远认不出它（v0.8.0）
+//! 原来是「双重证据，宁可放过也不误杀」：签名读不出的 `claude.exe`、Claude 拉起的
+//! MCP 服务器与命令行，统统写进「放过了 N 个」，关完还剩一地。使用者的原话是
+//! 「一键关闭有摸不着的，我想调整为宁可错杀，不可放过」。现在一个进程满足下面之一就收：
 //!
-//! **绝不能按进程名杀。** 叫 `claude.exe` 的东西可能是别人的；叫 `python.exe`
-//! 的更是满地都是。按名字杀会误伤到用户正在干的别的活，而这个按钮的语义是
-//! 「关掉我的 Claude」，不是「清理系统」。
+//!   ⓪ 可执行文件在反重力的安装目录底下（只在反重力归这一次关停时收，见 [`Scope`]）
+//!   ① 可执行文件由 Anthropic 签名（Authenticode 主体含 Anthropic）
+//!   ② 跑的是 `bridge.py`，并且命令行里有本项目的数据目录**或** `claude` —— Claude 酒馆桥接
+//!   ③ `node.exe` / `bun.exe` 跑的是 `node_modules\@anthropic-ai\claude-code\` —— npm 装的 Claude Code
+//!   ④ **名字就叫 `claude.exe`**（签名读不出、不是 Anthropic 也收），或文件在 Claude 桌面端的安装目录里
+//!   ⑤ 上面任何一个**拉起的子孙进程**（MCP 服务器、命令行、它起的工具），见 [`descendants`]
+//!
+//! 仍然不收的只有两类：面板自己和它的祖先（收了面板跟着没，关到一半停在半路），
+//! 以及跟 Claude 没有任何关系的进程（别人的 `node.exe` / `python.exe`，比如共用的酒馆）。
+//! 范围（GPT / Gemini / 反重力 / 中转保不保留）照旧由 [`Scope`] 管，宁可错杀不跨范围。
 //!
 //! 收完之后要重新上锁——否则下一次双击 exe 就真的能起来了。
 //!
@@ -30,7 +35,8 @@ use ts_rs::TS;
 pub enum Evidence {
     /// 可执行文件由 Anthropic 签名。
     AnthropicSigned,
-    /// 命令行同时命中 bridge.py 与数据目录。
+    /// Claude 酒馆桥接：跑的是 bridge.py，命令行里有本项目数据目录或 `claude`。
+    /// （名字沿用 2026-11-13 之前「bridge.py + 数据目录」那一条，界面按新含义显示。）
     BridgeAndDataDir,
     /// node.exe 跑的是 `@anthropic-ai/claude-code` 包 —— npm 装的 Claude Code。
     NpmPackage,
@@ -42,6 +48,12 @@ pub enum Evidence {
     /// 语言服务器、第三方汉化壳留下的 `*.original.exe`。别的 IDE 也有叫
     /// `language_server.exe` 的东西，所以**按目录认，不按名字认**。
     AntigravityInstall,
+    /// 宁可错杀（2026-11-13）：名字就叫 `claude.exe`（签名读不出、不是 Anthropic 也算），
+    /// 或者文件在 Claude 桌面端的安装目录里（`Update.exe` 之类）。
+    NameOrLocation,
+    /// 宁可错杀（2026-11-13）：由上面某个要收的进程拉起的子孙进程 ——
+    /// MCP 服务器、命令行、它起的工具。只收父进程会留下一地孤儿。
+    Descendant,
 }
 
 /// 这个进程属于哪一边。**只用于告诉用户「关掉了什么」，不参与判定。**
@@ -141,24 +153,35 @@ pub fn classify(
         }
     }
 
-    // ② 命令行双重命中：bridge.py 与数据目录，缺一不可
+    // ② Claude 酒馆桥接：bridge.py，并且命令行里有本项目的数据目录或 `claude`。
+    //    原来只认本项目数据目录（2026-11-13 前）：使用者自己的脚本起的 Claude 桥接因此一直「摸不着」。
     if let Some(cmd) = &p.cmdline {
         let c = cmd.to_lowercase();
         let d = data_dir.to_lowercase();
-        if c.contains("bridge.py") && !d.is_empty() && c.contains(&d) {
+        if c.contains("bridge.py") && ((!d.is_empty() && c.contains(&d)) || c.contains("claude")) {
             return Some(Evidence::BridgeAndDataDir);
         }
     }
 
-    // ③ npm 装的 Claude Code：进程是 node.exe **并且**命令行指进那个包。
-    //    两条缺一不可 —— 光是 node.exe 满地都是；光是命令行里有这串字，
-    //    可能只是别的程序把它当参数传了一下。
-    if p.name.eq_ignore_ascii_case("node.exe") {
+    // ③ npm 装的 Claude Code：node.exe / bun.exe **并且**命令行指进那个包。
+    //    光是 node.exe 满地都是（共用的酒馆就是一个），这一条仍然要两样都有。
+    if p.name.eq_ignore_ascii_case("node.exe") || p.name.eq_ignore_ascii_case("bun.exe") {
         if let Some(cmd) = &p.cmdline {
             let c = cmd.to_lowercase().replace('/', "\\");
             if c.contains("\\node_modules\\@anthropic-ai\\claude-code\\") {
                 return Some(Evidence::NpmPackage);
             }
+        }
+    }
+
+    // ④ 宁可错杀（2026-11-13）：名字就叫 claude.exe —— 签名读不出（正在更新、被占着、
+    //    以管理员身份跑所以路径都读不到）原来一律放过；或者文件在 Claude 桌面端的安装目录里。
+    if p.name.eq_ignore_ascii_case("claude.exe") {
+        return Some(Evidence::NameOrLocation);
+    }
+    if let Some(path) = p.path.as_deref() {
+        if crate::install::inventory::is_desktop_process_path(std::path::Path::new(path), local) {
+            return Some(Evidence::NameOrLocation);
         }
     }
 
@@ -175,9 +198,10 @@ pub fn role_of(
     use crate::install::inventory::{is_desktop_managed_path, is_desktop_process_path};
     match e {
         Evidence::BridgeAndDataDir => Role::Bridge,
-        Evidence::NpmPackage => Role::Code,
+        // 子孙进程的角色跟着拉起它的那个走（见 `descendants`），这里只是让 match 完整。
+        Evidence::NpmPackage | Evidence::Descendant => Role::Code,
         Evidence::AntigravityInstall => Role::Antigravity,
-        Evidence::AnthropicSigned => {
+        Evidence::AnthropicSigned | Evidence::NameOrLocation => {
             let Some(path) = p.path.as_deref().map(std::path::Path::new) else {
                 return Role::Code;
             };
@@ -205,6 +229,9 @@ pub struct Snapshot {
     pub self_chain: Vec<u32>,
     #[serde(default, rename = "Procs")]
     pub procs: Vec<RawProcess>,
+    /// 整张进程树，给 [`descendants`] 用。
+    #[serde(default, rename = "Tree")]
+    pub tree: Vec<TreeRow>,
 }
 
 /// 一个进程的处置结论。
@@ -239,10 +266,111 @@ pub fn triage(
     match classify(p, data_dir, local) {
         Some(e) => Triage::Kill(e),
         None => Triage::Spare(format!(
-            "PID {} {} —— 两条证据都不满足，放过",
+            "PID {} {} —— 跟 Claude 没有任何关系（不是 Claude 的文件、命令行，也不是 Claude 拉起的），放过",
             p.pid, p.name
         )),
     }
+}
+
+/// 进程树里的一行：只为算「谁是谁拉起的」。
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct TreeRow {
+    #[serde(default, rename = "ProcessId")]
+    pub pid: u32,
+    #[serde(default, rename = "ParentId")]
+    pub ppid: u32,
+    #[serde(default, rename = "Name")]
+    pub name: String,
+    #[serde(default, rename = "ExecutablePath")]
+    pub path: Option<String>,
+    /// `Win32_Process.CreationDate` 换成的 FILETIME（精确到微秒）。取不到是 0。
+    #[serde(default, rename = "Created")]
+    pub created: u64,
+}
+
+/// 宁可错杀（2026-11-13）：要收的进程**拉起的子孙**一起收。纯函数，可单测。
+///
+/// Claude Code 起的 MCP 服务器、命令行、它替你跑起来的工具，Claude 桌面端起的 MCP 服务器 ——
+/// 原来只收 Claude 自己，这些都留在原地（名字是 `node.exe` / `python.exe` / `uvx.exe`，
+/// 按证据认不出），使用者看到的就是「一键关闭有摸不着的」。
+///
+/// 两条护栏：
+/// * **父子关系只信「孩子比父亲晚创建」的** —— 父进程退出后 PID 可以被复用，
+///   光看 ParentId 会把复用了那个 PID 的无关进程的孩子也算进来；
+/// * 面板自己和它的祖先（`self_chain`）既不收、也不往下走。
+///
+/// 子孙的角色跟着拉起它的那个走：范围（[`Scope`]）按角色筛，宁可错杀不跨范围。
+pub fn descendants(
+    targets: &[KillTarget],
+    tree: &[TreeRow],
+    self_chain: &[u32],
+) -> Vec<KillTarget> {
+    use std::collections::{HashMap, HashSet, VecDeque};
+    let mut children: HashMap<u32, Vec<&TreeRow>> = HashMap::new();
+    for row in tree {
+        if row.pid != 0 && row.pid != row.ppid {
+            children.entry(row.ppid).or_default().push(row);
+        }
+    }
+    let mut seen: HashSet<u32> = targets.iter().map(|t| t.pid).collect();
+    let mut queue: VecDeque<(u32, u64, Role)> = targets
+        .iter()
+        .map(|t| (t.pid, t.process_created, t.role))
+        .collect();
+    let mut out = Vec::new();
+    while let Some((parent, parent_created, role)) = queue.pop_front() {
+        for child in children.get(&parent).into_iter().flatten() {
+            if seen.contains(&child.pid) || self_chain.contains(&child.pid) {
+                continue;
+            }
+            // 比父亲还早创建的「孩子」只可能是 PID 复用造出来的假亲戚。
+            if parent_created != 0 && child.created != 0 && child.created < parent_created {
+                continue;
+            }
+            seen.insert(child.pid);
+            out.push(KillTarget {
+                process_created: child.created,
+                pid: child.pid,
+                name: child.name.clone(),
+                path: child.path.clone(),
+                evidence: Evidence::Descendant,
+                role,
+            });
+            queue.push_back((child.pid, child.created, role));
+        }
+    }
+    out
+}
+
+/// 枚举到动手之间隔着一两秒：按 PID 再看一眼，**已经退出的不列**（不在就不用收），
+/// PID 换了个别的程序的也不列；还在的换上精确的创建时间（执行时拿它认身份）。
+///
+/// 只比文件名、不比创建时间：枚举那边的时间经过一次本地时区换算，夏令时回拨那一小时会差整一小时，
+/// 比时间反而可能把还活着的 Claude 当成「已经换了主人」漏掉 —— 宁可错杀。
+/// 看不了的（`identify` 报错，极少见）原样留着，按枚举时的创建时间（精确到微秒）去收。
+fn refresh_identities(targets: Vec<KillTarget>) -> Vec<KillTarget> {
+    targets
+        .into_iter()
+        .filter_map(|mut t| match crate::sessions::identify(t.pid) {
+            Ok(None) => None,
+            Ok(Some(id)) => {
+                let same_file = id.image.as_deref().is_none_or(|image| {
+                    std::path::Path::new(image)
+                        .file_name()
+                        .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(&t.name))
+                });
+                if !same_file {
+                    return None;
+                }
+                t.process_created = id.created;
+                if t.path.is_none() {
+                    t.path = id.image;
+                }
+                Some(t)
+            }
+            Err(_) => Some(t),
+        })
+        .collect()
 }
 
 /// 枚举候选进程并附带签名信息。
@@ -273,7 +401,12 @@ while ($cur -gt 0 -and $parent.ContainsKey($cur) -and $hops -lt 64) {
   $hops++
 }
 
-$names = @('claude.exe','Update.exe','python.exe','pythonw.exe','node.exe','Antigravity.exe','Antigravity IDE.exe','Antigravity IDE.original.exe','language_server.exe','language_server_windows_x64.exe')
+$names = @('claude.exe','Update.exe','python.exe','pythonw.exe','node.exe','bun.exe','Antigravity.exe','Antigravity IDE.exe','Antigravity IDE.original.exe','language_server.exe','language_server_windows_x64.exe')
+
+# 创建时间直接拿 CIM 自己的 CreationDate（精确到微秒，执行时 Rust 那边按微秒认身份）。
+# 原来逐个 Get-Process 取 StartTime：进程正在退出、或读不到时拿到 0，
+# 执行时就报「缺少进程创建时间，拒绝仅凭 PID 终止」（2026-11-13）。
+function Born($p) { if ($p.CreationDate) { $p.CreationDate.ToFileTimeUtc() } else { 0 } }
 
 # 按可执行文件路径缓存签名结果。本机十几个 claude.exe 共用同一个路径，
 # 不缓存就是十几次 Get-AuthenticodeSignature，每次几百毫秒。
@@ -300,7 +433,18 @@ $rows = @(foreach ($p in $all) {
     ExecutablePath = $exe
     CommandLine    = $p.CommandLine
     Signer         = $signer
-    Created        = $(try { (Get-Process -Id $p.ProcessId -ErrorAction Stop).StartTime.ToUniversalTime().ToFileTimeUtc() } catch { 0 })
+    Created        = Born $p
+  }
+})
+
+# 整张进程树（只要 PID、父 PID、名字、路径、创建时间）：宁可错杀，Claude 拉起的子孙一起收。
+$tree = @(foreach ($p in $all) {
+  [pscustomobject]@{
+    ProcessId      = [int]$p.ProcessId
+    ParentId       = [int]$p.ParentProcessId
+    Name           = [string]$p.Name
+    ExecutablePath = $p.ExecutablePath
+    Created        = Born $p
   }
 })
 
@@ -312,7 +456,7 @@ $rows = @(foreach ($p in $all) {
 #      Rust 侧按数组解就失败，又变回 0 个。
 #   `-InputObject @(...)` 是 5.1 上唯一两头都对的写法：空数组出 `[]`，
 #   单元素出 `[{...}]`，嵌在对象里的数组也保得住。
-ConvertTo-Json -InputObject ([pscustomobject]@{ SelfChain = @($chain); Procs = $rows }) -Compress -Depth 5
+ConvertTo-Json -InputObject ([pscustomobject]@{ SelfChain = @($chain); Procs = $rows; Tree = $tree }) -Compress -Depth 5
 "#;
 
 #[cfg(windows)]
@@ -395,6 +539,16 @@ pub async fn preview() -> Result<KillReport> {
         }
     }
 
+    // 宁可错杀：要收的进程拉起的子孙一起收。被它们认领的那些从「放过」里拿掉。
+    let extra = descendants(&targets, &snap.tree, &snap.self_chain);
+    spared_other.retain(|why| {
+        !extra
+            .iter()
+            .any(|t| why.starts_with(&format!("PID {} ", t.pid)))
+    });
+    targets.extend(extra);
+    let targets = refresh_identities(targets);
+
     let mut spared = spared_self;
     spared.extend(spared_other);
 
@@ -405,6 +559,58 @@ pub async fn preview() -> Result<KillReport> {
         relocked: 0,
         spared,
     })
+}
+
+/// 收掉报告里的全部目标：一批下结束指令、一起等退出（`sessions::terminate_verified_many`）。
+///
+/// 原来逐个 `terminate_verified`、每个最多等 3 秒，而且把「正在退出」「已经不在」记成失败。
+/// 等待是阻塞的，挪到阻塞线程池里做，不占着异步运行时。
+pub async fn kill_targets(report: &mut KillReport) {
+    let batch: Vec<(u32, u64)> = report
+        .targets
+        .iter()
+        .map(|t| (t.pid, t.process_created))
+        .collect();
+    if batch.is_empty() {
+        return;
+    }
+    let results =
+        match tokio::task::spawn_blocking(move || crate::sessions::terminate_verified_many(&batch))
+            .await
+        {
+            Ok(results) => results,
+            Err(e) => report
+                .targets
+                .iter()
+                .map(|t| {
+                    (
+                        t.pid,
+                        Err(GateError::Other(format!("结束进程的线程异常退出：{e}"))),
+                    )
+                })
+                .collect(),
+        };
+    for (pid, result) in results {
+        match result {
+            Ok(()) => report.killed.push(pid),
+            Err(e) => report.failed.push((pid, e.to_string())),
+        }
+    }
+}
+
+/// 失败清单给人看的那一句。`PID 0` 记的是不对应某个进程的步骤（停桥接、交回租约），不写 PID。
+pub fn describe_failures(failed: &[(u32, String)]) -> String {
+    failed
+        .iter()
+        .map(|(pid, reason)| {
+            if *pid == 0 {
+                reason.clone()
+            } else {
+                format!("PID {pid}: {reason}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("；")
 }
 
 // ------------------------------------------------------------ 桌面端进程
@@ -617,12 +823,7 @@ pub async fn execute_for_switch() -> Result<KillReport> {
 pub async fn execute_desktop() -> Result<KillReport> {
     let mut report = preview().await?;
     report.targets = only_desktop(report.targets);
-    for t in &report.targets {
-        match crate::sessions::terminate_verified(t.pid, t.process_created) {
-            Ok(()) => report.killed.push(t.pid),
-            Err(e) => report.failed.push((t.pid, e.to_string())),
-        }
-    }
+    kill_targets(&mut report).await;
     Ok(report)
 }
 
@@ -653,12 +854,7 @@ pub async fn execute_antigravity(
     let local = dirs::data_local_dir();
     let mut report = preview().await?;
     report.targets = only_antigravity(report.targets, product, local.as_deref());
-    for t in &report.targets {
-        match crate::sessions::terminate_verified(t.pid, t.process_created) {
-            Ok(()) => report.killed.push(t.pid),
-            Err(e) => report.failed.push((t.pid, e.to_string())),
-        }
-    }
+    kill_targets(&mut report).await;
     Ok(report)
 }
 
@@ -693,14 +889,14 @@ pub fn only_desktop(targets: Vec<KillTarget>) -> Vec<KillTarget> {
         .filter(|t| t.role == Role::Desktop)
         .collect()
 }
+/// Claude 页「一键关闭所有 Claude」按证据补收的那一步（会话与桥接由 `gate_ops::stop_claude` 先停）。不重锁。
+pub async fn execute_claude() -> Result<KillReport> {
+    execute_scoped(Scope::Claude).await
+}
+
 async fn execute_scoped(scope: Scope) -> Result<KillReport> {
     let mut report = preview_in(scope).await?;
-    for t in &report.targets {
-        match crate::sessions::terminate_verified(t.pid, t.process_created) {
-            Ok(()) => report.killed.push(t.pid),
-            Err(e) => report.failed.push((t.pid, e.to_string())),
-        }
-    }
+    kill_targets(&mut report).await;
     if scope == Scope::Everything {
         report.relocked = crate::gate::lock_all()?;
     }
@@ -739,14 +935,7 @@ pub fn is_claude_session(s: &Session) -> bool {
 /// 但使用者看到的如果只是「PID 1234: 拒绝访问」，他没法判断自己现在
 /// 到底在哪个账户上 —— 而这正是他点那一下想知道的事。
 pub fn unfinished_detail(failed: &[(u32, String)]) -> String {
-    format!(
-        "清场未完成，账户未切换：{}",
-        failed
-            .iter()
-            .map(|(pid, reason)| format!("PID {pid}: {reason}"))
-            .collect::<Vec<_>>()
-            .join("；")
-    )
+    format!("清场未完成，账户未切换：{}", describe_failures(failed))
 }
 
 #[cfg(test)]
@@ -941,10 +1130,68 @@ mod tests {
     }
 
     #[test]
-    fn name_alone_never_qualifies() {
-        // 这条是本文件存在的理由：叫 claude.exe 不构成任何证据。
+    fn claude_exe_is_taken_even_when_its_signature_cannot_be_read() {
+        // 宁可错杀（2026-11-13，使用者定的）：签名读不出（正在更新、被占着、以管理员身份跑
+        // 所以连路径都读不到）原来一律放过，界面上写进「放过了 N 个」，关完还剩着。
         let p = proc("claude.exe", Some("claude.exe --help"), None);
-        assert_eq!(classify(&p, DD, None), None);
+        assert_eq!(classify(&p, DD, None), Some(Evidence::NameOrLocation));
+        let unreadable = RawProcess {
+            path: None,
+            ..proc("Claude.EXE", None, None)
+        };
+        assert_eq!(
+            classify(&unreadable, DD, None),
+            Some(Evidence::NameOrLocation)
+        );
+    }
+
+    #[test]
+    fn files_in_the_desktop_install_dir_are_taken_but_other_updaters_are_not() {
+        let local = std::path::Path::new(r"C:\Users\me\AppData\Local");
+        let at = |path: &str| RawProcess {
+            path: Some(path.into()),
+            ..proc("Update.exe", None, None)
+        };
+        assert_eq!(
+            classify(
+                &at(r"C:\Users\me\AppData\Local\AnthropicClaude\Update.exe"),
+                DD,
+                Some(local)
+            ),
+            Some(Evidence::NameOrLocation)
+        );
+        // 别家 Squirrel 应用（Discord、Slack……）的 Update.exe 跟 Claude 没关系：宁可错杀不跨到别人家。
+        assert_eq!(
+            classify(
+                &at(r"C:\Users\me\AppData\Local\Discord\Update.exe"),
+                DD,
+                Some(local)
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_claude_bridge_outside_our_data_dir_is_taken() {
+        // 使用者自己的脚本起的 Claude 桥接：数据目录不是本项目的，原来「摸不着」。
+        let p = proc(
+            "python.exe",
+            Some(r"python.exe -u I:\tavern\claude-pro-rp\bridge.py --port 5001"),
+            None,
+        );
+        assert_eq!(classify(&p, DD, None), Some(Evidence::BridgeAndDataDir));
+    }
+
+    #[test]
+    fn bun_running_claude_code_is_taken() {
+        let p = proc(
+            "bun.exe",
+            Some(
+                r"bun C:\Users\me\.bun\install\global\node_modules\@anthropic-ai\claude-code\cli.js",
+            ),
+            None,
+        );
+        assert_eq!(classify(&p, DD, None), Some(Evidence::NpmPackage));
     }
 
     #[test]
@@ -983,12 +1230,82 @@ mod tests {
     }
 
     #[test]
-    fn spare_reason_survives_for_no_evidence() {
-        let p = proc("claude.exe", Some("claude.exe --help"), None);
+    fn spare_reason_survives_for_unrelated_processes() {
+        // 宁可错杀也只在 Claude 里错杀：别人的 python.exe 照旧放过，并说清为什么。
+        let p = proc("python.exe", Some("python.exe server.py"), None);
         match triage(&p, DD, None, &[]) {
-            Triage::Spare(why) => assert!(why.contains("两条证据")),
-            other => panic!("没证据就必须放过：{other:?}"),
+            Triage::Spare(why) => assert!(why.contains("没有任何关系"), "{why}"),
+            other => panic!("跟 Claude 无关就必须放过：{other:?}"),
         }
+    }
+
+    // ------------------------------------------------- 子孙进程（宁可错杀）
+
+    fn row(pid: u32, ppid: u32, created: u64, name: &str) -> TreeRow {
+        TreeRow {
+            pid,
+            ppid,
+            name: name.into(),
+            path: Some(format!(r"C:\x\{name}")),
+            created,
+        }
+    }
+
+    fn born(pid: u32, role: Role, created: u64) -> KillTarget {
+        KillTarget {
+            process_created: created,
+            ..target(pid, role)
+        }
+    }
+
+    #[test]
+    fn children_and_grandchildren_of_a_target_are_taken_with_its_role() {
+        // Claude Code 起的 MCP 服务器（node.exe）和它再起的命令行：原来按证据认不出，留在原地。
+        let targets = vec![born(10, Role::Code, 100)];
+        let tree = vec![
+            row(10, 1, 100, "claude.exe"),
+            row(11, 10, 110, "node.exe"),
+            row(12, 11, 120, "cmd.exe"),
+            row(13, 99, 130, "node.exe"),  // 别人的孩子
+            row(14, 10, 50, "python.exe"), // 比「父亲」还早：PID 复用造出来的假亲戚
+        ];
+        let got = descendants(&targets, &tree, &[]);
+        assert_eq!(pids(&got), vec![11, 12]);
+        assert!(got
+            .iter()
+            .all(|t| t.role == Role::Code && t.evidence == Evidence::Descendant));
+        assert_eq!(got[0].process_created, 110, "带上它自己的创建时间去核身份");
+    }
+
+    #[test]
+    fn the_panel_and_its_ancestors_are_never_swept_up() {
+        // 面板被某个 Claude 拉起时，面板就是那个 Claude 的孩子：不收、也不往下走。
+        let targets = vec![born(10, Role::Code, 100)];
+        let tree = vec![
+            row(10, 1, 100, "claude.exe"),
+            row(11, 10, 110, "qb-gate.exe"),
+            row(12, 11, 120, "powershell.exe"),
+        ];
+        assert!(descendants(&targets, &tree, &[11, 10, 1]).is_empty());
+    }
+
+    #[test]
+    fn descendants_stay_inside_the_scope_of_their_root() {
+        // 宁可错杀不跨范围：反重力拉起的子进程不会因为「是谁的孩子」被 Claude 页的关闭收走。
+        let targets = vec![born(1, Role::Desktop, 10), born(2, Role::Antigravity, 10)];
+        let tree = vec![row(3, 1, 20, "node.exe"), row(4, 2, 20, "node.exe")];
+        let mut all = targets.clone();
+        all.extend(descendants(&targets, &tree, &[]));
+        assert_eq!(pids(&in_scope(all, Scope::Claude, |_| false)), vec![1, 3]);
+    }
+
+    #[test]
+    fn failures_without_a_pid_read_as_plain_sentences() {
+        let text = describe_failures(&[
+            (1234, "拒绝访问".into()),
+            (0, "停 Claude 酒馆桥接：端口被占".into()),
+        ]);
+        assert_eq!(text, "PID 1234: 拒绝访问；停 Claude 酒馆桥接：端口被占");
     }
 
     // ------------------------------------------------- PowerShell 输出形状
@@ -1047,6 +1364,42 @@ mod tests {
     fn script_covers_node_exe() {
         // npm 装的 Claude Code 跑起来是 node.exe，漏了它就漏掉一整类会话。
         assert!(SCRIPT.contains("node.exe"));
+        assert!(SCRIPT.contains("bun.exe"));
+    }
+
+    #[test]
+    fn script_takes_creation_time_from_cim_and_ships_the_whole_tree() {
+        // 逐个 Get-Process 取 StartTime：进程正在退出或读不到时拿到 0，
+        // 执行时报「缺少进程创建时间，拒绝仅凭 PID 终止」（2026-11-13 前的高频报错之一）。
+        // 注释里提到 Get-Process 是在解释为什么不用它，只看真正执行的行。
+        assert!(
+            !SCRIPT
+                .lines()
+                .filter(|l| !l.trim_start().starts_with('#'))
+                .any(|l| l.contains("Get-Process")),
+            "创建时间只从 CIM 拿"
+        );
+        assert!(SCRIPT.contains("CreationDate"));
+        assert!(SCRIPT.contains("Tree = $tree"), "要带整张进程树去找子孙");
+        assert!(
+            !SCRIPT.contains('"'),
+            "整段走 -Command 传参，脚本里不许有双引号"
+        );
+    }
+
+    #[test]
+    fn snapshot_parses_the_process_tree() {
+        let raw = r#"{"SelfChain":[10],"Procs":[],"Tree":[
+            {"ProcessId":11,"ParentId":10,"Name":"node.exe","ExecutablePath":null,"Created":134390631015106830},
+            {"ProcessId":12,"ParentId":11,"Name":"cmd.exe","ExecutablePath":"C:\\Windows\\System32\\cmd.exe","Created":0}]}"#;
+        let snap: Snapshot = serde_json::from_str(raw).unwrap();
+        assert_eq!(snap.tree.len(), 2);
+        // FILETIME 超过 JS 安全整数，但 Rust 这边按 u64 原样解，一位都不能丢。
+        assert_eq!(snap.tree[0].created, 134390631015106830);
+        assert_eq!(snap.tree[1].ppid, 11);
+        // 老形状（没有 Tree）照样解得开。
+        let old: Snapshot = serde_json::from_str(r#"{"SelfChain":[],"Procs":[]}"#).unwrap();
+        assert!(old.tree.is_empty());
     }
 
     #[test]

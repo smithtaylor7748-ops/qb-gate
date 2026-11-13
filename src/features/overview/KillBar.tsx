@@ -3,8 +3,9 @@
  *
  * Claude 页的操作按客户端收窄；全局停用由 IP 锁入口处理。
  *
- * 判定逻辑一个字没动，仍然全在 Rust 侧（`killswitch.rs`）：
- * 只收满足双重证据的进程，绝不按进程名杀，面板自己祖先链上的一律放过。
+ * 判定全在 Rust 侧（`killswitch.rs`）。2026-11-13 起「宁可错杀，不可放过」：
+ * 名字叫 claude.exe 的、Claude 拉起的子孙进程都收；只放过面板自己和它的祖先，
+ * 以及跟 Claude 没有任何关系的进程（GPT / Gemini / 反重力 / 共用酒馆照旧保留）。
  */
 
 import { useState } from "react";
@@ -86,8 +87,11 @@ export default function KillBar({
       invalidate(...AFTER.gate, "plugins");
       if (r.failed.length) {
         throw new Error(
-          `已关闭 ${r.killed.length} 个 Claude 进程；仍有 ${r.failed.length} 个未关闭：` +
-            r.failed.map(([pid, reason]) => `PID ${pid}: ${reason}`).join("；"),
+          `已关闭 ${r.killed.length} 个 Claude 进程；仍有 ${r.failed.length} 项未完成：` +
+            r.failed
+              // PID 0 记的是不对应某个进程的步骤（停桥接、交回租约），不写 PID。
+              .map(([pid, reason]) => (pid ? `PID ${pid}: ${reason}` : reason))
+              .join("；"),
         );
       }
       endTask("killswitch-execute");
@@ -129,7 +133,7 @@ export default function KillBar({
                 : "一键关闭所有 Claude"}
           </button>
           <p className="notice notice--danger text-center">
-            只收满足双重证据的进程，绝不按进程名杀。
+            宁可错杀，不可放过：叫 claude.exe 的、Claude 拉起的子进程一起收。
             <strong>会连这个面板正在服务的 Claude Code 会话一起收掉。</strong>
             收回已关闭 Claude 会话的租约。
             {shown.error && ` ${shown.error}`}
@@ -185,9 +189,9 @@ export default function KillBar({
         )}
 
         <p className="notice notice--danger mt-3">
-          会停止面板起的 Claude 桌面端、Claude Code（包括 Claude 中转会话）和
-          Claude
-          酒馆桥接，并收回这些会话的租约。GPT、Gemini、反重力以及共用的酒馆页面继续运行。
+          会停止 Claude 桌面端、Claude Code（包括 Claude 中转会话）和 Claude
+          酒馆桥接，连同它们拉起的子进程（MCP
+          服务器、命令行等），并收回这些会话的租约。GPT、Gemini、反重力以及共用的酒馆页面继续运行。
         </p>
 
         {!!kill?.spared.length && (

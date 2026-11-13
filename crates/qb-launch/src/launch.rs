@@ -96,26 +96,123 @@ impl LaunchTarget {
         }
     }
 
-    /// 门禁判不过的时候，要不要收掉这个会话？
+    /// 这一次启动归不归 IP 锁管：起之前验 IP、解锁，起来之后持租约、挂看门狗。
     ///
-    /// # 为什么跟 [`Self::gated`] 是两件事
+    /// # 中转一律不归（2026-11-13，使用者定的）
     ///
-    /// Deny ACE 是**按文件**加的，不认身份：中转会话要起得来，claude.exe
-    /// 同样得先解锁。所以「中转不挂门禁」不可能是「中转绕过门禁」——
-    /// 那就成了现成的绕过入口（拿中转会话把文件解锁，再从终端起官方的）。
-    /// 解锁与持租约照旧走 `gated`。
+    /// 原来中转会话也要先验 IP 才起得来、起来之后持租约 —— 理由是 Deny ACE 按文件加，中转会话
+    /// 跟官方共用同一个 claude.exe，不解锁就起不来。结果是官方账户的 IP 锁原样压在中转上：
+    /// 不开代理（出口不在白名单里）就打不开中转；IP 一变看门狗把文件锁上，中转会话里 Claude Code
+    /// 的搜索（拿自己的 exe 再起一个进程跑内置 ripgrep）跟着坏。使用者的原话：
+    /// 「官方账户功能的 IP 锁错误地应用到了中转站功能，而中转站并不需要 IP 锁，请你删除这个联接」。
     ///
-    /// 变的是**处置**：出口 IP 一变，看门狗照常上锁、照常收掉官方进程，
-    /// 但**不动中转会话**。理由是门禁存在的唯一目的 —— 别让你的 Anthropic
-    /// 官方账号在没核实过的出口上发请求。中转请求打的是第三方端点、
-    /// 用的是你自己买的 API Key、不带官方 OAuth 身份，Anthropic 那边根本
-    /// 看不见。收它，保护收益是零，代价是把正在写的对话弄丢 ——
-    /// 而中转站的典型使用者，恰恰就是出口 IP 会变的那群人。
+    /// 现在中转起的是**不上锁的文件**（[`resolve_relay`]）：不验 IP、不解锁、不持租约、不挂看门狗，
+    /// 官方那份照旧锁着 —— 中转不会顺手把官方的门打开。
+    pub fn gated_for(self, identity: crate::domain::IdentityKind) -> bool {
+        self.gated() && identity != crate::domain::IdentityKind::Relay
+    }
+
+    /// 门禁判不过的时候，要不要收掉这个会话？跟 [`Self::gated_for`] 同一个答案：中转不收。
+    ///
+    /// 门禁存在的唯一目的是别让你的 Anthropic 官方账号在没核实过的出口上发请求。中转请求
+    /// 打的是第三方端点、用的是你自己买的 API Key、不带官方 OAuth 身份 —— 收它保护收益是零，
+    /// 代价是把正在写的对话弄丢，而中转站的典型使用者恰恰就是出口 IP 会变的那群人。
     ///
     /// 同理，会话内 hook 也不往中转环境目录里写（`gate::hook::set_hook`）。
     pub fn stops_with_gate(self, identity: crate::domain::IdentityKind) -> bool {
-        self.gated() && identity != crate::domain::IdentityKind::Relay
+        self.gated_for(identity)
     }
+}
+
+/// 中转会话起哪个文件（2026-11-13）。**都是不上锁的那一份**，见 [`LaunchTarget::gated_for`]。
+///
+/// * Claude Code：面板数据目录里的中转专用副本（[`relay_cli`]）；
+/// * 桌面端：直接起当前版本的 `app-<版本>\claude.exe` —— 它本来就不上锁（硬约束 2：一加桌面端开新窗口就崩），
+///   上锁的只有根上的存根，而存根做的事就是挑最大的那个 `app-*` 起它（[`inventory::desktop_app_dir`] 同一套挑法）；
+/// * Codex：Store 版不在锁的清单里，跟官方起的是同一个。
+///
+/// [`inventory::desktop_app_dir`]: crate::install::inventory::desktop_app_dir
+pub fn resolve_relay(target: LaunchTarget) -> Result<PathBuf> {
+    match target {
+        LaunchTarget::ClaudeCode => relay_cli(),
+        LaunchTarget::ClaudeDesktop => {
+            let local = dirs::data_local_dir().unwrap_or_default();
+            crate::install::inventory::desktop_app_dir(&local)
+                .map(|(_, dir)| dir.join("claude.exe"))
+                .filter(|p| p.is_file())
+                .ok_or_else(|| {
+                    GateError::Other(
+                        "找不到 Claude 桌面端（%LOCALAPPDATA%\\AnthropicClaude\\app-<版本>\\claude.exe）。\
+                         没装的话先在「软件」页装好；MSIX 方式装的桌面端面板起不了。"
+                            .into(),
+                    )
+                })
+        }
+        LaunchTarget::Codex => resolve(target),
+        LaunchTarget::Antigravity | LaunchTarget::AntigravityIde => {
+            Err(GateError::Other("反重力没有中转路径".into()))
+        }
+    }
+}
+
+/// 中转专用的 Claude Code：从启动官方用的那份复制到 [`relay_cli_root`]，跟着它的版本走。
+///
+/// 官方那份可能正锁着 —— 锁只拒绝「执行」，读和复制不受影响；复制出来的文件也不带那条 Deny（实测）。
+///
+/// [`relay_cli_root`]: crate::install::inventory::relay_cli_root
+pub fn relay_cli() -> Result<PathBuf> {
+    let roots = crate::install::inventory::Roots::current();
+    // 要 exe，不要 npm 的 claude.cmd：批处理背后跑的还是那份（会被锁的）原生文件。
+    let source = crate::install::inventory::preferred_exe(&roots).ok_or_else(|| {
+        GateError::Other("找不到 Claude Code 的可执行文件，请先在「软件」页装好。".into())
+    })?;
+    ensure_relay_copy(
+        &source,
+        &crate::install::inventory::relay_cli_root(&qb_foundation::paths::state_dir()),
+    )
+}
+
+/// 在 `root` 底下备好 `source` 的一份副本：同一版（大小 + 修改时间）已经有了就直接用，
+/// 否则先复制成 `.partial` 再改名（复制到一半断了不会留下一个起不来的 exe）。
+/// 旧版本的副本顺手删掉；正在跑的删不掉，下次再删。只做文件操作，可以对临时目录单测。
+pub fn ensure_relay_copy(source: &Path, root: &Path) -> Result<PathBuf> {
+    let meta = std::fs::metadata(source).map_err(|e| {
+        GateError::Other(format!("读不到 Claude Code（{}）：{e}", source.display()))
+    })?;
+    let stamp = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let key = format!("{}-{stamp}", meta.len());
+    let dir = root.join(&key);
+    let name = source
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_else(|| "claude.exe".into());
+    let dest = dir.join(&name);
+    let ready = std::fs::metadata(&dest).is_ok_and(|m| m.len() == meta.len());
+    if !ready {
+        std::fs::create_dir_all(&dir)?;
+        let partial = dir.join(format!("{}.partial", name.to_string_lossy()));
+        std::fs::copy(source, &partial).map_err(|e| {
+            GateError::Other(format!(
+                "准备中转专用的 Claude Code 副本失败（{} → {}）：{e}",
+                source.display(),
+                partial.display()
+            ))
+        })?;
+        std::fs::rename(&partial, &dest)?;
+    }
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy() != key && entry.path().is_dir() {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    Ok(dest)
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -276,26 +373,67 @@ mod tests {
         assert_eq!(LaunchTarget::ClaudeCode.watch_mode(), WatchMode::Cli);
     }
 
-    /// 「解锁 / 持租约」与「判不过时收不收」必须是两个判断。
+    /// 中转不归 IP 锁管（2026-11-13，使用者定的）：不验 IP、不持租约、IP 变了也不收。
     ///
-    /// 合成一个的话只有两种结局，都不能要：
-    /// * 合成「中转不走门禁」→ claude.exe 还锁着，中转会话根本起不来；
-    ///   真让它绕过解锁，就是现成的绕过入口（拿中转把文件解锁，
-    ///   再从终端起官方的）。
-    /// * 合成「中转照收」→ 换个 WiFi 就把正在写的中转对话弄丢，
-    ///   而中转请求根本不经过 Anthropic，收它一点保护都没换来。
+    /// 官方那一侧一点没松：同一个可执行文件，官方身份照旧要先验 IP 才解锁。
+    /// 中转之所以能不解锁就起来，是因为它起的是另一份不上锁的文件（`resolve_relay`），
+    /// 而不是把官方那份的锁打开。
     #[test]
-    fn relay_sessions_still_unlock_but_are_never_stopped_by_the_gate() {
+    fn relay_sessions_never_touch_the_gate() {
         use crate::domain::IdentityKind;
         for target in [LaunchTarget::ClaudeCode, LaunchTarget::ClaudeDesktop] {
-            // 可执行文件那一侧：两种身份都要先解锁才起得来。
-            assert!(target.gated(), "{target:?} 必须先验 IP 才能解锁");
+            assert!(target.gated(), "{target:?} 的官方可执行文件仍归门禁管");
+            assert!(target.gated_for(IdentityKind::Official));
             assert!(target.stops_with_gate(IdentityKind::Official));
+            assert!(
+                !target.gated_for(IdentityKind::Relay),
+                "{target:?} 的中转会话不该验 IP、不该持租约"
+            );
             assert!(
                 !target.stops_with_gate(IdentityKind::Relay),
                 "{target:?} 的中转会话不该被门禁收掉"
             );
         }
+        // Codex 归不归门禁跟着设置走，但中转那一档无论如何都不归。
+        assert!(!LaunchTarget::Codex.gated_for(IdentityKind::Relay));
+    }
+
+    /// 中转专用副本：同一版只复制一次，换版本换一份并删掉旧的；源文件找不到要报错，不能回一个不存在的路径。
+    #[test]
+    fn relay_copy_is_reused_per_version_and_old_ones_are_dropped() {
+        let base = std::env::temp_dir().join(format!("qb-relay-copy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let src_dir = base.join("src");
+        let root = base.join("relay");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let source = src_dir.join("claude.exe");
+        std::fs::write(&source, b"v1").unwrap();
+
+        let first = ensure_relay_copy(&source, &root).unwrap();
+        assert_eq!(std::fs::read(&first).unwrap(), b"v1");
+        assert_eq!(first.file_name().unwrap(), "claude.exe");
+        assert!(
+            first.starts_with(&root),
+            "副本只能在给定的根底下：{first:?}"
+        );
+        let again = ensure_relay_copy(&source, &root).unwrap();
+        assert_eq!(first, again, "同一版不该再复制一份");
+
+        // 换一版（大小不同）：新目录，旧目录删掉，没有残留的 .partial。
+        std::fs::write(&source, b"version-2").unwrap();
+        let second = ensure_relay_copy(&source, &root).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(&second).unwrap(), b"version-2");
+        assert!(!first.exists(), "旧版本的副本要删掉");
+        let leftovers: Vec<_> = std::fs::read_dir(second.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(leftovers, vec!["claude.exe".to_string()]);
+
+        assert!(ensure_relay_copy(&src_dir.join("missing.exe"), &root).is_err());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// GPT（Codex）默认归门禁管（0.25.0，使用者定的；设置里存的是反义的

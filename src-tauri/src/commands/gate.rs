@@ -237,12 +237,7 @@ pub async fn killswitch_execute(
         match &result {
             Ok(report) if !report.failed.is_empty() => rep.fail(&format!(
                 "部分 Claude 进程未关闭：{}",
-                report
-                    .failed
-                    .iter()
-                    .map(|(pid, reason)| format!("PID {pid}: {reason}"))
-                    .collect::<Vec<_>>()
-                    .join("；")
+                killswitch::describe_failures(&report.failed)
             )),
             Ok(_) => rep.done("Claude 已关闭"),
             Err(e) => rep.fail(&e.to_string()),

@@ -22,6 +22,8 @@ import type { AssetItem } from "./generated/AssetItem";
 import type { AuthStyle } from "./generated/AuthStyle";
 import type { BackupEntry } from "./generated/BackupEntry";
 import type { BrowserAudit } from "./generated/BrowserAudit";
+import type { BrowserLinkStart } from "./generated/BrowserLinkStart";
+import type { BrowserLinkStatus } from "./generated/BrowserLinkStatus";
 import type { BrowserExtension } from "./generated/BrowserExtension";
 import type { CategoryListing } from "./generated/CategoryListing";
 import type { Check } from "./generated/Check";
@@ -460,6 +462,11 @@ export const api = {
     call<BrowserReport | null>("browser_probe_wait", { token }),
   /** 最近一次交回的报告（只在后端内存里，面板重启就没了）。 */
   browserProbeLast: () => call<BrowserReport | null>("browser_probe_last"),
+  browserCompanionStart: () =>
+    call<BrowserLinkStart>("browser_companion_start"),
+  browserCompanionStatus: () =>
+    call<BrowserLinkStatus>("browser_companion_status"),
+  browserCompanionStop: () => call<void>("browser_companion_stop"),
   /**
    * 「这个账户现在还能用吗」—— 拿槽位里的令牌向官方发**一次**最小认证请求。
    *

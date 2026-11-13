@@ -38,6 +38,7 @@ import {
 } from "./DnsPanel";
 import { EgressResult, EgressRunButton, EgressWhy } from "./EgressPanel";
 import EnvironmentDiagnostics from "./EnvironmentDiagnostics";
+import BrowserCompanionCard from "./BrowserCompanionCard";
 import {
   BrowserProbeCard,
   LocalCheckup,
@@ -118,6 +119,7 @@ export function ObjectDetail({ id }: { id: ObjectId }) {
       return (
         <>
           <SignalsScore />
+          <BrowserCompanionCard />
           <BrowserProbeCard />
           <SignalsBreakdown />
           <SignalsFixable />
@@ -136,7 +138,12 @@ export function ObjectDetail({ id }: { id: ObjectId }) {
     case "allowlist":
       return <AllowlistPanel />;
     case "lock":
-      return <LockPanel />;
+      return (
+        <>
+          <BrowserCompanionCard />
+          <LockPanel />
+        </>
+      );
     case "session":
       return <SessionGatePanel />;
   }

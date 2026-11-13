@@ -506,7 +506,7 @@ export function LockPanel() {
           </p>
         )}
 
-        <Collapsible className="mt-2" summary="为什么有一个不带锁的副本？">
+        <Collapsible className="mt-2" summary="为什么有不带锁的副本？">
           <p className="notice">
             <code>AnthropicClaude\app-&lt;版本&gt;\claude.exe</code>{" "}
             不在上面的列表里。 给它加 Deny ACE 会让桌面端开新窗口就崩，
@@ -517,6 +517,11 @@ export function LockPanel() {
             ：刻意进那个目录双击能绕开启动门禁， 下一次巡检会尝试关闭（15
             秒间隔，加上检测与关停耗时）—— 前提是当时有看门狗在跑。
             要彻底堵死需要 AppLocker 或 WDAC， 不在本项目范围内。
+          </p>
+          <p className="notice mt-2">
+            中转不归 IP 锁管：面板数据目录{" "}
+            <code>relay-runtime\claude-code\</code> 里那份中转专用的 Claude Code
+            也不上锁，只由面板带着中转配置启动。专门去双击它同样能绕开 IP 锁。
           </p>
         </Collapsible>
 

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>QB Gate 浏览器助手</title>
+    <link rel="stylesheet" href="popup.css" />
+    <script type="module" src="popup.js"></script>
+  </head>
+  <body>
+    <header>
+      <strong>QB Gate 浏览器助手</strong
+      ><span id="connection" class="pill">未连接</span>
+    </header>
+    <p id="feedback" role="status" aria-live="polite"></p>
+    <section>
+      <div class="row">
+        <h1>IP 锁联动</h1>
+        <span id="protection" class="pill">未开启</span>
+      </div>
+      <p id="reason">正在读取连接状态…</p>
+      <p class="note">
+        开启后，出口 IP 变化、IP 锁不放行、断网或与 QB Gate 失联，将关闭此
+        Chrome
+        资料中的全部窗口，未保存的内容可能丢失。其他资料和后台进程不在关闭范围内。
+      </p>
+      <div class="buttons">
+        <button id="arm" class="primary">开启保护</button
+        ><button id="disarm">停止保护</button>
+      </div>
+      <p class="note">
+        巡检使用 QB Gate 的出口；Chrome 独立代理或 PAC
+        的出口可能不同，代理或网络状态变化也会触发关闭。
+        这是检测后关闭窗口，不是防火墙断网。关闭存在检测延迟；重开 Chrome
+        后需重新开启保护。QB Gate 需保持运行。
+      </p>
+    </section>
+    <section>
+      <h2>增强浏览器检查</h2>
+      <p class="note">
+        在当前 Chrome 检测语言、时区、字体与 WebRTC，并补充实际 WebRTC
+        策略和代理控制状态。结果显示在 QB Gate「检查」。
+      </p>
+      <button id="probe">检查当前 Chrome</button>
+    </section>
+    <section>
+      <div class="row">
+        <h2>中转站账户与公开价格</h2>
+        <button id="refresh" class="small">刷新</button>
+      </div>
+      <p id="current-origin" class="note"></p>
+      <label for="station">QB Gate 中的站点</label
+      ><select id="station">
+        <option value="">连接后加载站点</option>
+      </select>
+      <label for="backend">站点类型</label
+      ><select id="backend">
+        <option value="newapi">New API</option>
+        <option value="sub2">Sub2API</option>
+      </select>
+      <p class="note">
+        请先在当前页面登录对应站点。点击连接仅读取此站点的会话与账户标识，交给本机
+        QB Gate 验证并加密保存，用于「查套路」；不读取密码或刷新令牌。
+      </p>
+      <div class="buttons">
+        <button id="import" class="primary">连接已登录账户</button
+        ><button id="pricing">读取公开价格</button>
+      </div>
+      <p class="note">
+        公开价格使用未登录请求。公布价相对官方的倍数仅作价格对照，真实收费倍率仍由「查套路」核对实扣账单。
+      </p>
+      <div id="prices" aria-live="polite"></div>
+    </section>
+    <details id="pairing-details">
+      <summary>连接与配对</summary>
+      <p class="note">
+        在 QB Gate「环境体检」详情的「Chrome 插件联动」生成配对码， 或从「查套路
+        → 使用 Chrome 已登录账户」进入。复制配对信息到这里。
+        每次重新开启联动都需重新配对。
+      </p>
+      <label for="pairing">配对信息</label
+      ><textarea
+        id="pairing"
+        rows="3"
+        spellcheck="false"
+        autocomplete="off"
+        placeholder='{"endpoint":"http://127.0.0.1:…","token":"…"}'
+      ></textarea>
+      <div class="buttons">
+        <button id="pair" class="primary">保存并连接</button
+        ><button id="reconnect">重新连接</button
+        ><button id="forget">解除配对</button>
+      </div>
+    </details>
+    <details class="about">
+      <summary>关于</summary>
+      <p>
+        Based on QB Gate, Copyright (C) 2026 smithtaylor7748-ops.<br />Source
+        code:
+        <a
+          href="https://github.com/smithtaylor7748-ops/qb-gate"
+          target="_blank"
+          rel="noreferrer"
+          >https://github.com/smithtaylor7748-ops/qb-gate</a
+        >
+      </p>
+      <p>AGPL-3.0-only，及第 7 节附加条款。</p>
+    </details>
+  </body>
+</html>

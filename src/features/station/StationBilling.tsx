@@ -9,6 +9,7 @@ import {
 import { call } from "../../lib/ipc";
 import type { StationBillingSettings } from "../../lib/generated/StationBillingSettings";
 import { Button } from "../../ui";
+import BrowserCompanionCard from "../security/BrowserCompanionCard";
 
 export default function StationBilling({
   stationId,
@@ -52,6 +53,41 @@ export default function StationBilling({
       live = false;
     };
   }, [stationId, onChange]);
+  // Chrome 插件写入后只回读本机已验证设置，轮询不向中转站发请求。
+  useEffect(() => {
+    if (mode !== "extension" || disabled || busy) return;
+    let live = true;
+    let pending = false;
+    let seen = "";
+    const read = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const value = await call<StationBillingSettings>(
+          "station_billing_settings",
+          { stationId },
+        );
+        const key = JSON.stringify(value);
+        if (!live || seen === key) return;
+        seen = key;
+        setSettings(value);
+        onChange(value);
+        if (value.configured) {
+          setEditing(false);
+          setMessage("Chrome 账户已连接，可以开始查套路。");
+        }
+      } catch (e) {
+        if (live) setError(String(e));
+      } finally {
+        pending = false;
+      }
+    };
+    const timer = setInterval(() => void read(), 2000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [stationId, mode, disabled, busy, onChange]);
   const connect = async (command: string) => {
     setBusy(true);
     setError("");
@@ -172,6 +208,14 @@ export default function StationBilling({
               <Globe2 size={15} />
               浏览器 / Linux DO
             </button>
+            <button
+              aria-pressed={mode === "extension"}
+              disabled={locked}
+              onClick={() => setMode("extension")}
+            >
+              <Globe2 size={15} />
+              使用 Chrome 已登录账户
+            </button>
           </div>
           {mode === "password" ? (
             <form
@@ -225,6 +269,14 @@ export default function StationBilling({
                 </Button>
               </div>
             </form>
+          ) : mode === "extension" ? (
+            <div className="audit-browser-login">
+              <p>
+                在 Chrome 中打开已登录的本站页面，点击 QB Gate
+                插件，选择对应站点后点击“连接查套路”。完成后这里会自动显示账户；读取账户和公开价格不会调用模型。
+              </p>
+              <BrowserCompanionCard />
+            </div>
           ) : (
             <div className="audit-browser-login">
               <p>

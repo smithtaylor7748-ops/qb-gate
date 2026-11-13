@@ -958,6 +958,7 @@
     "keyboard modal close (extension import form)",
     "removed pages stay unreachable: old routes land home, template entries and the tavern gone from extensions, site search lands on the relay page, tavern search lands on the software card",
     "overview security modal",
+    "supplemental environment diagnostics: UDP partial/unknown, runtime rules, transient secret clearing, ASN and locale; no overflow at 1320/680/390px",
     "system theme matches explicit theme",
     "desktop account pagination and safe login confirmation",
     "five-item diagnostics and repair review",

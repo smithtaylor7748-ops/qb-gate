@@ -43,6 +43,8 @@ use std::collections::HashMap;
 #[derive(Clone, Default)]
 pub struct BillingSource {
     pub route_id: String,
+    pub station_id: String,
+    pub provider_revision: u32,
     /// 站点基地址。
     pub base_url: String,
     /// 这条线那把 key。
@@ -88,6 +90,8 @@ pub fn source(db: &Repository, route: &Route) -> Result<BillingSource> {
         };
     Ok(BillingSource {
         route_id: route.id.clone(),
+        station_id: provider.id,
+        provider_revision: provider.revision,
         base_url,
         key,
         client: route.client,
@@ -1049,6 +1053,17 @@ pub async fn fetch_models(
     source: &BillingSource,
     client: &reqwest::Client,
 ) -> (Vec<pricing::StationModel>, Option<String>) {
+    if let Some(models) = super::browser_station::cached_models(
+        &source.station_id,
+        source.provider_revision,
+        &source.base_url,
+        &source.group,
+    ) {
+        return (
+            models,
+            Some("来自 Chrome 手动读取的公开报价（5 分钟内）；不是实扣证据".into()),
+        );
+    }
     let base = source
         .base_url
         .trim_end_matches('/')

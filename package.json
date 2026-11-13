@@ -1,7 +1,7 @@
 {
   "name": "qb-gate",
   "private": true,
-  "version": "0.25.14",
+  "version": "0.25.15",
   "type": "module",
   "description": "官方账户、中转站与扩展的 Windows 本地工作空间",
   "license": "AGPL-3.0-only",
@@ -12,6 +12,8 @@
     "tauri": "tauri",
     "demo": "vite --mode demo",
     "test": "vitest run",
+    "test:browser-extension": "node --test browser-extension/*.node.mjs",
+    "build:browser-extension": "node scripts/build-browser-extension.mjs",
     "types:generate": "cargo run --manifest-path src-tauri/Cargo.toml --example export-types --quiet",
     "test:ui": "node scripts/ui-regression.mjs",
     "release:check": "node scripts/release-check.mjs",

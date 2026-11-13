@@ -19,6 +19,7 @@
 
 pub mod accounts;
 pub mod backup;
+pub mod browser_companion;
 /// 环境变量清理（中转站重构阶段 7 · X5）。模块名不叫 `envvars`：`qb_sysenv::sysenv::envvars` 已经占了。
 pub mod env_cleanup;
 pub mod gate;

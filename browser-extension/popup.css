@@ -1,0 +1,202 @@
+:root {
+  color-scheme: light dark;
+  font:
+    13px/1.55 system-ui,
+    sans-serif;
+  color: #253247;
+  background: #f4f6f9;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  width: 440px;
+  margin: 0;
+  padding: 16px;
+}
+header,
+.row,
+.buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+header,
+.row {
+  justify-content: space-between;
+}
+header {
+  margin-bottom: 12px;
+  font-size: 15px;
+}
+section,
+details {
+  border: 1px solid #dce2ea;
+  background: #fff;
+  border-radius: 10px;
+  padding: 13px;
+  margin-top: 10px;
+}
+h1,
+h2 {
+  margin: 0 0 5px;
+  font-size: 14px;
+  font-weight: 650;
+}
+p {
+  margin: 7px 0;
+  overflow-wrap: anywhere;
+}
+.note,
+.about {
+  color: #58677a;
+  font-size: 12px;
+}
+.pill {
+  font-size: 11px;
+  color: #58677a;
+  background: #edf1f6;
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+.pill.good {
+  color: #0e6844;
+  background: #dff6eb;
+}
+label {
+  display: block;
+  margin: 9px 0 4px;
+  font-weight: 550;
+}
+button,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  border: 1px solid #cbd4df;
+  border-radius: 6px;
+  background: #fff;
+  padding: 7px 9px;
+}
+button {
+  cursor: pointer;
+}
+button.primary {
+  color: #fff;
+  background: #1d5dce;
+  border-color: #1d5dce;
+}
+button.small {
+  padding: 3px 7px;
+  font-size: 12px;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+button:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid #6095ef;
+  outline-offset: 2px;
+}
+select,
+textarea {
+  width: 100%;
+}
+textarea {
+  resize: vertical;
+  font-family: ui-monospace, monospace;
+}
+.buttons {
+  margin-top: 10px;
+}
+summary {
+  cursor: pointer;
+}
+#feedback {
+  padding: 0;
+  margin: 0;
+}
+#feedback:not(:empty) {
+  padding: 9px;
+  background: #e7efff;
+  border-radius: 7px;
+}
+#feedback.error {
+  color: #a02a21;
+  background: #fff0ee;
+}
+.price {
+  border-top: 1px solid #e0e6ee;
+  padding-top: 8px;
+  margin-top: 8px;
+}
+.price strong {
+  overflow-wrap: anywhere;
+  display: block;
+}
+.price dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 10px;
+  margin: 5px 0;
+}
+.price dt {
+  color: #58677a;
+}
+.price dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.prices-list {
+  max-height: 310px;
+  overflow: auto;
+  padding-right: 5px;
+}
+a {
+  color: #1d5dce;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #e1e7f0;
+    background: #141a24;
+  }
+  section,
+  details,
+  button,
+  select,
+  textarea {
+    background: #1c2532;
+    border-color: #354052;
+  }
+  .note,
+  .about,
+  .price dt {
+    color: #a5b3c6;
+  }
+  .pill {
+    background: #2a3547;
+    color: #b8c6d9;
+  }
+  .pill.good {
+    background: #143f32;
+    color: #91ddba;
+  }
+  #feedback:not(:empty) {
+    background: #203657;
+  }
+  #feedback.error {
+    background: #4e2526;
+    color: #ffb4ab;
+  }
+  .price {
+    border-color: #354052;
+  }
+  a {
+    color: #94b9ff;
+  }
+}

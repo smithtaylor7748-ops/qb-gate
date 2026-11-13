@@ -8,7 +8,7 @@
  * 它**没有自己的进度步骤**，归在 `environment` 那一步里 ——
  * `progress.json` 的五个 key 一个都不能多，见 `steps.ts`。
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Globe, Play, RotateCw, Stethoscope, Wrench } from "lucide-react";
 import { Link } from "react-router-dom";
 
@@ -166,15 +166,38 @@ export function BrowserProbeCard() {
   const [started, setStarted] = useState<ProbeStart | null>(null);
   const [phase, setPhase] = useState<"idle" | "waiting" | "timeout">("idle");
   const [err, setErr] = useState("");
+  const lastSeen = useRef(
+    report ? `${report.received_unix}:${report.page_json}` : "",
+  );
 
-  // 面板刷新过页面但后端还开着：内存里那一份拿回来显示。
+  // 只读本机内存：插件发起检测后，打开的报告卡也能收到新结果，不另发探测。
   useEffect(() => {
-    if (report) return;
-    void api
-      .browserProbeLast()
-      .then((r) => r && setReport(r))
-      .catch(() => undefined);
-    // 只在第一次挂上时问一次。
+    let live = true;
+    let pending = false;
+    const read = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const r = await api.browserProbeLast();
+        if (!live || !r) return;
+        const key = `${r.received_unix}:${r.page_json}`;
+        if (key === lastSeen.current) return;
+        lastSeen.current = key;
+        setReport(r);
+        const scan = scanFromReport(r);
+        if (scan) put("signals", scan);
+      } catch {
+        // 保留最近报告；用户主动运行时的错误仍由 run 展示。
+      } finally {
+        pending = false;
+      }
+    };
+    void read();
+    const timer = setInterval(() => void read(), 2000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
   }, []);
 
   const run = async () => {
@@ -189,6 +212,7 @@ export function BrowserProbeCard() {
         return;
       }
       setReport(r);
+      lastSeen.current = `${r.received_unix}:${r.page_json}`;
       setPhase("idle");
       const scan = scanFromReport(r);
       if (scan) put("signals", scan);

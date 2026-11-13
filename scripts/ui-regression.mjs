@@ -1718,6 +1718,25 @@ try {
     .click();
   await page.getByRole("dialog").waitFor();
   await page.getByLabel("检验模型").fill("fixture-model");
+  await page
+    .getByRole("button", { name: "使用 Chrome 已登录账户", exact: true })
+    .click();
+  await page.getByText("Chrome 插件联动", { exact: true }).waitFor();
+  assert.equal(await page.getByLabel("Chrome 插件配对码").count(), 0);
+  await page.getByRole("button", { name: "生成配对码", exact: true }).click();
+  await page.getByText("手动复制配对码", { exact: true }).click();
+  const pairing = JSON.parse(
+    await page.getByLabel("Chrome 插件配对码").inputValue(),
+  );
+  assert.equal(new URL(pairing.endpoint).hostname, "127.0.0.1");
+  assert.match(pairing.token, /^[a-f0-9]{64}$/);
+  await page.getByText("IP 保护未开启", { exact: true }).waitFor();
+  await page.setViewportSize({ width: 680, height: 940 });
+  await assertNoOverflow(page, "Chrome companion pairing in billing");
+  await page.getByRole("button", { name: "停止联动", exact: true }).click();
+  await page.getByRole("button", { name: "生成配对码", exact: true }).waitFor();
+  await page.getByRole("button", { name: "账号密码", exact: true }).click();
+  await page.setViewportSize({ width: 1320, height: 940 });
   await page.getByLabel("站点账号 / 邮箱").fill("demo-user");
   await page.getByLabel("站点密码").fill("fixture-password");
   await page

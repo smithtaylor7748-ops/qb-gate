@@ -47,34 +47,71 @@ pub type RefreshUi = std::sync::Arc<dyn Fn() + Send + Sync>;
 
 /// Claude 页的关闭只停止 Claude；全局停用仍由 `stop_managed` 负责。
 /// 不暂停共享门禁、不收回其它账户的租约，也不停止共用的 SillyTavern。
+///
+/// # 每一步都做到底，失败攒到最后一起报（2026-11-13）
+///
+/// 原来这里有四处 `?`：先扫进程，再要求「所有 Claude 会话都核验过」（没核验过的直接报错、
+/// 一个进程都不收），停桥接、交回租约任何一步出错也当场返回 —— 后面的进程就留在那里。
+/// 而且扫进程在停会话**之前**：停会话收掉的整棵树，再按 PID 补收一遍时它们正在退出，
+/// Windows 回「拒绝访问」，界面就报一串「仍有 N 个未关闭」。现在的顺序：
+///
+/// 1. 面板登记的 Claude 会话按会话停（Job Object 收整棵树）；
+/// 2. 停 Claude 酒馆桥接；
+/// 3. **再**扫一遍，按证据把剩下的连同子孙一起收（`killswitch::execute_claude`，宁可错杀）；
+/// 4. 收完让没核验过的会话记录重新核一次（原进程已经被收掉的会转成「已退出」）；
+/// 5. 交回已停会话的租约。
 pub async fn stop_claude(state: &GateState) -> Result<crate::killswitch::KillReport> {
-    let mut report = crate::killswitch::preview_in(crate::killswitch::Scope::Claude).await?;
-    crate::sessions::ensure_verified(crate::killswitch::is_claude_session)?;
+    let mut stopped = Vec::new();
+    let mut failed: Vec<(u32, String)> = Vec::new();
     for session in crate::sessions::list()
         .into_iter()
         .filter(|s| crate::killswitch::is_claude_session(s) && s.state == "running")
     {
         match crate::sessions::stop(&session.id) {
-            Ok(()) => {
-                report.killed.push(session.pid);
-                release_holder(state, &session.id)?;
-            }
-            Err(e) => report.failed.push((session.pid, e.to_string())),
+            Ok(()) => stopped.push(session),
+            Err(e) => failed.push((session.pid, e.to_string())),
         }
     }
-    crate::plugins::sillytavern::stop_claude_bridge()?;
-    // 登记会话已停的 PID 不再二次 taskkill；其余仍核验创建时间。
-    for target in &report.targets {
-        if report.killed.contains(&target.pid) {
-            continue;
+    if let Err(e) = crate::plugins::sillytavern::stop_claude_bridge() {
+        failed.push((0, format!("停 Claude 酒馆桥接：{e}")));
+    }
+    let mut report = match crate::killswitch::execute_claude().await {
+        Ok(report) => report,
+        Err(e) => {
+            // 扫不了就说不清还剩什么：照实报错（§7.17），但前面已经停掉的照样交回租约。
+            for s in &stopped {
+                let _ = release_holder(state, &s.id);
+            }
+            return Err(GateError::Other(format!(
+                "已停止 {} 个面板托管的 Claude 会话；扫描其余 Claude 进程失败：{e}",
+                stopped.len()
+            )));
         }
-        match crate::sessions::terminate_verified(target.pid, target.process_created) {
-            Ok(()) => report.killed.push(target.pid),
-            Err(e) => report.failed.push((target.pid, e.to_string())),
+    };
+    // 会话停掉的那棵树在上一步可能还被扫到（正在退出）—— 按 PID 去重，不重复计数。
+    for s in &stopped {
+        if !report.killed.contains(&s.pid) {
+            report.killed.push(s.pid);
+        }
+    }
+    report.failed.extend(failed);
+    if let Err(e) = crate::sessions::recover() {
+        report.failed.push((0, format!("重新核验会话记录：{e}")));
+    }
+    if let Err(e) = crate::sessions::ensure_verified(crate::killswitch::is_claude_session) {
+        report.failed.push((0, e.to_string()));
+    }
+    for s in &stopped {
+        if let Err(e) = release_holder(state, &s.id) {
+            report
+                .failed
+                .push((0, format!("交回会话 {} 的租约：{e}", s.id)));
         }
     }
     if !crate::gpt_bridge::running() && !crate::gemini_bridge::running() {
-        release_holder(state, "sillytavern")?;
+        if let Err(e) = release_holder(state, "sillytavern") {
+            report.failed.push((0, format!("交回酒馆的租约：{e}")));
+        }
     }
     Ok(report)
 }
@@ -127,11 +164,10 @@ pub async fn stop_managed(
         r.relocked = relocked;
     }
     match &report {
-        Ok(r) => {
-            for (pid, e) in &r.failed {
-                errors.push(format!("PID {pid}: {e}"));
-            }
+        Ok(r) if !r.failed.is_empty() => {
+            errors.push(crate::killswitch::describe_failures(&r.failed));
         }
+        Ok(_) => {}
         Err(e) => errors.push(e.to_string()),
     }
     lease_release(state);

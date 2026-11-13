@@ -97,3 +97,32 @@ it("keeps a partial Claude shutdown failure visible instead of reporting success
   ).toBeTruthy();
   expect(screen.queryByText("关闭 1 个 Claude 进程")).toBeNull();
 });
+
+it("shows steps that are not tied to one process without a fake PID 0", async () => {
+  // 停桥接、交回租约这类步骤后端记成 PID 0（2026-11-13）：界面只写原因，不写「PID 0」。
+  mock.call.mockImplementation(async (command: string) => {
+    if (command === "killswitch_preview") return report;
+    if (command === "killswitch_execute")
+      return {
+        ...report,
+        killed: [123],
+        failed: [[0, "停 Claude 酒馆桥接：端口被占"]],
+      };
+    throw new Error(`unexpected command: ${command}`);
+  });
+  render(
+    <ToastProvider>
+      <KillBar />
+    </ToastProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "一键关闭所有 Claude" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "确认关闭 1 个进程" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getAllByText(/停 Claude 酒馆桥接：端口被占/).length,
+    ).toBeGreaterThan(0),
+  );
+  expect(screen.queryAllByText(/PID 0/)).toHaveLength(0);
+});

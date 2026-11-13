@@ -107,6 +107,11 @@ fn main() {
         qb_gate_lib::sysenv::checkup::State::export_all_to(&root)?;
         qb_app::browser_probe::BrowserReport::export_all_to(&root)?;
         qb_app::browser_probe::ProbeStart::export_all_to(&root)?;
+        qb_app::browser_link::BrowserLinkStart::export_all_to(&root)?;
+        qb_app::browser_link::BrowserLinkStatus::export_all_to(&root)?;
+        qb_app::usecase::browser_station::BrowserStation::export_all_to(&root)?;
+        qb_app::usecase::browser_station::BrowserStationPrice::export_all_to(&root)?;
+        qb_app::usecase::browser_station::BrowserStationPrices::export_all_to(&root)?;
         // 启动时对齐（0.19.0）：区域格式与显示语言改之前长什么样，用来还原。
         qb_gate_lib::sysenv::locale::LocaleState::export_all_to(&root)?;
         // 系统代理（0.19.0，「两个口子」之二）。改之前的那一份也是这个形状，

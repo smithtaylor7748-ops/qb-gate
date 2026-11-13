@@ -39,8 +39,10 @@ jobs:
       - name: Formatting (rustfmt)
         run: cargo fmt --all --check
       - run: npm test
+      - run: npm run test:browser-extension
       - run: npm run types:check
       - run: npm run build
+      - run: npm run build:browser-extension
       - name: Isolated Rust regressions
         run: cargo test --locked --workspace
       # 判定函数的可见性收窄到 pub(super) 靠的就是这道门：一旦有人把判定

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   ArrowRight,
@@ -70,6 +70,9 @@ export default function StationAudit({
     [],
   );
   const [models, setModels] = useState<StationModelsView | null>(null);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const currentRoute = useRef(routeId);
+  currentRoute.current = routeId;
   const [model, setModel] = useState("");
   const [key, setKey] = useState("");
   const [cold, setCold] = useState(false);
@@ -184,6 +187,21 @@ export default function StationAudit({
     } finally {
       setBusy(false);
       onBusyChange?.(false);
+    }
+  };
+  const reloadModels = async () => {
+    if (!routeId || modelsLoading) return;
+    const requestedRoute = routeId;
+    setModelsLoading(true);
+    try {
+      const value = await stationApi.models(requestedRoute);
+      if (currentRoute.current !== requestedRoute) return;
+      setModels(value);
+      setModel((m) => m || value.recommended || "");
+    } catch (e) {
+      if (currentRoute.current === requestedRoute) setError(String(e));
+    } finally {
+      setModelsLoading(false);
     }
   };
   const round = history[selected]?.round;
@@ -312,6 +330,14 @@ export default function StationAudit({
               {models?.problem && (
                 <p className="audit-caption">{models.problem}</p>
               )}
+              <Button
+                size="sm"
+                disabled={busy || !routeId}
+                loading={modelsLoading}
+                onClick={() => void reloadModels()}
+              >
+                刷新模型与公开价
+              </Button>
               <p className="audit-caption">
                 <LockKeyhole size={13} />
                 测试 Key 仅在本轮内存中使用，提交后清空，不写入历史或线路。
