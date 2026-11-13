@@ -394,26 +394,43 @@ const TABLES: &[&str] = &[
     "deeplink_pending",
 ];
 
-/// 这个进程是不是 cargo 编出来的测试程序：`<target>/<profile>/deps/<crate>-<16 位十六进制>`（Windows 上带 `.exe`）。
+/// 这个进程是不是 cargo 编出来的测试程序（Windows 上带 `.exe`）。两种目录布局都要认：
+///
+/// * 旧布局（Rust 1.99 及以前）：`<target>/<profile>/deps/<crate>-<16 位十六进制>`；
+/// * 新布局（Rust 1.100 起）：`<target>/<profile>/build/<crate>/<16 位十六进制>/out/<crate>-<16 位十六进制>`。
+///   2026-11-13 CI 的 runner 换到 1.100.0，这里只认旧布局，护栏当场失灵（这条函数自己的单测先红了）。
 ///
 /// 2026-10-26 的教训：一条单测经 `extensions::catalog()` 间接调到了 [`Repository::open`]，把使用者真实的
 /// `workspace.sqlite3` 迁到了开发分支的结构版本 9，装着的面板（只认 3）当场停在「需要完成数据恢复」，
 /// 靠手工核验才救回来。「单测不许碰真实的运行期状态」写在 CLAUDE.md 里没拦住 —— 间接调用读源码看不出来。
 /// 现在测试程序里打开真实目录的库直接报错：漏网的那条单测当场红，真实的库一个字节不动。
 fn running_in_a_test_binary(exe: Option<&Path>) -> bool {
+    fn hex16(s: &str) -> bool {
+        s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit())
+    }
+    fn name(p: Option<&Path>) -> Option<&str> {
+        p.and_then(Path::file_name).and_then(|n| n.to_str())
+    }
     let Some(exe) = exe else {
         return false;
     };
-    let in_deps = exe
-        .parent()
-        .and_then(Path::file_name)
-        .is_some_and(|d| d == "deps");
     let hashed = exe
         .file_stem()
         .and_then(|s| s.to_str())
         .and_then(|s| s.rsplit_once('-'))
-        .is_some_and(|(_, h)| h.len() == 16 && h.bytes().all(|b| b.is_ascii_hexdigit()));
-    in_deps && hashed
+        .is_some_and(|(_, h)| hex16(h));
+    if !hashed {
+        return false;
+    }
+    let parent = exe.parent();
+    if name(parent) == Some("deps") {
+        return true;
+    }
+    // 新布局：…/build/<crate>/<hash>/out/<crate>-<hash>
+    let hash_dir = parent.and_then(Path::parent);
+    name(parent) == Some("out")
+        && name(hash_dir).is_some_and(hex16)
+        && name(hash_dir.and_then(Path::parent).and_then(Path::parent)) == Some("build")
 }
 
 impl Repository {
@@ -1514,12 +1531,19 @@ mod tests {
         assert!(running_in_a_test_binary(Some(Path::new(
             "D:/x/target/debug/deps/qb_app-0123456789abcdef.exe"
         ))));
-        // 面板本体、开发时的 exe、诊断例子、碰巧叫 deps 的目录：一律放行。
+        // Rust 1.100 起的新布局（2026-11-13 CI 先撞上）。
+        assert!(running_in_a_test_binary(Some(Path::new(
+            "D:/x/target/debug/build/qb-app/0123456789abcdef/out/qb_app-0123456789abcdef.exe"
+        ))));
+        // 面板本体、开发时的 exe、诊断例子、碰巧叫 deps / out 的目录、构建脚本：一律放行。
         for p in [
             "C:/Users/demo/AppData/Local/QB Gate/qb-gate.exe",
             "D:/claude-gate/target/debug/qb-gate.exe",
             "D:/claude-gate/target/debug/examples/usage-summary.exe",
             "C:/tools/deps/qb-gate.exe",
+            "C:/tools/out/qb-gate.exe",
+            "D:/x/target/debug/build/qb-app/notahash/out/qb_app-0123456789abcdef.exe",
+            "D:/x/target/debug/build/qb-app-0123456789abcdef/build-script-build.exe",
         ] {
             assert!(!running_in_a_test_binary(Some(Path::new(p))), "{p}");
         }

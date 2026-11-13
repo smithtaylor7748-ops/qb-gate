@@ -9,6 +9,7 @@
 - **修复「一键关闭所有 Claude」与 IP 锁关闭 Claude 频繁报错**（2026-11-13）：根因是先按会话收掉整棵进程树、再按证据补收时，补收扫到的进程正在退出或已经退出 —— 再结束一次 Windows 回「拒绝访问」，逐个取创建时间又拿到 0（「缺少进程创建时间，拒绝仅凭 PID 终止」），两种都被记成没关掉。现在已退出、正在退出、PID 换了主人都算收完，一批进程先下指令再共用 5 秒等退出；创建时间改从 CIM 取、按微秒认身份；Claude 页的关闭改为先停会话再扫描，每一步做到底、失败一起报，不再因为一处出错半路停下。
 - **一键关闭改为「宁可错杀，不可放过」**：名字叫 `claude.exe` 的（签名读不出也收）、Claude 桌面端安装目录里的、命令行带 `claude` 的 `bridge.py`、`bun.exe` 跑的 Claude Code 都收，并连同 Claude 拉起的子孙进程（MCP 服务器、命令行、它起的工具）一起收。只放过面板自己与它的祖先、与 Claude 无关的进程；GPT、Gemini、反重力、共用酒馆与 IP 锁对中转的放过照旧。
 - **中转站不再受官方账户的 IP 锁约束**：启动中转不再验 IP、不解锁、不持租约、不挂看门狗，IP 变化也不收中转会话。中转改用不上锁的可执行文件：Claude Code 使用面板数据目录中的中转专用副本（随官方版本更新），桌面端直接启动当前版本的 `app-<版本>`；官方那份仍按原规则上锁。
+- **测试护栏兼容 Rust 1.100**：CI 换到 Rust 1.100.0 后，测试程序从 `target/<profile>/deps/` 挪到了 `target/<profile>/build/<crate>/<hash>/out/`，「测试里不许打开真实数据库」的护栏只认旧位置、当场失灵。现在两种布局都认。
 
 检查（2026-11-13 这三项）：`cargo fmt --check`、`cargo clippy --workspace --lib -D warnings`、`cargo deny check` 通过；改动涉及的五个 crate 单测全过（qb-launch 58、qb-platform 121、qb-install 272、qb-app 591、qb-gate 43 + 集成 21），新增判定、子孙进程、范围、失败文案、微秒身份比对与中转副本复用的测试；前端 `npm run build`、`npm test`（**371 项 / 72 个文件**，新增「PID 0」文案测试）、`types:generate` + `types:check`、`format:check`、`test:ui`（**151 + 28**）、`release:check` 通过。批量结束进程另对本机临时进程手工核过。`cargo test --workspace` 全量两次被打断（本机内存耗尽一次、安装版 IP 锁关停桌面端一次），未改动的其余 crate 本轮没有重跑。真实关停与中转启动只在安装版上验，见 `docs/KNOWN-ISSUES.zh-CN.md`。
 
