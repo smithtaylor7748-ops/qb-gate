@@ -29,7 +29,9 @@ pub mod rank;
 
 pub use breaker::{BreakerSettings, Outcome, Permit, RouteBreaker, State};
 pub use cheap::{cheap_values, cost_per_token, CheapBasis, CheapInput};
-pub use dispatch::{dispatch, Dispatch, DispatchMemory, DispatchParams, DispatchRow, LineFacts, Tier};
+pub use dispatch::{
+    dispatch, Dispatch, DispatchMemory, DispatchParams, DispatchRow, LineFacts, Tier,
+};
 pub use rank::{rank, AxisScore, FloorMiss, Ranking, Row, HYSTERESIS, INDISTINGUISHABLE_SPREAD};
 
 use serde::{Deserialize, Serialize};

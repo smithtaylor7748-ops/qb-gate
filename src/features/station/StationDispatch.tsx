@@ -31,7 +31,6 @@ import {
 } from "./StationRouteBoundary";
 
 const TIER: Record<DispatchTier, { label: string; pill: string }> = {
-  pinned: { label: "钉住", pill: "qb-st-pill--accent" },
   qualified: { label: "合格", pill: "qb-st-pill--ok" },
   fallback: { label: "兜底", pill: "qb-st-pill--warn" },
   faulty: { label: "故障", pill: "qb-st-pill--danger" },
@@ -46,8 +45,9 @@ const STATE: Record<ProbeState, { label: string; pill: string }> = {
 const KIND: Record<string, string> = {
   switch: "换了第一条",
   reorder: "热备改了顺序",
-  pin: "钉住",
-  unpin: "取消钉住",
+  // 钉住 2026-11-14 删了；动作日志里的旧记录照样认得出来。
+  pin: "钉住（旧记录）",
+  unpin: "取消钉住（旧记录）",
   "probe-burst": "紧急测活",
 };
 
@@ -73,6 +73,12 @@ export default function StationDispatch({ client }: { client: Client }) {
   const [params, setParams] = useState<DispatchParams>(DEFAULT_PARAMS);
   const [error, setError] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
+  /** 免费测完之后，还能花钱测几条、最多多少钱（等使用者点头）。 */
+  const [paidOffer, setPaidOffer] = useState<{
+    routeId: string | null;
+    count: number;
+    estimate: number;
+  } | null>(null);
   const [policy, setPolicy] = useState<RouterSettings | null>(null);
   const clientRef = useRef(client);
   clientRef.current = client;
@@ -183,39 +189,34 @@ export default function StationDispatch({ client }: { client: Client }) {
     };
   }, [client, paramsReload]);
 
-  const probeNow = async (routeId?: string) => {
+  /**
+   * 「立刻测」：只测当前线路和备用线路。先只发免费的；开着花钱测活时后端顺便算出能花钱测哪几条、最多多少钱，
+   * 由使用者再点一下才发（`paid: true`）—— 原来点一下就连花钱的一起发了。
+   */
+  const probeNow = async (routeId?: string, paid = false) => {
     if (probing) return;
     setProbing(true);
+    setPaidOffer(null);
     try {
-      const got = await stationApi.probeNow(client, routeId ?? null);
-      const bad = got.filter((a) => !a.ok).length;
+      const got = await stationApi.probeNow(client, routeId ?? null, paid);
+      const n = got.attempts.length;
+      const bad = got.attempts.filter((a) => !a.ok).length;
       toast.ok(
         bad === 0
-          ? `测了 ${got.length} 次，都通`
-          : `测了 ${got.length} 次，${bad} 次没通（原因在表里）`,
+          ? `测了 ${n} 次，都通`
+          : `测了 ${n} 次，${bad} 次没通（原因在表里）`,
       );
+      if (!paid && got.paid_pending.length > 0)
+        setPaidOffer({
+          routeId: routeId ?? null,
+          count: got.paid_pending.length,
+          estimate: got.paid_estimate_cny,
+        });
       await load();
     } catch (e) {
       toast.error(`测活失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setProbing(false);
-    }
-  };
-
-  const pin = async (routeId: string | null) => {
-    try {
-      await stationApi.pin(client, routeId);
-      toast.ok(
-        routeId
-          ? policy?.admission.overflow_to_pool &&
-            policy?.pool_strategy === "least-loaded"
-            ? "已固定池内首选 4 小时；优先空闲线路模式下仅影响相同负载时的顺序"
-            : "已固定池内首选 4 小时；首选不可用时仍允许名单内备用线路"
-          : "已取消钉住，交回调度",
-      );
-      await load();
-    } catch (e) {
-      toast.error(`钉住失败：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -290,8 +291,6 @@ export default function StationDispatch({ client }: { client: Client }) {
     queue.current != null &&
     effectiveCurrent != null &&
     queue.current !== effectiveCurrent;
-  const pinned =
-    queue.pin && Number(queue.pin.until_ms) > now ? queue.pin : null;
   const rowOf = new Map(queue.rows.map((r) => [r.route_id, r]));
 
   return (
@@ -394,16 +393,19 @@ export default function StationDispatch({ client }: { client: Client }) {
           </div>
         ))}
 
-        {pinned && (
-          <div className="qb-st-nudge qb-st-dq">
-            已钉住「{routeLabelFromId(pinned.route_id)}」到{" "}
-            {clock(Number(pinned.until_ms))}
-            {policy?.admission.overflow_to_pool &&
-            policy?.pool_strategy === "least-loaded"
-              ? "。优先空闲线路模式下，固定首选只影响相同负载时的顺序；要固定每次请求，请改用仅所选线路。"
-              : "，首选不可用时仍可使用名单内备用线路"}
-            <button className="qb-st-iconbtn" onClick={() => void pin(null)}>
-              取消钉住
+        {paidOffer && (
+          <div className="qb-st-nudge qb-st-dq" role="status">
+            免费的测完了。花钱测活开着：还能花钱测 {paidOffer.count}{" "}
+            条，这次最多约 ¥{paidOffer.estimate.toFixed(2)}
+            （计入今天的测活预算）。
+            <button
+              className="qb-st-iconbtn"
+              disabled={probing}
+              onClick={() =>
+                void probeNow(paidOffer.routeId ?? undefined, true)
+              }
+            >
+              花钱测这几条
             </button>
           </div>
         )}
@@ -435,14 +437,12 @@ export default function StationDispatch({ client }: { client: Client }) {
                     line={line}
                     row={rowOf.get(line.route_id)}
                     current={runtimeCurrent === line.route_id}
-                    pinned={pinned?.route_id === line.route_id}
-                    scheduled={
-                      view.enabled &&
-                      policy?.routing_mode === "pool" &&
-                      policy.allowed_routes.includes(line.route_id)
+                    testable={
+                      effectiveCurrent === line.route_id ||
+                      (policy?.routing_mode === "pool" &&
+                        policy.allowed_routes.includes(line.route_id))
                     }
                     now={now}
-                    onPin={(id) => void pin(id)}
                     onProbe={(id) => void probeNow(id)}
                     probing={probing}
                   />
@@ -670,20 +670,17 @@ function Line({
   line,
   row,
   current,
-  pinned,
-  scheduled,
+  testable,
   now,
-  onPin,
   onProbe,
   probing,
 }: {
   line: LineLiveness;
   row: DispatchView["queue"]["rows"][number] | undefined;
   current: boolean;
-  pinned: boolean;
-  scheduled: boolean;
+  /** 当前线路或备用线路：只有这几条能测（名单外的线后端也不测）。 */
+  testable: boolean;
   now: number;
-  onPin: (id: string | null) => void;
   onProbe: (id: string) => void;
   probing: boolean;
 }) {
@@ -742,27 +739,15 @@ function Line({
       <td>{reason || <span className="qb-st-dim">—</span>}</td>
       <td>
         <span className="qb-st-inline">
-          <button
-            className="qb-st-iconbtn"
-            disabled={probing}
-            onClick={() => onProbe(line.route_id)}
-          >
-            测
-          </button>
-          {scheduled &&
-            (pinned ? (
-              <button className="qb-st-iconbtn" onClick={() => onPin(null)}>
-                取消钉住
-              </button>
-            ) : (
-              <button
-                className="qb-st-iconbtn"
-                title="固定名单内首选 4 小时；仍允许使用名单内备用线路"
-                onClick={() => onPin(line.route_id)}
-              >
-                固定池内首选
-              </button>
-            ))}
+          {testable && (
+            <button
+              className="qb-st-iconbtn"
+              disabled={probing}
+              onClick={() => onProbe(line.route_id)}
+            >
+              测
+            </button>
+          )}
         </span>
       </td>
     </tr>

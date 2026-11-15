@@ -57,6 +57,22 @@ const status = (base: string, selected: string): RouterStatus => ({
   turnstate_takeover: null,
   breakers: [],
   admission: [],
+  selection: {
+    current: selected,
+    backups: [],
+    auto_select: false,
+    plan: {
+      current: selected,
+      steps: [],
+      first: selected,
+      max_attempts: 2,
+      strict_single: true,
+    },
+    paused: null,
+    aggregate: null,
+    pricier_backups: [],
+    problem: null,
+  },
 });
 
 it("keeps SillyTavern chat and model discovery on the selected client route", async () => {

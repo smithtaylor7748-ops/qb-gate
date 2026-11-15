@@ -582,15 +582,11 @@ function StationBoard({
   };
 
   /**
-   * 右列「启动」：**只是把这个软件打开**，走它现在选中的那条上游。
+   * 右列「启动」：**只是把这个软件打开**，走它的当前线路。不停调度、也不改上游 ——
+   * 换线只有行上的「设为当前」（2026-11-14 起，原来行上那个「仅用这条并启动」删了）。
    *
-   * ⛔ 不停调度、也不改上游 —— 所以**不传 routeId**。传了的话后端会 `set_now`，
-   * 而 `set_now` 会把排队中的切换清掉：刚点的那一行、调度刚排上的那条，
-   * 都会被悄悄换回旧的。「指定这一条再启动」是行上那个按钮，见 `launchFrom`。
-   *
-   * ⛔ **本机路由只有「启动」会拉起来**（右列和行上两个入口，后端都是
-   * `station_launch`）。切上游、拉路由、起客户端进程是后端里的一个动作，
-   * 不在这里拆成三次调用 —— 拆开的话中间失败会留下「路由起了、客户端
+   * ⛔ **本机路由只有「启动」会拉起来**（后端 `station_launch`）。拉路由、起客户端进程是后端里的一个动作，
+   * 不在这里拆成两次调用 —— 拆开的话中间失败会留下「路由起了、客户端
    * 没起」的半成品状态，而界面显示「运行中」。
    */
   const launchNow = async () => {
@@ -606,38 +602,6 @@ function StationBoard({
       await workspace.refresh();
       if (clientRef.current === who)
         setStatus(await stationApi.routerStatus(who));
-      finishLaunch(who, "done");
-    } catch (e) {
-      // 失败还是要说 —— 不接住的话按钮看起来像没反应。
-      setLaunchError({
-        client: who,
-        text: e instanceof Error ? e.message : String(e),
-      });
-      finishLaunch(who, "failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /**
-   * 行上的「启动」：**指定这一条再启动**。
-   *
-   * 后端把明确指定线路与「仅所选线路」一起保存，并停止该软件的调度。
-   */
-  const launchFrom = async (r: Route) => {
-    if (launching || stopping) return;
-    const who = client;
-    // 从行上点的也让右列那块跟着动 —— 启动在哪儿点的，进度都看同一个地方。
-    setBusy(true);
-    setLaunching(who);
-    setLaunchFx(null);
-    setLaunchError(null);
-    try {
-      await stationApi.launch(who, r.id);
-      await workspace.refresh();
-      if (clientRef.current === who)
-        await Promise.all([refreshStatus(), refreshSched()]);
-      toast.info("已设为仅用这条线路，智能调度已停止");
       finishLaunch(who, "done");
     } catch (e) {
       // 失败还是要说 —— 不接住的话按钮看起来像没反应。
@@ -758,15 +722,14 @@ function StationBoard({
           ))}
         </div>
         <span style={{ flex: 1 }} />
-        {/* 项目（阶段 5 · M4）：只换这个软件中转那一侧，不碰官方账户。 */}
-        <StationProjects
-          client={client}
-          clientName={CLIENTS.find((c) => c.id === client)?.name ?? client}
-          onApplied={() => {
-            void refreshStatus();
-            onChanged();
-          }}
-        />
+        {/* 项目（阶段 5 · M4）：只换这个软件中转环境里的 MCP / Skills / 提示词，不碰线路、不碰官方账户。
+            桌面端没有这几样，所以没有项目（2026-11-14）。 */}
+        {client !== "claude-desktop" && (
+          <StationProjects
+            client={client}
+            clientName={CLIENTS.find((c) => c.id === client)?.name ?? client}
+          />
+        )}
         {/* 导入链接（阶段 5 · X4）：粘贴中转站给的 qbgate:// / ccswitch:// 链接。 */}
         <DeepLinkPasteButton />
         <Button
@@ -1183,14 +1146,17 @@ function StationBoard({
                   siteName={siteName}
                   topup={topupOf(providers.find((p) => p.id === s.id))}
                   onPick={() => {
-                    // 普通选线即收紧为仅用这条，后端同时停掉该软件的调度。
+                    // 设为当前：只换当前线路，备用线路不动；自动选线开着时后端会关掉它，并如实说。
                     void act(async () => {
-                      const st = await stationApi.selectRoute(r.id, false);
-                      toast.ok("已设为仅用这条线路，智能调度已停止");
-                      return st;
-                    }, "仅用这条线路");
+                      const done = await stationApi.setCurrent(r.id);
+                      toast.ok(
+                        done.auto_select_stopped
+                          ? "已设为当前线路，自动选线已关闭"
+                          : "已设为当前线路",
+                      );
+                      return done.status;
+                    }, "设为当前");
                   }}
-                  onLaunch={() => void launchFrom(r)}
                   onAudit={() => setAuditOpen(r)}
                   onLogs={() => setLogOpen(r)}
                   onEdit={() => setRouteDialog({ editing: r })}
@@ -1431,7 +1397,6 @@ function RouteRow({
   siteName: _siteName,
   topup,
   onPick,
-  onLaunch,
   onAudit,
   onLogs,
   onEdit,
@@ -1454,7 +1419,6 @@ function RouteRow({
   /** 这家站 1 美元额度付几元（充值比例），见 `topupOf`。 */
   topup: number;
   onPick: () => void;
-  onLaunch: () => void;
   onAudit: () => void;
   onLogs: () => void;
   onEdit: () => void;
@@ -1476,9 +1440,9 @@ function RouteRow({
       title={
         current
           ? queued
-            ? "仅用这条线路：已排队，下一次请求生效"
-            : "点击设为仅用这条线路，并停止智能调度"
-          : "仅用这条线路，停止智能调度（下一次请求生效）"
+            ? "当前线路：已排队，下一次请求生效"
+            : "这是当前线路"
+          : "设为当前线路（备用线路不变；自动选线开着会被关掉；下一次请求生效）"
       }
       onClick={onPick}
       onKeyDown={(e) => {
@@ -1542,12 +1506,17 @@ function RouteRow({
           </span>
         )}
         <span className="acts">
-          <Button
-            variant="primary"
-            onClick={stop(running && current ? onClose : onLaunch)}
-          >
-            {running && current ? "一键关闭" : "仅用这条并启动"}
-          </Button>
+          {running && current ? (
+            <Button variant="primary" onClick={stop(onClose)}>
+              一键关闭
+            </Button>
+          ) : (
+            !current && (
+              <Button variant="primary" onClick={stop(onPick)}>
+                设为当前
+              </Button>
+            )
+          )}
           <Button variant="ghost" onClick={stop(onAudit)}>
             查套路
           </Button>

@@ -70,9 +70,13 @@ const PRESETS: { name: string; prefs: Prefs }[] = [
   },
 ];
 
+/**
+ * 「默认」那一档：省钱优先（便宜 + 成功率 ≥ 95%）。⛔ 必须跟后端 `Prefs::saving()`（新建自动选线的默认）一样 ——
+ * 原来这里是「便宜 + 快 + 稳」、后端是「稳 + 快」，两边说的不是同一个默认。
+ */
 const DEFAULT_PREFS: Prefs = {
-  axes: ["cheap", "fast", "stable"],
-  floors: { min_success_rate: null, max_ttft_p95_ms: null, max_rate: null },
+  axes: ["cheap"],
+  floors: { min_success_rate: 0.95, max_ttft_p95_ms: null, max_rate: null },
 };
 
 // 关闭再打开弹窗仍接着同一条写入队列，避免旧实例的慢写覆盖新实例。
@@ -258,7 +262,8 @@ export default function StationSchedule({
             variant="ghost"
             disabled={busy}
             onClick={() => {
-              void stationApi.selectRoute(winner, false).catch((e: unknown) => {
+              // 设为当前：自动选线开着时会被关掉（后端如实返回）。这个入口页面重排时会删掉（B2）。
+              void stationApi.setCurrent(winner).catch((e: unknown) => {
                 setError(
                   `选线失败：${e instanceof Error ? e.message : String(e)}`,
                 );

@@ -11,7 +11,7 @@ import StationProjects from "./StationProjects";
 import { ToastProvider } from "../../ui";
 const mock = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock("../../lib/ipc", () => ({ call: mock.call }));
-const slot = { route: "r", queue: [], mcp: [], skills: [], prompt: null };
+const slot = { mcp: [], skills: [], prompt: null };
 const view = {
   projects: [
     { id: "a", name: "开发", slots: { codex: slot }, updated_ms: 0 },
@@ -38,7 +38,7 @@ beforeEach(() => {
     if (command === "projects_apply")
       return {
         view: { ...view, current: { codex: "b" } },
-        warnings: ["派单顺序里有 1 条线已经不在了，跳过"],
+        warnings: ["MCP fs 已经删了，跳过"],
       };
     if (command === "projects_clear")
       return { view: { ...view, current: {} }, warnings: [] };
@@ -58,8 +58,9 @@ it("switches per software, shows what did not land, and only deletes after confi
     </ToastProvider>,
   );
   fireEvent.click(await screen.findByRole("button", { name: /项目：开发/ }));
-  // 说清楚只换中转那一侧。
+  // 说清楚只换中转环境里那几样：不碰线路、不碰官方账户。
   expect(screen.getByText(/官方账户和槽位一概不动/)).toBeTruthy();
+  expect(screen.getByText("项目不换线路")).toBeTruthy();
   // 当前那个不能再「换到」；没存过 Codex 那一组的标出来。
   expect(
     (screen.getByRole("button", { name: "正在用" }) as HTMLButtonElement)
@@ -74,10 +75,8 @@ it("switches per software, shows what did not land, and only deletes after confi
       client: "codex",
     }),
   );
-  // 没落成的那几样留在弹窗里，中转站页要重读状态。
-  expect(
-    await screen.findByText("派单顺序里有 1 条线已经不在了，跳过"),
-  ).toBeTruthy();
+  // 没落成的那几样留在弹窗里。
+  expect(await screen.findByText("MCP fs 已经删了，跳过")).toBeTruthy();
   expect(applied).toHaveBeenCalled();
 
   // 删除要再确认一次，确认之前什么都不发。

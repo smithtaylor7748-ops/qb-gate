@@ -1238,12 +1238,13 @@ mod tests {
             allowed_routes: vec!["x".into(), "old".into(), "y".into()],
             ..RouterSettings::for_client(Client::ClaudeCode)
         };
-        s.admission
-            .route_limits
-            .insert("old".into(), RouteLimits {
+        s.admission.route_limits.insert(
+            "old".into(),
+            RouteLimits {
                 max_concurrent: 2,
                 ..Default::default()
-            });
+            },
+        );
         s.aggregate.members = vec!["old".into()];
         s.aggregate.models.insert("old".into(), vec!["m".into()]);
         s.aggregate.keys.insert("k".into(), "old".into());
@@ -1253,7 +1254,10 @@ mod tests {
         assert!(!s.admission.route_limits.contains_key("old"));
         assert_eq!(s.aggregate.members, ["new"]);
         assert_eq!(s.aggregate.models["new"], ["m"]);
-        assert_eq!(s.aggregate.keys["k"], "new", "客户端手里的旧聚合 id 照样指着这条线");
+        assert_eq!(
+            s.aggregate.keys["k"], "new",
+            "客户端手里的旧聚合 id 照样指着这条线"
+        );
         // 新 id 已经在名单里：不重复。
         let mut dup = RouterSettings {
             allowed_routes: vec!["old".into(), "new".into()],
@@ -1415,7 +1419,11 @@ mod tests {
         assert_eq!(q.current.as_deref(), Some("a"));
         let back = serde_json::to_value(&q).unwrap();
         assert!(back.get("order").is_none() && back.get("pin").is_none());
-        assert_eq!(q.rows[0].tier, crate::schedule::Tier::Qualified, "旧的「钉住」档按合格读");
+        assert_eq!(
+            q.rows[0].tier,
+            crate::schedule::Tier::Qualified,
+            "旧的「钉住」档按合格读"
+        );
     }
 
     #[test]

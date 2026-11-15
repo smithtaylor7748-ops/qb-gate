@@ -161,10 +161,7 @@ fn selection_facts(
 /// 下一发的顺序 → 当前线路是不是被跳过了。
 fn paused_of(plan: &qb_station::router::RoutePlan) -> Option<CurrentPaused> {
     use qb_station::router::{PlanRole, PlanSkip};
-    let step = plan
-        .steps
-        .iter()
-        .find(|s| s.role == PlanRole::Current)?;
+    let step = plan.steps.iter().find(|s| s.role == PlanRole::Current)?;
     let reason = step.skip.filter(|r| *r != PlanSkip::OverLimit)?;
     Some(CurrentPaused {
         route_id: step.route_id.clone(),
@@ -499,7 +496,10 @@ pub fn station_set_current(
     // 聚合模型只发布「当前线路 + 备用名单」里的线：当前线路换了，客户端配置里的模型列表跟着更新。
     // 写不进去不算这一下失败（线路已经换了），原因在路由设置的聚合那一节显示。
     if let Err(e) = sync_aggregate_config(&state, route.client) {
-        tracing::warn!("设为当前之后，聚合模型没写进 {:?} 的配置：{e}", route.client);
+        tracing::warn!(
+            "设为当前之后，聚合模型没写进 {:?} 的配置：{e}",
+            route.client
+        );
     }
     if change.auto_select_stopped && station_schedules()?.iter().all(|s| !s.enabled) {
         stop_scheduler(&state);
@@ -2083,7 +2083,10 @@ pub async fn station_decide(
             .station
             .lock()
             .map_err(|_| GateError::Other("中转站状态损坏".into()))?;
-        (s.pending(client).or_else(|| s.current(client)), s.settings(client))
+        (
+            s.pending(client).or_else(|| s.current(client)),
+            s.settings(client),
+        )
     };
     let pool = station_ops::auto_select_pool(&settings, current.as_deref());
     let routes: Vec<Route> = db
@@ -2651,8 +2654,9 @@ pub async fn run_schedule_tick(state: &AppState) -> Vec<Schedule> {
         let routes: Vec<Route> = pool
             .iter()
             .filter_map(|id| {
-                all.iter()
-                    .find(|r| &r.id == id && r.client == client && station_ops::source(&db, r).is_ok())
+                all.iter().find(|r| {
+                    &r.id == id && r.client == client && station_ops::source(&db, r).is_ok()
+                })
             })
             .cloned()
             .collect();
@@ -2934,7 +2938,7 @@ fn apply_round(
         dispatch,
         now,
     )
-        .and_then(|actions| station_ops::record_actions(db, &actions))
+    .and_then(|actions| station_ops::record_actions(db, &actions))
     {
         Ok(()) => {}
         Err(e) => tracing::warn!("智能调度：动作日志没写进库：{e}"),
@@ -3183,7 +3187,10 @@ mod tests {
 
         // 模拟计划算完、等待落地期间，用户把 B「设为当前」。旧计划仍想把 A 放第一。
         let change = set_current_in(&state, &db, &b).unwrap();
-        assert!(change.auto_select_stopped, "设为当前关掉了自动选线，要如实说");
+        assert!(
+            change.auto_select_stopped,
+            "设为当前关掉了自动选线，要如实说"
+        );
         assert!(!apply_round(
             &state,
             &db,
@@ -3334,7 +3341,12 @@ mod tests {
         plan.first = Some("b".into());
         let p = paused_of(&plan).unwrap();
         assert_eq!(
-            (p.route_id.as_str(), p.reason, p.until_ms, p.using.as_deref()),
+            (
+                p.route_id.as_str(),
+                p.reason,
+                p.until_ms,
+                p.using.as_deref()
+            ),
             ("a", PlanSkip::BreakerRejected, Some(99), Some("b"))
         );
         // 全都熔断着时仍打当前那条：「这期间用哪条」不能写成它自己。

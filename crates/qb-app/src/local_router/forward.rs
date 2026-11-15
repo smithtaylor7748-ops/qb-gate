@@ -3063,9 +3063,11 @@ mod tests {
     /// C2：上游 429 的那一发换到备用线，之后 Retry-After 窗口里的几发**也**去备用线 —— 原来这几发在本机被直接拒掉、不换线。
     /// 容量分流开关开不开结果一样：它只管本机自己的并发 / RPM 限额。
     #[tokio::test]
-    async fn an_upstream_429_and_its_retry_window_both_move_to_the_backup_whatever_the_overflow_switch() {
+    async fn an_upstream_429_and_its_retry_window_both_move_to_the_backup_whatever_the_overflow_switch(
+    ) {
         for overflow in [false, true] {
-            let (a, a_hits) = stub(Script::json(429, r#"{"error":{"message":"rate limited"}}"#)).await;
+            let (a, a_hits) =
+                stub(Script::json(429, r#"{"error":{"message":"rate limited"}}"#)).await;
             let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
             let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
                 s.admission.overflow_to_pool = overflow;
@@ -3078,13 +3080,19 @@ mod tests {
                 "分流 {overflow}：第一发 A 429 之后去 B"
             );
             // 把 A 的等待窗口拉长，第二发一定落在窗口里。
-            h.state.lock().unwrap().remember_rate_limit("a", Some(60_000));
+            h.state
+                .lock()
+                .unwrap()
+                .remember_rate_limit("a", Some(60_000));
             let now = chrono::Utc::now().timestamp_millis();
             let plan = h.state.lock().unwrap().route_plan(Client::ClaudeCode, now);
             assert_eq!(plan.steps[0].skip, Some(PlanSkip::RateLimited));
             assert_eq!(plan.first.as_deref(), Some("b"), "主页那一行照实说先打 B");
             let (status, _) = post(&h, "/v1/messages", r#"{"model":"m"}"#).await;
-            assert_eq!(status, 200, "分流 {overflow}：窗口里也去备用线，不在本机回繁忙");
+            assert_eq!(
+                status, 200,
+                "分流 {overflow}：窗口里也去备用线，不在本机回繁忙"
+            );
             assert_eq!(
                 (a_hits.lock().unwrap().len(), b_hits.lock().unwrap().len()),
                 (1, 2),
@@ -3093,7 +3101,10 @@ mod tests {
             let log = last_log(&h).await;
             assert_eq!(log.route_id, "b");
             assert_eq!(
-                log.attempts.iter().map(|t| t.route_id.as_str()).collect::<Vec<_>>(),
+                log.attempts
+                    .iter()
+                    .map(|t| t.route_id.as_str())
+                    .collect::<Vec<_>>(),
                 ["b"],
                 "本机跳过 A 不伪造一次对 A 的尝试"
             );
@@ -3102,7 +3113,8 @@ mod tests {
 
     /// 没有备用线路：上游 429 原样回；它的等待窗口里本机回「繁忙」（没设等候），绝不换站。
     #[tokio::test]
-    async fn without_backups_a_429_comes_back_as_is_and_its_window_answers_busy_without_switching() {
+    async fn without_backups_a_429_comes_back_as_is_and_its_window_answers_busy_without_switching()
+    {
         let (a, a_hits) = stub(Script::json(429, r#"{"error":{"message":"rate limited"}}"#)).await;
         let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
         let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
@@ -3110,7 +3122,10 @@ mod tests {
         })
         .await;
         assert_eq!(post(&h, "/v1/messages", r#"{"model":"m"}"#).await.0, 429);
-        h.state.lock().unwrap().remember_rate_limit("a", Some(60_000));
+        h.state
+            .lock()
+            .unwrap()
+            .remember_rate_limit("a", Some(60_000));
         let now = chrono::Utc::now().timestamp_millis();
         let plan = h.state.lock().unwrap().route_plan(Client::ClaudeCode, now);
         assert!(plan.strict_single);
@@ -3126,7 +3141,8 @@ mod tests {
 
     /// 额度证据明确说当前线路用光了（开了额度检查）：跟上游 429 一样是线路的故障，有备用就去备用，不看分流开关。
     #[tokio::test]
-    async fn an_exhausted_quota_on_the_current_line_moves_to_the_backup_without_the_overflow_switch() {
+    async fn an_exhausted_quota_on_the_current_line_moves_to_the_backup_without_the_overflow_switch(
+    ) {
         let (a, a_hits) = stub(Script::json(200, CLAUDE_OK)).await;
         let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
         let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
@@ -3815,7 +3831,11 @@ mod tests {
             ("b", "qbg-claude-zhipu--glm-5", true)
         );
         assert_eq!(
-            h.state.lock().unwrap().current(Client::ClaudeCode).as_deref(),
+            h.state
+                .lock()
+                .unwrap()
+                .current(Client::ClaudeCode)
+                .as_deref(),
             Some("a")
         );
         // 之后来了一发普通模型：那次聚合直达还在，但已经不是最近一发。

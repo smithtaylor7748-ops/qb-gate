@@ -1742,7 +1742,11 @@ mod tests {
         // 当前线路删了：备用也不许（不悄悄改用备用线）。
         s.remove_upstream("c");
         assert!(!s.route_allowed(cc, "a") && !s.route_allowed(cc, "b"));
-        assert_eq!(s.settings(cc).backups(), ["a", "b"], "名单留着，等下一条当前线路");
+        assert_eq!(
+            s.settings(cc).backups(),
+            ["a", "b"],
+            "名单留着，等下一条当前线路"
+        );
         // 名单清空 = 严格单线：只有当前那一条。
         s.set_now(cc, "a");
         with_backups(&mut s, cc, &[]);
@@ -1869,7 +1873,10 @@ mod tests {
         assert!(s.aggregate_recent(cc).is_none());
         s.note_request(cc, Some(("b", "qbg-claude-x--m")), 10);
         let hit = s.aggregate_recent(cc).unwrap();
-        assert_eq!((hit.route_id.as_str(), hit.at_ms, hit.latest), ("b", 10, true));
+        assert_eq!(
+            (hit.route_id.as_str(), hit.at_ms, hit.latest),
+            ("b", 10, true)
+        );
         s.note_request(Client::Codex, None, 11);
         assert!(s.aggregate_recent(cc).unwrap().latest, "别的软件的请求不算");
         s.note_request(cc, None, 12);

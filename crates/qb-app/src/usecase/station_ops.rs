@@ -823,7 +823,10 @@ pub fn pricier_backups(
         routes
             .iter()
             .find(|r| r.id == id)
-            .and_then(|r| r.rate_for_ranking().map(|v| v * topup_for(topup, &r.station_id)))
+            .and_then(|r| {
+                r.rate_for_ranking()
+                    .map(|v| v * topup_for(topup, &r.station_id))
+            })
             .filter(|v| v.is_finite() && *v > 0.0)
     };
     let Some(base) = rate(current) else {
@@ -2218,10 +2221,17 @@ mod tests {
         restore_router(&db, &mut state).unwrap();
         let restored = state.settings(Client::Codex);
         assert_eq!(restored.routing_mode, RoutingMode::Pool);
-        assert_eq!(restored.backups(), [b.clone(), a.clone()], "重复的那条没去掉、顺序照排的");
+        assert_eq!(
+            restored.backups(),
+            [b.clone(), a.clone()],
+            "重复的那条没去掉、顺序照排的"
+        );
         assert_eq!(restored.max_attempts, 3, "存过的值不动");
         assert_eq!(state.current(Client::Codex).as_deref(), Some(a.as_str()));
-        assert!(state.queue(Client::Codex).is_empty(), "自动选线关着：备用就按名单顺序");
+        assert!(
+            state.queue(Client::Codex).is_empty(),
+            "自动选线关着：备用就按名单顺序"
+        );
         // 别的软件不受影响。
         assert_eq!(state.current(Client::ClaudeCode), None);
         assert_eq!(
@@ -2389,7 +2399,11 @@ mod tests {
         assert!(q.alerts.is_empty());
         assert!(!load_schedule(&db, Client::Codex).unwrap().enabled);
         // 再设一次：自动选线本来就关着，不说「关掉了」。
-        assert!(!set_current(&db, Client::Codex, &b.id, 4).unwrap().auto_select_stopped);
+        assert!(
+            !set_current(&db, Client::Codex, &b.id, 4)
+                .unwrap()
+                .auto_select_stopped
+        );
         assert_eq!(load_router_settings(&db, Client::Codex).unwrap(), settings);
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
@@ -2410,7 +2424,10 @@ mod tests {
         settings.routing_mode = RoutingMode::Pool;
         settings.allowed_routes = vec![b.id.clone()];
         save_router_settings(&db, &settings).unwrap();
-        assert!(prepare_auto_select(&db, Client::Codex).is_err(), "没有当前线路");
+        assert!(
+            prepare_auto_select(&db, Client::Codex).is_err(),
+            "没有当前线路"
+        );
         remember_current(&db, Client::Codex, &a.id, 1).unwrap();
         let prepared = prepare_auto_select(&db, Client::Codex).unwrap();
         assert_eq!(prepared.backups(), [a.id.clone(), b.id.clone()]);
@@ -2470,7 +2487,10 @@ mod tests {
         assert_eq!(s.aggregate.members, [renamed.id.clone()]);
         assert_eq!(s.aggregate.keys[&key], renamed.id);
         assert_eq!(
-            load_dispatch_queue(&db, Client::Codex).unwrap().current.as_deref(),
+            load_dispatch_queue(&db, Client::Codex)
+                .unwrap()
+                .current
+                .as_deref(),
             Some(renamed.id.as_str()),
             "当前线路跟着新 id 走，不是被清空"
         );
@@ -2498,7 +2518,12 @@ mod tests {
         unknown.nominal_rate = None;
         let routes = [cur.clone(), dear.clone(), cheap.clone(), unknown.clone()];
         let topup = HashMap::from([("seven".to_string(), 7.0)]);
-        let backups = [cur.id.clone(), dear.id.clone(), cheap.id.clone(), unknown.id.clone()];
+        let backups = [
+            cur.id.clone(),
+            dear.id.clone(),
+            cheap.id.clone(),
+            unknown.id.clone(),
+        ];
         assert_eq!(
             pricier_backups(&routes, &topup, &cur.id, &backups),
             [dear.id.clone()]
@@ -3622,7 +3647,8 @@ mod tests {
             confirm: 1,
             ..Default::default()
         };
-        let d = qb_station::schedule::dispatch(r, &facts, current, &[], &Default::default(), &params);
+        let d =
+            qb_station::schedule::dispatch(r, &facts, current, &[], &Default::default(), &params);
         next_upstream(&d, current)
     }
 

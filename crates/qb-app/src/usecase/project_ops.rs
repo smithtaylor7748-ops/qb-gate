@@ -393,7 +393,12 @@ mod tests {
         let changed = clear_current(&db, Client::Codex).unwrap();
         assert!(changed.warnings.is_empty(), "{:?}", changed.warnings);
         assert!(!changed.view.current.contains_key("codex"));
-        assert!(db.find::<Project>(TABLE, &a).unwrap().unwrap().slots.contains_key("codex"));
+        assert!(db
+            .find::<Project>(TABLE, &a)
+            .unwrap()
+            .unwrap()
+            .slots
+            .contains_key("codex"));
         // 没有当前项目时再点一次：什么都不存、不报错。
         let again = clear_current(&db, Client::Codex).unwrap();
         assert!(again.warnings.is_empty());

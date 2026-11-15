@@ -665,7 +665,10 @@ mod tests {
             ("fallback", Tier::Fallback),
             ("faulty", Tier::Faulty),
         ] {
-            assert_eq!(serde_json::from_str::<Tier>(&format!("\"{raw}\"")).unwrap(), tier);
+            assert_eq!(
+                serde_json::from_str::<Tier>(&format!("\"{raw}\"")).unwrap(),
+                tier
+            );
             assert_eq!(serde_json::to_string(&tier).unwrap(), format!("\"{raw}\""));
         }
         assert!(serde_json::from_str::<Tier>(r#""mystery""#).is_err());
@@ -682,14 +685,7 @@ mod tests {
             row("c", Some(0.60)),
         ]);
         let prev = ["c".to_string(), "b".to_string()];
-        let out = dispatch(
-            &close,
-            &f,
-            Some("a"),
-            &prev,
-            &DispatchMemory::default(),
-            &p,
-        );
+        let out = dispatch(&close, &f, Some("a"), &prev, &DispatchMemory::default(), &p);
         assert_eq!(out.order, ["a", "c", "b"]);
         // 差得多（1 个样本就够）：纠正。
         let far = ranking(vec![
