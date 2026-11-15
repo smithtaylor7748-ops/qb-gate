@@ -695,14 +695,19 @@ pub fn stop_auto_select(db: &Repository, client: Client) -> Result<Schedule> {
     let mut schedule = load_schedule(db, client)?;
     schedule.enabled = false;
     schedule.last_note.clear();
-    let mut queue = load_dispatch_queue(db, client)?;
-    queue.clear_round();
     let key = schedule_key(client)?;
     db.transaction(|| {
-        db.put(DISPATCH_TABLE, &key, &queue)?;
+        clear_round(db, client)?;
         db.put(SCHEDULE_TABLE, &key, &schedule)
     })?;
     Ok(schedule)
+}
+
+/// 自动选线这一轮的记录（排出的顺序、防抖记忆、告警）作废。当前线路不动。
+pub fn clear_round(db: &Repository, client: Client) -> Result<()> {
+    let mut queue = load_dispatch_queue(db, client)?;
+    queue.clear_round();
+    db.put(DISPATCH_TABLE, &schedule_key(client)?, &queue)
 }
 
 /// 动作日志落在哪张表（迁移 7）。
@@ -1748,6 +1753,20 @@ pub fn remember_current(
     db.put(DISPATCH_TABLE, &schedule_key(client)?, &q)
 }
 
+/// 把这个软件落盘的设置（含备用名单）和自动选线排的顺序（只在它开着时）装进路由器。**不动当前线路。**
+///
+/// 改了设置、删了 / 改名了线路、停了自动选线之后都走这里，免得库和路由器漂开。调用方持着路由锁。
+pub fn reload_policy(db: &Repository, state: &mut RouterState, client: Client) -> Result<()> {
+    state.set_settings(load_router_settings(db, client)?);
+    let scheduled = if load_schedule(db, client)?.enabled {
+        load_dispatch_queue(db, client)?.scheduled_order()
+    } else {
+        Vec::new()
+    };
+    state.set_queue(client, scheduled);
+    Ok(())
+}
+
 /// 把落盘的设置（含备用名单）、当前线路、自动选线上一轮排的顺序装回路由器（面板启动时、路由拉起来之前）。
 ///
 /// 自动选线排的顺序只在它开着时装回去（面板重启后第一跳之前先照它接着用）；关着时备用就按名单顺序。
@@ -1757,14 +1776,8 @@ pub fn remember_current(
 /// 而不是悄悄换成另一条（那是替使用者做决定）。
 pub fn restore_router(db: &Repository, state: &mut RouterState) -> Result<()> {
     for client in RELAY_CLIENTS {
-        state.set_settings(load_router_settings(db, client)?);
+        reload_policy(db, state, client)?;
         let q = load_dispatch_queue(db, client)?;
-        let scheduled = if load_schedule(db, client)?.enabled {
-            q.scheduled_order()
-        } else {
-            Vec::new()
-        };
-        state.set_queue(client, scheduled);
         if state.current(client).is_none() && state.pending(client).is_none() {
             if let Some(id) = q.current {
                 state.set_now(client, id);

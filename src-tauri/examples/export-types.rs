@@ -308,6 +308,12 @@ fn main() {
         qb_gate_lib::router::AggregateSettings::export_all_to(&root)?;
         qb_gate_lib::router::AggregateModel::export_all_to(&root)?;
         qb_gate_lib::router::DispatchQueue::export_all_to(&root)?;
+        // 选线三个概念（2026-11-14）：下一发实际顺序、最近一次聚合直达。
+        qb_gate_lib::router::RoutePlan::export_all_to(&root)?;
+        qb_gate_lib::router::PlanStep::export_all_to(&root)?;
+        qb_gate_lib::router::PlanRole::export_all_to(&root)?;
+        qb_gate_lib::router::PlanSkip::export_all_to(&root)?;
+        qb_gate_lib::router::AggregateHit::export_all_to(&root)?;
         qb_gate_lib::router::RectifierSwitches::export_all_to(&root)?;
         qb_gate_lib::schedule::BreakerSettings::export_all_to(&root)?;
         qb_gate_lib::schedule::AxisScore::export_all_to(&root)?;
@@ -315,10 +321,9 @@ fn main() {
         qb_gate_lib::schedule::Row::export_all_to(&root)?;
         qb_gate_lib::schedule::Ranking::export_all_to(&root)?;
         qb_gate_lib::schedule::Schedule::export_all_to(&root)?;
-        // 中转站重构阶段 2：派单（分档、防抖、钉住）与测活（死活、速度、花了多少）。
+        // 中转站重构阶段 2：派单（分档、防抖）与测活（死活、速度、花了多少）。钉住 2026-11-14 删了。
         qb_gate_lib::schedule::DispatchParams::export_all_to(&root)?;
         qb_gate_lib::schedule::Tier::export_all_to(&root)?;
-        qb_gate_lib::schedule::Pin::export_all_to(&root)?;
         qb_gate_lib::schedule::DispatchMemory::export_all_to(&root)?;
         qb_gate_lib::schedule::DispatchRow::export_all_to(&root)?;
         qb_gate_lib::schedule::liveness::ProbeAttempt::export_all_to(&root)?;
@@ -328,6 +333,9 @@ fn main() {
         qb_gate_lib::schedule::liveness::SchedulerAction::export_all_to(&root)?;
         qb_app::usecase::station_liveness::LineLiveness::export_all_to(&root)?;
         qb_gate_lib::commands::station::DispatchView::export_all_to(&root)?;
+        // 手动「重新检测」：免费的先发，花钱的给预估、点头后再发（C6）。
+        qb_gate_lib::commands::station::ProbeNowResult::export_all_to(&root)?;
+        qb_gate_lib::commands::station::PaidProbePlan::export_all_to(&root)?;
         // 站点的备用地址与测速（中转站重构阶段 4，多端点）。
         qb_gate_lib::commands::station::EndpointTestView::export_all_to(&root)?;
         // 共存型工具（阶段 4）。
@@ -365,6 +373,10 @@ fn main() {
         qb_gate_lib::commands::station::ProbeResult::export_all_to(&root)?;
         qb_gate_lib::commands::station::ClientConfig::export_all_to(&root)?;
         qb_gate_lib::commands::station::RouterStatus::export_all_to(&root)?;
+        // 选线全貌与「设为当前」的结果（2026-11-14）。
+        qb_gate_lib::commands::station::SelectionView::export_all_to(&root)?;
+        qb_gate_lib::commands::station::CurrentPaused::export_all_to(&root)?;
+        qb_gate_lib::commands::station::SetCurrentResult::export_all_to(&root)?;
         // 本机路由的网络设置（R6）：监听范围、路由口令、出站代理（去掉了用户名密码）。
         qb_gate_lib::commands::station::RouterNetworkView::export_all_to(&root)?;
         qb_gate_lib::commands::station::RouteHealthView::export_all_to(&root)?;

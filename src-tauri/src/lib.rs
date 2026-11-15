@@ -214,7 +214,7 @@ pub fn run() {
             commands::station::station_turnstate_disable,
             commands::quality_check::quality_check_run,
             commands::quality_check::quality_check_cancel,
-            commands::station::station_select_route,
+            commands::station::station_set_current,
             // 本机路由每个软件一份的设置与派单顺序（2026-10-24，中转站重构阶段 1）。
             commands::station::station_router_settings,
             commands::station::station_router_settings_save,
@@ -262,7 +262,6 @@ pub fn run() {
             commands::station::station_route_retest,
             commands::station::station_dispatch_view,
             commands::station::station_probe_now,
-            commands::station::station_pin,
             commands::station::station_probe_settings_save,
             // 本机路由的网络设置（R6）：监听范围与路由口令、中转线路的出站代理。
             commands::station::station_router_network,

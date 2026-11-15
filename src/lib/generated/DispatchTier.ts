@@ -2,5 +2,8 @@
 
 /**
  * 档位。**数字小的排前面。** TS 那边叫 `DispatchTier`。
+ *
+ * `Deserialize` 是手写的：旧数据里有 `"pinned"`（「钉住」档，已删），按合格档读。不用 `#[serde(alias)]` ——
+ * ts-rs 认不出它，每编一次都打一行警告。
  */
-export type DispatchTier = "pinned" | "qualified" | "fallback" | "faulty";
+export type DispatchTier = "qualified" | "fallback" | "faulty";

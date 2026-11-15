@@ -184,7 +184,8 @@ impl RouterState {
         Ok(())
     }
 
-    /// 同步发包入口。后台探测不排队，和真实流量共用容量/RPM；手动探测可显式指定非当前线。
+    /// 同步发包入口。后台探测不排队，和真实流量共用容量/RPM。`require_permission` = 只许测当前线路和备用线路
+    /// （手动「重新检测」和自动选线的测活都要；自动选线的另外由调用方核「它还开着」）。
     pub fn admit_probe(
         state: &Arc<Mutex<Self>>,
         client: Client,
@@ -213,9 +214,6 @@ impl RouterState {
                 && live.model_map == source.model_map
                 && live.model_exact == source.model_exact
         }) {
-            return None;
-        }
-        if require_permission && !s.settings(client).has_backups() {
             return None;
         }
         s.try_admit(
