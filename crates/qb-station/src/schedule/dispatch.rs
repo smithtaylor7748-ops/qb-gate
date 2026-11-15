@@ -1,16 +1,19 @@
-//! 派单：一个软件的线路排成一个队列 —— 第一条是当前上游（p1），后面是失败时依次改用的热备。
+//! 派单：自动选线在「当前线路 + 备用线路」里排一个队列 —— 第一条是它定的当前线路（p1），后面是失败时依次改用的备用。
 //!
 //! 改写自 sub2guard v2 的 `scheduler/rank.py` 的 `decide`（中转站重构阶段 2），
 //! 接到 QB Gate 自己的排序上（使用者定的「分档 + 档内按勾选项」，交接文档 §1.2）：
 //!
 //! | 档 | 是谁 | sub2guard 里对应 |
 //! |---|---|---|
-//! | 钉住 | 使用者手动选的那条，4 小时内（除非它挂了） | `override = "pin"` + 人工保护 4 小时 |
 //! | 合格 | 没熔断、测活没判死、过了全部底线 | 不亏钱 |
 //! | 兜底 | 没过某条底线（**不拉黑**，照样留在队列里接失败切换） | 亏钱的「照样开着兜底」 |
 //! | 故障 | 熔断中，或测活判死 | `state = down` |
 //!
 //! 档内按 [`rank`](super::rank) 的最弱项总分排（勾的「便宜 / 快 / 稳」）。
+//!
+//! 原来还有一档「钉住」（调度开着时手动选的线钉 4 小时，sub2guard 的 `override = "pin"`），2026-11-14 删了：
+//! 它就是「设为当前」的另一个名字，只是只在调度开着时出现、过 4 小时又自己失效。现在手动指定只有「设为当前」，
+//! 而且它会关掉自动选线 —— 不存在「自动选线开着、又有一条人手钉着」的状态。旧数据里的 `pinned` 按合格档读。
 //!
 //! # ⛔ 防抖只有这一道
 //!
@@ -21,7 +24,6 @@
 //!
 //! # 换第一条的规矩（照 sub2guard，加上 QB Gate 自己的那条）
 //!
-//! - 钉住的那条：直接当第一（它挂了就不算钉住）。
 //! - 现任掉档了（熔断 / 判死 / 没过底线）而有**合格**的：立刻换，不谈防抖。
 //! - ⛔ **兜底和故障档的线永远不会被换上来当第一**（CLAUDE.md「熔断中或不合格的线不当第一」）。
 //!   没有合格的就留着现任 —— 本机路由每一发自己会跳过熔断着的线、改用队列里的下一条，这里不必冒险。
@@ -78,20 +80,36 @@ impl Default for DispatchParams {
 }
 
 /// 档位。**数字小的排前面。** TS 那边叫 `DispatchTier`。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
+///
+/// `Deserialize` 是手写的：旧数据里有 `"pinned"`（「钉住」档，已删），按合格档读。不用 `#[serde(alias)]` ——
+/// ts-rs 认不出它，每编一次都打一行警告。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, TS)]
 #[ts(export, rename = "DispatchTier")]
 #[serde(rename_all = "kebab-case")]
 pub enum Tier {
-    Pinned,
     Qualified,
     Fallback,
     Faulty,
 }
 
+impl<'de> Deserialize<'de> for Tier {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let raw = String::deserialize(d)?;
+        match raw.as_str() {
+            "qualified" | "pinned" => Ok(Tier::Qualified),
+            "fallback" => Ok(Tier::Fallback),
+            "faulty" => Ok(Tier::Faulty),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["qualified", "fallback", "faulty"],
+            )),
+        }
+    }
+}
+
 impl Tier {
     pub fn label(self) -> &'static str {
         match self {
-            Tier::Pinned => "钉住",
             Tier::Qualified => "合格",
             Tier::Fallback => "兜底",
             Tier::Faulty => "故障",
@@ -112,14 +130,6 @@ pub struct LineFacts {
     pub mapping_missing: Vec<String>,
     /// 给界面的显示名（站点 · 分组）。
     pub label: String,
-}
-
-/// 钉住：使用者手动选的那条，到什么时候为止。TS 那边叫 `DispatchPin`。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[ts(export, rename = "DispatchPin")]
-pub struct Pin {
-    pub route_id: String,
-    pub until_ms: i64,
 }
 
 /// 防抖的记忆（存在派单队列里，跨轮带着）。
@@ -224,22 +234,15 @@ fn inverted(seq: &[&Line], params: &DispatchParams) -> bool {
 /// 排一轮派单。
 ///
 /// - `ranking`：这个软件这一轮 [`rank`](super::rank) 的结果（**不带 incumbent**，见模块头）。
-/// - `incumbent`：当前上游；`previous`：上一轮的队列（热备的相对顺序要照它）。
-/// - `pin`：钉住的那条（过期了的调用方先去掉也行，这里也查）。
-#[allow(clippy::too_many_arguments)]
+/// - `incumbent`：当前线路；`previous`：上一轮排出的顺序（备用的相对顺序要照它；第一次排就传备用名单的顺序）。
 pub fn dispatch(
     ranking: &Ranking,
     facts: &HashMap<String, LineFacts>,
     incumbent: Option<&str>,
     previous: &[String],
-    pin: Option<&Pin>,
     memory: &DispatchMemory,
     params: &DispatchParams,
-    now_ms: i64,
 ) -> Dispatch {
-    let pinned_id = pin
-        .filter(|p| now_ms < p.until_ms)
-        .map(|p| p.route_id.as_str());
     let label = |id: &str| {
         facts
             .get(id)
@@ -258,8 +261,6 @@ pub fn dispatch(
                 (Tier::Faulty, "熔断中".to_string())
             } else if let Some(why) = &f.probe_down {
                 (Tier::Faulty, why.clone())
-            } else if pinned_id == Some(row.route_id.as_str()) {
-                (Tier::Pinned, "你手动选的，钉住".to_string())
             } else if !row.failed_floors.is_empty() {
                 let misses: Vec<String> = row
                     .failed_floors
@@ -312,10 +313,6 @@ pub fn dispatch(
     let best = 0usize;
     let note;
     let first: usize = match inc {
-        _ if lines[best].tier == Tier::Pinned => {
-            note = format!("钉住的「{}」", label(lines[best].id));
-            best
-        }
         None => {
             // 还没有当前上游：挑最好的那条（哪一档都行 —— 没有第一条，客户端每一发都是「还没选上游」）。
             note = format!("选了「{}」", label(lines[best].id));
@@ -437,19 +434,9 @@ pub fn dispatch(
         ));
     }
     if lines.len() == 1 {
-        alerts.push("只有 1 条线，没有备份：它一坏这个软件就停。多加几条线，调度才有得挑".into());
-    }
-    if let Some(id) = pin
-        .filter(|p| now_ms < p.until_ms)
-        .map(|p| p.route_id.as_str())
-    {
-        if let Some(l) = lines.iter().find(|l| l.id == id && l.tier == Tier::Faulty) {
-            alerts.push(format!(
-                "钉住的「{}」{}，这一轮没按钉住派",
-                label(id),
-                l.reason
-            ));
-        }
+        alerts.push(
+            "只有 1 条线，没有备用：它一坏这个软件就停。多勾几条备用线路，自动选线才有得挑".into(),
+        );
     }
     for (id, f) in facts {
         if !f.mapping_missing.is_empty() && lines.iter().any(|l| l.id == id) {
@@ -487,11 +474,10 @@ pub fn dispatch(
 #[cfg(test)]
 mod tests {
     //! 改写自 sub2guard v2 的 `tests/scheduler/test_rank.py`：换人防抖、掉档立刻换、兜底不当第一、
-    //! 钉住、热备不来回改、永不全关、告警。粘性会话回收那一组是 Sub2API 专属的，不搬（交接文档 §4.2）。
+    //! 热备不来回改、永不全关、告警。粘性会话回收那一组是 Sub2API 专属的，不搬（交接文档 §4.2）。
+    //! 「钉住」那一条随钉住一起删了（2026-11-14）。
     use super::super::rank::Row;
     use super::*;
-
-    const NOW: i64 = 1_000_000_000;
 
     fn row(id: &str, score: Option<f64>) -> Row {
         Row {
@@ -537,7 +523,7 @@ mod tests {
         inc: Option<&str>,
         mem: &DispatchMemory,
     ) -> Dispatch {
-        dispatch(r, f, inc, &[], None, mem, &DispatchParams::default(), NOW)
+        dispatch(r, f, inc, &[], mem, &DispatchParams::default())
     }
 
     #[test]
@@ -671,54 +657,18 @@ mod tests {
     }
 
     #[test]
-    fn a_pin_goes_first_unless_the_pinned_line_is_dead() {
-        let r = ranking(vec![row("a", Some(1.0)), row("b", Some(0.2))]);
-        let f = facts(&[("a", 5, 1), ("b", 5, 1)]);
-        let pin = Pin {
-            route_id: "b".into(),
-            until_ms: NOW + 1,
-        };
-        let p = DispatchParams::default();
-        let out = dispatch(
-            &r,
-            &f,
-            Some("a"),
-            &[],
-            Some(&pin),
-            &DispatchMemory::default(),
-            &p,
-            NOW,
-        );
-        assert_eq!(out.order[0], "b");
-        assert_eq!(out.rows[0].tier, Tier::Pinned);
-        // 过期了就不算。
-        let out = dispatch(
-            &r,
-            &f,
-            Some("b"),
-            &[],
-            Some(&pin),
-            &DispatchMemory::default(),
-            &p,
-            NOW + 2,
-        );
-        assert_ne!(out.rows[0].tier, Tier::Pinned);
-        // 钉住的那条熔断了：这一轮不按钉住派，并且告警。
-        let mut dead = row("b", Some(0.2));
-        dead.tripped = true;
-        let r2 = ranking(vec![row("a", Some(1.0)), dead]);
-        let out = dispatch(
-            &r2,
-            &f,
-            Some("b"),
-            &[],
-            Some(&pin),
-            &DispatchMemory::default(),
-            &p,
-            NOW,
-        );
-        assert_eq!(out.order[0], "a");
-        assert!(out.alerts.iter().any(|a| a.contains("钉住的")));
+    fn old_pinned_rows_read_as_qualified_and_unknown_tiers_are_refused() {
+        let t: Tier = serde_json::from_str(r#""pinned""#).unwrap();
+        assert_eq!(t, Tier::Qualified);
+        for (raw, tier) in [
+            ("qualified", Tier::Qualified),
+            ("fallback", Tier::Fallback),
+            ("faulty", Tier::Faulty),
+        ] {
+            assert_eq!(serde_json::from_str::<Tier>(&format!("\"{raw}\"")).unwrap(), tier);
+            assert_eq!(serde_json::to_string(&tier).unwrap(), format!("\"{raw}\""));
+        }
+        assert!(serde_json::from_str::<Tier>(r#""mystery""#).is_err());
     }
 
     #[test]
@@ -737,10 +687,8 @@ mod tests {
             &f,
             Some("a"),
             &prev,
-            None,
             &DispatchMemory::default(),
             &p,
-            NOW,
         );
         assert_eq!(out.order, ["a", "c", "b"]);
         // 差得多（1 个样本就够）：纠正。
@@ -749,16 +697,7 @@ mod tests {
             row("b", Some(0.9)),
             row("c", Some(0.3)),
         ]);
-        let out = dispatch(
-            &far,
-            &f,
-            Some("a"),
-            &prev,
-            None,
-            &DispatchMemory::default(),
-            &p,
-            NOW,
-        );
+        let out = dispatch(&far, &f, Some("a"), &prev, &DispatchMemory::default(), &p);
         assert_eq!(out.order, ["a", "b", "c"]);
     }
 

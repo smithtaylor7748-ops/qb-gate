@@ -12,18 +12,33 @@ import type { SessionRecoverySettings } from "./SessionRecoverySettings";
  * 一个软件的本机路由设置（cc-switch 的 `AppProxyConfig`，每个 app 一行）。
  *
  * 存在 `router_settings` 表里，一个软件一行；没存过就是 [`RouterSettings::for_client`] 那一份。
+ *
+ * # 选线只有三个概念（2026-11-14）
+ *
+ * | 概念 | 在哪 |
+ * |---|---|
+ * | 当前线路 | 派单队列的 `current`（[`DispatchQueue`]），一个软件一条 |
+ * | 备用线路 | 这里的 [`allowed_routes`](Self::allowed_routes)：使用者勾的、按他排的顺序。**空 = 严格单线** |
+ * | 自动选线 | `schedule::Schedule`：一个开关 + 偏好，只在「当前线路 + 备用线路」里挑首选 |
+ *
+ * 能访问哪些线路只由「当前线路 + 备用名单」定。[`routing_mode`](Self::routing_mode) 只是存储字段，
+ * 永远跟「名单空不空」对得上 —— 对不上的由 [`normalized`](Self::normalized) 按不扩大许可的方向理顺。
  */
 export type RouterSettings = { client: Client, 
 /**
- * 唯一的跨线路授权开关。旧配置没有此字段时只用当前线路；旧 auto_failover 不构成授权。
+ * 存储字段：`pool` = 有备用线路，`selected` = 没有（严格单线）。**不是一个独立的开关** ——
+ * 逻辑一律问 [`has_backups`](Self::has_backups)。存的时候两者对不上：`selected` 赢（名单清空）。
+ * 旧配置没有此字段时只用当前线路；旧 auto_failover 不构成授权。
  */
 routing_mode: RoutingMode, 
 /**
- * 使用者明确允许的线路，顺序也是未启用智能排序时的备用顺序。新增线路不会自动加入。
+ * 备用线路：使用者明确勾选的名单，顺序就是备用顺序（**只存这一份**；自动选线排出的顺序不改它）。
+ * 新增线路不会自动加入。当前线路可以在里面，也可以不在。
  */
 allowed_routes: Array<string>, 
 /**
- * 授权池内优先/备用，或按当前并发占用分摊；仅 pool 生效。
+ * 容量分流怎么分：优先当前线路、满了才去备用，或按当前并发占用分摊。只在开了
+ * [`overflow_to_pool`](AdmissionSettings::overflow_to_pool) 时有意义；分流关着时一律是 `priority`。
  */
 pool_strategy: PoolStrategy, 
 /**

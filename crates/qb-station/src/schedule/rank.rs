@@ -734,5 +734,20 @@ mod tests {
         assert_eq!(Prefs::batch().floors.min_success_rate, Some(0.95));
         assert_eq!(Prefs::chat().axes, vec![Axis::Fast]);
         assert_eq!(Prefs::chat().floors.min_success_rate, Some(0.99));
+        assert_eq!(Prefs::saving().axes, vec![Axis::Cheap]);
+        assert_eq!(Prefs::saving().floors.min_success_rate, Some(0.95));
+    }
+
+    /// 新建的自动选线默认省钱优先（2026-11-14）；存过的偏好照原样读回来。
+    #[test]
+    fn a_new_schedule_defaults_to_saving_money_and_stored_prefs_are_kept() {
+        let fresh = super::super::Schedule::new(qb_contract::domain::Client::Codex);
+        assert!(!fresh.enabled);
+        assert_eq!(fresh.prefs, Prefs::saving());
+        let mut stored = fresh.clone();
+        stored.prefs = Prefs::coding();
+        let back: super::super::Schedule =
+            serde_json::from_str(&serde_json::to_string(&stored).unwrap()).unwrap();
+        assert_eq!(back.prefs, Prefs::coding());
     }
 }
