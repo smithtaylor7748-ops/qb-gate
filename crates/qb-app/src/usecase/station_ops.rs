@@ -30,7 +30,7 @@ use qb_station::router::{
 use qb_station::schedule::liveness::{self, ProbeAttempt, ProbeState, SchedulerAction};
 use qb_station::schedule::{
     cheap_values, cost_per_token, rank, Candidate, CheapBasis, CheapInput, Dispatch, LineFacts,
-    Pin, Prefs, Ranking, Schedule,
+    Prefs, Ranking, Schedule,
 };
 use qb_station::station::audit::{AuditRound, Check, CheckKind};
 use qb_station::station::endpoints::StationEndpoints;
@@ -621,6 +621,9 @@ pub struct Round {
 }
 
 /// 排一轮派单：健康度 + 证据 → 排序（不带现任）→ 分档、防抖、热备。**不联网、不碰路由器。**
+///
+/// `routes` 是自动选线这一跳的范围（当前线路 + 备用名单，[`auto_select_pool`]）；`backups` 是备用名单的顺序 ——
+/// 自动选线第一次排（上一轮没有记录）时，备用的相对顺序照它。
 #[allow(clippy::too_many_arguments)]
 pub fn plan_round(
     routes: &[Route],
@@ -628,6 +631,7 @@ pub fn plan_round(
     breaker_state: &HashMap<String, (f64, bool)>,
     schedule: &Schedule,
     queue: &DispatchQueue,
+    backups: &[String],
     incumbent: Option<&str>,
     catalog: &pricing::Catalog,
     topup: &HashMap<String, f64>,
@@ -648,15 +652,17 @@ pub fn plan_round(
         speed_ms.as_ref(),
     );
     let facts = line_facts(routes, health, evidence, speeds.as_ref(), now_ms);
+    let previous = match queue.scheduled_order() {
+        order if order.is_empty() => backups.to_vec(),
+        order => order,
+    };
     let dispatch = qb_station::schedule::dispatch(
         &ranking,
         &facts,
         incumbent,
-        &queue.order,
-        queue.pin.as_ref(),
+        &previous,
         &queue.memory,
         &schedule.dispatch,
-        now_ms,
     );
     Round {
         ranking,
@@ -666,10 +672,8 @@ pub fn plan_round(
     }
 }
 
-/// 调度开着时手动选的线钉多久。
-pub const PIN_MS: i64 = 4 * 3600 * 1000;
-
-/// 把这一轮派单存进派单队列（顺序、防抖记忆、每一行、告警），过期的钉住顺手清掉。
+/// 把这一轮派单存进派单队列（防抖记忆、按排出的顺序的每一行、告警）。**备用名单不动** ——
+/// 排出的顺序只是这一轮的，关掉自动选线就回到名单顺序。
 pub fn save_dispatch(
     db: &Repository,
     client: Client,
@@ -677,43 +681,28 @@ pub fn save_dispatch(
     now_ms: i64,
 ) -> Result<DispatchQueue> {
     let mut q = load_dispatch_queue(db, client)?;
-    q.order = dispatch.order.clone();
     q.memory = dispatch.memory.clone();
     q.rows = dispatch.rows.clone();
     q.alerts = dispatch.alerts.clone();
-    if q.pin.as_ref().is_some_and(|p| p.until_ms <= now_ms) {
-        q.pin = None;
-    }
     q.updated_ms = now_ms;
     db.put(DISPATCH_TABLE, &schedule_key(client)?, &q)?;
     Ok(q)
 }
 
-/// 钉住一条线 [`PIN_MS`]（`None` = 取消钉住）。只收这个软件自己的线。
-pub fn set_pin(
-    db: &Repository,
-    client: Client,
-    route_id: Option<&str>,
-    now_ms: i64,
-) -> Result<DispatchQueue> {
-    let mut q = load_dispatch_queue(db, client)?;
-    q.pin = match route_id {
-        Some(id) => {
-            if !id.starts_with(&format!("{}\u{1f}", schedule_key(client)?)) {
-                return Err(GateError::Other(format!("钉住的线不是这个软件的（{id}）")));
-            }
-            Some(Pin {
-                route_id: id.to_string(),
-                until_ms: now_ms + PIN_MS,
-            })
-        }
-        None => None,
-    };
-    // 钉住换了人，防抖的记忆作废（那是跟上一个现任比出来的）。
-    q.memory = Default::default();
-    q.updated_ms = now_ms;
-    db.put(DISPATCH_TABLE, &schedule_key(client)?, &q)?;
-    Ok(q)
+/// 关掉自动选线：开关落成关、结论清掉、这一轮的排序记录作废。当前线路和备用名单都不动 ——
+/// 停的意思是「以后不替你换了」，不是「把你换回去」。
+pub fn stop_auto_select(db: &Repository, client: Client) -> Result<Schedule> {
+    let mut schedule = load_schedule(db, client)?;
+    schedule.enabled = false;
+    schedule.last_note.clear();
+    let mut queue = load_dispatch_queue(db, client)?;
+    queue.clear_round();
+    let key = schedule_key(client)?;
+    db.transaction(|| {
+        db.put(DISPATCH_TABLE, &key, &queue)?;
+        db.put(SCHEDULE_TABLE, &key, &schedule)
+    })?;
+    Ok(schedule)
 }
 
 /// 动作日志落在哪张表（迁移 7）。
@@ -812,6 +801,34 @@ pub fn topup_ratios(db: &Repository) -> HashMap<String, f64> {
             let v = p.topup_per_usd();
             (p.id, v)
         })
+        .collect()
+}
+
+/// 备用名单里比当前线路贵的那几条（主页提示「名单里有更贵的线」用）。
+///
+/// 两边都按「真实倍率（标称 × 检验出的 mult；没检验过就是标称）× 充值比例」折成「每 $1 官方牌价付几元」比 ——
+/// 跟自动选线那条「倍率不高于」底线比的是同一个数。哪一边没有倍率就比不出来，那一条不算（不猜）。
+pub fn pricier_backups(
+    routes: &[Route],
+    topup: &HashMap<String, f64>,
+    current: &str,
+    backups: &[String],
+) -> Vec<String> {
+    let rate = |id: &str| {
+        routes
+            .iter()
+            .find(|r| r.id == id)
+            .and_then(|r| r.rate_for_ranking().map(|v| v * topup_for(topup, &r.station_id)))
+            .filter(|v| v.is_finite() && *v > 0.0)
+    };
+    let Some(base) = rate(current) else {
+        return Vec::new();
+    };
+    backups
+        .iter()
+        .filter(|id| id.as_str() != current)
+        .filter(|id| rate(id).is_some_and(|v| v > base * (1.0 + 1e-9)))
+        .cloned()
         .collect()
 }
 
@@ -1230,8 +1247,8 @@ pub fn load_schedule(db: &Repository, client: Client) -> Result<Schedule> {
         .find(SCHEDULE_TABLE, &schedule_key(client)?)?
         .unwrap_or_else(|| Schedule::new(client));
     schedule.client = client;
-    // 旧版 enabled=true 不代表同意跨站；只用当前线时后台始终视为关闭。
-    if !pool_ready(db, client)? {
+    // 旧版 enabled=true 不代表同意跨站；没有备用线路（严格单线）、没有当前线路时后台始终视为关闭。
+    if !auto_select_ready(db, client)? {
         schedule.enabled = false;
         schedule.last_note.clear();
     }
@@ -1240,31 +1257,70 @@ pub fn load_schedule(db: &Repository, client: Client) -> Result<Schedule> {
 
 /// 存一个软件的智能调度（主键取 `schedule.client`）。
 pub fn save_schedule(db: &Repository, schedule: &Schedule) -> Result<()> {
-    if schedule.enabled && !pool_ready(db, schedule.client)? {
+    if schedule.enabled && !auto_select_ready(db, schedule.client)? {
         return Err(GateError::Other(
-            "先选择当前线路，并将它加入明确授权的线路池，才能开启智能调度".into(),
+            "自动选线要先有一条当前线路，并勾上至少一条备用线路".into(),
         ));
     }
     db.put(SCHEDULE_TABLE, &schedule_key(schedule.client)?, schedule)
 }
 
-fn pool_ready(db: &Repository, client: Client) -> Result<bool> {
+/// 自动选线开得起来没有：有当前线路（还在库里、不是官方线），而且勾了备用线路。
+fn auto_select_ready(db: &Repository, client: Client) -> Result<bool> {
     let settings = load_router_settings(db, client)?;
-    let selected = load_dispatch_queue(db, client)?.current;
-    Ok(settings.routing_mode == RoutingMode::Pool
-        && selected.is_some_and(|id| {
-            settings.allowed_routes.contains(&id)
-                && db
-                    .find::<Route>("station_routes", &id)
-                    .is_ok_and(|r| r.is_some())
-        }))
+    let current = load_dispatch_queue(db, client)?.current;
+    Ok(settings.has_backups() && current.is_some_and(|id| current_is_a_relay_route(db, &id)))
+}
+
+fn current_is_a_relay_route(db: &Repository, id: &str) -> bool {
+    id != crate::local_router::OFFICIAL_CODEX_ROUTE_ID
+        && db
+            .find::<Route>("station_routes", id)
+            .is_ok_and(|r| r.is_some())
+}
+
+/// 自动选线在哪几条里挑：当前线路 + 备用名单（当前线路打头，去重）。
+pub fn auto_select_pool(settings: &RouterSettings, current: Option<&str>) -> Vec<String> {
+    let mut pool: Vec<String> = current.map(str::to_string).into_iter().collect();
+    for id in settings.backups() {
+        if !pool.contains(id) {
+            pool.push(id.clone());
+        }
+    }
+    pool
+}
+
+/// 打开自动选线之前：当前线路不在备用名单里，就把它放进名单最前面，返回存下的设置。
+///
+/// 自动选线在「当前线路 + 备用线路」里挑。当前线路要是不在名单里，自动选线一把首选换走，它就不再是当前、
+/// 也不在名单里，再也回不来了 —— 开的那一刻把它放进名单，挑的范围就固定是开的时候看到的那几条。
+/// 这是打开自动选线这个动作的一部分（使用者点的），不是后台自己改名单。
+pub fn prepare_auto_select(db: &Repository, client: Client) -> Result<RouterSettings> {
+    let mut settings = load_router_settings(db, client)?;
+    if !settings.has_backups() {
+        return Err(GateError::Other(
+            "先勾上至少一条备用线路，自动选线才有得挑".into(),
+        ));
+    }
+    let current = load_dispatch_queue(db, client)?.current;
+    let Some(current) = current.filter(|id| current_is_a_relay_route(db, id)) else {
+        return Err(GateError::Other(
+            "先给这个软件设一条当前线路（官方线不参加自动选线），再开自动选线".into(),
+        ));
+    };
+    if !settings.allowed_routes.contains(&current) {
+        settings.allowed_routes.insert(0, current);
+        settings.validate().map_err(GateError::Other)?;
+        db.put(ROUTER_SETTINGS_TABLE, &schedule_key(client)?, &settings)?;
+    }
+    Ok(settings)
 }
 
 // ------------------------------------------------------------ 本机路由的设置与派单队列
 
 /// 本机路由每个软件一份的设置落在哪张表（迁移 6）。主键跟调度一样是软件名。
 const ROUTER_SETTINGS_TABLE: &str = "router_settings";
-/// 派单队列（当前那条 + 手动顺序）落在哪张表（迁移 6）。
+/// 派单队列（当前线路 + 自动选线这一轮的记录）落在哪张表（迁移 6）。备用顺序不在这里，在路由设置的名单里。
 const DISPATCH_TABLE: &str = "dispatch_queue";
 
 /// 有中转路径的三个软件。反重力没有（`workspace::reject_if_no_relay_path`）。
@@ -1278,21 +1334,30 @@ pub const RELAY_CLIENTS: [Client; 5] = [
 ];
 
 /// 读一个软件的本机路由设置。**没存过 = 默认那一份**（[`RouterSettings::for_client`]）；
-/// 别的失败照实报（跟 [`load_schedule`] 同一条规矩）。
+/// 别的失败照实报（跟 [`load_schedule`] 同一条规矩）。读回来先理顺（[`RouterSettings::normalized`]）：
+/// 旧版「仅所选线路」+ 名单里留着的那几条不算备用，「分流关 + 优先空闲」按复位后的读。
 pub fn load_router_settings(db: &Repository, client: Client) -> Result<RouterSettings> {
     let mut s: RouterSettings = db
         .find(ROUTER_SETTINGS_TABLE, &schedule_key(client)?)?
         .unwrap_or_else(|| RouterSettings::for_client(client));
     // 主键说了算：存的那一份里 client 写错了也不许串到别的软件上。
     s.client = client;
-    Ok(s)
+    Ok(s.normalized())
 }
 
 /// 存一个软件的本机路由设置。先理顺聚合名单（[`settle_aggregate`]），再 [`RouterSettings::validate`]，
 /// 不合格就整份不存。返回真正存下的那份（聚合模型的 key 是这里分的，界面要读回去）。
+///
+/// 备用名单只收这个软件自己的中转线路（不收官方线），去重、去空，顺序照使用者排的。**不要求当前线路在名单里**：
+/// 名单是「当前线路出故障时依次改用谁」，当前线路自己永远可以用。名单存成空的（严格单线）就顺带关掉自动选线 ——
+/// 它没得挑了；自动选线排的那一轮记录也作废。
 pub fn save_router_settings(db: &Repository, settings: &RouterSettings) -> Result<RouterSettings> {
     let mut settings = settings.clone();
     settle_aggregate(db, &mut settings)?;
+    // 旧版「仅所选线路」带着名单进来：名单不算数（不扩大许可），跟读库时一样理顺。
+    if settings.routing_mode == RoutingMode::Selected {
+        settings.allowed_routes.clear();
+    }
     let mut allowed = Vec::new();
     for id in &settings.allowed_routes {
         let id = id.trim();
@@ -1301,15 +1366,18 @@ pub fn save_router_settings(db: &Repository, settings: &RouterSettings) -> Resul
         }
         let route: Route = db
             .find("station_routes", id)?
-            .ok_or_else(|| GateError::Other("授权池中的线路不存在，请重新选择".into()))?;
+            .ok_or_else(|| GateError::Other("备用名单里的线路不存在，请重新勾选".into()))?;
         if route.client != settings.client || id == crate::local_router::OFFICIAL_CODEX_ROUTE_ID {
             return Err(GateError::Other(
-                "授权池只能包含当前软件的中转线路，不能包含官方账户".into(),
+                "备用线路只能是这个软件自己的中转线路，不能是官方账户".into(),
             ));
         }
         allowed.push(id.to_string());
     }
     settings.allowed_routes = allowed;
+    // 名单非空就是「有备用」：存储字段跟着名单走（旧界面只改名单、不改模式时也对得上）。
+    settings.routing_mode = RoutingMode::Pool;
+    let settings = settings.normalized();
     for id in settings.admission.route_limits.keys() {
         let route: Route = db
             .find("station_routes", id)?
@@ -1322,31 +1390,13 @@ pub fn save_router_settings(db: &Repository, settings: &RouterSettings) -> Resul
     }
     settings.validate().map_err(GateError::Other)?;
     let key = schedule_key(settings.client)?;
-    let mut queue = load_dispatch_queue(db, settings.client)?;
-    if settings.routing_mode == RoutingMode::Pool
-        && !queue
-            .current
-            .as_ref()
-            .is_some_and(|id| settings.allowed_routes.contains(id))
-    {
-        return Err(GateError::Other(
-            "当前线路必须在授权池中；请先选择线路，再保存线路池".into(),
-        ));
-    }
-    queue.order = settings.allowed_routes.clone();
-    if queue
-        .pin
-        .as_ref()
-        .is_some_and(|p| !settings.allowed_routes.contains(&p.route_id))
-    {
-        queue.pin = None;
-    }
-    // 在写入新模式之前读取有效状态，不能让旧库被屏蔽的 enabled=true 随 pool 保存复活。
+    // 在写入新名单之前读取有效状态，不能让旧库被屏蔽的 enabled=true 随这次保存复活。
     let mut schedule = load_schedule(db, settings.client)?;
-    if settings.routing_mode == RoutingMode::Selected {
+    let mut queue = load_dispatch_queue(db, settings.client)?;
+    if !settings.has_backups() {
         schedule.enabled = false;
         schedule.last_note.clear();
-        queue.pin = None;
+        queue.clear_round();
     }
     db.transaction(|| {
         db.put(ROUTER_SETTINGS_TABLE, &key, &settings)?;
@@ -1356,37 +1406,53 @@ pub fn save_router_settings(db: &Repository, settings: &RouterSettings) -> Resul
     Ok(settings)
 }
 
-/// 普通选线只授权所选线路，关闭调度并清除钉住；三项同时落盘后调用方再改内存。
-pub fn select_exclusively(
+/// 「设为当前」的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CurrentChange {
+    /// 这一下顺带关掉了自动选线（它原来开着）。
+    pub auto_select_stopped: bool,
+}
+
+/// 「设为当前」：**只换当前线路**，备用名单一个字都不动（不再像原来那样把范围收回成「仅所选」）。
+///
+/// 自动选线开着时会被关掉：使用者亲手指定了一条，后台不该过 30 秒又替他换回去；返回值如实说「关掉了」。
+/// 原来那个「钉住 4 小时」删了 —— 它就是这件事的另一个名字，只是过一阵子又自己失效。
+/// 当前线路、自动选线开关、这一轮的排序记录在一个事务里落盘，调用方随后再改内存（持锁）。
+pub fn set_current(
     db: &Repository,
     client: Client,
     route_id: &str,
     now_ms: i64,
-) -> Result<RouterSettings> {
-    let mut settings = load_router_settings(db, client)?;
-    settings.routing_mode = RoutingMode::Selected;
+) -> Result<CurrentChange> {
     let mut queue = load_dispatch_queue(db, client)?;
     queue.current = Some(route_id.to_string());
-    queue.pin = None;
     queue.updated_ms = now_ms;
+    // 读的是有效状态：旧库里被屏蔽的 enabled=true 也一并落成关着，不会哪天自己复活。
     let mut schedule = load_schedule(db, client)?;
+    let auto_select_stopped = schedule.enabled;
     schedule.enabled = false;
     schedule.last_note.clear();
+    if auto_select_stopped {
+        queue.clear_round();
+    }
     let key = schedule_key(client)?;
     db.transaction(|| {
-        db.put(ROUTER_SETTINGS_TABLE, &key, &settings)?;
         db.put(DISPATCH_TABLE, &key, &queue)?;
         db.put(SCHEDULE_TABLE, &key, &schedule)
     })?;
-    Ok(settings)
+    Ok(CurrentChange {
+        auto_select_stopped,
+    })
 }
 
-/// 删除线路同时撤销跨线授权与当前选择，绝不自动选择另一条。
+/// 删除线路同时撤销它的一切许可与当前选择，绝不自动选择另一条。
 pub fn remove_route(db: &Repository, id: &str) -> Result<Option<Client>> {
     db.transaction(|| remove_route_in_transaction(db, id))
 }
 
-/// 供线路重命名复用；调用者必须已开启数据库事务并持有运行期路由锁。
+/// 删一条线：从备用名单、发送限制、聚合名单里拿掉；它是当前线路的话当前线路清空（**不改用备用线**，
+/// 下一发如实回「还没选上游」）。当前线路没了、或者备用名单删空了，自动选线跟着停。
+/// 备用名单里别的线留着：使用者再设一条当前线路，它们照旧是备用。调用者必须已开启数据库事务并持有运行期路由锁。
 pub fn remove_route_in_transaction(db: &Repository, id: &str) -> Result<Option<Client>> {
     let Some(route) = db.find::<Route>("station_routes", id)? else {
         return Ok(None);
@@ -1398,27 +1464,55 @@ pub fn remove_route_in_transaction(db: &Repository, id: &str) -> Result<Option<C
     settings.admission.route_limits.remove(id);
     settings.aggregate.members.retain(|r| r != id);
     settings.aggregate.models.remove(id);
+    let settings = settings.normalized();
     let mut queue = load_dispatch_queue(db, client)?;
-    queue.order.retain(|r| r != id);
-    if queue.pin.as_ref().is_some_and(|p| p.route_id == id) {
-        queue.pin = None;
-    }
-    let stop = settings.allowed_routes.is_empty() || queue.current.as_deref() == Some(id);
-    if queue.current.as_deref() == Some(id) {
+    queue.rows.retain(|r| r.route_id != id);
+    let current_gone = queue.current.as_deref() == Some(id);
+    if current_gone {
         queue.current = None;
     }
+    let stop = current_gone || !settings.has_backups();
+    let mut schedule = load_schedule(db, client)?;
     if stop {
-        settings.routing_mode = RoutingMode::Selected;
+        schedule.enabled = false;
+        schedule.last_note.clear();
+        queue.clear_round();
     }
     db.remove("station_routes", id)?;
     db.put(ROUTER_SETTINGS_TABLE, &key, &settings)?;
     db.put(DISPATCH_TABLE, &key, &queue)?;
     if stop {
-        let mut schedule = load_schedule(db, client)?;
-        schedule.enabled = false;
         db.put(SCHEDULE_TABLE, &key, &schedule)?;
     }
     Ok(Some(client))
+}
+
+/// 线路改了站点名 / 分组，id 从 `old` 变成新线路的 id：当前线路、备用名单（原位）、发送限制、聚合名单与它的 key
+/// 都迁到新 id，**不清空**。原来这里按「删掉旧的」处理，于是一改分组当前线路就悄悄没了。
+///
+/// 新线路那一行调用方已经写进去了；这里删掉旧的那一行。调用者必须已开启数据库事务并持有运行期路由锁，
+/// 之后照常 `RouterState::rename_route` + 重装上游。不能换软件（id 第一段）。
+pub fn rename_route_in_transaction(db: &Repository, old: &str, renamed: &Route) -> Result<()> {
+    let Some(prior) = db.find::<Route>("station_routes", old)? else {
+        return Ok(());
+    };
+    if prior.client != renamed.client {
+        return Err(GateError::Other("不能更换线路所属的软件".into()));
+    }
+    if old == renamed.id {
+        return Ok(());
+    }
+    let client = renamed.client;
+    let key = schedule_key(client)?;
+    let mut settings = load_router_settings(db, client)?;
+    settings.rename_route(old, &renamed.id);
+    let settings = settings.normalized();
+    settings.validate().map_err(GateError::Other)?;
+    let mut queue = load_dispatch_queue(db, client)?;
+    queue.rename_route(old, &renamed.id);
+    db.remove("station_routes", old)?;
+    db.put(ROUTER_SETTINGS_TABLE, &key, &settings)?;
+    db.put(DISPATCH_TABLE, &key, &queue)
 }
 
 /// 聚合名单（中转站重构阶段 3）存之前理一遍：
@@ -1628,7 +1722,8 @@ pub async fn test_endpoints(
     futures_util::future::join_all(tasks).await
 }
 
-/// 读一个软件的派单队列。没存过 = 空的（没有上次选中的那条、没有顺序）。
+/// 读一个软件的派单队列。没存过 = 空的（没有当前线路、没有这一轮的记录）。
+/// 旧数据里的 `order`（第二份备用顺序）和 `pin`（钉住）读得进来、不认。
 pub fn load_dispatch_queue(db: &Repository, client: Client) -> Result<DispatchQueue> {
     let mut q: DispatchQueue = db
         .find(DISPATCH_TABLE, &schedule_key(client)?)?
@@ -1637,36 +1732,7 @@ pub fn load_dispatch_queue(db: &Repository, client: Client) -> Result<DispatchQu
     Ok(q)
 }
 
-/// 存派单顺序。**只收这个软件自己的线**（按 `Route::make_id` 的软件前缀认），去重、去空；
-/// 别的软件的线混进来就整份拒绝 —— 换过去等于拿这个软件的请求打别人的 Key。
-pub fn save_dispatch_order(
-    db: &Repository,
-    client: Client,
-    order: Vec<String>,
-    now_ms: i64,
-) -> Result<DispatchQueue> {
-    let prefix = format!("{}\u{1f}", schedule_key(client)?);
-    let mut clean: Vec<String> = Vec::new();
-    for id in order {
-        let id = id.trim().to_string();
-        if id.is_empty() || clean.contains(&id) {
-            continue;
-        }
-        if !id.starts_with(&prefix) {
-            return Err(GateError::Other(format!(
-                "派单顺序里混进了别的软件的线（{id}）：每个软件只能排自己的线"
-            )));
-        }
-        clean.push(id);
-    }
-    let mut q = load_dispatch_queue(db, client)?;
-    q.order = clean;
-    q.updated_ms = now_ms;
-    db.put(DISPATCH_TABLE, &schedule_key(client)?, &q)?;
-    Ok(q)
-}
-
-/// 记下这个软件上次选中的那条（手动选的、调度换过去的都记），面板重启后接着用。
+/// 记下这个软件的当前线路（自动选线换过去的），面板重启后接着用。使用者「设为当前」走 [`set_current`]。
 pub fn remember_current(
     db: &Repository,
     client: Client,
@@ -1682,16 +1748,23 @@ pub fn remember_current(
     db.put(DISPATCH_TABLE, &schedule_key(client)?, &q)
 }
 
-/// 把落盘的设置、派单顺序、上次选中的那条装回路由器（面板启动时、路由拉起来之前）。
+/// 把落盘的设置（含备用名单）、当前线路、自动选线上一轮排的顺序装回路由器（面板启动时、路由拉起来之前）。
 ///
-/// 上次选中的那条**只在这个软件眼下还没选时**装回去 —— 面板开着期间使用者或调度刚选过的，
+/// 自动选线排的顺序只在它开着时装回去（面板重启后第一跳之前先照它接着用）；关着时备用就按名单顺序。
+///
+/// 当前线路**只在这个软件眼下还没选时**装回去 —— 面板开着期间使用者或调度刚选过的，
 /// 不该被库里那份旧的盖掉。那条线后来被删了也照样装回去：下一发如实回 503「还没选上游」，
 /// 而不是悄悄换成另一条（那是替使用者做决定）。
 pub fn restore_router(db: &Repository, state: &mut RouterState) -> Result<()> {
     for client in RELAY_CLIENTS {
         state.set_settings(load_router_settings(db, client)?);
         let q = load_dispatch_queue(db, client)?;
-        state.set_queue(client, q.order);
+        let scheduled = if load_schedule(db, client)?.enabled {
+            q.scheduled_order()
+        } else {
+            Vec::new()
+        };
+        state.set_queue(client, scheduled);
         if state.current(client).is_none() && state.pending(client).is_none() {
             if let Some(id) = q.current {
                 state.set_now(client, id);
@@ -2107,34 +2180,35 @@ mod tests {
     fn router_settings_and_the_dispatch_queue_survive_a_panel_restart() {
         // 原来当前上游只在内存里：面板一重启，客户端下一发收到 503「还没选上游」。
         let root = std::env::temp_dir().join(crate::config_io::id());
-        let a = Route::make_id(Client::Codex, "s", "a");
-        let b = Route::make_id(Client::Codex, "s", "b");
+        let ra = Route::new(Client::Codex, "s", "a");
+        let rb = Route::new(Client::Codex, "s", "b");
+        let (a, b) = (ra.id.clone(), rb.id.clone());
         {
             let db = Repository::open_in(&root).unwrap();
+            for r in [&ra, &rb] {
+                db.put("station_routes", &r.id, r).unwrap();
+            }
             let mut s = load_router_settings(&db, Client::Codex).unwrap();
             assert_eq!(
                 s,
                 RouterSettings::for_client(Client::Codex),
                 "没存过 = 默认那份"
             );
-            s.routing_mode = RoutingMode::Selected;
-            s.max_attempts = 2;
+            s.routing_mode = RoutingMode::Pool;
+            s.allowed_routes = vec![b.clone(), a.clone(), b.clone()];
+            s.max_attempts = 3;
             save_router_settings(&db, &s).unwrap();
-            save_dispatch_order(&db, Client::Codex, vec![b.clone(), a.clone(), b.clone()], 7)
-                .unwrap();
             remember_current(&db, Client::Codex, &a, 8).unwrap();
         }
         let db = Repository::open_in(&root).unwrap();
         let mut state = RouterState::default();
         restore_router(&db, &mut state).unwrap();
-        assert_eq!(
-            state.settings(Client::Codex).routing_mode,
-            RoutingMode::Selected
-        );
-        assert_eq!(state.settings(Client::Codex).max_attempts, 2);
+        let restored = state.settings(Client::Codex);
+        assert_eq!(restored.routing_mode, RoutingMode::Pool);
+        assert_eq!(restored.backups(), [b.clone(), a.clone()], "重复的那条没去掉、顺序照排的");
+        assert_eq!(restored.max_attempts, 3, "存过的值不动");
         assert_eq!(state.current(Client::Codex).as_deref(), Some(a.as_str()));
-        let q = load_dispatch_queue(&db, Client::Codex).unwrap();
-        assert_eq!(q.order, [b.clone(), a.clone()], "重复的那条没去掉");
+        assert!(state.queue(Client::Codex).is_empty(), "自动选线关着：备用就按名单顺序");
         // 别的软件不受影响。
         assert_eq!(state.current(Client::ClaudeCode), None);
         assert_eq!(
@@ -2195,7 +2269,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_save_requires_current_and_valid_members_and_deletion_revokes_recreated_ids() {
+    fn the_backup_list_only_takes_this_client_s_relay_lines_and_deletion_revokes_recreated_ids() {
         let root = std::env::temp_dir().join(crate::config_io::id());
         let db = Repository::open_in(&root).unwrap();
         let a = Route::new(Client::Codex, "s", "a");
@@ -2207,16 +2281,17 @@ mod tests {
         let mut settings = RouterSettings::for_client(Client::Codex);
         settings.routing_mode = RoutingMode::Pool;
         settings.allowed_routes = vec![a.id.clone(), b.id.clone()];
-        assert!(
-            save_router_settings(&db, &settings).is_err(),
-            "没有当前线不能保存池"
-        );
-        remember_current(&db, Client::Codex, &a.id, 1).unwrap();
-        save_router_settings(&db, &settings).unwrap();
-        let good_queue = load_dispatch_queue(&db, Client::Codex).unwrap();
-        assert_eq!(good_queue.order, settings.allowed_routes);
+        // 旧界面的「仅所选线路」是 selected + 名单还留着：名单不算数，存下来就是空的（不扩大许可）。
+        let strict = RouterSettings {
+            routing_mode: RoutingMode::Selected,
+            ..settings.clone()
+        };
+        let strict = save_router_settings(&db, &strict).unwrap();
+        assert!(strict.allowed_routes.is_empty() && !strict.has_backups());
+        // 备用名单是「当前线路出故障时依次改用谁」，存它不要求先有当前线路（没有当前线路时什么都不发）。
+        let settings = save_router_settings(&db, &settings).unwrap();
+        assert!(settings.has_backups());
         for denied in [
-            vec![b.id.clone()],
             vec![a.id.clone(), c.id.clone()],
             vec![a.id.clone(), "missing".into()],
             vec![
@@ -2227,35 +2302,23 @@ mod tests {
             let mut bad = settings.clone();
             bad.allowed_routes = denied;
             assert!(save_router_settings(&db, &bad).is_err());
-            assert_eq!(load_dispatch_queue(&db, Client::Codex).unwrap(), good_queue);
             assert_eq!(load_router_settings(&db, Client::Codex).unwrap(), settings);
         }
-        let mut schedule = Schedule::new(Client::Codex);
-        schedule.enabled = true;
-        save_schedule(&db, &schedule).unwrap();
-        select_exclusively(&db, Client::Codex, &a.id, 3).unwrap();
-        assert!(!load_schedule(&db, Client::Codex).unwrap().enabled);
-        assert_eq!(
-            load_router_settings(&db, Client::Codex)
-                .unwrap()
-                .routing_mode,
-            RoutingMode::Selected
-        );
-        save_router_settings(&db, &settings).unwrap();
+        remember_current(&db, Client::Codex, &a.id, 1).unwrap();
         remove_route(&db, &b.id).unwrap();
         db.put("station_routes", &b.id, &b).unwrap();
-        assert!(!load_router_settings(&db, Client::Codex)
-            .unwrap()
-            .allowed_routes
-            .contains(&b.id));
-        assert!(!load_dispatch_queue(&db, Client::Codex)
-            .unwrap()
-            .order
-            .contains(&b.id));
+        assert!(
+            !load_router_settings(&db, Client::Codex)
+                .unwrap()
+                .allowed_routes
+                .contains(&b.id),
+            "同 id 重建不能自动回到备用名单"
+        );
         remove_route(&db, &a.id).unwrap();
         assert_eq!(
             load_dispatch_queue(&db, Client::Codex).unwrap().current,
-            None
+            None,
+            "删了当前线路：当前线路清空，不改用备用线"
         );
         db.put("station_routes", &a.id, &a).unwrap();
         assert_eq!(
@@ -2265,6 +2328,169 @@ mod tests {
         assert!(!load_schedule(&db, Client::Codex).unwrap().enabled);
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 「设为当前」只换当前线路：备用名单一个字都不动；自动选线开着时关掉，并如实说关掉了。
+    #[test]
+    fn setting_the_current_line_never_touches_the_backup_list_and_reports_stopping_auto_select() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        let [a, b, c] = ["a", "b", "c"].map(|g| Route::new(Client::Codex, "s", g));
+        for r in [&a, &b, &c] {
+            db.put("station_routes", &r.id, r).unwrap();
+        }
+        remember_current(&db, Client::Codex, &a.id, 1).unwrap();
+        let mut settings = RouterSettings::for_client(Client::Codex);
+        settings.routing_mode = RoutingMode::Pool;
+        settings.allowed_routes = vec![b.id.clone(), a.id.clone()];
+        let settings = save_router_settings(&db, &settings).unwrap();
+        let mut schedule = load_schedule(&db, Client::Codex).unwrap();
+        schedule.enabled = true;
+        save_schedule(&db, &schedule).unwrap();
+        save_dispatch(
+            &db,
+            Client::Codex,
+            &Dispatch {
+                order: vec![a.id.clone(), b.id.clone()],
+                rows: Vec::new(),
+                memory: qb_station::schedule::DispatchMemory {
+                    challenger: Some(b.id.clone()),
+                    streak: 1,
+                    signature: None,
+                },
+                alerts: vec!["一条告警".into()],
+                note: String::new(),
+                switched: false,
+            },
+            2,
+        )
+        .unwrap();
+
+        // 设一条不在名单里的线（c）当前：名单照旧，自动选线被关掉、这一轮的记录作废。
+        let change = set_current(&db, Client::Codex, &c.id, 3).unwrap();
+        assert!(change.auto_select_stopped);
+        assert_eq!(load_router_settings(&db, Client::Codex).unwrap(), settings);
+        let q = load_dispatch_queue(&db, Client::Codex).unwrap();
+        assert_eq!(q.current.as_deref(), Some(c.id.as_str()));
+        assert_eq!(q.memory, Default::default());
+        assert!(q.alerts.is_empty());
+        assert!(!load_schedule(&db, Client::Codex).unwrap().enabled);
+        // 再设一次：自动选线本来就关着，不说「关掉了」。
+        assert!(!set_current(&db, Client::Codex, &b.id, 4).unwrap().auto_select_stopped);
+        assert_eq!(load_router_settings(&db, Client::Codex).unwrap(), settings);
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 打开自动选线时，当前线路不在名单里就放进名单最前面（不然一换走就回不来）；没备用、没当前线路开不了。
+    /// 名单存空了（严格单线）自动选线跟着停。
+    #[test]
+    fn auto_select_needs_a_current_line_and_backups_and_stops_when_the_list_is_emptied() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        let [a, b] = ["a", "b"].map(|g| Route::new(Client::Codex, "s", g));
+        for r in [&a, &b] {
+            db.put("station_routes", &r.id, r).unwrap();
+        }
+        assert!(prepare_auto_select(&db, Client::Codex).is_err(), "没有备用");
+        let mut settings = RouterSettings::for_client(Client::Codex);
+        settings.routing_mode = RoutingMode::Pool;
+        settings.allowed_routes = vec![b.id.clone()];
+        save_router_settings(&db, &settings).unwrap();
+        assert!(prepare_auto_select(&db, Client::Codex).is_err(), "没有当前线路");
+        remember_current(&db, Client::Codex, &a.id, 1).unwrap();
+        let prepared = prepare_auto_select(&db, Client::Codex).unwrap();
+        assert_eq!(prepared.backups(), [a.id.clone(), b.id.clone()]);
+        assert_eq!(load_router_settings(&db, Client::Codex).unwrap(), prepared);
+        let mut schedule = load_schedule(&db, Client::Codex).unwrap();
+        schedule.enabled = true;
+        save_schedule(&db, &schedule).unwrap();
+        assert!(load_schedule(&db, Client::Codex).unwrap().enabled);
+        assert_eq!(
+            auto_select_pool(&prepared, Some(&a.id)),
+            [a.id.clone(), b.id.clone()]
+        );
+
+        // 名单清空：严格单线，自动选线没得挑了，跟着停（落盘的也是关着）。
+        let mut empty = prepared.clone();
+        empty.allowed_routes.clear();
+        let saved = save_router_settings(&db, &empty).unwrap();
+        assert_eq!(saved.routing_mode, RoutingMode::Selected);
+        assert!(!load_schedule(&db, Client::Codex).unwrap().enabled);
+        assert!(!db.get::<Schedule>(SCHEDULE_TABLE, "codex").unwrap().enabled);
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 改了站点名 / 分组（id 变了）：当前线路、备用名单（原位）、聚合名单与它的 key 都迁到新 id，不清空。
+    #[test]
+    fn renaming_a_route_carries_the_current_line_backups_and_aggregate_to_the_new_id() {
+        let root = std::env::temp_dir().join(crate::config_io::id());
+        let db = Repository::open_in(&root).unwrap();
+        let [a, b] = ["a", "b"].map(|g| Route::new(Client::Codex, "s", g));
+        for r in [&a, &b] {
+            db.put("station_routes", &r.id, r).unwrap();
+        }
+        remember_current(&db, Client::Codex, &a.id, 1).unwrap();
+        let mut settings = RouterSettings::for_client(Client::Codex);
+        settings.routing_mode = RoutingMode::Pool;
+        settings.allowed_routes = vec![a.id.clone(), b.id.clone()];
+        settings.aggregate.enabled = true;
+        settings.aggregate.members = vec![a.id.clone()];
+        let saved = save_router_settings(&db, &settings).unwrap();
+        let key = saved
+            .aggregate
+            .keys
+            .iter()
+            .find(|(_, id)| **id == a.id)
+            .map(|(k, _)| k.clone())
+            .expect("聚合 key 是存的时候分的");
+
+        let renamed = Route::new(Client::Codex, "s", "a2");
+        db.transaction(|| {
+            db.put("station_routes", &renamed.id, &renamed)?;
+            rename_route_in_transaction(&db, &a.id, &renamed)
+        })
+        .unwrap();
+        let s = load_router_settings(&db, Client::Codex).unwrap();
+        assert_eq!(s.backups(), [renamed.id.clone(), b.id.clone()]);
+        assert_eq!(s.aggregate.members, [renamed.id.clone()]);
+        assert_eq!(s.aggregate.keys[&key], renamed.id);
+        assert_eq!(
+            load_dispatch_queue(&db, Client::Codex).unwrap().current.as_deref(),
+            Some(renamed.id.as_str()),
+            "当前线路跟着新 id 走，不是被清空"
+        );
+        assert!(db.find::<Route>("station_routes", &a.id).unwrap().is_none());
+        // 不能借改名换软件。
+        let other = Route::new(Client::ClaudeCode, "s", "x");
+        db.put("station_routes", &other.id, &other).unwrap();
+        assert!(db
+            .transaction(|| rename_route_in_transaction(&db, &b.id, &other))
+            .is_err());
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 「名单里有比当前线路更贵的线」：两边都折成同一种钱比；没有倍率的不算（不猜）。
+    #[test]
+    fn pricier_backups_compare_real_rates_after_topup_and_skip_unknowns() {
+        let mut cur = route("cur", 0.5);
+        cur.station_id = "one".into();
+        let mut dear = route("dear", 0.4);
+        dear.station_id = "seven".into(); // 0.4 × 7 = 2.8 > 0.5
+        let mut cheap = route("cheap", 0.3);
+        cheap.station_id = "one".into();
+        let mut unknown = route("unknown", 1.0);
+        unknown.nominal_rate = None;
+        let routes = [cur.clone(), dear.clone(), cheap.clone(), unknown.clone()];
+        let topup = HashMap::from([("seven".to_string(), 7.0)]);
+        let backups = [cur.id.clone(), dear.id.clone(), cheap.id.clone(), unknown.id.clone()];
+        assert_eq!(
+            pricier_backups(&routes, &topup, &cur.id, &backups),
+            [dear.id.clone()]
+        );
+        assert!(pricier_backups(&routes, &topup, &unknown.id, &backups).is_empty());
     }
 
     fn probe(at_ms: i64, ok: bool, fault: Option<&str>, total_ms: u64) -> ProbeAttempt {
@@ -2321,6 +2547,7 @@ mod tests {
                 ..Schedule::new(Client::ClaudeCode)
             },
             &DispatchQueue::new(Client::ClaudeCode),
+            &[],
             None,
             &pricing::Catalog::new(vec![]),
             &HashMap::new(),
@@ -2388,16 +2615,31 @@ mod tests {
         assert_eq!(facts[&routes[0].id].evidence_at, None);
     }
 
+    /// 自动选线一轮排出的顺序只存在这一轮的记录里，**不改备用名单**；关掉自动选线，记录作废、名单和当前线路不动。
     #[test]
-    fn a_pin_belongs_to_one_client_expires_and_resets_the_debounce_memory() {
+    fn a_scheduled_round_never_rewrites_the_backup_list_and_stopping_clears_only_the_round() {
         let root = std::env::temp_dir().join(crate::config_io::id());
         let db = Repository::open_in(&root).unwrap();
-        let mine = Route::make_id(Client::Codex, "s", "a");
-        let theirs = Route::make_id(Client::ClaudeCode, "s", "a");
-        assert!(set_pin(&db, Client::Codex, Some(&theirs), 0).is_err());
+        let [a, b] = ["a", "b"].map(|g| Route::new(Client::Codex, "s", g));
+        for r in [&a, &b] {
+            db.put("station_routes", &r.id, r).unwrap();
+        }
+        remember_current(&db, Client::Codex, &a.id, 1).unwrap();
+        let mut settings = RouterSettings::for_client(Client::Codex);
+        settings.routing_mode = RoutingMode::Pool;
+        settings.allowed_routes = vec![a.id.clone(), b.id.clone()];
+        let settings = save_router_settings(&db, &settings).unwrap();
+        let row = |id: &str, position| qb_station::schedule::DispatchRow {
+            route_id: id.into(),
+            tier: qb_station::schedule::Tier::Qualified,
+            position,
+            score: None,
+            samples: 0,
+            reason: String::new(),
+        };
         let d = Dispatch {
-            order: vec![mine.clone()],
-            rows: Vec::new(),
+            order: vec![b.id.clone(), a.id.clone()],
+            rows: vec![row(&b.id, 1), row(&a.id, 2)],
             memory: qb_station::schedule::DispatchMemory {
                 challenger: Some("x".into()),
                 streak: 1,
@@ -2407,25 +2649,20 @@ mod tests {
             note: String::new(),
             switched: false,
         };
-        save_dispatch(&db, Client::Codex, &d, 1).unwrap();
-        let q = set_pin(&db, Client::Codex, Some(&mine), 1_000).unwrap();
-        assert_eq!(q.pin.as_ref().unwrap().until_ms, 1_000 + PIN_MS);
-        assert_eq!(q.memory, Default::default(), "换了钉住，防抖记忆作废");
-        assert_eq!(q.alerts, ["P1 告警"]);
-        // 还没到期：存这一轮不动它；过期了：顺手清掉。
-        assert!(save_dispatch(&db, Client::Codex, &d, 2_000)
-            .unwrap()
-            .pin
-            .is_some());
-        assert!(save_dispatch(&db, Client::Codex, &d, 1_000 + PIN_MS)
-            .unwrap()
-            .pin
-            .is_none());
-        assert!(set_pin(&db, Client::Codex, Some(&mine), 0)
-            .unwrap()
-            .pin
-            .is_some());
-        assert!(set_pin(&db, Client::Codex, None, 0).unwrap().pin.is_none());
+        let q = save_dispatch(&db, Client::Codex, &d, 2).unwrap();
+        assert_eq!(q.scheduled_order(), [b.id.clone(), a.id.clone()]);
+        assert_eq!(
+            load_router_settings(&db, Client::Codex).unwrap(),
+            settings,
+            "排出来的顺序不写回名单"
+        );
+        let stopped = stop_auto_select(&db, Client::Codex).unwrap();
+        assert!(!stopped.enabled);
+        let q = load_dispatch_queue(&db, Client::Codex).unwrap();
+        assert!(q.scheduled_order().is_empty() && q.alerts.is_empty());
+        assert_eq!(q.memory, Default::default());
+        assert_eq!(q.current.as_deref(), Some(a.id.as_str()), "当前线路不动");
+        assert_eq!(load_router_settings(&db, Client::Codex).unwrap(), settings);
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -2763,13 +3000,17 @@ mod tests {
             RouterSettings::for_client(Client::ClaudeCode),
             "不合格的那份存进去了"
         );
-        // Codex 的线混进 Claude Code 的派单顺序：换过去就是拿 Claude 的请求打 Codex 的 Key。
-        let foreign = Route::make_id(Client::Codex, "s", "");
-        let err = save_dispatch_order(&db, Client::ClaudeCode, vec![foreign], 1).unwrap_err();
-        assert!(err.to_string().contains("别的软件"), "{err}");
-        assert!(load_dispatch_queue(&db, Client::ClaudeCode)
+        // Codex 的线混进 Claude Code 的备用名单：换过去就是拿 Claude 的请求打 Codex 的 Key。
+        let foreign = Route::new(Client::Codex, "s", "");
+        db.put("station_routes", &foreign.id, &foreign).unwrap();
+        let mut mixed = RouterSettings::for_client(Client::ClaudeCode);
+        mixed.routing_mode = RoutingMode::Pool;
+        mixed.allowed_routes = vec![foreign.id.clone()];
+        let err = save_router_settings(&db, &mixed).unwrap_err();
+        assert!(err.to_string().contains("这个软件自己"), "{err}");
+        assert!(load_router_settings(&db, Client::ClaudeCode)
             .unwrap()
-            .order
+            .allowed_routes
             .is_empty());
         drop(db);
         std::fs::remove_dir_all(root).unwrap();
@@ -3368,16 +3609,7 @@ mod tests {
             confirm: 1,
             ..Default::default()
         };
-        let d = qb_station::schedule::dispatch(
-            r,
-            &facts,
-            current,
-            &[],
-            None,
-            &Default::default(),
-            &params,
-            0,
-        );
+        let d = qb_station::schedule::dispatch(r, &facts, current, &[], &Default::default(), &params);
         next_upstream(&d, current)
     }
 

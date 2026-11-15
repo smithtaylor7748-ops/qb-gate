@@ -797,6 +797,20 @@ pub struct RoutePlan {
     pub strict_single: bool,
 }
 
+/// 最近一次聚合模型直达（主页的提示条用：客户端选了 `qbg` 开头的模型，这一发不看当前线路、
+/// 不换线、不碰熔断，钱花在 `route_id` 那条线上）。只在本机路由的内存里，面板重启就没了。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AggregateHit {
+    /// 直达的那条线。
+    pub route_id: String,
+    /// 客户端请求里写的那个聚合模型 id。
+    pub model: String,
+    pub at_ms: i64,
+    /// 它就是这个软件最近一发模型请求（之后还没有走普通派单的请求）。
+    pub latest: bool,
+}
+
 /// [`RoutePlan`] 里的一步。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]

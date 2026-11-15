@@ -2,5 +2,7 @@
 
 /**
  * 一个软件那一组的快照。`None` = 这一项没拍过（换过去时不动），跟「拍到的就是空的」（`Some(空)`，换过去时清空）分开。
+ *
+ * 旧数据里的 `route` / `queue`（线路、派单顺序）读得进来、不认 —— 项目不再碰线路。
  */
-export type ProjectSlot = { route: string | null, queue: Array<string> | null, mcp: Array<string> | null, skills: Array<string> | null, prompt: string | null, };
+export type ProjectSlot = { mcp: Array<string> | null, skills: Array<string> | null, prompt: string | null, };
