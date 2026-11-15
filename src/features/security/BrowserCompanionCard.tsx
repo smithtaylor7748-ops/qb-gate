@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Globe, Copy, Link2, Unplug } from "lucide-react";
+import { Copy, Globe, Link2, RefreshCw, Unplug } from "lucide-react";
 import { api } from "../../lib/api";
+import type { BrowserLinkPairing } from "../../lib/generated/BrowserLinkPairing";
 import type { BrowserLinkStart } from "../../lib/generated/BrowserLinkStart";
 import { refresh, res, useResource, useSession } from "../../lib/store";
 import { Button, Card, Pill, useToast } from "../../ui";
@@ -41,22 +42,68 @@ function enhancementRows(raw: string | null | undefined): [string, string][] {
   }
 }
 
-/** Only the extension enables protection; opening this card never starts monitoring. */
+function PairingRow({
+  pairing,
+  busy,
+  onUnpair,
+}: {
+  pairing: BrowserLinkPairing;
+  busy: boolean;
+  onUnpair: (id: string) => void;
+}) {
+  const p = pairing.protection;
+  return (
+    <li className="mb-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <strong>{pairing.label}</strong>
+        <Pill tone={pairing.connected ? "ok" : "default"}>
+          {pairing.connected
+            ? "已连接"
+            : pairing.needs_relink
+              ? "需要重连"
+              : "未连接"}
+        </Pill>
+        <Pill tone={p.allow ? "ok" : p.armed ? "danger" : "default"}>
+          {p.allow ? "放行中" : p.armed ? "已拦截" : "保护未开启"}
+        </Pill>
+        <Button
+          size="sm"
+          icon={<Unplug size={13} />}
+          disabled={busy}
+          onClick={() => onUnpair(pairing.pairing_id)}
+        >
+          解除配对
+        </Button>
+      </div>
+      <p className="notice mt-1">{p.reason}</p>
+      {enhancementRows(pairing.enhancement_json).map(([label, value]) => (
+        <p className="notice mb-1" key={label}>
+          {label}：{value}
+        </p>
+      ))}
+    </li>
+  );
+}
+
+/**
+ * 浏览器助手的连接与配对。界面重做在后面一轮；这里只把协议 2 的四条命令接好。
+ * 打开这张卡不开任何端口：只有点「连接浏览器」或已经配对过，面板才在本机监听。
+ */
 export default function BrowserCompanionCard() {
   const status = useResource("browserCompanion", linkResource);
-  const [pairing, setPairing] = useSession<BrowserLinkStart | null>(
-    "browserCompanion.pairing",
+  const [last, setLast] = useSession<BrowserLinkStart | null>(
+    "browserCompanion.link",
     null,
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const toast = useToast();
   const s = status.data;
-  const start = async () => {
+  const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setError("");
     try {
-      setPairing(await api.browserCompanionStart());
+      await action();
       await refresh("browserCompanion");
     } catch (e) {
       setError(String(e));
@@ -64,114 +111,113 @@ export default function BrowserCompanionCard() {
       setBusy(false);
     }
   };
-  const stop = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      await api.browserCompanionStop();
-      setPairing(null);
-      await refresh("browserCompanion");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const connect = () =>
+    run(async () => setLast(await api.browserCompanionConnect()));
+  const reconnect = () =>
+    run(async () => setLast(await api.browserCompanionReconnect()));
+  const unpair = (id: string) => run(() => api.browserCompanionUnpair(id));
   const copy = async () => {
-    if (!pairing) return;
+    if (!last?.url) return;
     try {
-      await navigator.clipboard.writeText(pairing.pairing);
-      toast.ok("配对码已复制，在 Chrome 插件中粘贴并连接");
+      await navigator.clipboard.writeText(last.url);
+      toast.ok("连接地址已复制，在装了插件的浏览器里打开");
     } catch {
-      setError("复制失败，请从下方配对码手动复制。");
+      setError("复制失败，请手动选中上面的地址。");
     }
   };
+  const claim = s?.claim;
   return (
-    <Card title="Chrome 插件联动" icon={<Globe size={15} />} className="mb-3">
+    <Card title="Chrome 浏览器助手" icon={<Globe size={15} />} className="mb-3">
       <div className="flex flex-wrap items-center gap-2 mb-2">
-        <Pill tone={s?.connected ? "ok" : "default"}>
-          {s?.connected ? "插件已连接" : s?.running ? "等待插件连接" : "未连接"}
+        <Pill tone={s?.listening ? "ok" : "default"}>
+          {s?.listening ? `本机端口 ${s.port}` : "未监听"}
         </Pill>
-        <Pill tone={s?.armed ? (s.safe ? "ok" : "danger") : "default"}>
-          {s?.armed
-            ? s.safe
-              ? "IP 保护已开启"
-              : "保护已触发"
-            : "IP 保护未开启"}
+        <Pill tone={s?.pairings.some((p) => p.connected) ? "ok" : "default"}>
+          已配对 {s?.pairings.length ?? 0} 个浏览器
         </Pill>
       </div>
       <p className="notice mb-2">
-        在 Chrome 的扩展程序页开启开发者模式，加载 QB Gate 插件文件夹。
-        在这里生成配对码，再到插件里连接。配对后可复用站点登录、读取公开模型单价，并检测
-        Chrome 实际环境。
+        在 Chrome 的扩展程序页开启开发者模式，加载 QB Gate
+        插件文件夹，再点「连接浏览器」：浏览器里会打开一个本机页面，插件自动完成配对，不用复制粘贴。配对一次长期有效，面板重启后插件自己连回来。
       </p>
       <p className="notice mb-2">
-        在插件中单独开启 IP 保护后，出口 IP 变化、IP 锁拒绝或连接中断会关闭当前
-        Chrome 资料的全部窗口。
-        其他资料、未授权的隐身窗口及后台进程不在关闭范围内。QB Gate
-        需要保持运行。
+        插件开启保护后，只有面板确认出口 IP
+        正常时才放行受保护的网站；出口变化、IP
+        锁拒绝、面板退出或连接中断时一律拦截。保护只对装了插件的那个浏览器资料有效。
       </p>
-      {s?.reason && (
-        <p className="notice mb-2" role="status">
-          {s.reason}
+      {s?.relink_needed && (
+        <p className="notice notice--danger mb-2" role="status">
+          原来的端口被别的程序占用，面板换了一个；已配对的浏览器要点「一键重连」才找得到。
         </p>
       )}
-      {s?.ip && <p className="notice mb-2">当前受检出口：{s.ip}</p>}
-      {enhancementRows(s?.enhancement_json).map(([label, value]) => (
-        <p className="notice mb-1" key={label}>
-          {label}：{value}
+      {claim?.state === "pending" && (
+        <p className="notice mb-2" role="status">
+          {claim.problem ?? "等插件在浏览器里认领这次连接…"}
         </p>
-      ))}
+      )}
+      {claim?.state === "claimed" && (
+        <p className="notice mb-2" role="status">
+          已连接：{claim.browser}
+        </p>
+      )}
+      {claim?.state === "expired" && (
+        <p className="notice mb-2" role="status">
+          这次连接已超时，需要的话再点一次「连接浏览器」。
+        </p>
+      )}
+      {s?.last_check && (
+        <p className="notice mb-2">最近一次判定：{s.last_check.reason}</p>
+      )}
+      {s?.problem && (
+        <p className="notice notice--danger mb-2" role="alert">
+          {s.problem}
+        </p>
+      )}
+      {s && s.pairings.length > 0 && (
+        <ul className="mb-2">
+          {s.pairings.map((pairing) => (
+            <PairingRow
+              key={pairing.pairing_id}
+              pairing={pairing}
+              busy={busy}
+              onUnpair={(id) => void unpair(id)}
+            />
+          ))}
+        </ul>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button
           icon={<Link2 size={13} />}
-          disabled={!!s?.running || status.loading || !!status.error}
+          disabled={status.loading || !!status.error}
           loading={busy}
-          onClick={() => void start()}
+          onClick={() => void connect()}
         >
-          生成配对码
+          连接浏览器
         </Button>
-        {s?.running && pairing && (
-          <Button icon={<Copy size={13} />} onClick={() => void copy()}>
-            复制配对码
-          </Button>
-        )}
-        {s?.running && (
+        {s && s.pairings.length > 0 && (
           <Button
-            icon={<Unplug size={13} />}
-            disabled={!!s.armed && s.connected}
-            loading={busy}
-            onClick={() => void stop()}
+            icon={<RefreshCw size={13} />}
+            disabled={busy}
+            onClick={() => void reconnect()}
           >
-            {s.armed && !s.connected ? "重置失效连接" : "停止联动"}
+            一键重连
           </Button>
         )}
       </div>
-      {s?.running && pairing && (
-        <details className="mt-2">
-          <summary className="notice">手动复制配对码</summary>
-          <textarea
-            className="w-full mt-2"
-            rows={3}
-            readOnly
-            aria-label="Chrome 插件配对码"
-            value={pairing.pairing}
-            spellCheck={false}
-          />
-        </details>
-      )}
-      {s?.running && !pairing && (
-        <p className="notice mt-2">
-          配对码只保留在本次界面会话中；需要重新配对时，先停止联动，再生成配对码。
-        </p>
-      )}
-      {s?.armed && s.connected && (
-        <p className="notice mt-2">先在插件里停止 IP 保护，再停止联动。</p>
-      )}
-      {s?.armed && !s.connected && (
-        <p className="notice mt-2">
-          插件保护连接已失效，可重置后重新配对；重新连接不会自动开启保护。
-        </p>
+      {last?.url && !last.opened && (
+        <div className="mt-2">
+          <p className="notice mb-1">
+            没能替你打开浏览器。在装了插件的浏览器里打开这个地址（几分钟内有效）：
+          </p>
+          <code className="notice">{last.url}</code>
+          <Button
+            size="sm"
+            icon={<Copy size={13} />}
+            onClick={() => void copy()}
+          >
+            复制地址
+          </Button>
+        </div>
       )}
       {(error || status.error) && (
         <p role="alert" className="notice notice--danger mt-2">

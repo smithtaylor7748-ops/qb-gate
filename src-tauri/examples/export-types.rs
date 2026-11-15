@@ -109,6 +109,12 @@ fn main() {
         qb_app::browser_probe::ProbeStart::export_all_to(&root)?;
         qb_app::browser_link::BrowserLinkStart::export_all_to(&root)?;
         qb_app::browser_link::BrowserLinkStatus::export_all_to(&root)?;
+        qb_app::browser_link::BrowserLinkPairing::export_all_to(&root)?;
+        qb_app::browser_link::BrowserProtection::export_all_to(&root)?;
+        qb_app::browser_link::ProtectionCode::export_all_to(&root)?;
+        qb_app::browser_link::BrowserLinkCheck::export_all_to(&root)?;
+        qb_app::browser_link::BrowserLinkClaim::export_all_to(&root)?;
+        qb_app::browser_link::BrowserLinkClaimState::export_all_to(&root)?;
         qb_app::usecase::browser_station::BrowserStation::export_all_to(&root)?;
         qb_app::usecase::browser_station::BrowserStationPrice::export_all_to(&root)?;
         qb_app::usecase::browser_station::BrowserStationPrices::export_all_to(&root)?;

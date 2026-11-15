@@ -463,6 +463,36 @@ fn pricing_in(db: &Repository, request: BrowserStationPricing) -> Result<Browser
     })
 }
 
+/// 浏览器助手的开发桥与单测用：同一套解析与换算，但**不读库、不进共享查价缓存**。
+/// 站点只核对给定的那份列表（开发桥启动时自己配的假站点）。
+pub fn pricing_offline(
+    stations: &[BrowserStation],
+    request: BrowserStationPricing,
+) -> Result<BrowserStationPrices> {
+    if !stations
+        .iter()
+        .any(|s| s.id == request.station_id && s.origin == request.origin)
+    {
+        return Err(problem("当前网页与所选 QB 站点不同源，请重新选择"));
+    }
+    let entries = parse_public(&request.backend, &request.pricing)?;
+    let catalog = Catalog::new(Vec::new());
+    Ok(BrowserStationPrices {
+        source_path: if request.backend == "newapi" {
+            "/api/pricing"
+        } else {
+            "/api/v1/model-plaza"
+        }
+        .into(),
+        models: entries.iter().map(|entry| entry.view(&catalog)).collect(),
+        station_id: request.station_id,
+        origin: request.origin,
+        backend: request.backend,
+        fetched_at_ms: chrono::Utc::now().timestamp_millis() as f64,
+        notice: "开发桥：只解析与换算，不保存、不进查价缓存。".into(),
+    })
+}
+
 /// Exact provider identity, full endpoint and revision; never persist an anonymous quote as an audit.
 pub(crate) fn cached_models(
     station_id: &str,

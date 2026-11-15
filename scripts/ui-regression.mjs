@@ -1721,20 +1721,19 @@ try {
   await page
     .getByRole("button", { name: "使用 Chrome 已登录账户", exact: true })
     .click();
-  await page.getByText("Chrome 插件联动", { exact: true }).waitFor();
-  assert.equal(await page.getByLabel("Chrome 插件配对码").count(), 0);
-  await page.getByRole("button", { name: "生成配对码", exact: true }).click();
-  await page.getByText("手动复制配对码", { exact: true }).click();
-  const pairing = JSON.parse(
-    await page.getByLabel("Chrome 插件配对码").inputValue(),
-  );
-  assert.equal(new URL(pairing.endpoint).hostname, "127.0.0.1");
-  assert.match(pairing.token, /^[a-f0-9]{64}$/);
-  await page.getByText("IP 保护未开启", { exact: true }).waitFor();
+  await page.getByText("Chrome 浏览器助手", { exact: true }).waitFor();
+  // 协议 2（2026-11-14）：配对不再复制粘贴 —— 卡片上没有配对码、没有口令。
+  assert.equal(await page.getByRole("dialog").locator("textarea").count(), 0);
+  await page.getByText("已配对 0 个浏览器", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "连接浏览器", exact: true }).click();
+  await page.getByText("Chrome 131", { exact: true }).waitFor();
+  await page.getByText("放行中", { exact: true }).waitFor();
+  // 演示里浏览器「打开成功」：不该再露出认领地址。
+  assert.equal(await page.getByText("/link#c=", { exact: false }).count(), 0);
   await page.setViewportSize({ width: 680, height: 940 });
   await assertNoOverflow(page, "Chrome companion pairing in billing");
-  await page.getByRole("button", { name: "停止联动", exact: true }).click();
-  await page.getByRole("button", { name: "生成配对码", exact: true }).waitFor();
+  await page.getByRole("button", { name: "解除配对", exact: true }).click();
+  await page.getByText("已配对 0 个浏览器", { exact: true }).waitFor();
   await page.getByRole("button", { name: "账号密码", exact: true }).click();
   await page.setViewportSize({ width: 1320, height: 940 });
   await page.getByLabel("站点账号 / 邮箱").fill("demo-user");

@@ -462,11 +462,18 @@ export const api = {
     call<BrowserReport | null>("browser_probe_wait", { token }),
   /** 最近一次交回的报告（只在后端内存里，面板重启就没了）。 */
   browserProbeLast: () => call<BrowserReport | null>("browser_probe_last"),
-  browserCompanionStart: () =>
-    call<BrowserLinkStart>("browser_companion_start"),
+  /** 浏览器助手：是否在监听、端口、已配对的浏览器及各自的连接 / 保护状态、最近一次判定。不开端口。 */
   browserCompanionStatus: () =>
     call<BrowserLinkStatus>("browser_companion_status"),
-  browserCompanionStop: () => call<void>("browser_companion_stop"),
+  /** 「连接浏览器」：开起本机监听，用默认浏览器打开一次性认领页（`opened: false` = 没打开，界面给地址）。 */
+  browserCompanionConnect: () =>
+    call<BrowserLinkStart>("browser_companion_connect"),
+  /** 「一键重连」：先试着拿回原来的端口，再打开认领页让换过端口的插件学到新端口。 */
+  browserCompanionReconnect: () =>
+    call<BrowserLinkStart>("browser_companion_reconnect"),
+  /** 解除一个浏览器的配对：口令立刻作废、连接立刻断开；最后一个解除后不再监听。 */
+  browserCompanionUnpair: (pairingId: string) =>
+    call<BrowserLinkStatus>("browser_companion_unpair", { pairingId }),
   /**
    * 「这个账户现在还能用吗」—— 拿槽位里的令牌向官方发**一次**最小认证请求。
    *

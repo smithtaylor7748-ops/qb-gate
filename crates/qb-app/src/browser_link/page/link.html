@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN" data-qb-gate-link="2">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex" />
+    <title>连接 QB Gate 浏览器助手</title>
+    <link rel="stylesheet" href="/link/tokens.css" />
+    <link rel="stylesheet" href="/link/app.css" />
+  </head>
+  <body>
+    <main>
+      <h1>连接 QB Gate 浏览器助手</h1>
+
+      <section data-view="waiting">
+        <p class="lead" role="status">正在等这个浏览器里的「QB Gate 浏览器助手」插件认领这次连接…</p>
+        <p class="hint">不需要复制或粘贴任何东西，通常一两秒就好。</p>
+      </section>
+
+      <section data-view="claiming" hidden>
+        <p class="lead" role="status">插件已经看到这次连接，正在向 QB Gate 确认…</p>
+        <p class="problem" id="extension-error" hidden></p>
+      </section>
+
+      <section data-view="done" hidden>
+        <p class="lead ok" role="status">已连接。</p>
+        <p class="hint" id="done-browser"></p>
+        <p class="hint">可以关掉这个页面了。以后 QB Gate 重新打开，插件会自己连上，不用再来这里。</p>
+      </section>
+
+      <section data-view="missing" hidden>
+        <p class="lead warn" role="status">这个浏览器里没有检测到「QB Gate 浏览器助手」插件。</p>
+        <ol>
+          <li>在地址栏打开 <code>chrome://extensions</code>（Edge 是 <code>edge://extensions</code>）。</li>
+          <li>打开「开发者模式」。</li>
+          <li>点「加载已解压的扩展程序」，选 QB Gate 面板「浏览器助手」页里「打开插件文件夹」指的那个文件夹。</li>
+          <li>装好后回到这个页面按 F5 刷新，连接会自动继续。</li>
+        </ol>
+        <p class="hint">
+          已经装了、只是装在另一个浏览器或另一个用户资料里？在那个浏览器里打开这个页面的地址即可；
+          或者回到 QB Gate 面板，把那个浏览器设成默认浏览器后再点一次「连接浏览器」。
+        </p>
+        <p class="hint">这次连接几分钟后失效。过期了就回到 QB Gate 面板再点一次。</p>
+      </section>
+
+      <section data-view="problem" hidden>
+        <p class="lead warn" role="status">这次没连上。</p>
+        <p class="problem" id="problem-text"></p>
+        <p class="hint">处理完之后按 F5 刷新这个页面，连接会自动继续。</p>
+      </section>
+
+      <section data-view="expired" hidden>
+        <p class="lead warn" role="status">这次连接已经失效（超时，或者已经被用过）。</p>
+        <p class="hint">回到 QB Gate 面板，再点一次「连接浏览器」。</p>
+      </section>
+
+      <section data-view="offline" hidden>
+        <p class="lead warn" role="status">连不上 QB Gate。</p>
+        <p class="hint">面板可能已经退出，或者这次连接已经结束。打开 QB Gate 面板，再点一次「连接浏览器」。</p>
+      </section>
+
+      <section data-view="no-claim" hidden>
+        <p class="lead warn" role="status">这个页面要从 QB Gate 面板里打开。</p>
+        <p class="hint">回到 QB Gate 面板，在「浏览器助手」里点「连接浏览器」。</p>
+      </section>
+
+      <footer>这个页面由你电脑上的 QB Gate 提供，只在本机（127.0.0.1）能打开，不经过互联网。</footer>
+    </main>
+    <script src="/link/app.js"></script>
+  </body>
+</html>

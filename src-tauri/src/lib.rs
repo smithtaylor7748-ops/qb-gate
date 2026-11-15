@@ -190,9 +190,11 @@ pub fn run() {
             commands::env_cleanup::env_backup_restore,
             commands::env_cleanup::env_backup_delete,
             commands::probe::browser_probe_start,
-            commands::browser_companion::browser_companion_start,
+            // Chrome 浏览器助手（协议 2，2026-11-14）。连接 / 重连只由点击触发；启动时只在配对过时恢复监听。
             commands::browser_companion::browser_companion_status,
-            commands::browser_companion::browser_companion_stop,
+            commands::browser_companion::browser_companion_connect,
+            commands::browser_companion::browser_companion_reconnect,
+            commands::browser_companion::browser_companion_unpair,
             commands::probe::browser_probe_wait,
             commands::probe::browser_probe_last,
             commands::install::managed_history,
@@ -686,6 +688,10 @@ pub fn run() {
                     }
                 });
             });
+            // 浏览器助手：配对过才恢复监听（端口沿用上次的）；没配对过不开任何端口。
+            tauri::async_runtime::spawn(commands::browser_companion::resume_on_start(
+                app.handle().clone(),
+            ));
             // 托盘：不打开主窗口也能看状态、切账户、切中转站。
             // 建不起来不该让整个程序起不来 —— 有些精简版 Windows 没有
             // 通知区域，那时候面板本身仍然完全可用。
@@ -727,6 +733,8 @@ pub fn run() {
             // 已经在跑的进程不受影响（Windows 不会因为加了 Deny ACE 就杀掉
             // 已加载的映像），挡住的是**下一次启动**。
             if matches!(event, tauri::RunEvent::Exit) {
+                // 先告诉连着的浏览器「面板下线」（插件据此拦住受保护的网站并说明原因），再重锁。
+                commands::browser_companion::stop_on_exit();
                 if readiness::status().ready {
                     match gate::lock_all() {
                         Ok(n) => audit::write(&format!("面板退出，已重新上锁 {n} 个可执行文件")),

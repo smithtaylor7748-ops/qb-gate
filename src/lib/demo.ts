@@ -649,7 +649,51 @@ const demoEnv: EnvHit[] = [
 
 /** 演示的真实浏览器报告：点过「用默认浏览器测」才有。 */
 let demoProbeReport: BrowserReport | null = null;
-let demoBrowserLinkRunning = false;
+/** 演示的浏览器助手：点「连接浏览器」之后多一个已连接的 Chrome（不开任何端口）。 */
+let demoBrowserPaired = false;
+function demoBrowserLinkStatus() {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    listening: demoBrowserPaired,
+    port: demoBrowserPaired ? 53124 : null,
+    relink_needed: false,
+    pairings: demoBrowserPaired
+      ? [
+          {
+            pairing_id: "0123456789abcdef",
+            label: "Chrome 131",
+            extension_id: "abcdefghijklmnopabcdefghijklmnop",
+            extension_version: "0.2.0",
+            paired_at: now - 3600,
+            connected: true,
+            needs_relink: false,
+            protection: {
+              allow: true,
+              code: "allowed" as const,
+              reason: "出口 IP 已核实，可以放行",
+              armed: true,
+              checking: false,
+              ip: "203.0.113.10",
+              baseline: "203.0.113.10",
+              checked_at: now,
+            },
+            enhancement_json: null,
+          },
+        ]
+      : [],
+    last_check: demoBrowserPaired
+      ? {
+          ip: "203.0.113.10",
+          allowed: true,
+          code: "allowed" as const,
+          reason: "出口 IP 203.0.113.10 在白名单内",
+          checked_at: now,
+        }
+      : null,
+    claim: null,
+    problem: null,
+  };
+}
 function demoBrowserReport(): BrowserReport {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -4721,24 +4765,27 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     return demoProbeReport;
   },
   browser_probe_last: () => demoProbeReport,
-  browser_companion_start: () => {
-    demoBrowserLinkRunning = true;
-    const endpoint = "http://127.0.0.1:53124";
-    const token = "0".repeat(64);
-    return { endpoint, token, pairing: JSON.stringify({ endpoint, token }) };
+  browser_companion_status: () => demoBrowserLinkStatus(),
+  browser_companion_connect: () => {
+    demoBrowserPaired = true;
+    return {
+      url: "http://127.0.0.1:53124/link#c=" + "0".repeat(64),
+      opened: true,
+      port: 53124,
+      expires_at: Math.floor(Date.now() / 1000) + 300,
+      rebound: false,
+    };
   },
-  browser_companion_status: () => ({
-    running: demoBrowserLinkRunning,
-    connected: false,
-    armed: false,
-    safe: false,
-    ip: null,
-    reason: demoBrowserLinkRunning ? "演示模式：等待插件连接" : "联动未开启",
-    checked_at: 0,
-    enhancement_json: null,
+  browser_companion_reconnect: () => ({
+    url: "http://127.0.0.1:53124/link#c=" + "1".repeat(64),
+    opened: true,
+    port: 53124,
+    expires_at: Math.floor(Date.now() / 1000) + 300,
+    rebound: false,
   }),
-  browser_companion_stop: () => {
-    demoBrowserLinkRunning = false;
+  browser_companion_unpair: () => {
+    demoBrowserPaired = false;
+    return demoBrowserLinkStatus();
   },
   // 克隆一份：额度演示会就地改槽位（盖上「官方接口」那份），同一个引用 React Query 看不出变了。
   accounts_list: () => structuredClone(accounts),
