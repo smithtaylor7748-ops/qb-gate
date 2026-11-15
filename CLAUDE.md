@@ -479,7 +479,7 @@ cargo run -p qb-app --example antigravity-hub-quota -- --account <槽位 id>
 
 | 文件           | 管什么                                                                                            |
 | -------------- | ------------------------------------------------------------------------------------------------- |
-| `mod.rs`       | `RouterState`（当前上游、派单顺序、每个软件的路由设置、熔断器、缺模型记忆、日志缓冲）与共用小工具 |
+| `mod.rs`       | `RouterState`（当前线路、自动选线排的备用顺序、每个软件的路由设置含备用名单、熔断器、缺模型记忆、日志缓冲、下一发顺序 `route_plan`）与共用小工具 |
 | `server.rs`    | 监听、认软件、绑这个软件此刻的当前线路（拷贝）、收齐请求体、问聚合模型那一层，分给下面两条路      |
 | `aggregate.rs` | 聚合模型（阶段 3）：模型发现本机自己答；带前缀的模型直达名单里那一条，解不出来报错、不回落        |
 | `forward.rs`   | **中转线路**的重试循环（cc-switch `forward_with_retry_inner`）                                    |
@@ -509,9 +509,11 @@ cargo run -p qb-app --example antigravity-hub-quota -- --account <槽位 id>
     换线之后用的是那条线自己的那份。**官方线不换模型名**。`qb-station::RouteModelMap` 与 `qb-proxy::ModelMapping`
     同在第 3 层、互不依赖，换算放在 `qb-app`（别往 `ALLOWED_SIDEWAYS` 里补边）。`Route.upstream_format` 阶段 3 起生效，见下面「协议转换与聚合模型」。
 11. **路由设置与派单队列是落盘的承诺**（迁移 6：`router_settings`、`dispatch_queue`，一个软件一行，主键是软件名）。
-    读的是库里那份、存了立刻 `set_settings` / `set_queue` 到路由器上；只改界面 state 的话路由和界面会漂开。
-    不合格的设置**整份拒绝、不夹到范围里**（`RouterSettings::validate`）；派单顺序混进别的软件的线整份拒绝。
-    手动选的、调度换过去的都 `remember_current`；面板启动时 `restore_router_state` 装回去，**只在那个软件眼下还没选时**。
+    备用名单（有序）在 `router_settings.allowed_routes`，**只存这一份**；`dispatch_queue` 只放当前线路和自动选线这一轮的记录
+    （旧数据里的 `order`、`pin` 读得进来、不认，2026-11-14）。读的是库里那份、存了立刻装到路由器上（`station_ops::reload_policy`）；
+    只改界面 state 的话路由和界面会漂开。不合格的设置**整份拒绝、不夹到范围里**（`RouterSettings::validate`）；
+    名单混进别的软件的线、官方线整份拒绝。「设为当前」走 `set_current`，自动选线换过去的走 `remember_current`；
+    面板启动时 `restore_router_state` 装回去，**只在那个软件眼下还没选时**。
     ⛔ 面板启动**不拉起路由**（监听端口）—— 那是使用者还没回答的问题（交接文档阶段 1 第 8 步），别顺手加上。
 12. **排序的证据：本机路由记过的线用它自己的日志，没记过的才读站点账单**（`station_ops::decision_health`，
     `station_decide` 与调度那一跳都用它）。一发请求试过几条线，那几条各记一行（`router_usage_rows`）：换走的那次算失败，
@@ -521,9 +523,9 @@ cargo run -p qb-app --example antigravity-hub-quota -- --account <槽位 id>
 
 #### 选线与分流入口、Codex 请求侧会话修复（2026-11-09，未发布）
 
-`StationCenter` 统一“选线与分流”弹窗：第一页“允许范围、分流与故障备用”，第二页“自动选线偏好”。
-自动选线只改变定期排序，停它不能顺带撤销许可池内故障备用；容量分流由独立的默认关闭开关控制。
-需要严格单线路用 selected；A 并发 2 超额才去 B 的场景用显式 pool + priority + overflow_to_pool，不用提前分摊的 least-loaded 冒充。
+选线只有三个概念（当前线路 / 备用线路 / 自动选线，2026-11-14，见「智能调度是落盘的承诺」）；“选线与分流”弹窗页面重排时拆开。
+自动选线只改变首选与备用的排序，停它不撤销备用名单里的故障备用；容量分流由独立的默认关闭开关控制。
+需要严格单线就把备用名单清空；A 并发 2 超额才去 B 的场景用备用名单 + priority + overflow_to_pool，不用提前分摊的 least-loaded 冒充。
 
 `RouterSettings.session_recovery` 的 `strip_item_ids` / `filter_encrypted_content` 独立默认 false，
 只在本机 Codex `/responses` 普通中转与聚合请求发送前应用，官方 OAuth 不进此路径。不得改 JSONL 或其它会话文件。
@@ -1397,29 +1399,30 @@ Gemini CLI 的 `GEMINI.md`、Hermes 的 `SOUL.md`。**写进哪一份由使用�
 钉着这些的是 `prompt_ops` 的 `switching_prompts_never_loses_what_the_file_had`、
 `importing_reads_the_file_without_touching_it_and_minimax_has_a_limit` 和 `PromptsPanel.test.tsx`（正在用的删不了、没装的不列）。
 
-## 项目：只换中转那一侧（2026-10-26，中转站重构阶段 5 · M4，照 cc-switch 的 Profile）
+## 项目：只换中转环境里的扩展，不碰线路（2026-10-26 起；2026-11-14 不再碰线路，照 cc-switch 的 Profile）
 
-中转站页软件分段器那一行的「项目」按钮（`StationProjects.tsx`，照 cc-switch 的项目切换器 + 管理对话框，并成一个弹窗），
-后端 `usecase::project_ops`，六条命令在 `commands/station.rs`（`projects_list / create / rename / delete / apply / clear`）。
-一个项目按软件分组（`claude-code` / `claude-desktop` / `codex` / `gemini-cli` / `grok-build`）存快照：
-这个软件选的线路、派单顺序、中转环境里勾着的 MCP / Skills、中转环境用的提示词（桌面端只有前两样）。`None` = 这一项没拍过（换过去时不动），
-跟「拍到的就是空的」分开（cc-switch 同样）。项目列表各软件共用，「当前项目」每个软件各记各的（`metadata` 的 `project-current:<软件>`）。
+中转站页软件分段器那一行的「项目」按钮（`StationProjects.tsx`，照 cc-switch 的项目切换器 + 管理对话框，并成一个弹窗；
+页面重排时挪到「扩展」页），后端 `usecase::project_ops`，六条命令在 `commands/station.rs`（`projects_list / create / rename / delete / apply / clear`）。
+一个项目按软件分组（`claude-code` / `codex` / `gemini-cli` / `grok-build`）存快照：中转环境里勾着的 MCP / Skills、中转环境用的提示词。
+`None` = 这一项没拍过（换过去时不动），跟「拍到的就是空的」分开（cc-switch 同样）。项目列表各软件共用，
+「当前项目」每个软件各记各的（`metadata` 的 `project-current:<软件>`）。
 换项目时先把当前项目的这一组按现在的样子存一下，再落目标项目那一组；尽力而为，单项失败记成提醒（弹窗里列出来、写审计日志）、不整体回滚。
 快照只由「换走时自动存」维护，不另给「重拍」（cc-switch 同样）。
 
+- ⛔ **项目不碰线路**（2026-11-14，使用者定的）：原来项目还存「这个软件选的线路、派单顺序」，换项目就悄悄切线、关掉自动选线，
+  而存的派单顺序又不起作用。现在换线路只有「设为当前」一个入口（见「智能调度是落盘的承诺」）。旧项目里的 `route` / `queue`
+  读得进来、不认（下次存这个项目就没了）。桌面端没有 MCP / Skills / 提示词，所以**没有项目**（建、换、清都拒绝）。别把线路加回来。
 - ⛔ **只碰中转那一侧，永远不碰官方账户 / 槽位的切换**：MCP / Skills / 提示词只动 `<软件>:relay` 那个目标（Grok Build 是它唯一那份），
   官方目录一概不碰。`architecture.rs` 的 `project_module_can_never_reach_account_switching` 钉着：换项目会跑到的五个模块
   （`project_ops`、`mcp_ops`、`skill_ops`、`prompt_ops`、`ext_place`）一个都不许提账户切换的入口（`account_ops`、`codex_accounts`、
   `accounts::switch`、`killswitch`……）。
-- **线路和派单顺序走手动操作原来那两条路**（`select_route_in` / `save_queue_in`，手动点一行、手排顺序也用它们，不另写一份）：
-  线路排队、下一发生效；项目选线与普通手动选线都回到 `selected` 并停止调度，只有独立的池内固定首选操作才保留备用；项目里存的线路已经删了 —— 不换、记提醒，不替使用者另挑一条。
-  派单顺序只收这个软件还在的线；**调度开着时不落**（顺序归调度排，记提醒）。
 - **「不使用项目」先把当前项目这一组存一下再清**（cc-switch 只清指针：在项目里改过的设置一清就丢）；什么配置都不动。
 - 删项目只删记录，不动任何配置；删之前再确认一次。反重力不经本机路由，没有项目（建、换、清都拒绝）。
 
 钉着的是 `project_ops` 的 `switching_projects_saves_the_old_one_and_lands_the_new_one_on_the_relay_side_only`、
-`not_using_a_project_saves_it_first_and_touches_no_configuration`、上面那条架构测试，和 `StationProjects.test.tsx`
-（只说中转那一侧、没落成的列出来、删除先确认、新建只拍这个软件）。
+`not_using_a_project_saves_it_first_and_touches_no_configuration`、`an_old_project_with_a_route_and_a_queue_reads_and_never_touches_routes`、
+上面那条架构测试，`demoRouting.test.ts` 的「换项目不动备用名单、自动选线和当前线路」，和 `StationProjects.test.tsx`
+（只说中转那一侧、写明不换线路、没落成的列出来、删除先确认、新建只拍这个软件）。
 
 ## 导入链接：先确认，什么都不自动启用（2026-10-26，中转站重构阶段 5 · X4，照 cc-switch 的 Deep Link）
 
@@ -1707,14 +1710,46 @@ Claude Code 和 Codex 留在本机的会话记录：列表（按来源筛、搜�
 
 相应地：
 
-- **后台快照不能覆盖较新的用户操作**（2026-11-09）：提交派单前，在同一路由状态锁内重读开关、偏好、队列、固定线路和内存 current / pending；期间有变化就丢弃这轮结果。手动选择、落盘与钉住在同一状态锁内完成；恢复旧线路时已有 pending 也算已选。设置页读取失败不得回写默认值，写入排队且失败显错；当前 / 下一发 / 最近请求实际线路分开显示。
-- **请求允许范围先于排序**（2026-11-09，未发布）：`RouterSettings.routing_mode` 是唯一跨线授权来源。默认 `selected` 只用当前 / 待用所选线路，旧 JSON 即使带 `auto_failover:true` 也不迁成许可池；`pool` 只能访问明确保存的 `allowed_routes`。普通选线、指定线路启动及项目选线收回为 `selected` 并停止调度；“固定池内首选”才保留池内备用。关闭智能调度只停止排序，不退出用户已明确批准的池，界面必须说清这一点。池、队列、当前线与调度状态在同一锁 / 事务中协调；新增线路不自动授权。
+- **选线只有三个概念**（2026-11-14，使用者批准；推翻了 2026-11-09 定的「普通选线、指定线路启动、项目选线一律收回成单线并停调度」
+  和「固定池内首选，钉住 4 小时」两条）：
+
+  | 概念 | 落盘在哪 | 谁能改 |
+  | ---- | -------- | ------ |
+  | 当前线路 | `dispatch_queue.current` | 只有「设为当前」（`station_set_current` → `station_ops::set_current`）；自动选线换过去的走 `remember_current` |
+  | 备用线路 | `router_settings.allowed_routes`（有序，**只存这一份**） | 路由设置保存（`station_router_settings_save`）；空 = 严格单线 |
+  | 自动选线 | `station_schedule` | 一个开关 + 偏好，只在「当前线路 + 备用名单」里挑首选（`station_ops::auto_select_pool`） |
+
+  - 「设为当前」**只换当前线路，备用名单一个字都不动**；自动选线开着时把它关掉，并如实返回（`SetCurrentResult.auto_select_stopped`；
+    界面在生效前看 `RouterStatus.selection.auto_select` 提示一句）。钉住删了；行上「仅用这条并启动」删了（`station_launch` 没有 `routeId`，
+    启动只走当前线路）；项目不再存 / 换线路。⛔ **别再加第二个换线入口** —— 八个入口、后果各不相同，正是 2026-11-14 要收拾的局面。
+  - **能访问哪些线路只看「当前线路 + 备用名单」**（`RouterState::route_allowed`）：当前线路永远可发；名单只在当前线路还在、
+    而且不是官方 Codex 线时算数（当前线路删了什么都不许，不悄悄改用备用线）。新增线路不自动进名单；旧 JSON 即使带
+    `auto_failover:true` 也不迁成有备用。`routing_mode` 只是存储字段，`RouterSettings::normalized` 让它永远跟名单对得上 ——
+    对不上时按**不扩大许可**的方向理顺：`selected` + 名单 = 清空名单（旧数据、旧界面的「仅所选线路」照旧安全），名单空 = `selected`。
+    跨线的逻辑一律问 `has_backups()`，别单看 `routing_mode`；读库、存库、装进路由器三处都过 `normalized`。
+  - **备用名单为空 = 严格单线**：任何失败（429、缺模型、熔断……）都不换站，熔断也不拦发送（只有一条线时本机路由不问熔断，
+    主页也不报「N 条熔断」，E6）。有备用时：当前线路出故障才按名单顺序用备用；故障换线不改当前线路，恢复后下一发自动回到当前线路。
+  - **自动选线开着时**：每一跳在「当前线路 + 备用名单」里重排，排出的顺序只放在路由器内存和 `dispatch_queue.rows`（这一轮的记录）里，
+    **不改名单**；关掉它（或「设为当前」把它关掉）立刻回到名单顺序、这一轮的记录作废（`station_ops::clear_round`）。
+    打开的那一刻当前线路不在名单里就放进名单最前面（`prepare_auto_select`）—— 不然一换走它就回不来。名单存空、当前线路删了都会停掉自动选线。
+    新建的默认偏好省钱优先（`Prefs::saving`：便宜 + 成功率 ≥ 95%，界面「默认」那一档必须一样）；`max_attempts` 默认 2（存过的值不动）。
+  - **下一发实际按什么顺序试，后端算好给界面**（`RouterState::route_plan` → `RouterStatus.selection.plan`，跟转发同一套规矩；
+    主线暂停在 `selection.paused`，聚合直达在 `selection.aggregate`，名单里更贵的线在 `selection.pricier_backups`）。界面只照实显示，不自己再算。
+- **后台快照不能覆盖较新的用户操作**（2026-11-09）：提交派单前，在同一路由状态锁内重读开关、偏好、备用名单和内存 current / pending；
+  期间有变化就丢弃这轮结果。「设为当前」的落盘与改内存在同一状态锁内完成；恢复旧线路时已有 pending 也算已选。设置页读取失败不得回写默认值，
+  写入排队且失败显错；当前 / 下一发 / 最近请求实际线路分开显示。
 - **发送前读最新许可，不信旧候选拷贝**：聚合发现 / 固定前缀、等待请求体后的首发、官方线及每次重试（含整流与同线路备用地址）均受当前范围限制。删除或撤销阻止尚未准入的发送，已准入在途请求不承诺撤回；不持状态锁等待网络。被拒绝而未发包不伪造 attempt、不计站点健康错误、不写成“最近实际访问了该站”。不凭价格或站名推断免费；明确名单是授权边界，预算硬上限仍未实现。
-- **容量分流必须另开开关**（2026-11-09，未发布）：`AdmissionSettings.overflow_to_pool` 默认 `false`。明确 `pool` + `priority` + 当前 A 的 `max_concurrent=2` + 开关开，才实现同一对话两条 SSE 占住 A 后第 3 发去许可 B；关开关则守住 A 等待或返回 429。A 空出后优先回 A，分流不改全局 `current`。`least-loaded` 也只在开关开时生效，可能在满额前分摊。容量开关不关闭池内故障备用；严格不跨站用 `selected`。
+- **上游限流和本机限额分两类**（2026-11-14，C2；表在 `local_router::admission` 模块头）：上游 429 与它的 Retry-After 窗口、
+  额度证据说用光了，是**线路的故障** —— 有备用就立刻去下一条（不等、跟分流开关无关），没有备用就等（设了等候的话）或回繁忙。
+  原来第一发换线、窗口里后几发却在本机被拒、不换线。本机自己的并发 / RPM 限额（默认关）才看 `AdmissionSettings.overflow_to_pool`（默认 `false`）：
+  开了，A 的 `max_concurrent=2` 被同一对话两条 SSE 占住时第 3 发去备用 B；关着则守住 A 等待或返回 429。A 空出后优先回 A，分流不改全局 `current`。
+  `least-loaded` 也只在开关开时生效，可能在满额前分摊；关掉分流时分法复位成 `priority`（旧数据「分流关 + 优先空闲」按复位后读，C3）。
 - **可选发送准入不得扩大许可**：每线路并发 / RPM / 额度检查和有限等待默认关闭。每次真实发送（含重试与测活）同锁领取容量并计 RPM；并发名额随响应结束 / 取消释放，等待位置在准入时立即释放，不等上游首字节。一个请求共用总期限，设置延长不延长旧等待，关闭或缩短期限立即生效。只有分流开关开才先查全部即时可用候选，都忙再排队；本机拒绝不伪造消费或健康失败。
-- **容量按线路 ID、当前进程计算**：同一线路的不同会话共享名额；同站 / 同 Key 的不同线路 ID 不合并，外部流量和其他 QB 进程不在计数内。已发送响应流不拆分或迁移；依赖上游状态的对话应固定线路。
-- **来源修改与撤销必须同步**：删除清理数据库和运行时 current / pending，同 ID 重建不能恢复旧许可。站点 / Key 保存、链接导入及备用地址更新必须同锁持久化并重载上游；测活既查 route_id，也查地址 / Key / 协议 / 模型快照及当前政策，关闭付费测活阻止尚未准入的旧任务。前端排名要隔离旧版本响应，派单保存要跨卸载 / 重挂保持顺序。
-- **额度证据不得猜**：当前只消费内置 DeepSeek `is_available` 的明确机器可用性；逐线路开启且 5 分钟内明确不可用才拒绝。未知、过期、余额 0 均不自行推断，请求路径不主动刷新，来源改动作废旧证据。官方 OAuth 身份不参与 API 线路容量池，消费预算仍须另行实现。
+- **容量按线路 ID、当前进程计算**：同一线路的不同会话共享名额；同站 / 同 Key 的不同线路 ID 不合并，外部流量和其他 QB 进程不在计数内。已发送响应流不拆分或迁移；依赖上游状态的对话应固定线路（清空备用名单）。
+- **来源修改与撤销必须同步**：删除清理数据库和运行时 current / pending，同 ID 重建不能恢复旧许可。线路改了站点名 / 分组（id 变了）时，
+  当前线路、备用名单（原位）、发送限制、聚合名单与 key 都**迁到新 id**，不清空（`rename_route_in_transaction` + `RouterState::rename_route`，A3）；
+  旧 id 的上游、熔断随重装清掉。站点 / Key 保存、链接导入及备用地址更新必须同锁持久化并重载上游；测活既查 route_id，也查地址 / Key / 协议 / 模型快照及当前政策，关闭付费测活阻止尚未准入的旧任务。前端排名要隔离旧版本响应。
+- **额度证据不得猜**：当前只消费内置 DeepSeek `is_available` 的明确机器可用性；逐线路开启且 5 分钟内明确不可用才跳过这条线（有备用去备用，没有就回繁忙）。未知、过期、余额 0 均不自行推断，请求路径不主动刷新，来源改动作废旧证据。官方 OAuth 身份不参与 API 线路容量池，消费预算仍须另行实现。
 - **界面上必须写明「面板关掉即停」**。循环活在面板进程里，关掉面板调度
   就不再换上游了，而客户端还在照着上一次选的那条线跑 —— 可能是几天前
   那条已经涨价的。这不是缺陷，是这个软件的定位（它是个面板，不是后台服务），
@@ -1727,15 +1762,17 @@ Claude Code 和 Codex 留在本机的会话记录：列表（按来源筛、搜�
   个样本、连续 `confirm` 轮**有新证据**都领先才换；默认 8% / 3 / 2，每个软件一份存在 `Schedule.dispatch`）。
   `rank` 一律不给 `incumbent`（0.25.6 及以前迟滞在 `rank` 里），`next_upstream` 只问一句「派单的第一条是不是现任」——
   再判一次就是两道叠在一起，结果是永远不换，而且没人说得清为什么；
-- **熔断中、测活判死、没过底线的线永远不当第一。** 派单分四档：钉住 → 合格 → 兜底（没过底线，**不拉黑**，
+- **熔断中、测活判死、没过底线的线永远不当第一。** 派单分三档（2026-11-14 起没有「钉住」档）：合格 → 兜底（没过底线，**不拉黑**，
   照样留在队列里接失败切换）→ 故障（熔断中 / 测活判死）。现任掉档了而有合格的才立刻换；没有合格的就留着现任
   （本机路由每一发自己会跳过熔断着的线）。底线全卡光时 `rank` 会放开底线重排一轮，那是为了不制造死局，
   **不是**为了把不合格的送上生产。唯一的例外是还没有当前上游：那时挑排第一的（哪一档都行，不然客户端每一发都是
   「还没选上游」）；
 - **测活判死要让位给真实流量**：判死之后本机路由在那条线上成功过，就不算判死（`station_ops::line_facts`）——
   一次测活不能把正在干活的线打进故障档；
-- **调度开着时**：普通 `station_select_route` 会回到 `selected` 并关闭调度；只有明确的池内固定首选才保留池并钉住 4 小时（故障时不继续强占首位）。仍在调度的池内热备顺序归调度排，
-  `station_dispatch_queue_save` 拒收手排的顺序（路由设置弹窗里那张表只读）；
+- **测活与排名预览只碰当前线路 + 备用名单**（C6 / C7）：手动「重新检测」（`station_probe_now`）只测这几条，名单外的一概不测；
+  先只发免费的，开着花钱测活时只回预估（`ProbeNowResult.paid_pending` / `paid_estimate_cny`），带 `paid: true` 再调一次才发花钱的；
+  每一发真正发出去前再核一遍许可（`admit_probe_when` 的 `require_permission`）。排名预览（`station_decide`）跟调度一跳一样只排这几条 ——
+  原来预览排全部线路，说「第一是 X」而 X 根本不在调度的范围里；
 - **测活两种**（`usecase::station_liveness`，判读在 `schedule::liveness`，改写自 sub2guard）：免费的发空请求体，
   只证明「线通、Key 认」，调度开着时自动跑，最近走过真实流量的线不测；花钱的**默认关**（使用者选的），
   开了也按每日预算（元，已乘充值比例）封顶，不知道价的线按偏贵的价（`UNKNOWN_PRICE_PER_MTOK`）记上界。

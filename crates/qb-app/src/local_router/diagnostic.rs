@@ -44,7 +44,7 @@ impl Target {
             })
             .ok_or_else(|| {
                 GateError::Other(
-                    "检测线路未获授权或已删除：请先选为 Codex 当前线路，或加入已启用的授权池"
+                    "检测线路未获授权或已删除：请先把它设为 Codex 的当前线路，或加进备用线路"
                         .into(),
                 )
             })?

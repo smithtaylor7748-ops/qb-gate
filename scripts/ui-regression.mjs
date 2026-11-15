@@ -2490,38 +2490,36 @@ try {
     .first()
     .waitFor();
   await schedDialog.getByText(/今天测活约 ¥0\.0000～¥0\.0000/).waitFor();
-  // 打开之后再测：花钱的那几次照实记上，「今天测活约」跟着涨。
+  // 打开之后再测（C6，2026-11-14）：先只发免费的，花钱的只给预估、点了才测；点之前「今天测活约」不动，点之后才涨。
   await paidProbe.check();
   await schedDialog
     .getByRole("button", { name: "立刻测", exact: true })
     .click();
+  const paidConfirm = schedDialog.getByRole("button", {
+    name: "花钱测这几条",
+    exact: true,
+  });
+  await paidConfirm.waitFor();
+  await schedDialog.getByText(/今天测活约 ¥0\.0000～¥0\.0000/).waitFor();
+  await paidConfirm.click();
   await schedDialog
     .getByText(/今天测活约 ¥0\.0000～¥0\.0000/)
     .waitFor({ state: "hidden" });
   await paidProbe.uncheck();
-  // 池内首选与普通选线分开：这里固定首选仍保留许可池，取消后交回调度。
-  await schedDialog
-    .getByRole("button", { name: "固定池内首选", exact: true })
-    .first()
-    .click();
-  await schedDialog.getByText(/^已钉住「/).waitFor();
-  // 档位那一格和动作日志那一格都写「钉住」。
-  await schedDialog
-    .getByRole("cell", { name: "钉住", exact: true })
-    .first()
-    .waitFor();
-  await schedDialog
-    .getByRole("button", { name: "取消钉住", exact: true })
-    .first()
-    .click();
-  await page.getByText("已取消钉住，交回调度", { exact: true }).waitFor();
-  await schedDialog.getByText(/^已钉住「/).waitFor({ state: "hidden" });
+  // 钉住删了（2026-11-14）：派单队列里不再有「固定池内首选」，手动指定只有「设为当前」。
+  assert.equal(
+    await schedDialog
+      .getByRole("button", { name: "固定池内首选", exact: true })
+      .count(),
+    0,
+    "钉住的入口还在",
+  );
   await page.keyboard.press("Escape");
   await schedDialog.waitFor({ state: "hidden" });
-  // 调度只接管已批准池的排序，名单仍由用户决定。
+  // 自动选线只接管排序，备用名单仍由用户决定。
   await page.getByRole("button", { name: /^选线与分流/ }).click();
   await page.getByText(/智能调度开着：名单仍由你决定/).waitFor();
-  assert.equal(await poolMode().isChecked(), true, "固定首选破坏了授权池模式");
+  assert.equal(await poolMode().isChecked(), true, "自动选线改了备用名单");
   for (const button of await routerDialog
     .getByRole("button", { name: /往[前后]挪/ })
     .all()) {
@@ -2532,23 +2530,24 @@ try {
   await schedToggle(false).waitFor();
   await schedToggle(false).click();
   await schedToggle(true).waitFor();
-  // 普通选线必须立即收回跨线许可，并停止智能调度。
+  // 「设为当前」只换当前线路：备用名单不动，自动选线被关掉并如实说
+  // （2026-11-14，推翻了「普通选线必须立即收回跨线许可」）。
   await page.getByRole("radio").filter({ hasText: "DS 低价组" }).click();
   await page
-    .getByText("已设为仅用这条线路，智能调度已停止", { exact: true })
+    .getByText("已设为当前线路，自动选线已关闭", { exact: true })
     .last()
     .waitFor();
   await schedToggle(false).waitFor();
+  // 备用名单还在，所以自动选线随时能再打开。
   await page
-    .locator('button[aria-label="智能调度"][aria-disabled="true"]')
+    .locator('button[aria-label="智能调度"][aria-disabled="false"]')
     .waitFor();
-  assert.equal(await schedToggle(false).getAttribute("aria-disabled"), "true");
   await page.getByRole("button", { name: /^选线与分流/ }).click();
-  await strictMode().waitFor();
+  await poolMode().waitFor();
   assert.equal(
-    await strictMode().isChecked(),
+    await poolMode().isChecked(),
     true,
-    "普通选线仍留在授权池模式",
+    "设为当前把备用名单收回成了仅所选",
   );
   await page.keyboard.press("Escape");
   await page.getByRole("radio").filter({ hasText: "DS 专线" }).click();

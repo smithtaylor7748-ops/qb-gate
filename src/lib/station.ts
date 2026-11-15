@@ -285,8 +285,8 @@ export const stationApi = {
   /** ⛔ 给线路 = 直连（桌面端配置里写那条线的真 Key）；`null` = 改回经本机路由。重开桌面端才生效。 */
   setDesktopDirect: (routeId: string | null) =>
     call<DesktopDirectView>("station_desktop_direct_set", { routeId }),
-  // 项目（阶段 5，cc-switch 的 M4）：只换中转那一侧（线路、派单顺序、中转环境里的 MCP / Skills / 提示词），
-  // ⛔ 不碰官方账户和槽位。项目列表各软件共用，「当前项目」每个软件各记各的。
+  // 项目（阶段 5，cc-switch 的 M4）：只换中转环境里的 MCP / Skills / 提示词，⛔ 不碰线路（2026-11-14 起）、
+  // 不碰官方账户和槽位；桌面端没有项目。项目列表各软件共用，「当前项目」每个软件各记各的。
   /** 项目列表和每个软件的当前项目。 */
   projects: () => call<ProjectsView>("projects_list"),
   /** 把这个软件现在的样子存成一个项目，并记成它的当前项目。 */

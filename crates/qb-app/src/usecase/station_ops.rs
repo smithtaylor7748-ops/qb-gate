@@ -1527,7 +1527,7 @@ pub fn rename_route_in_transaction(db: &Repository, old: &str, renamed: &Route) 
 ///
 /// - **key 登记簿以库里那份为准、只增不减**，界面传来的 `keys` 不认：key 一旦换了指向，客户端带着的旧 id
 ///   会被悄悄发到另一条线（cc-switch 的 `allocate_key` 同样只增不减）；
-/// - 名单只收这个软件自己的线（混进别的软件的、官方 Codex 那条，整份拒绝 —— 跟派单顺序同一条规矩）；去空、去重；
+/// - 名单只收这个软件自己的线（混进别的软件的、官方 Codex 那条，整份拒绝 —— 跟备用名单同一条规矩）；去空、去重；
 /// - 名单里还没 key 的按站点名 → 站点域名 → 分组名分一个（中文名转不出 key，就往后取）；
 /// - 每条线发布的模型去空白、去重，只留名单里那些线的。
 fn settle_aggregate(db: &Repository, settings: &mut RouterSettings) -> Result<()> {
@@ -2284,7 +2284,7 @@ mod tests {
         save_router_settings(&db, &routing).unwrap();
         assert!(
             !load_schedule(&db, Client::Codex).unwrap().enabled,
-            "授权池不能恢复旧版调度开关"
+            "存备用名单不能恢复旧版调度开关"
         );
         assert!(!db.get::<Schedule>(SCHEDULE_TABLE, "codex").unwrap().enabled);
         drop(db);

@@ -7,7 +7,7 @@
 //!
 //! # 一发请求怎么走
 //!
-//! 对派单顺序里的每一条线（当前那条打头，见 [`RouterState::candidates`]）：
+//! 对这一发要试的每一条线（当前线路打头、后面是备用线路，见 [`RouterState::candidates`]）：
 //!
 //! 1. 试满 [`RouterSettings::max_attempts`] 条就停；「这条线没有这个模型」的 6 小时内跳过。
 //! 2. 向熔断器要放行（半开只放一发）；只有一条线时不问（cc-switch 同样如此）。
@@ -2021,7 +2021,7 @@ mod tests {
         }
     }
 
-    /// 一个软件两条线：`a` 是当前那条，`b` 排在派单顺序里。
+    /// 一个软件两条线：`a` 是当前线路，`b` 在备用名单里。
     async fn two_lines(
         client: Client,
         a: Upstream,

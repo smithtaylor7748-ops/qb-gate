@@ -952,7 +952,7 @@ function StationBoard({
             </span>
           </button>
 
-          {/* 本机路由每个软件一份的设置：故障转移、派单顺序、超时、熔断、整流器。 */}
+          {/* 本机路由每个软件一份的设置：备用线路、超时、熔断、整流器。 */}
           <button
             type="button"
             className="qb-st-schedcfg"

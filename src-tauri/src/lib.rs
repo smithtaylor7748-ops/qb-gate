@@ -215,7 +215,7 @@ pub fn run() {
             commands::quality_check::quality_check_run,
             commands::quality_check::quality_check_cancel,
             commands::station::station_set_current,
-            // 本机路由每个软件一份的设置与派单顺序（2026-10-24，中转站重构阶段 1）。
+            // 本机路由每个软件一份的设置（含备用名单，2026-10-24 中转站重构阶段 1；2026-11-14 起选线只有「设为当前」）。
             commands::station::station_router_settings,
             commands::station::station_router_settings_save,
             // 聚合模型此刻发布哪些（中转站重构阶段 3）。
@@ -639,7 +639,7 @@ pub fn run() {
                     if let Err(e) = usecase::antigravity_ops::sync_ide_profile() {
                         audit::write(&format!("读反重力 IDE 槽位索引失败（汉化引擎会按默认资料目录找端口）：{e}"));
                     }
-                    // 本机路由的设置、派单顺序、各软件上次选中的那条（2026-10-24 起落盘）装回去。
+                    // 本机路由的设置（含备用名单）、自动选线排的顺序（开着时）、各软件的当前线路（2026-10-24 起落盘）装回去。
                     // 路由本身不在这里拉起（跟原来一样，「启动」/ 开启识别时才起）；
                     // 这一步只保证它起来之后接着用上次那条，而不是 503「还没选上游」。
                     if let Err(e) =
