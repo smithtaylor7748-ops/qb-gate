@@ -1,0 +1,25 @@
+name: LLM price drift
+
+on:
+  schedule:
+    # Weekly, Mondays at 07:43 UTC.
+    - cron: '43 7 * * 1'
+  pull_request:
+    paths:
+      - 'crates/qb-station/src/station/pricing.rs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Hard-coded station prices match official pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Mattbusel/llm-prices@v1
+        with:
+          paths: crates/qb-station/src/station/pricing.rs
+          fail-on: drift
