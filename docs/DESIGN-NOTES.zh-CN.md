@@ -2,6 +2,208 @@
 
 # 实现笔记
 
+## 2026-11-14（未发布）：浏览器助手连接协议（协议 2）—— 配一次长期有效、多个浏览器同时连、按站点放行
+
+**插件那一侧只照这一节写。** 实现在 `crates/qb-app/src/browser_link/`（`mod.rs` 桥本体，`link_auth.rs` 证明，`link_store.rs` 落盘，`page/` 认领页面），
+单测在同目录 `tests.rs`，独立测试桥是 `cargo run -p qb-app --example browser-link-dev`（见本节末尾）。
+
+### 为什么改
+
+0.25.15 那一版的桥只在点「生成配对码」时开、每次随机端口 + 新口令、只放内存：面板一重启插件就失联，要重新复制粘贴一段 JSON；一个桥只接一个浏览器资料；
+保护一触发就关掉整个资料的全部窗口。使用者定了三件事：配一次长期有效、不粘贴；面板入口放扩展页；保护改成**只拦受保护的网站**。
+
+没用 Native Messaging：要往注册表写宿主清单，正撞杀软那一节「别再加像木马的行为」，使用者也没批准。仍是本机回环 HTTP + WebSocket，
+**端口照旧让系统挑**，只是落盘复用；不写死、不扫端口段（开源兼容那一节）。
+
+### 一、谁记什么
+
+| 在哪 | 记什么 |
+|---|---|
+| 面板 `<数据目录>\browser-link.json` | 每条配对：配对编号（16 位十六进制，不是秘密）、扩展 ID、**长期口令（`secret::seal` = DPAPI 加密）**、浏览器名、插件版本、配对时间、这条配对最后被告知的端口；外加一个「下次启动先试的端口」。一条都没有就删掉文件 |
+| 插件 `chrome.storage.local` | 配对编号、长期口令、端口、上次放行时的出口（恢复保护用）。由 P2 决定，桥不关心 |
+| 面板内存 | 认领码（5 分钟、一次性）、每条连接的会话口令与保护状态、最近一次 IP 判定 |
+
+一条配对 = 一个浏览器资料里的那份插件。插件的扩展 ID 固定之后，同一台机器上所有 Chrome 资料的扩展 ID 都一样 —— 所以**按配对编号区分，不按扩展 ID**。
+上限 8 条；同时连着的每条配对最多一条连接（新连接让旧的让位）。
+
+### 二、生命周期
+
+- **没配对过：不监听任何端口。** 打开面板、打开卡片都不开端口。
+- 有配对：面板启动时（`lib.rs` 的 setup，就绪之后）`Link::resume` 先试上次的端口，被占用就让系统另挑，并记下「有浏览器还在找旧端口」（状态里 `relink_needed`）。
+- 使用者点「连接浏览器」：没在监听就开起来（端口让系统挑），发一个认领码，用默认浏览器打开认领页。
+- 使用者点「一键重连」：此刻没有浏览器连着、端口又换过时，先试着拿回原来的端口（拿回了 `rebound: true`）；然后照样发认领码、打开认领页 ——
+  页面本身会叫醒插件的后台，换过端口的插件也靠它学到新端口。
+- 解除配对：先落盘，再给那条连接发 `revoked` 断开；那条配对的口令、会话口令立刻失效。**最后一条解除就停止监听。**
+- 面板正常退出（`RunEvent::Exit`）：先给每条连接发 `offline`（`panel_exit`），最多等两秒，再重锁。崩溃、被杀没有这条消息。
+- 启停之间的顺序：`Link` 有一个 `epoch`，停止先把它加一再排队；排在停止之前请求、之后才轮到的启动 / 连接一律作废（`a_late_start_cannot_override_a_newer_stop`）。
+
+### 三、端点
+
+都只在 `127.0.0.1:<端口>` 上；**每个请求都校验 `Host` 是 `127.0.0.1:<端口>` 或 `localhost:<端口>`（挡 DNS 重绑定），带查询串一律 421。**
+
+| 方法与路径 | 谁调 | 鉴权 | 做什么 |
+|---|---|---|---|
+| `GET /link` | 使用者的浏览器（面板打开的） | 无（认领码在 `#c=` 片段里，不进请求行） | 认领页面。严格 CSP（只许本源脚本 / 样式 / 连接、`frame-ancestors 'none'`）、`X-Frame-Options: DENY`、`no-referrer`、`no-store` |
+| `GET /link/app.js`、`/link/app.css`、`/link/tokens.css` | 认领页面 | 无 | 页面自己的脚本与样式（颜色就是面板的 `tokens.css`） |
+| `POST /link/state` | 认领页面 | `Origin` 必须是本源（`http://127.0.0.1:<端口>`） | `{"claim": 码}` → `{"state": "pending"\|"claimed"\|"expired"\|"invalid", "browser"?, "problem"?}` |
+| `POST /link/claim` | 插件后台 | `Origin` 必须是 `chrome-extension://<32 个 a–p>` | 认领：新配对或重连（下面第四、五节） |
+| `GET /v2/events` | 插件后台 | `Origin` 必须是扩展来源；之后在消息里握手 | 保护通道（WebSocket，第六节） |
+| `GET /v2/status` | 插件 | 会话口令 | 这条连接的保护状态（同推送的 `status`） |
+| `POST /v2/arm` `{"baseline"?: "上次放行的出口"}` | 插件 | 会话口令 | 开启 / 恢复保护（第七节） |
+| `POST /v2/disarm` `{}` | 插件 | 会话口令 | 暂停保护 |
+| `POST /v2/probe/start` `{}`、`POST /v2/probe/enhancement` | 插件 | 会话口令 | 浏览器检查（同 0.25.15） |
+| `GET /v2/stations`、`POST /v2/station/connect`、`POST /v2/station/pricing` | 插件 | 会话口令 | 查套路免登录、公开价格（请求体同 0.25.15） |
+| `/v1/*` | 旧插件 | — | 一律 `410`，`{"code": "protocol_outdated"}` |
+
+**会话口令的用法**：`Authorization: Bearer <会话口令>`。有 `Origin` 时必须等于那条连接的扩展来源；Chromium 偶尔不给 GET 带 `Origin`，
+这时要带 `X-QB-Extension: <扩展 ID>`，必须是那条连接的。POST 一律带 JSON 体（可以是 `{}`）。错误回包是 `{"error": 人话, "protocol": 2, "code"?: 机器代号}`，
+会话失效是 `401` + `code: "session_invalid"`（插件该重新握手）。
+
+### 四、首次配对
+
+```text
+面板「连接浏览器」 → 认领码 C（64 位十六进制，5 分钟，一次性）
+默认浏览器打开 http://127.0.0.1:<端口>/link#c=<C>
+插件的内容脚本（匹配 http://127.0.0.1/*）看到 <html data-qb-gate-link="2"> 与 #c=<C>
+  → 在 <html> 上写 data-qb-extension="<插件版本>"（页面据此显示「插件已经看到」）
+  → 把 C 和 location.port 交给后台
+插件后台 POST /link/claim {"claim": C, "extension_version": "0.2.0"}   （Origin 由 Chrome 自动带上）
+桥 → 200 {"type":"paired","protocol":2,"pairing":P,"token":T,"port":端口,"proof":HMAC(T,"claimed",P,C)}
+插件：按第八节验 proof（证明回包没被改），存 P、T、端口，然后连第六节的保护通道
+认领页面轮询 /link/state 看到 claimed → 显示「已连接」并把 #c= 从地址栏抹掉
+```
+
+- 桥**先落盘、后回包**：存不进去就回 `500 save_failed`，认领码不消耗，页面显示原因。
+- 认领失败时插件可以在 `<html>` 上写 `data-qb-extension-error="一句话"`，页面照搬显示（只读这两个属性，不执行内容）。
+- 4 秒内页面没看到插件 → 显示「没有检测到插件」与安装步骤。
+- 失败代号：`claim_invalid` / `claim_used` / `claim_expired`（都是 410，该回面板重点「连接浏览器」）、`too_many_pairings`（409，页面也显示）、`bad_request`（400）。
+
+**首次配对是首次信任（TOFU）**：没有旧口令，插件无法核实回包来自真的面板；只有面板打开的那一页带着真的认领码，这是使用者显式点出来的。
+本机若有恶意程序冒充桥，它本来就能做更坏的事 —— 威胁模型同 DPAPI 那一条（不防已经拿到本用户会话的代码）。
+
+### 五、重连（换过端口 / 被叫醒）
+
+已经有配对的插件在认领页上要**证明自己认得口令**，桥也要证明自己认得：
+
+```text
+插件 POST /link/claim {"claim": C, "pairing": P, "proof": HMAC(T,"claim",P,C), "extension_version": "…"}
+桥 → 200 {"type":"relinked","protocol":2,"pairing":P,"port":新端口,"proof":HMAC(T,"claimed",P,C)}   （不再发口令）
+插件：验 proof 通过才改记新端口，然后连保护通道
+```
+
+- 桥回 `404 unknown_pairing`（面板里解除过）或 `401 bad_proof`（口令对不上）时**不消耗认领码**：插件扔掉本地配对，用同一个 C 当新浏览器再认领一次（第四节）。
+- 插件连上保护通道本身也算「知道这个端口」：桥更新那条配对的端口与「下次先试的端口」。
+
+### 六、保护通道（`/v2/events` WebSocket）
+
+握手（每一步 5 秒内；消息上限 4 KB）：
+
+```text
+插件 → {"type":"hello","protocol":2,"pairing":P,"nonce":<插件随机 64 位十六进制 n1>,"version":"0.2.0"}
+桥   → {"type":"challenge","protocol":2,"nonce":<n2>,"proof":HMAC(T,"server",n1,n2)}
+插件：验 proof；不对 = 这个端口上不是认得这条配对的面板 → 断开，当作「面板没在运行」
+插件 → {"type":"authenticate","proof":HMAC(T,"client",n1,n2)}
+桥   → {"type":"welcome","protocol":2,"connection":编号,"pairing":P,"session":<会话口令>,"port":端口}
+桥   → {"type":"status", …}（第七节）
+```
+
+被拒是 `{"type":"rejected","code":…,"reason":…}` 然后断开：`unknown_pairing`（没有这条配对、或配对属于别的扩展 ID）、`bad_proof`、`protocol_mismatch`（`protocol` 不是 2）。
+⚠ `unknown_pairing` 这句话**没有经过证明**（桥不认得口令就没法证明）：插件不能凭它删掉本地配对，只能显示「请在面板点连接浏览器」并继续拦截；
+真正的撤销只认已认证连接里收到的 `revoked`。
+
+连上之后：
+
+| 方向 | 消息 | 说明 |
+|---|---|---|
+| 插件 → 桥 | `{"type":"ping"}` | 至少每 15 秒一次（建议 5 秒），否则桥断开 |
+| 插件 → 桥 | `{"type":"recheck"}` | 浏览器网络、代理变了：请桥立刻复查出口 |
+| 桥 → 插件 | `status` | 状态一变立刻推，另外每 2 秒一次心跳 |
+| 桥 → 插件 | `{"type":"offline","code":"panel_exit"\|"restarting","reason":…}` | 面板正常退出 / 联动换端口重启。随后断开 |
+| 桥 → 插件 | `{"type":"revoked","reason":…}` | 面板里解除了这条配对：插件删掉本地配对 |
+| 桥 → 插件 | `{"type":"replaced","reason":…}` | 同一条配对又连上了一条新连接，这条让位 |
+
+别的消息类型一律断开。**任何断开（有没有上面三条消息）都按「面板不可用」拦截。**
+
+### 七、保护状态机（每条连接各一份）
+
+`status` 的形状：
+
+```json
+{"type":"status","protocol":2,"seq":7,"allow":true,"code":"allowed","reason":"出口 IP 已核实，可以放行",
+ "armed":true,"checking":false,"ip":"203.0.113.10","baseline":"203.0.113.10","checked_at":1731500000,"ttl_ms":10000}
+```
+
+- **插件只认 `allow`。** `allow: true` 只在「开着保护、核实过、出口等于基准、代次没变、没被手动关、检测不超过 20 秒、联动在运行」全部成立时出现。
+- `ttl_ms`：拿到一条 `allow: true` 之后，`ttl_ms` 毫秒内没再收到新状态就自己当成拦截（心跳每 2 秒一次，正常不会过期）。
+- `seq`：每条连接单调递增。HTTP 回包里也带它，插件只采用最大的那一个，晚到的回包不覆盖新的推送。
+- `code`（`ProtectionCode`）：`not_armed` · `checking` · `allowed` · `ip_changed` · `ip_unknown` · `ip_not_allowed` · `country_not_allowed` · `country_unknown` ·
+  `country_conflict` · `probe_timeout` · `manual_paused` · `config_changed` · `stale` · `disconnected` · `panel_stopping`。`reason` 是给人看的一句话。
+
+```text
+未开启 ──arm（无 baseline）──→ 核验中 ──判定放行──→ 放行（基准 = 这次的出口）
+   ↑                              └──判定不放行──→ 未开启（code 说明为什么；插件可稍后再 arm）
+   │
+   │       放行 ──复查：出口变了（含白名单内换 IP）──→ 已触发（armed、不放行、code=ip_changed）
+   │       放行 ──查不到 / 不在白名单 / 超时 / 手动关门 / 代次变 / 过期──→ 已触发（code 对应）
+   │       已触发 ──再 arm──→ 原样不变（不会悄悄换基准）
+   └──disarm── 任何状态（使用者点「重新放行」= 先 disarm 再 arm）
+
+恢复（插件后台重启、面板重启后重连）：arm {"baseline": 上次放行的出口}
+   现在的出口 == baseline 且判定放行 → 直接放行；不一样 → 已触发（ip_changed），等使用者重新放行
+```
+
+- 复查：有放行中的连接时，按 IP 锁的检测间隔（最长 5 秒）复查一次，所有连接共用一次探测、各按自己的基准比。插件发 `recheck` 立刻复查。
+- **晚到的开启不覆盖较新的停止**：每条连接一个 `revision`，停止 / 断开 / 失败都把它加一；开启在等检测锁之前记下、探测回来之后核对，对不上就作废。
+- 断开不是停止：开着保护的连接断开后，面板上那条配对显示「开着、不放行、已断开」，不冒充使用者关了保护。
+- 「已触发」之后怎么关标签页、怎么显示拦截页、规则是不是浏览器重启仍在，是插件（P2）的事；桥只给「放 / 不放 + 原因」。
+
+### 八、证明怎么算
+
+`proof = hex(HMAC-SHA256(key = 长期口令 T 的 ASCII 字节, message = "qb-link/2 <角色>\n<a>\n<b>"))`，结果 64 位小写十六进制。
+
+| 角色 | 谁出 | a | b |
+|---|---|---|---|
+| `server` | 桥（challenge） | 插件随机数 n1 | 桥随机数 n2 |
+| `client` | 插件（authenticate） | n1 | n2 |
+| `claim` | 插件（重连认领） | 配对编号 P | 认领码 C |
+| `claimed` | 桥（认领回包） | P | C |
+
+插件用 WebCrypto：`crypto.subtle.importKey("raw", 口令的 UTF-8 字节, {name:"HMAC", hash:"SHA-256"}, false, ["sign"])` 再 `sign`。
+固定向量（`T = "0123456789abcdef"` 重复 4 次）：`server`、a = 64 个 `a`、b = 64 个 `b` → `1763e994…2ffc99`；`client` 同参数 → `442e2ed3…ad7e9b`；
+`claim`、a = `0123456789abcdef`、b = 64 个 `c` → `5eb5a596…6f529e`；`claimed` 同参数 → `4d26b086…ba83a`。完整值见单测
+`proofs_match_the_documented_webcrypto_vectors`（这组就是拿 WebCrypto 算出来的）。
+
+为什么不直接发口令：端口落盘复用之后，面板没开时那个端口可能被别的程序占着，插件照旧去连 —— 连上就发口令，等于把口令交给不相干的程序，
+对方还能回一句「可以放行」。现在长期口令一辈子只在首次配对的回包里出现一次；桥先证明，插件才开口。
+
+### 九、兼容策略：直接替换，`/v1/*` 回 410
+
+旧插件的 JSON 配对码只在面板内存里、面板一重启就作废；新桥不再发那种口令，旧插件本来就认证不了。保留 v1 等于把「单一来源、内存口令」那套留着，
+跟这一轮的三条要求直接冲突。插件随安装包一起分发（使用者定的），版本一起走，所以**换了版本号的路径（`/v2/`）+ 握手里的 `"protocol": 2`**，
+旧路径一律 `410 protocol_outdated`（「请换用 QB Gate 自带的新版插件」）。以后再改线协议就加 `/v3/` 与 `"protocol": 3`，同样的处理。
+
+### 十、插件要做的事（P2 的清单）
+
+1. 内容脚本匹配 `http://127.0.0.1/*`：在 `data-qb-gate-link="2"` 的页面上读 `#c=`，写 `data-qb-extension`，交给后台认领（第四、五节）；失败写 `data-qb-extension-error`。
+2. 存 P、T、端口、上次放行的出口；后台醒来就按存的端口连保护通道（第六节），先验桥的证明。连不上 / 证明不对 / `rejected` = 面板不可用 → 拦截，退避重试。
+3. 只认 `allow`；`ttl_ms` 内没新状态就拦；按 `seq` 取最新。
+4. 保护开着、连上之后发 `POST /v2/arm {"baseline": 存的出口}`；`allow` 变成真的时候记下 `baseline`。使用者点「重新放行」= `disarm` 再 `arm`（不带 baseline）。
+   **每次 `arm` 都会真的去探一次出口**（联网）：判定没放行时请退避重试（至少 15 秒），别连发。
+5. 收到 `offline` / 异常断开 → 拦截并显示原因（`panel_exit` 写「QB Gate 面板已退出」）；收到 `revoked` → 删本地配对。
+6. 浏览器网络、代理变了发 `recheck`；至少每 15 秒 `ping`。
+
+### 十一、独立测试桥
+
+```powershell
+cargo run -p qb-app --example browser-link-dev -- --fresh --browser "C:\Program Files\Google\Chrome\Application\chrome.exe"
+```
+
+不开面板、不碰 `%LOCALAPPDATA%\ClaudeIpGate`（配对记录默认放 `%TEMP%\qb-browser-link-dev`，`--dir` 指向数据目录会直接拒绝）、**不打开任何数据库**
+（站点路由走 `--station 名字=来源` 给的假站点：账户导入只核对同源与格式、不验证不保存；公开价格只解析）。出口判定是假的，
+在窗口里打 `allow` / `change` / `unknown` / `reject` / `hang` / `pause` / `gen` 切换，`offline` 正常停（发下线）、`crash` 直接结束进程、
+`occupy` 模拟端口被占用、`reconnect` 一键重连。自动化用控制端点：地址与口令写在 `<目录>\dev-control.json`，每个请求带 `X-QB-Dev-Token`；
+完整命令表在 `crates/qb-app/examples/browser-link-dev.rs` 文件头。不加 `--fresh` 时沿用上次的配对，拿来测「面板重启之后插件自己连回来」。
+
 ## 2026-11-13（0.25.15）：关停按「要的结果」判成败；一键关闭宁可错杀；中转脱离 IP 锁
 
 **关停报错不是没关掉，是把「已经在死」记成了失败。** `ip-gate.log` 11-09 那一串「部分关停未完成」全是 `PID x` 形式 —— 来自按证据补收那一步，不是按会话停那一步。
