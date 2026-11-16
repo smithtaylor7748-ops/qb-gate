@@ -79,6 +79,15 @@ impl GateState {
     pub fn clear_needs_reopen(&self) {
         *self.needs_reopen.lock().unwrap() = None;
     }
+
+    /// 看门狗此刻是不是真的在执行策略：监督循环活着，**而且**没被手动暂停。
+    ///
+    /// 「停止看门狗」只是 [`pause`]，监督循环留着（免得再起一个跟它抢）。
+    /// 只看 `watchdog_running` 的话，停完界面照样写「运行中」、「启动」按钮一直是灰的。
+    pub fn watchdog_active(&self) -> bool {
+        *self.watchdog_running.lock().unwrap()
+            && !self.manual_paused.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 // ---------------------------------------------------------------- ACL 包装
@@ -464,6 +473,37 @@ pub fn pause(state: &GateState) -> Result<()> {
     finish_pause(invalidated, persisted)
 }
 
+/// 「启动看门狗」撞上被手动暂停的门禁：**先验出口 IP，过了才解除暂停**。
+///
+/// 只恢复巡检：不解锁、不发租约 —— 那是「重新放行」的事。验不过就保持暂停、照实报错
+/// （跟会话内 hook 那句「请回到 QB Gate 验证并启动」是同一条路）。
+/// 验 IP 期间又被手动暂停 / 收回过（`generation` 变了），这次恢复作废。
+pub async fn resume(state: &GateState) -> Result<String> {
+    let generation = state.generation.load(std::sync::atomic::Ordering::SeqCst);
+    let ip = verified_ip().await?;
+    finish_resume(
+        state,
+        generation,
+        &crate::paths::state_dir().join("gate-intent.json"),
+    )?;
+    crate::audit::write(&format!("出口 IP 在白名单内（{ip}），看门狗已恢复巡检"));
+    Ok(ip)
+}
+
+/// [`resume`] 验过 IP 之后那一半：核对期间没有更新的手动操作，再落盘、解除暂停。
+///
+/// 先写意图文件再改内存：写不进去就保持暂停 —— 会话内 hook 读的是那份文件。
+fn finish_resume(state: &GateState, generation: u64, intent: &Path) -> Result<()> {
+    if state.generation.load(std::sync::atomic::Ordering::SeqCst) != generation {
+        return Err(GateError::Other("门禁操作已被更新的手动操作取消".into()));
+    }
+    crate::config_io::replace(intent, Some(b"{\"paused\":false}"))?;
+    state
+        .manual_paused
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
 /// Callers must perform emergency cleanup even when recording the pause fails.
 pub fn finish_pause<T>(pause: Result<()>, action: Result<T>) -> Result<T> {
     match (pause, action) {
@@ -785,6 +825,44 @@ mod tests {
         assert_eq!(cache.get(), None);
         super::with_current_verdict(&generation, 2, || cache.set(Some(false)));
         assert_eq!(cache.get(), Some(false));
+    }
+
+    #[test]
+    fn a_paused_supervisor_is_not_reported_as_a_running_watchdog() {
+        use std::sync::atomic::Ordering;
+        let state = super::GateState::default();
+        assert!(!state.watchdog_active());
+        *state.watchdog_running.lock().unwrap() = true;
+        assert!(state.watchdog_active());
+        // 「停止看门狗」= 暂停：循环还活着，但界面必须看到「未运行」，「启动」才点得动。
+        state.manual_paused.store(true, Ordering::SeqCst);
+        assert!(!state.watchdog_active());
+    }
+
+    #[test]
+    fn resuming_clears_the_pause_only_when_no_newer_manual_action_happened() {
+        use std::sync::atomic::Ordering;
+        let dir = std::env::temp_dir().join(format!("qb-gate-resume-{}", crate::config_io::id()));
+        let intent = dir.join("gate-intent.json");
+        let state = super::GateState::default();
+        *state.watchdog_running.lock().unwrap() = true;
+        state.manual_paused.store(true, Ordering::SeqCst);
+
+        // 验 IP 期间又点了一次「停止」/「立即全部上锁」：这次恢复作废，暂停留着，文件不写。
+        let stale = state.generation.load(Ordering::SeqCst);
+        state.generation.fetch_add(1, Ordering::SeqCst);
+        assert!(super::finish_resume(&state, stale, &intent).is_err());
+        assert!(state.manual_paused.load(Ordering::SeqCst));
+        assert!(!intent.exists());
+
+        let current = state.generation.load(Ordering::SeqCst);
+        super::finish_resume(&state, current, &intent).unwrap();
+        assert!(!state.manual_paused.load(Ordering::SeqCst));
+        assert!(state.watchdog_active());
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&intent).unwrap()).unwrap();
+        assert_eq!(written["paused"], false);
+        let _ = std::fs::remove_dir_all(&dir);
     }
     use super::*;
 

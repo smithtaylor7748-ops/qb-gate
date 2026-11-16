@@ -32,7 +32,7 @@ pub async fn gate_status(state: tauri::State<'_, AppState>) -> Result<gate::Gate
         all_locked: !targets.is_empty() && targets.iter().all(|t| t.locked),
         targets,
         lease: state.gate.lease.lock().unwrap().clone(),
-        watchdog_running: *state.gate.watchdog_running.lock().unwrap(),
+        watchdog_running: state.gate.watchdog_active(),
         stale_copies: gate::targets::stale_copies(),
         recent_log: audit::tail(20),
         needs_reopen: state.gate.needs_reopen.lock().unwrap().clone(),
@@ -176,12 +176,23 @@ pub async fn gate_check_interval_save(seconds: u32) -> Result<settings::Settings
     usecase::settings_ops::save_gate_check_interval(seconds)
 }
 
+/// 「停止看门狗」只是暂停（监督循环留着），所以这里要先解除暂停 ——
+/// 只解除暂停的话 `start_watchdog` 看到循环还活着就直接返回，点了等于没点。
+/// 解除前验一次出口 IP（`gate::resume`），验不过就保持暂停、照实报错。
 #[tauri::command]
-pub fn watchdog_start(
+pub async fn watchdog_start(
     app: tauri::AppHandle,
     mode: gate::watchdog::WatchMode,
     state: tauri::State<'_, AppState>,
 ) -> Result<()> {
+    if state
+        .gate
+        .manual_paused
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        let _guard = operations::exclusive_soon().await?;
+        gate::resume(&state.gate).await?;
+    }
     crate::app::start_watchdog(mode, &state, Some(app));
     Ok(())
 }
