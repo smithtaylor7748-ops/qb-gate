@@ -112,8 +112,29 @@ fn our_entry(matcher: Option<&str>) -> Value {
     e
 }
 
+/// 认「这一条是不是我们的」：带标记，**或者**里面每一条命令跑的都是我们那份脚本。
+///
+/// 只认标记不够：Claude Code 自己改 `settings.json` 时（`/config`、`/hooks`、
+/// 改权限……）按它的 schema 重写整份文件，hook 条目上的未知键 `_qb_gate` 会被丢掉，
+/// 命令原样留着。只认标记的话，界面从此显示「未启用」而 hook 照样在拦；
+/// 再点一次启用又会因为认不出旧的那条而叠出第二份。
+///
+/// 按命令认要的是**完整脚本路径**（面板数据目录下那一份），不是文件名 ——
+/// 别人家碰巧也叫 `gate-check.ps1` 的不算。`all` 而不是 `any`：使用者往同一组里
+/// 塞了自己的命令，这一组就不是我们独占的，卸载时不能整组删掉。
 fn is_ours(v: &Value) -> bool {
-    v.get(MARK).and_then(Value::as_bool).unwrap_or(false)
+    if v.get(MARK).and_then(Value::as_bool).unwrap_or(false) {
+        return true;
+    }
+    let script = script_path().display().to_string().to_lowercase();
+    v.get("hooks").and_then(Value::as_array).is_some_and(|hs| {
+        !hs.is_empty()
+            && hs.iter().all(|h| {
+                h.get("command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|c| c.to_lowercase().contains(&script))
+            })
+    })
 }
 
 pub fn try_merge(root: &mut Value) -> Result<()> {
@@ -467,7 +488,7 @@ function Deny($why) {
     [Console]::Error.WriteLine("  3. 临时停用：面板 -> IP 锁 -> 会话内门禁 -> 停用；")
     [Console]::Error.WriteLine("  4. 面板打不开时手动解除：编辑")
     [Console]::Error.WriteLine("     $settings")
-    [Console]::Error.WriteLine("     删掉 hooks 里带 _qb_gate 标记的那两段即可。")
+    [Console]::Error.WriteLine("     删掉 hooks 里运行 gate-check.ps1 的那两段即可（可能带 _qb_gate 标记，也可能已被 Claude Code 去掉）。")
     exit 2
 }
 
@@ -587,6 +608,57 @@ mod tests {
         let mut v = looks_alike.clone();
         strip_from(&mut v);
         assert_eq!(v, looks_alike);
+    }
+
+    /// Claude Code 重写 `settings.json` 时会丢掉条目上的未知键 `_qb_gate`。
+    /// 标记没了、命令还在：照样算装着，卸载照样摘得掉，重装不叠第二份。
+    fn without_marks(v: &Value) -> Value {
+        let mut v = v.clone();
+        for arr in v["hooks"].as_object_mut().unwrap().values_mut() {
+            for e in arr.as_array_mut().unwrap() {
+                e.as_object_mut().unwrap().remove(MARK);
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn entries_whose_mark_was_dropped_by_claude_code_are_still_ours() {
+        let mut v = json!({ "model": "opus" });
+        merge_into(&mut v);
+        let rewritten = without_marks(&v);
+        assert!(!rewritten.to_string().contains(MARK));
+        assert!(is_installed(&rewritten), "标记没了也得认得出来");
+
+        let mut again = rewritten.clone();
+        merge_into(&mut again);
+        assert_eq!(again["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            again["hooks"]["UserPromptSubmit"].as_array().unwrap().len(),
+            1
+        );
+
+        let mut off = rewritten;
+        strip_from(&mut off);
+        assert_eq!(off, json!({ "model": "opus" }));
+    }
+
+    /// 使用者把自己的命令塞进了我们那一组（又没有标记），这一组就不归我们 ——
+    /// 卸载整组删掉会把他的命令一起删了。
+    #[test]
+    fn an_unmarked_group_shared_with_a_user_command_is_left_alone() {
+        let mut v = json!({});
+        merge_into(&mut v);
+        let mut v = without_marks(&v);
+        v["hooks"]["UserPromptSubmit"][0]["hooks"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "type": "command", "command": "my-own-thing" }));
+        strip_from(&mut v);
+        let ups = v["hooks"]["UserPromptSubmit"].as_array().unwrap();
+        assert_eq!(ups.len(), 1);
+        assert_eq!(ups[0]["hooks"][1]["command"], "my-own-thing");
+        assert!(v["hooks"].get("SessionStart").is_none());
     }
 
     #[test]

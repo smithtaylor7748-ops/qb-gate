@@ -897,7 +897,7 @@ export function SessionGatePanel() {
           ) : (
             " settings.json "
           )}
-          里带 <code>_qb_gate</code> 的两段即可解除。
+          里运行 <code>gate-check.ps1</code> 的两段即可解除。
         </p>
       )}
 
