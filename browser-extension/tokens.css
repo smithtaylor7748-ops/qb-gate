@@ -1,0 +1,227 @@
+/**
+ * 设计令牌。**颜色与主题只在这个文件里定义**，别的样式表只引用变量。
+ *
+ * # 为什么只剩一套（D1，2026-09-14）
+ *
+ * 原来有两套色值：这里一套（从旧 `src/styles.css` 搬来，深色为底，
+ * `prefers-color-scheme: light` 覆盖浅色），`workspace.css` 顶上又一套
+ * （`data-theme` 手选）。手选「浅色 / 深色」时后者整套生效，看不出问题；
+ * **默认的「跟随系统」两边都不完整命中** —— `data-theme="system"` 哪个属性选择器
+ * 都不中：系统浅色时背景、正文、强调色来自 workspace，边框和状态色来自这里；
+ * 系统深色时几乎整套是这里的旧色。`test:ui` 的截图全在手选主题下拍，所以一直是绿的。
+ *
+ * 留哪套是使用者定的：workspace 那套。实测对比度（WCAG AA 小字要 ≥ 4.5）：
+ *
+ *   组合                        留下的这套 浅 / 深    旧的那套 浅 / 深
+ *   `--text-3` 压 `--surface`   5.01 / 6.11          3.64 / 3.43
+ *   `--surface` 压 `--accent`   4.93 / 6.40          3.90 / 4.49
+ *
+ * `--text-3` 就是侧栏 10px 提示字的颜色。中转站草图（V24）用的是旧的那套 ——
+ * 照草图做新页面时颜色一律引用这里的变量，**不要从草图里抄 hex**。
+ *
+ * # 三种状态，一个机制
+ *
+ *   跟随系统 + 系统深色   → `:root`
+ *   跟随系统 + 系统浅色   → 媒体查询那一块
+ *   手选浅色             → `:root[data-theme="light"]`
+ *   手选深色             → `:root`（媒体查询那块用 `:not([data-theme="dark"])` 让开）
+ *
+ * 浅色写了两遍：CSS 没法把「媒体查询成立」和「属性选择器成立」写成一个「或」。
+ * **两份必须一字不差** —— `scripts/ui-regression.mjs` 逐个令牌比对「跟随系统」
+ * 与手选主题，改了一份忘了另一份当场红。
+ *
+ * # 其余几类
+ *
+ * 间距 / 字号 / 圆角 / 动效在下面补齐 —— 它们是替掉页面里九十来处内联
+ * `style={{marginTop: 9}}` 的前提。
+ *
+ * 分两层写是有原因的：
+ *   1. `:root` 里是**原始变量名**（`--bg` `--accent` …），主题覆盖的是它们；
+ *   2. `@theme inline` 把 Tailwind 的颜色名映射到 `var(--bg)` 这类引用上。
+ * `inline` 意味着 `bg-surface` 编译成 `background-color: var(--surface)` 而不是
+ * 复制一份色值 —— 所以主题切换对所有工具类同样生效，只需要写一遍。
+ */
+
+:root {
+  color-scheme: dark;
+
+  --bg: #171410;
+  --surface: #211d18;
+  --surface-2: #29231d;
+  --border: #3c332a;
+  --border-strong: #5b4e40;
+  --text: #f0e9df;
+  --text-2: #c0b5a6;
+  --text-3: #a49b8e;
+
+  --accent: #e18a65;
+  --accent-bg: #38251b;
+  --accent-border: #72503a;
+
+  --ok: #8bc18c;
+  --ok-bg: #1d2a1b;
+  --ok-border: #385631;
+
+  --warn: #e4b269;
+  --warn-bg: #352817;
+  --warn-border: #68502e;
+
+  --danger: #ef9385;
+  --danger-bg: #381e1b;
+  --danger-border: #754036;
+
+  /* 图表（用量明细页的柱状图，2026-09-24）。单系列、一种颜色，跟强调色同色相。
+     深色不直接用 --accent：#e18a65 的 OKLCH 亮度 0.717，超出深色图表的亮度带（0.48–0.67），
+     大块柱子会显得发白。#d27a55 是同色相里最亮的一档达标色（dataviz 的
+     validate_palette.js：亮度带 / 彩度 / 对 #211d18 的对比度三项都过）。
+     悬停那一档往亮处走一步 —— 「被点到的那根亮起来」。
+     --chart-grid 是网格线：比边框再淡一点，只起定位作用。 */
+  --chart-1: #d27a55;
+  --chart-1-hover: #e18a65;
+  --chart-grid: #2f2821;
+
+  --mono: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+
+  /* 圆角：旧代码里 `.card` 写死 12px 绕过了 `--radius: 8px`，这里给三档，
+     卡片用 lg、控件用 md、标签用 sm，不再有绕过。 */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* 动效：旧代码零 transition，交互反馈只有 :hover 换背景色。 */
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* 这里原来还有 `--sidebar-w: 232px` / `--sidebar-w-narrow: 56px`，注释写着
+     「窄屏收成图标条时改这一个值」。**没有任何地方引用它们**，真实侧栏是
+     workspace.css 里写死的 228px / 72px —— 照这条注释去改只会什么都不发生。删了。 */
+}
+
+/* 跟随系统，系统是浅色。与下面「手选浅色」那块必须一字不差。 */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+
+    --bg: #f6f3ee;
+    --surface: #fffefa;
+    --surface-2: #f2eee7;
+    --border: #e3ddd2;
+    --border-strong: #c9beae;
+    --text: #302b25;
+    --text-2: #675d51;
+    --text-3: #786d60;
+
+    --accent: #b55232;
+    --accent-bg: #f9eae1;
+    --accent-border: #e7bdab;
+
+    --ok: #3b7247;
+    --ok-bg: #eef5ed;
+    --ok-border: #bad1b9;
+
+    --warn: #87570d;
+    --warn-bg: #fff1d7;
+    --warn-border: #dec596;
+
+    --danger: #ac3934;
+    --danger-bg: #fbeceb;
+    --danger-border: #e8bdb9;
+
+    --chart-1: #b55232;
+    --chart-1-hover: #c76241;
+    --chart-grid: #ece7de;
+  }
+}
+
+/* 手选浅色，不管系统是什么。与上面媒体查询那块必须一字不差。 */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f6f3ee;
+  --surface: #fffefa;
+  --surface-2: #f2eee7;
+  --border: #e3ddd2;
+  --border-strong: #c9beae;
+  --text: #302b25;
+  --text-2: #675d51;
+  --text-3: #786d60;
+
+  --accent: #b55232;
+  --accent-bg: #f9eae1;
+  --accent-border: #e7bdab;
+
+  --ok: #3b7247;
+  --ok-bg: #eef5ed;
+  --ok-border: #bad1b9;
+
+  --warn: #87570d;
+  --warn-bg: #fff1d7;
+  --warn-border: #dec596;
+
+  --danger: #ac3934;
+  --danger-bg: #fbeceb;
+  --danger-border: #e8bdb9;
+
+  --chart-1: #b55232;
+  --chart-1-hover: #c76241;
+  --chart-grid: #ece7de;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+
+  --color-fg: var(--text);
+  --color-fg-2: var(--text-2);
+  --color-fg-3: var(--text-3);
+
+  --color-accent: var(--accent);
+  --color-accent-bg: var(--accent-bg);
+  --color-accent-line: var(--accent-border);
+
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-ok-line: var(--ok-border);
+
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-line: var(--warn-border);
+
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-danger-line: var(--danger-border);
+
+  --font-mono: var(--mono);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+
+  --ease-out: var(--ease-out);
+}
+
+@theme {
+  /* 间距基数。`p-2` = 8px，`gap-3` = 12px —— 旧代码里 22/26/13/15/9/8/6/5
+     那些字面量全部换算到这把尺子上。 */
+  --spacing: 4px;
+
+  /* 字号。旧代码七种字号散落在各处，这里收成一张表。 */
+  --text-2xs: 10px;
+  --text-2xs--line-height: 1.4;
+  --text-xs: 11px;
+  --text-xs--line-height: 1.5;
+  --text-sm: 12px;
+  --text-sm--line-height: 1.6;
+  --text-base: 13px;
+  --text-base--line-height: 1.6;
+  --text-md: 14px;
+  --text-md--line-height: 1.6;
+  --text-lg: 15px;
+  --text-lg--line-height: 1.5;
+  --text-xl: 19px;
+  --text-xl--line-height: 1.4;
+}

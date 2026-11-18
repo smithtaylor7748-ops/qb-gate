@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>已被 QB Gate 浏览器助手拦下</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="ui.css" />
+    <script type="module" src="blocked.js"></script>
+  </head>
+  <body>
+    <main class="page">
+      <header class="brand">
+        <img src="icons/icon32.png" alt="" />QB Gate 浏览器助手
+      </header>
+      <h1 id="headline">这个网站被拦下了</h1>
+      <p id="target" class="muted"></p>
+
+      <section id="status" class="card status" aria-live="polite">
+        <h2 data-title>正在读取原因…</h2>
+        <p class="detail" data-detail></p>
+        <div class="actions" data-actions></div>
+      </section>
+      <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+
+      <section class="card">
+        <div class="actions">
+          <button id="return" type="button">回到原来的页面</button>
+          <button id="options" type="button" class="link">插件设置</button>
+        </div>
+        <p class="note" id="return-note">
+          QB Gate 核实出口没问题之后，这一页会自动回到原来的页面。
+        </p>
+      </section>
+
+      <p class="note">
+        保护开着时，只有 QB Gate 确认出口 IP
+        没变，受保护网站才能打开。只有这类网站会被拦下，其他网站、其他标签页不受影响。
+        要临时不拦，可以在工具栏的插件图标里点「暂停保护」。
+      </p>
+    </main>
+  </body>
+</html>

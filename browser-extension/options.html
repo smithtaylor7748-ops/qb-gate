@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>QB Gate 浏览器助手 · 设置</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="ui.css" />
+    <script type="module" src="options.js"></script>
+  </head>
+  <body>
+    <main class="page">
+      <header class="brand">
+        <img src="icons/icon32.png" alt="" />QB Gate 浏览器助手 · 设置
+      </header>
+
+      <section id="status" class="card status" aria-live="polite">
+        <h2 data-title>正在读取状态…</h2>
+        <p class="detail" data-detail></p>
+        <div class="actions" data-actions></div>
+      </section>
+      <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+
+      <section class="card">
+        <h2>受保护网站</h2>
+        <p class="note">
+          每一项连同它的子域名一起保护（填 <code>claude.ai</code> 就包括
+          <code>www.claude.ai</code> 等）。
+          保护开着时，改动立即生效。名单只存在这个浏览器的插件里。
+        </p>
+        <ul id="sites" class="chips"></ul>
+        <div class="row">
+          <input
+            id="site"
+            type="text"
+            placeholder="例如 example.com"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="add" type="button">添加</button>
+          <button id="reset" type="button" class="link">恢复默认</button>
+        </div>
+        <p class="note">
+          添加新网站时浏览器会问一次能不能访问它：允许之后，触发拦截时已经打开的那些页面才能换成说明页；
+          不允许也照样拦，只是看到的是浏览器自带的「已被扩展程序屏蔽」页面。
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>和 QB Gate 的连接</h2>
+        <p id="pairing" class="muted">正在读取…</p>
+        <div class="actions">
+          <button id="forget" type="button">忘掉这个连接</button>
+        </div>
+        <p class="note">
+          忘掉之后要在 QB Gate
+          面板重新点「连接浏览器」。也可以直接在面板「浏览器助手」里解除，效果一样。
+          保护开着时，忘掉连接期间受保护网站一直拦着。
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>关于</h2>
+        <p id="about" class="muted"></p>
+        <p class="muted">
+          Based on QB Gate, Copyright (C) 2026 smithtaylor7748-ops. 源码：
+          <a
+            href="https://github.com/smithtaylor7748-ops/qb-gate"
+            target="_blank"
+            rel="noreferrer"
+            >https://github.com/smithtaylor7748-ops/qb-gate</a
+          >。AGPL-3.0-only，及第 7 节附加条款。
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

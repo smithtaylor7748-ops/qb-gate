@@ -1,25 +1,51 @@
 {
   "manifest_version": 3,
   "name": "QB Gate 浏览器助手",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minimum_chrome_version": "116",
-  "description": "联动 QB Gate 的 IP 锁、浏览器检查与中转站账单账户。",
+  "description": "联动 QB Gate：出口 IP 没核实时拦下受保护的网站（默认 Claude 官方网站），其他网站不受影响。",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAz0Pu+gxeKIJaQM9bb9G4jsIrEI1ukRDzfBjOoaM6Mz4RHDlGDmy9UeQl71/qOt65EpKN3hFDCP5qVDdGn8V3laodIcKNXhmeDj1aL/aCa4VzR023dAZAcfs/i8eQjUWhTUHkNdWqSAzt7SoT4mo89PKwT7M3Y2s1XE75KGEhwTnDPVQoQ6hcgl1TKkPVPq0ObrItGsbXRRw7fl+FZtKmnm+WkGi3y9W15VJgB7/SjrPt2zJDWqpCvjOymjMxYyf1Qw+vXkq/v2io0v+B0WvGBe+KdREoWZyfDmP70ylDXD9lL6op+v/TRe8iEPMcD1VqZ+3ezNqx++Wv7xJhGpLkFwIDAQAB",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "permissions": [
+    "declarativeNetRequest",
+    "storage",
+    "alarms",
     "activeTab",
     "scripting",
-    "storage",
     "cookies",
     "privacy",
-    "proxy",
-    "alarms"
+    "proxy"
   ],
-  "host_permissions": ["http://127.0.0.1/*"],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "*://*.claude.ai/*",
+    "*://*.claude.com/*",
+    "*://*.anthropic.com/*",
+    "*://*.claudeusercontent.com/*"
+  ],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
   "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1/*"],
+      "js": ["claim.js"],
+      "run_at": "document_end"
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "QB Gate 浏览器助手"
+    "default_title": "QB Gate 浏览器助手",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
   },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
   },

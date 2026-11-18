@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>QB Gate 浏览器助手 · 使用引导</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="ui.css" />
+    <script type="module" src="welcome.js"></script>
+  </head>
+  <body>
+    <main class="page">
+      <header class="brand">
+        <img src="icons/icon32.png" alt="" />QB Gate 浏览器助手
+      </header>
+      <h1>三步用起来</h1>
+
+      <ol class="steps">
+        <li id="step-connect">
+          <h2>在 QB Gate 面板点「连接浏览器」</h2>
+          <p>
+            打开电脑上的 QB Gate 面板，进入「扩展 →
+            浏览器助手」，点「连接浏览器」。
+            面板没在运行时插件连不上它，这一步必须在面板里点。
+          </p>
+        </li>
+        <li id="step-confirm">
+          <h2>浏览器里会自动打开一个确认页</h2>
+          <p>
+            页面标题是「连接 QB Gate
+            浏览器助手」。插件会自己完成连接，<strong>不用复制或粘贴任何东西</strong>，
+            看到「已连接」就好。以后面板重新打开，插件会自己连上，不用再来一次。
+          </p>
+          <p class="note">
+            确认页打开在别的浏览器里？把那个页面的地址粘到装了这个插件的浏览器里打开即可（几分钟内有效）。
+          </p>
+        </li>
+        <li id="step-protect">
+          <h2>开启保护</h2>
+          <p>
+            开启后，只有 QB Gate 确认出口 IP
+            没变时，下面这些受保护网站才能打开；出口一变、QB Gate 断开或查不到，
+            它们会立刻被拦下，已经打开的页面也会换成说明页。<strong
+              >其他网站、其他标签页一律不动。</strong
+            >
+          </p>
+          <ul id="sites" class="chips"></ul>
+          <div class="actions">
+            <button id="enable" type="button" class="primary">开启保护</button>
+            <button id="options" type="button" class="link">
+              管理受保护网站
+            </button>
+          </div>
+        </li>
+      </ol>
+
+      <section id="status" class="card status" aria-live="polite">
+        <h2 data-title>正在读取状态…</h2>
+        <p class="detail" data-detail></p>
+        <div class="actions" data-actions></div>
+      </section>
+      <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+
+      <section class="card">
+        <h2>它是什么、不是什么</h2>
+        <ul>
+          <li>
+            是：按网站拦截。保护开着时，受保护网站只在 QB Gate
+            核实出口之后才放行；浏览器重启、插件后台重启、面板没开，都先拦着。
+          </li>
+          <li>
+            是：可以随时在插件弹窗里「暂停保护」，暂停就撤掉全部拦截规则。
+          </li>
+          <li>
+            不是：代理或
+            VPN。插件不改你的网络、不转发任何流量，也不改浏览器设置。
+          </li>
+          <li>
+            不是：整机防护。只管装了这个插件的这一个浏览器资料；别的浏览器、别的资料、别的程序不管。
+          </li>
+          <li>
+            出口 IP 由 QB Gate
+            面板探测。如果这个浏览器单独设了代理，它真正走的出口可能跟面板探测到的不一样。
+          </li>
+        </ul>
+      </section>
+      <footer>
+        Based on QB Gate, Copyright (C) 2026 smithtaylor7748-ops. 源码：
+        <a
+          href="https://github.com/smithtaylor7748-ops/qb-gate"
+          target="_blank"
+          rel="noreferrer"
+          >https://github.com/smithtaylor7748-ops/qb-gate</a
+        >。AGPL-3.0-only，及第 7 节附加条款。
+      </footer>
+    </main>
+  </body>
+</html>

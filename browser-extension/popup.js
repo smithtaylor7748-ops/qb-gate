@@ -1,73 +1,78 @@
 // QB Gate — Copyright (C) 2026 smithtaylor7748-ops
 // AGPL-3.0-only; see LICENSE and LICENSE-ADDITIONAL-TERMS.md.
+//
+// 弹窗：首屏一个状态 + 一个主按钮；附带功能收在「更多功能」里。
 import { webOrigin } from "./core.js";
+import { $, feedback, renderStatus, runAction, send, siteList } from "./ui.js";
 
-const $ = (id) => document.getElementById(id);
 let state = null;
 let stations = [];
 let currentOrigin = null;
 let busy = false;
 
-async function send(type, data = {}) {
-  const response = await chrome.runtime.sendMessage({ type, ...data });
-  if (!response?.ok)
-    throw new Error(response?.error || "浏览器后台没有响应，请重新打开插件。");
-  return response.value;
-}
-function feedback(text, error = false) {
-  $("feedback").textContent = text;
-  $("feedback").classList.toggle("error", error);
-}
-function updateButtons() {
-  for (const id of [
-    "arm",
-    "disarm",
-    "probe",
-    "refresh",
-    "import",
-    "pricing",
-    "pair",
-    "reconnect",
-    "forget",
-  ])
-    $(id).disabled = busy;
-  if (busy) return;
-  $("arm").disabled =
-    !state?.connected || state.armed || state.armPending || state.closing;
-  $("disarm").disabled = !state?.armed && !state?.armPending;
-  for (const id of ["probe", "refresh"]) $(id).disabled = !state?.connected;
+function updateTools() {
+  const connected = state?.link === "connected";
+  for (const id of ["probe", "refresh"]) $(id).disabled = busy || !connected;
   for (const id of ["import", "pricing"])
-    $(id).disabled = !state?.connected || !selected();
-  $("reconnect").disabled = !state?.paired || state.connected;
-  $("forget").disabled = !state?.paired;
+    $(id).disabled = busy || !connected || !selected();
 }
-async function refreshState() {
+
+async function refresh() {
   state = await send("state");
-  $("connection").textContent = state.connected ? "已连接" : "未连接";
-  $("connection").classList.toggle("good", state.connected);
-  $("protection").textContent = state.armed
-    ? "保护中"
-    : state.armPending
-      ? "核验中"
-      : "未开启";
-  $("protection").classList.toggle("good", state.armed);
-  $("reason").textContent =
-    `${state.reason}${state.ip ? ` · ${state.ip}` : ""}`;
-  if (!state.paired) $("pairing-details").open = true;
-  updateButtons();
+  renderStatus($("status"), state, onAction, { busy });
+  siteList($("sites"), state.sites);
+  $("version").textContent = `版本 ${state.version}`;
+  updateTools();
 }
+
+async function run(work) {
+  if (busy) return;
+  busy = true;
+  feedback($("feedback"), "");
+  if (state) renderStatus($("status"), state, onAction, { busy });
+  updateTools();
+  try {
+    await work();
+  } catch (error) {
+    feedback(
+      $("feedback"),
+      error instanceof Error ? error.message : "操作失败。",
+      true,
+    );
+  } finally {
+    busy = false;
+    await refresh().catch(() => {});
+  }
+}
+
+const DONE = {
+  enable: "已开启保护。正在核实出口 IP，核实之前受保护网站先拦着。",
+  pause: "已暂停保护，拦截规则已全部撤掉。",
+  reallow: "已按现在的出口重新核实。",
+  retry: "正在重新检查。",
+};
+
+function onAction(action) {
+  void run(async () => {
+    await runAction(action);
+    if (action === "guide") window.close();
+    else feedback($("feedback"), DONE[action] ?? "");
+  });
+}
+
 function selected() {
   return stations.find(
     (station) =>
       station.id === $("station").value && station.origin === currentOrigin,
   );
 }
+
 async function loadStations() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   currentOrigin = webOrigin(tab?.url);
   $("current-origin").textContent = currentOrigin
-    ? `当前站点：${currentOrigin}`
-    : "请打开要读取的中转站网页。";
+    ? `当前页面：${currentOrigin}`
+    : "请先打开要读取的中转站网页。";
   const previous = $("station").value;
   stations = await send("stations");
   if (!Array.isArray(stations)) throw new Error("站点列表无法识别。");
@@ -76,71 +81,29 @@ async function loadStations() {
     (station) => station.origin === currentOrigin,
   );
   if (!matches.length) {
-    $("station").add(new Option("当前地址未匹配站点，请先在 QB Gate 添加", ""));
+    $("station").add(
+      new Option("当前地址没有对应的站点，请先在 QB Gate 添加", ""),
+    );
   } else {
     for (const station of matches)
       $("station").add(new Option(station.name, station.id));
     if (matches.some((station) => station.id === previous))
       $("station").value = previous;
   }
-  updateButtons();
+  updateTools();
 }
-async function run(work) {
-  if (busy) return;
-  busy = true;
-  updateButtons();
-  feedback("");
-  try {
-    await work();
-  } catch (error) {
-    feedback(error instanceof Error ? error.message : "操作失败。", true);
-  } finally {
-    busy = false;
-    await refreshState().catch(() => updateButtons());
-  }
-}
-function command(type, success) {
-  return () =>
-    void run(async () => {
-      await send(type);
-      feedback(success);
-    });
-}
-$("arm").onclick = command("arm", "保护已开启。关闭插件弹窗不会停止保护。");
-$("disarm").onclick = command("disarm", "保护已停止。");
-$("probe").onclick = command(
-  "probe",
-  "已打开检测页，完成后请回 QB Gate 查看结果。",
-);
-$("forget").onclick = command("forget", "已停止保护并移除配对信息。");
-$("reconnect").onclick = () =>
-  void run(async () => {
-    await send("connect");
-    await loadStations();
-    feedback("已重新连接。");
-  });
-$("pair").onclick = () =>
-  void run(async () => {
-    await send("pair", { pairing: $("pairing").value });
-    $("pairing").value = "";
-    $("pairing-details").open = false;
-    await loadStations();
-    feedback("配对成功。需要保护浏览器时，请点击「开启保护」。");
-  });
-$("refresh").onclick = () => void run(loadStations);
-$("station").onchange = updateButtons;
 
 function stationAction(type) {
   return () => {
     const station = selected();
     if (!station || busy) return;
-    // Request from the click itself: Chrome requires a user gesture for optional host grants.
+    // 在点击里直接申请：Chrome 只允许用户手势触发可选主机权限。
     const permission = chrome.permissions.request({
       origins: [`${station.origin}/*`],
     });
     void run(async () => {
       if (!(await permission))
-        throw new Error("未授权访问此站点，未读取账户或价格。");
+        throw new Error("没有允许访问这个站点，未读取账户或价格。");
       const result = await send(type, {
         stationId: station.id,
         origin: station.origin,
@@ -148,17 +111,16 @@ function stationAction(type) {
       });
       if (type === "import")
         feedback(
+          $("feedback"),
           `已连接${result.account ? `：${result.account}` : "当前账户"}，请回 QB Gate「查套路」使用。`,
         );
       else {
         renderPrices(result);
-        feedback("已读取公开价格，价格对照也已交回 QB Gate。");
+        feedback($("feedback"), "已读取公开价格，价格对照也已交回 QB Gate。");
       }
     });
   };
 }
-$("import").onclick = stationAction("import");
-$("pricing").onclick = stationAction("pricing");
 
 function renderPrices(result) {
   const root = $("prices");
@@ -169,8 +131,6 @@ function renderPrices(result) {
     result.notice ||
     "单位：站点美元额度 / 百万 Token；倍数相对 QB Gate 官方参考价。";
   root.append(notice);
-  const list = document.createElement("div");
-  list.className = "prices-list";
   const money = (value) =>
     typeof value === "number" && Number.isFinite(value)
       ? `$${value.toLocaleString(undefined, { maximumFractionDigits: 8 })}`
@@ -187,7 +147,11 @@ function renderPrices(result) {
       dt.textContent = label;
       const dd = document.createElement("dd");
       const ratio = model.official_multipliers?.[index];
-      dd.textContent = `${money(model.prices_per_mtok?.[index])}${typeof ratio === "number" && Number.isFinite(ratio) ? ` · ${ratio.toFixed(3)}×` : ""}`;
+      dd.textContent = `${money(model.prices_per_mtok?.[index])}${
+        typeof ratio === "number" && Number.isFinite(ratio)
+          ? ` · ${ratio.toFixed(3)}×`
+          : ""
+      }`;
       dl.append(dt, dd);
     });
     item.append(dl);
@@ -205,14 +169,27 @@ function renderPrices(result) {
       note.textContent = model.notice;
       item.append(note);
     }
-    list.append(item);
+    root.append(item);
   }
-  root.append(list);
 }
 
-void refreshState()
-  .then(() => state.connected && loadStations())
-  .catch(() => feedback("暂时无法连接浏览器后台，请重新打开插件。", true));
+$("import").onclick = stationAction("import");
+$("pricing").onclick = stationAction("pricing");
+$("station").onchange = updateTools;
+$("refresh").onclick = () => void run(loadStations);
+$("probe").onclick = () =>
+  void run(async () => {
+    await send("probe");
+    feedback($("feedback"), "已打开检测页，完成后回 QB Gate 查看结果。");
+  });
+$("manage").onclick = () => void send("options").then(() => window.close());
+$("options").onclick = () => void send("options").then(() => window.close());
+$("guide").onclick = () => void send("guide").then(() => window.close());
+$("more").addEventListener("toggle", () => {
+  if ($("more").open && state?.link === "connected") void run(loadStations);
+});
+
+void refresh().catch((error) => feedback($("feedback"), error.message, true));
 setInterval(() => {
-  if (!busy) void refreshState().catch(() => {});
-}, 2_000);
+  if (!busy) void refresh().catch(() => {});
+}, 1_000);
