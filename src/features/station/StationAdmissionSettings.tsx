@@ -1,7 +1,7 @@
 import type { RouterSettings } from "../../lib/generated/RouterSettings";
 import type { Route } from "../../lib/generated/Route";
 
-/** 编辑草稿；与允许名单一起提交，不能把设了限额理解为允许使用该线路。 */
+/** 编辑草稿；跟备用线路一起提交。设了限额不等于把这条线加为备用线路。 */
 export function StationAdmissionSettings({
   settings,
   routes,
@@ -22,29 +22,37 @@ export function StationAdmissionSettings({
 
   return (
     <section className="qb-st-admission-settings" aria-label="请求容量设置">
-      <h4 className="qb-st-sect">同一对话的并行请求</h4>
+      <h4 className="qb-st-sect">限流与容量分流</h4>
       <label className="qb-st-admission-check">
         <input
           type="checkbox"
-          aria-label="容量不足时分流到其他允许线路"
+          aria-label="本机限额满了时分流到备用线路"
           checked={overflow}
           disabled={settings.routing_mode !== "pool"}
           onChange={(event) =>
-            setAdmission({ overflow_to_pool: event.target.checked })
+            // 关分流时把「怎么分」一起复位成优先当前线路（C3）：不然再开分流就立刻按负载分到别的站。
+            onChange({
+              admission: {
+                ...admission,
+                overflow_to_pool: event.target.checked,
+              },
+              ...(event.target.checked
+                ? {}
+                : { pool_strategy: "priority" as const }),
+            })
           }
         />
-        容量不足时分流到其他允许线路
+        本机限额满了时分流到备用线路
       </label>
       <p className="qb-st-note">
-        默认关闭；先选择允许线路池并勾选备用站。使用“首选与备用”时，当前站并发上限设为
-        2，
-        两个请求仍在进行时，同一对话的新请求会尝试其他允许站；当前站空闲后新请求回到首选。
-        关闭后达到并发或每分钟上限会等待或返回繁忙。智能调度开关只控制定时排序。
-        分流按独立请求进行，不拆分一条回复；需要服务端会话状态的请求应固定线路。
+        默认关闭，只管下面这几条你自己设的本机限额（并发、每分钟）；上游说限流（429）、额度用光是线路故障，有备用线路就直接改用，跟这个开关无关。
+        例：当前线路并发上限设为 2，两个请求还在进行时，第 3
+        个会去备用线路；当前线路空出来后新请求回到它。
+        关着时达到上限会等待或返回繁忙。分流按独立请求进行，不拆分一条回复；需要服务端会话状态的对话请清空备用线路。
       </p>
       {settings.routing_mode === "pool" && (
         <>
-          <h4 className="qb-st-sect">名单内如何分配请求</h4>
+          <h4 className="qb-st-sect">分流时怎么分</h4>
           <div className="qb-st-routing-options">
             <label
               className={`qb-st-routing-option${!useLoad ? " active" : ""}`}
@@ -56,10 +64,8 @@ export function StationAdmissionSettings({
                 onChange={() => onChange({ pool_strategy: "priority" })}
               />
               <span>
-                <strong>首选与备用</strong>
-                <span>
-                  优先所选线路；失败时尝试备用，容量不足时是否分流由上方开关控制。
-                </span>
+                <strong>先用当前线路</strong>
+                <span>优先当前线路，满了才去备用线路（默认）。</span>
               </span>
             </label>
             <label
@@ -75,7 +81,7 @@ export function StationAdmissionSettings({
               <span>
                 <strong>优先空闲线路</strong>
                 <span>
-                  开启分流后可用：每次请求在允许名单内比较负载，首选未满时也可能使用其他站并消耗其额度。
+                  开了分流才可选：每次请求在当前线路和备用线路里比较负载，当前线路没满也可能用备用线路、花它的额度。
                 </span>
               </span>
             </label>
@@ -84,10 +90,10 @@ export function StationAdmissionSettings({
       )}
       <h4 className="qb-st-sect">每条线路的请求容量</h4>
       <p className="qb-st-note">
-        默认不限制。这里仅约束经过本机路由的 API
-        中转请求，不限制官方账户；设置限额不会把线路加入允许名单。
+        默认不限制。这里只约束经过本机路由的 API
+        中转请求，不限制官方账户；设了限额也不会把线路加为备用线路。
         同一线路的所有对话共用上限，流式回复结束或取消后释放名额。
-        仅用所选线路时，达到限制也不会改用其他站。
+        没有备用线路时，达到限制也不会改用其他站。
         每分钟按实际发送次数计，重试与测活也计入；等待和本机拒绝不计入。
       </p>
       <div className="qb-st-admission-routes">
@@ -142,8 +148,8 @@ export function StationAdmissionSettings({
         })}
       </div>
       <p className="qb-st-note">
-        额度检查只采用近期查询中上游明确的不可用状态。仅余额为
-        0、未查询或缓存过期时不据此拦截，也不会自动联网刷新额度。这不是消费预算上限。
+        额度检查只采用近期查询中上游明确的不可用状态（明确用光了就当这条线故障，有备用线路就改用）。仅余额为
+        0、未查询或缓存过期时不据此拦截，也不会自动联网刷新额度。这不是消费预算上限；余额本身显示在站点卡表头。
       </p>
       <h4 className="qb-st-sect">容量不足时等待</h4>
       <div className="qb-st-admission-fields">
@@ -163,9 +169,9 @@ export function StationAdmissionSettings({
         />
       </div>
       <p className="qb-st-note">
-        开启分流时先尝试名单内的可用线路，都忙才等待；关闭分流时只等当前候选。
+        开着分流时先试当前线路和备用线路里空着的，都忙才等待；关着分流时只等当前那一条。
         两项都大于 0 才会排队；任一为 0 时，容量不足就返回本机繁忙。
-        队列满或超时也会结束等待，不会扩大允许名单。
+        队列满或超时也会结束等待，不会多用名单外的线路。
       </p>
     </section>
   );

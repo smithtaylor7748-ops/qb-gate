@@ -44,6 +44,8 @@ export interface BarDatum {
   title: string;
   /** `null` = 没有记录：不画柱。 */
   value: number | null;
+  /** `value` 是 `null` 时提示框写什么（默认「没有记录」）。有请求却没记到 token / 花费时写「没记到」。 */
+  missing?: string;
   /** 提示框里数值下面的几行 `[名字, 值]`。 */
   rows?: [string, string][];
 }
@@ -178,7 +180,7 @@ export default function BarChart({
 
   const cur = active != null ? data[active] : null;
   const say = cur
-    ? `${cur.title}：${cur.value == null ? "没有记录" : valueFormat(cur.value)}`
+    ? `${cur.title}：${cur.value == null ? (cur.missing ?? "没有记录") : valueFormat(cur.value)}`
     : "";
 
   if (known.length === 0) {
@@ -296,7 +298,9 @@ export default function BarChart({
           aria-hidden="true"
         >
           <strong>
-            {cur.value == null ? "没有记录" : valueFormat(cur.value)}
+            {cur.value == null
+              ? (cur.missing ?? "没有记录")
+              : valueFormat(cur.value)}
           </strong>
           <span className="qb-bars-tip-title">{cur.title}</span>
           {cur.value != null &&

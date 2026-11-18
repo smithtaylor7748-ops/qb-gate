@@ -52,18 +52,16 @@ function verdictPrice(r: CategoryVerdict): number | null {
 }
 
 export default function StationAudit({
-  routes,
-  focus = null,
+  route,
   stationName,
   onBusyChange,
 }: {
-  routes: Route[];
-  focus?: string | null;
+  /** 要检验的那一条线（行上点「查套路」时就定了，弹窗里不再问一遍）。 */
+  route: Route;
   stationName?: string;
   onBusyChange?: (busy: boolean) => void;
 }) {
-  const [routeId, setRouteId] = useState(focus || routes[0]?.id || "");
-  const route = routes.find((r) => r.id === routeId);
+  const routeId = route.id;
   const [settings, setSettings] = useState<StationBillingSettings | null>(null);
   const billingChanged = useCallback(
     (value: StationBillingSettings | null) => setSettings(value),
@@ -265,22 +263,6 @@ export default function StationAudit({
       {view === "setup" ? (
         <div className="audit-layout">
           <main className="audit-main">
-            {routes.length > 1 && (
-              <label className="audit-route">
-                待检验线路
-                <select
-                  value={routeId}
-                  disabled={busy}
-                  onChange={(e) => setRouteId(e.target.value)}
-                >
-                  {routes.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.station_id} · {r.group || "默认分组"}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
             {route && (
               <StationBilling
                 key={route.station_id}

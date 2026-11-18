@@ -1026,18 +1026,17 @@ try {
   assert.equal(cancelledQuality[0].state, "cancelled");
   assert.equal(cancelledQuality[0].attemptedRequests, 1);
   assert.equal(cancelledQuality[0].samples[0].status, "cancelled");
-  await page
-    .getByText("高级：原五题手动导入与历史记录", { exact: true })
-    .click();
-  await page.getByLabel("测试模型", { exact: true }).fill("ui-test-model");
-  await page
-    .getByLabel("测试结果", { exact: true })
-    .fill('{"q1":25,"q2":"B","q3":64,"q4":-10,"q5":4}');
-  await page.getByRole("button", { name: "检查并记录", exact: true }).click();
-  await page.getByText(/本次 5\/5/).waitFor();
+  // 「原五题手动导入」2026-11-15 删了（E4）：折叠区和一点就删的「清除测试记录」都不在了；
+  // 旧 turn-state 接管的恢复入口只在检测到旧接管时出现。
+  assert.equal(await page.getByText(/原五题手动导入/).count(), 0);
+  assert.equal(
+    await page
+      .getByRole("button", { name: "清除测试记录", exact: true })
+      .count(),
+    0,
+  );
   await page.setViewportSize({ width: 680, height: 900 });
   await assertNoOverflow(page, "GPT quality evidence 680");
-  await page.getByRole("button", { name: "清除测试记录", exact: true }).click();
   await page.keyboard.press("Escape");
   await page.getByRole("dialog").waitFor({ state: "hidden" });
   await page.setViewportSize({ width: 1320, height: 940 });
@@ -2280,281 +2279,409 @@ try {
   }
   await panel2.getByRole("tab", { name: "概览", exact: true }).click();
 
-  // 选线边界：旧队列不构成跨站许可，默认仅用所选线路，也不能直接开启调度。
-  await page.goto(origin + "/#/relays");
-  const schedToggle = (pressed) =>
-    page.getByRole("button", { name: "智能调度", exact: true, pressed });
-  assert.equal(await schedToggle(false).getAttribute("aria-disabled"), "true");
-  // aria-disabled 保留键盘焦点，Enter 仍要经过动作护栏，不能偷偷启动。
-  await schedToggle(false).focus();
-  await schedToggle(false).press("Enter");
-  await page
-    .getByText("请先在选线与分流中勾选允许使用的线路并保存，再启动自动选线", {
-      exact: true,
-    })
-    .waitFor();
-  assert.equal(await schedToggle(true).count(), 0);
-  await page.getByRole("button", { name: /^选线与分流/ }).click();
-  const routerDialog = page.getByRole("dialog");
-  const strictMode = () =>
-    page.getByRole("dialog").getByRole("radio", { name: /^仅所选线路/ });
-  const poolMode = () =>
-    page.getByRole("dialog").getByRole("radio", { name: /^允许所勾选线路/ });
-  await strictMode().waitFor();
-  assert.equal(await strictMode().isChecked(), true, "默认不是仅用所选线路");
-  await poolMode().check();
-  await routerDialog
-    .getByRole("tab", { name: "自动选线偏好", exact: true })
-    .click();
-  await routerDialog
-    .getByRole("tab", { name: "允许范围、分流与故障备用", exact: true })
-    .click();
-  assert.equal(
-    await poolMode().isChecked(),
-    true,
-    "切换设置分页丢失了未保存的允许范围草稿",
-  );
-  await routerDialog.getByText("允许使用的线路", { exact: true }).waitFor();
-  const allowedLines = routerDialog.getByRole("checkbox", {
-    name: /^允许使用「/,
-  });
-  assert.equal(await allowedLines.count(), 3);
-  for (const checkbox of await allowedLines.all()) {
-    assert.equal(
-      await checkbox.isChecked(),
-      false,
-      "旧队列中的线路被自动批准了",
-    );
-  }
-  await routerDialog.getByRole("button", { name: "保存", exact: true }).click();
-  await routerDialog
-    .getByText("请把当前所选线路勾入允许名单，再保存。", { exact: true })
-    .waitFor();
-  for (const width of [1320, 680]) {
-    await page.setViewportSize({ width, height: 940 });
-    await assertNoOverflow(page, `router settings ${width}`);
-  }
+  // 中转站页面改造（2026-11-15，第三版样机）：版面不动，只在原位上改。选线只有三个概念 ——
+  // 当前线路（行上「设为当前」）、备用线路（「选线与分流」里勾）、自动选线（右列那一个开关）。
+  // 截图只在指定了 QB_UI_OUTPUT_DIR 时才拍：给人逐张核对用，不往仓库里添要维护的二进制。
+  const reviewShot = async (name) => {
+    if (!process.env.QB_UI_OUTPUT_DIR) return;
+    await page.screenshot({ path: `${ARTIFACT_ROOT}/screenshots/${name}.png` });
+  };
   await page.setViewportSize({ width: 1320, height: 940 });
-  await routerDialog
-    .getByRole("button", { name: "立刻重测", exact: true })
-    .click();
-  await routerDialog.getByText("半开 · 下一发回探", { exact: true }).waitFor();
+  await page.goto(origin + "/#/relays");
+  await page.locator(".qb-st-ctl").waitFor();
+  const autoToggle = (pressed) =>
+    page.getByRole("button", { name: "自动选线", exact: true, pressed });
+  // 全宽的范围卡删了；线路行整行不可点（没有 role=radio）；页头没有「项目」了（挪到扩展页）。
+  assert.equal(await page.locator(".qb-st-route-boundary").count(), 0);
+  assert.equal(await page.getByText("仅所选线路", { exact: true }).count(), 0);
+  assert.equal(await page.locator(".qb-st-sites [role=radio]").count(), 0);
   assert.equal(
-    await routerDialog
-      .getByRole("button", { name: "立刻重测", exact: true })
+    await page.getByRole("button", { name: /^项目：|^不使用项目/ }).count(),
+    0,
+    "中转站页头还有「项目」按钮",
+  );
+  // 默认：有当前线路、没有备用线路 —— 自动选线开不了，原因写在按钮上；按回车也得过动作护栏。
+  // 先等选线状态读回来（读回来之前按钮也是灰的，原因是「正在读取」）。
+  await page
+    .locator(".qb-st-selcard-sub", { hasText: "备用：无 · 失败直接报错" })
+    .waitFor();
+  await autoToggle(false)
+    .getByText("先在选线与分流里勾备用线路", { exact: true })
+    .waitFor();
+  assert.equal(await autoToggle(false).getAttribute("aria-disabled"), "true");
+  await autoToggle(false).focus();
+  await autoToggle(false).press("Enter");
+  await page
+    .getByText("先在选线与分流里勾备用线路，再开自动选线", { exact: true })
+    .last()
+    .waitFor();
+  assert.equal(await autoToggle(true).count(), 0);
+  const selCard = page.getByRole("button", { name: /^选线与分流/ });
+  assert.match(await selCard.innerText(), /备用：无 · 失败直接报错/);
+  assert.equal(
+    (await page
+      .locator(".qb-st-sites .qb-st-pill", { hasText: "熔断" })
+      .count()) + (await selCard.getByText(/条熔断/).count()),
+    0,
+    "只有一条线时熔断不拦发送，不该显示「N 条熔断」",
+  );
+  await page
+    .locator(".qb-st-recent-route", { hasText: "最近请求实际去向" })
+    .waitFor();
+  // 当前线路那一行：「当前线路」标签，没有「设为当前」。
+  const mainRow = page.getByRole("group", {
+    name: /^线路「DS 专线」，当前线路/,
+  });
+  await mainRow.getByText("当前线路", { exact: true }).waitFor();
+  assert.equal(
+    await mainRow
+      .getByRole("button", { name: "设为当前", exact: true })
       .count(),
     0,
-    "重测之后那条线还显示着「立刻重测」",
   );
-  // 演示里的高倍组熔断着：重测只将它转成半开，不授予它请求许可。
-  await strictMode().check();
-  await routerDialog.getByRole("button", { name: "保存", exact: true }).click();
-  await page.getByText("路由设置已保存，下一发请求就按新的来").last().waitFor();
-  await page.keyboard.press("Escape");
-  await routerDialog.waitFor({ state: "hidden" });
-  // 存下的仅用模式读回仍有效，未通过校验的 pool 草稿不能改变生效范围。
-  await page.getByRole("button", { name: /^选线与分流/ }).click();
-  await strictMode().waitFor();
-  assert.equal(await strictMode().isChecked(), true, "保存后又回到了跨线模式");
-  // 中转站重构阶段 3：聚合模型。勾一条线、写发布的模型、保存 —— 列出来的 id 是后端（演示后端）编的，前端不自己拼。
-  const aggDialog = page.getByRole("dialog");
+
+  // 柱状图：上方只有一行，左边「柱状图」下拉框当标题，三种口径切得过去；不再单写「时间范围」「粒度」字样。
+  const metric = page.getByRole("combobox", { name: "柱状图" });
+  const chartSum = page.locator(".qb-st-chart-sum");
+  assert.match(await chartSum.innerText(), / 次 · /);
+  await metric.selectOption({ label: "Token" });
+  await page.waitForFunction(() =>
+    /Token/.test(document.querySelector(".qb-st-chart-sum")?.textContent ?? ""),
+  );
+  await metric.selectOption({ label: "价格" });
+  await page.waitForFunction(() =>
+    /站内价/.test(
+      document.querySelector(".qb-st-chart-sum")?.textContent ?? "",
+    ),
+  );
+  await metric.selectOption({ label: "请求数" });
+  await page.waitForFunction(() =>
+    / 次 · /.test(
+      document.querySelector(".qb-st-chart-sum")?.textContent ?? "",
+    ),
+  );
+  await page.getByRole("combobox", { name: "时间范围" }).waitFor();
+  await page.getByRole("combobox", { name: "粒度" }).waitFor();
   assert.equal(
-    await aggDialog
-      .getByText("现在发布的（保存后刷新）", { exact: true })
+    await page
+      .locator(".qb-st-ov label", { hasText: /^时间范围$|^粒度$/ })
       .count(),
+    0,
+    "柱状图上方还单写着「时间范围」「粒度」",
+  );
+  assert.equal(
+    await page.locator(".qb-st-chart-head").evaluate((el) => {
+      const tops = [...el.children].map((c) => c.getBoundingClientRect().top);
+      return Math.max(...tops) - Math.min(...tops) < 12;
+    }),
+    true,
+    "柱状图上方的控件不在一行",
+  );
+  await reviewShot("relays-main");
+
+  // 「选线与分流」弹窗：第一屏只有备用线路、自动选线偏好、下一次请求；其余在「高级设置」里。
+  await selCard.click();
+  const sel = page.getByRole("dialog");
+  await sel.getByText("下一次请求", { exact: true }).waitFor();
+  assert.equal(
+    await sel.getByRole("radio", { name: /仅所选线路|允许所勾选线路/ }).count(),
+    0,
+    "「仅所选线路 / 允许所勾选线路」单选框还在",
+  );
+  assert.equal(
+    await sel
+      .getByRole("button", { name: /用这一条|按这套启动调度|停止调度/ })
+      .count(),
+    0,
+    "弹窗里还有重复的换线 / 自动选线入口",
+  );
+  assert.match(
+    await sel.locator(".qb-st-plan").innerText(),
+    /只用「.*DS 专线」，失败直接报错（没有备用线路）/,
+  );
+  const presetChecked = await Promise.all(
+    ["省钱", "速度", "稳定"].map((name) =>
+      sel.getByRole("radio", { name: new RegExp(`^${name}`) }).isChecked(),
+    ),
+  );
+  assert.equal(
+    presetChecked.filter(Boolean).length,
+    1,
+    "三档偏好没有恰好选中一档",
+  );
+  const timeoutHeading = sel.getByText("超时（秒，0 = 不限）", { exact: true });
+  assert.equal(await timeoutHeading.isVisible(), false, "高级设置默认就展开着");
+  const backupBoxes = sel.getByRole("checkbox", { name: /加为备用线路$/ });
+  assert.equal(await backupBoxes.count(), 2);
+  for (const box of await backupBoxes.all())
+    assert.equal(
+      await box.isChecked(),
+      false,
+      "旧数据里的线被自动加成了备用线路",
+    );
+  for (const width of [1320, 680]) {
+    await page.setViewportSize({ width, height: 940 });
+    await assertNoOverflow(page, `selection dialog ${width}`);
+  }
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await reviewShot("relays-selection-dialog");
+  await sel
+    .getByRole("checkbox", { name: /Claude 高倍组」加为备用线路$/ })
+    .check();
+  await sel.getByRole("checkbox", { name: /DS 低价组」加为备用线路$/ }).check();
+  await sel.getByRole("button", { name: /DS 低价组」往前挪$/ }).click();
+  await sel.getByRole("button", { name: "保存", exact: true }).click();
+  await page.getByText("选线设置已保存，下一次请求就按新的来").last().waitFor();
+  // 保存后主页把状态读回来：下一次请求的完整顺序、熔断着的那条标「跳过」、比当前线路贵的标出来。
+  await page.waitForFunction(() =>
+    /DS 专线.*→.*DS 低价组.*→.*Claude 高倍组（熔断中，跳过）/.test(
+      document.querySelector("dialog[open] .qb-st-plan")?.textContent ?? "",
+    ),
+  );
+  await sel.getByText("比当前线路贵", { exact: true }).waitFor();
+  await sel.getByRole("button", { name: "重试这条", exact: true }).click();
+  await page
+    .getByText(/转成半开了：下一发真实请求就是回探/)
+    .last()
+    .waitFor();
+  await sel
+    .getByRole("button", { name: "重试这条", exact: true })
+    .waitFor({ state: "detached" });
+  // 高级设置：点开才有；聚合模型、检测与排名都在里面。
+  await sel.getByText("高级设置 · 一般不用改", { exact: true }).click();
+  await timeoutHeading.waitFor();
+  await sel.getByText("换当前线路的防抖与底线", { exact: true }).waitFor();
+  await sel.getByText("限流与容量分流", { exact: true }).waitFor();
+  assert.equal(
+    await sel.getByText("现在发布的（保存后刷新）", { exact: true }).count(),
     0,
     "聚合没开时也列了发布的模型",
   );
-  await aggDialog
+  await sel
     .getByLabel(
-      "把勾上的几条线的模型一起列给这个软件：选哪个模型，就请求对应线路；仍受上方允许范围限制，范围外的线路会拒绝访问",
+      "把勾上的几条线的模型一起列给这个软件：客户端选哪个模型，就请求对应线路；只能是当前线路或备用线路，别的线路会拒绝访问",
     )
     .check();
-  await aggDialog
+  await sel
     .getByLabel(/放进聚合$/)
     .first()
     .check();
-  await aggDialog
+  await sel
     .getByLabel(/发布的模型$/)
     .first()
     .fill("glm-5[1M], glm-4.7，glm-4.7");
-  await aggDialog.getByRole("button", { name: "保存", exact: true }).click();
-  await aggDialog
+  await sel.getByRole("button", { name: "保存", exact: true }).click();
+  await sel
     .getByText("qbg-claude-example--glm-5[1M]", { exact: true })
     .waitFor();
-  await aggDialog
-    .getByText("qbg-claude-example--glm-4.7", { exact: true })
-    .waitFor();
   assert.equal(
-    await aggDialog
-      .getByText("qbg-claude-example--glm-4.7", { exact: true })
-      .count(),
+    await sel.getByText("qbg-claude-example--glm-4.7", { exact: true }).count(),
     1,
     "重复写的模型发布了两次",
   );
-  await page.setViewportSize({ width: 680, height: 940 });
-  await assertNoOverflow(page, "router aggregate 680");
-  await page.setViewportSize({ width: 1320, height: 940 });
-  // 网络那一节（R6）：开到所有网卡上才出现口令与警告；代理框不回填存着的那个（会冲掉密码）。
-  const netDialog = page.getByRole("dialog");
-  assert.equal(
-    await netDialog.getByText("路由口令", { exact: true }).count(),
-    0,
-    "只本机时也显示了路由口令",
-  );
-  await netDialog.getByLabel("所有网卡：WSL、局域网里别的机器也能连").check();
-  await netDialog.getByText("路由口令", { exact: true }).waitFor();
-  await page.setViewportSize({ width: 680, height: 940 });
-  await assertNoOverflow(page, "router network open 680");
-  await page.setViewportSize({ width: 1320, height: 940 });
-  await netDialog
-    .getByRole("button", { name: "扫描本机", exact: true })
+  await sel
+    .getByText("检测与排名 · 手动重新检测、每条线的读数", { exact: true })
     .click();
-  await netDialog
-    .getByRole("button", { name: "http://127.0.0.1:7890", exact: true })
-    .click();
-  await netDialog
-    .getByRole("button", { name: "保存代理", exact: true })
-    .click();
-  // 等的是保存那句提示 —— 扫描出来的那个胶囊上也写着这个地址，按地址等会在存完之前就等到。
-  await page.getByText("出站代理已保存：下一发中转请求就经它走").waitFor();
-  await netDialog.locator("b", { hasText: "http://127.0.0.1:7890" }).waitFor();
-  assert.equal(
-    await netDialog.getByLabel("出站代理地址").inputValue(),
-    "",
-    "保存之后代理框里还留着地址（下次一保存会冲掉密码）",
-  );
-  await netDialog.getByLabel("只本机（127.0.0.1）—— 默认").check();
-  await netDialog
-    .getByText("路由口令", { exact: true })
-    .waitFor({ state: "hidden" });
-  await page.keyboard.press("Escape");
-
-  // 明确逐条批准后才允许跨线。先保存并读回，再启动调度。
-  await page.goto(origin + "/#/relays");
-  await page.getByRole("button", { name: /^选线与分流/ }).click();
-  await poolMode().check();
-  const authorizedLabels = await allowedLines.evaluateAll((nodes) =>
-    nodes.map((node) => node.getAttribute("aria-label")),
-  );
-  for (const name of authorizedLabels) {
-    await routerDialog.getByRole("checkbox", { name, exact: true }).check();
-  }
-  await routerDialog.getByRole("button", { name: "保存", exact: true }).click();
-  await page.getByText("路由设置已保存，下一发请求就按新的来").last().waitFor();
-  await page.keyboard.press("Escape");
-  await routerDialog.waitFor({ state: "hidden" });
-  await page.getByRole("button", { name: /^选线与分流/ }).click();
-  await poolMode().waitFor();
-  assert.equal(await poolMode().isChecked(), true, "授权池没有保存");
-  for (const name of authorizedLabels) {
-    assert.equal(
-      await routerDialog
-        .getByRole("checkbox", { name, exact: true })
-        .isChecked(),
-      true,
-      "明确批准的线路没有读回",
-    );
-  }
-  await page.keyboard.press("Escape");
-  await routerDialog.waitFor({ state: "hidden" });
-  // 关窗会重新读取后端状态；等待生效范围读回再检查调度是否可启用。
-  await page
-    .locator('button[aria-label="智能调度"][aria-disabled="false"]')
-    .waitFor();
-  assert.equal(await schedToggle(false).getAttribute("aria-disabled"), "false");
-  await schedToggle(false).click();
-  await schedToggle(true).waitFor();
-  await page.getByRole("button", { name: /^选线与分流/ }).click();
-  await page.getByRole("tab", { name: "自动选线偏好", exact: true }).click();
-  const schedDialog = page.getByRole("dialog");
-  await schedDialog
-    .getByRole("heading", { name: "派单队列", exact: true })
-    .waitFor();
-  await schedDialog.getByText("合格", { exact: true }).first().waitFor();
-  await schedDialog.getByText("兜底", { exact: true }).first().waitFor();
-  await schedDialog.getByText("活着", { exact: true }).first().waitFor();
-  for (const width of [1320, 680]) {
-    await page.setViewportSize({ width, height: 940 });
-    await assertNoOverflow(page, `schedule dispatch queue ${width}`);
-  }
-  await page.setViewportSize({ width: 1320, height: 940 });
-  // 花钱测活默认关：「立刻测」只做免费的，今天花的还是 0。
-  const paidProbe = schedDialog.getByLabel("开启花钱测活");
-  assert.equal(await paidProbe.isChecked(), false, "花钱测活默认就开着");
-  await schedDialog
-    .getByRole("button", { name: "立刻测", exact: true })
-    .click();
+  await sel.getByText("当前线路与备用线路的检测", { exact: true }).waitFor();
+  await sel.getByText("按这套偏好的排名（预览）", { exact: true }).waitFor();
+  await sel.getByRole("button", { name: "重新检测", exact: true }).click();
   await page
     .getByText(/^测了 \d+ 次/)
     .first()
     .waitFor();
-  await schedDialog.getByText(/今天测活约 ¥0\.0000～¥0\.0000/).waitFor();
-  // 打开之后再测（C6，2026-11-14）：先只发免费的，花钱的只给预估、点了才测；点之前「今天测活约」不动，点之后才涨。
-  await paidProbe.check();
-  await schedDialog
-    .getByRole("button", { name: "立刻测", exact: true })
+  await sel.getByText(/今天测活约 ¥0\.0000～¥0\.0000/).waitFor();
+  for (const width of [1320, 680]) {
+    await page.setViewportSize({ width, height: 940 });
+    await assertNoOverflow(page, `selection dialog advanced ${width}`);
+  }
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await reviewShot("relays-selection-advanced");
+  // 每个弹窗右上角都有 ×（A6）。
+  await sel.getByRole("button", { name: "关闭窗口", exact: true }).click();
+  await sel.waitFor({ state: "hidden" });
+
+  // 主页：右列卡片第二行写备用线路，行上标「第 N 备用」。
+  await page.waitForFunction(() =>
+    /备用：.*DS 低价组 → .*Claude 高倍组/.test(
+      document.querySelector(".qb-st-selcard-sub")?.textContent ?? "",
+    ),
+  );
+  await page
+    .getByRole("group", { name: /^线路「DS 低价组」，第 1 备用/ })
+    .getByText("第 1 备用", { exact: true })
+    .waitFor();
+  // 有备用线路了，自动选线开得起来；右列写真实的防抖数（G5）。
+  await page
+    .locator('button[aria-label="自动选线"][aria-disabled="false"]')
+    .waitFor();
+  await autoToggle(false).click();
+  await autoToggle(true).waitFor();
+  await autoToggle(true)
+    .getByText("领先 8% 连续 2 轮才换 · 面板关掉即停", { exact: true })
+    .waitFor();
+  // 自动选线开着时「设为当前」先在行里问一句；取消什么都不变。
+  const cheapRow = page.getByRole("group", { name: /^线路「DS 低价组」/ });
+  await cheapRow.getByRole("button", { name: "设为当前", exact: true }).click();
+  await cheapRow.getByText(/自动选线开着，设为当前会把它关掉/).waitFor();
+  await reviewShot("relays-set-current-confirm");
+  await cheapRow.getByRole("button", { name: "取消", exact: true }).click();
+  assert.equal(await autoToggle(true).count(), 1, "取消之后自动选线还是被关了");
+  await cheapRow.getByRole("button", { name: "设为当前", exact: true }).click();
+  await cheapRow.getByRole("button", { name: "继续", exact: true }).click();
+  await page
+    .getByText("已设为当前，下一次请求生效。备用名单没动；自动选线已关", {
+      exact: true,
+    })
+    .last()
+    .waitFor();
+  await autoToggle(false).waitFor();
+  await page
+    .getByRole("group", { name: /^线路「DS 低价组」，当前线路/ })
+    .waitFor();
+  // 备用名单没动。
+  assert.match(await selCard.innerText(), /备用：.*Claude 高倍组/);
+  // 移除要在行里再点一次确认，写明不能恢复；是当前线路时多一句（A2）。取消就什么都不删。
+  const highRow = page.getByRole("group", { name: /^线路「Claude 高倍组」/ });
+  await highRow.getByRole("button", { name: "移除「Claude 高倍组」" }).click();
+  await highRow.getByText(/不能恢复/).waitFor();
+  await highRow.getByRole("button", { name: "取消", exact: true }).click();
+  const curRow = page.getByRole("group", {
+    name: /^线路「DS 低价组」，当前线路/,
+  });
+  await curRow.getByRole("button", { name: "移除「DS 低价组」" }).click();
+  await curRow.getByText(/而且它是当前线路/).waitFor();
+  await reviewShot("relays-remove-confirm");
+  await curRow.getByRole("button", { name: "取消", exact: true }).click();
+  assert.equal(await page.locator(".qb-st-sites .qb-st-row").count(), 3);
+  // 换回原来那条当前线路（自动选线关着，不问）。
+  await page
+    .getByRole("group", { name: /^线路「DS 专线」/ })
+    .getByRole("button", { name: "设为当前", exact: true })
     .click();
-  const paidConfirm = schedDialog.getByRole("button", {
+  await page
+    .getByText("已设为当前，下一次请求生效。备用名单没动", { exact: true })
+    .last()
+    .waitFor();
+
+  // Codex：当前线路熔断着 —— 「最近请求实际去向」那一行变黄，说这期间改用哪条备用线路，给「重试主线」。
+  await page.getByRole("tab", { name: /Codex 桌面端/ }).click();
+  const warnLine = page.locator(".qb-st-recent-route.warn");
+  await warnLine.getByText(/暂停中/).waitFor();
+  assert.match(
+    await warnLine.innerText(),
+    /这期间改用备用线路「.*GPT 备用组」/,
+  );
+  assert.match(await selCard.innerText(), /备用：.*GPT 备用组/);
+  await reviewShot("relays-codex-paused");
+  await warnLine.getByRole("button", { name: "重试主线", exact: true }).click();
+  await page
+    .getByText("当前线路转成半开了：下一发真实请求就是回探（不额外花钱）")
+    .last()
+    .waitFor();
+  await page.locator(".qb-st-recent-route.warn").waitFor({ state: "detached" });
+  // 桌面端：最近一发是客户端选了聚合模型 —— 同一行变黄，写清钱花在哪条线上。
+  await page.getByRole("tab", { name: /^桌面端/ }).click();
+  await page
+    .locator(".qb-st-recent-route.warn")
+    .getByText(/客户端选了聚合模型「claude-fable-qbg-482913」/)
+    .waitFor();
+  await reviewShot("relays-desktop-aggregate");
+  await page.getByRole("tab", { name: /Claude Code/ }).click();
+
+  // 设置 → 中转站：五个软件共用的监听范围、出站代理、测活（D8）。改监听范围先确认（A4）。
+  await page.goto(origin + "/#/settings/relay", {
+    waitUntil: "domcontentloaded",
+  });
+  await page
+    .getByRole("heading", { name: "中转站 · 五个软件共用", exact: true })
+    .waitFor();
+  const allIfaces = page.getByRole("radio", { name: /^所有网卡/ });
+  const loopback = page.getByRole("radio", { name: /^只本机/ });
+  await allIfaces.click();
+  await page
+    .getByText(/拿到口令的人能用你的线路额度/)
+    .first()
+    .waitFor();
+  assert.equal(
+    await page.getByLabel("路由口令").count(),
+    0,
+    "没确认就开到了所有网卡",
+  );
+  await page.getByRole("button", { name: "取消", exact: true }).click();
+  assert.equal(await loopback.isChecked(), true, "取消之后监听范围变了");
+  await allIfaces.click();
+  await page.getByRole("button", { name: "改成所有网卡", exact: true }).click();
+  await page
+    .getByText("本机路由开到了所有网卡上：别的机器要带路由口令")
+    .last()
+    .waitFor();
+  await page.getByLabel("路由口令").waitFor();
+  await page.getByRole("button", { name: "扫描本机", exact: true }).click();
+  await page
+    .getByRole("button", { name: "http://127.0.0.1:7890", exact: true })
+    .click();
+  await page.getByRole("button", { name: "保存代理", exact: true }).click();
+  // 等的是保存那句提示 —— 扫描出来的那个胶囊上也写着这个地址，按地址等会在存完之前就等到。
+  await page.getByText("出站代理已保存：下一发中转请求就经它走").waitFor();
+  await page.locator("b", { hasText: "http://127.0.0.1:7890" }).waitFor();
+  assert.equal(
+    await page.getByLabel("出站代理地址").inputValue(),
+    "",
+    "保存之后代理框里还留着地址（下次一保存会冲掉密码）",
+  );
+  const paidProbe = page.getByLabel("开启花钱测活");
+  assert.equal(await paidProbe.isChecked(), false, "花钱测活默认就开着");
+  await paidProbe.check();
+  await page.getByRole("button", { name: "保存测活设置", exact: true }).click();
+  await page.getByText("测活设置已保存").last().waitFor();
+  for (const width of [1320, 680]) {
+    await page.setViewportSize({ width, height: 940 });
+    await assertNoOverflow(page, `settings relay ${width}`);
+  }
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await reviewShot("settings-relay");
+  await loopback.click();
+  await page.getByRole("button", { name: "改回只本机", exact: true }).click();
+  await page.getByText("本机路由改成只本机能连").last().waitFor();
+  await page.getByLabel("路由口令").waitFor({ state: "detached" });
+
+  // 花钱测活开着时「重新检测」先只发免费的，花钱的只给预估、点了才测（C6）。
+  await page.goto(origin + "/#/relays");
+  await page.getByRole("button", { name: /^选线与分流/ }).click();
+  const sel2 = page.getByRole("dialog");
+  await sel2.getByText("高级设置 · 一般不用改", { exact: true }).click();
+  await sel2
+    .getByText("检测与排名 · 手动重新检测、每条线的读数", { exact: true })
+    .click();
+  await sel2.getByRole("button", { name: "重新检测", exact: true }).click();
+  const paidConfirm = sel2.getByRole("button", {
     name: "花钱测这几条",
     exact: true,
   });
   await paidConfirm.waitFor();
-  await schedDialog.getByText(/今天测活约 ¥0\.0000～¥0\.0000/).waitFor();
+  await sel2.getByText(/今天测活约 ¥0\.0000～¥0\.0000/).waitFor();
   await paidConfirm.click();
-  await schedDialog
+  await sel2
     .getByText(/今天测活约 ¥0\.0000～¥0\.0000/)
     .waitFor({ state: "hidden" });
-  await paidProbe.uncheck();
-  // 钉住删了（2026-11-14）：派单队列里不再有「固定池内首选」，手动指定只有「设为当前」。
-  assert.equal(
-    await schedDialog
-      .getByRole("button", { name: "固定池内首选", exact: true })
-      .count(),
-    0,
-    "钉住的入口还在",
-  );
   await page.keyboard.press("Escape");
-  await schedDialog.waitFor({ state: "hidden" });
-  // 自动选线只接管排序，备用名单仍由用户决定。
-  await page.getByRole("button", { name: /^选线与分流/ }).click();
-  await page.getByText(/智能调度开着：名单仍由你决定/).waitFor();
-  assert.equal(await poolMode().isChecked(), true, "自动选线改了备用名单");
-  for (const button of await routerDialog
-    .getByRole("button", { name: /往[前后]挪/ })
-    .all()) {
-    assert.equal(await button.isDisabled(), true, "调度运行时仍允许手排顺序");
-  }
-  await page.keyboard.press("Escape");
-  await schedToggle(true).click();
-  await schedToggle(false).waitFor();
-  await schedToggle(false).click();
-  await schedToggle(true).waitFor();
-  // 「设为当前」只换当前线路：备用名单不动，自动选线被关掉并如实说
-  // （2026-11-14，推翻了「普通选线必须立即收回跨线许可」）。
-  await page.getByRole("radio").filter({ hasText: "DS 低价组" }).click();
-  await page
-    .getByText("已设为当前线路，自动选线已关闭", { exact: true })
-    .last()
-    .waitFor();
-  await schedToggle(false).waitFor();
-  // 备用名单还在，所以自动选线随时能再打开。
-  await page
-    .locator('button[aria-label="智能调度"][aria-disabled="false"]')
-    .waitFor();
-  await page.getByRole("button", { name: /^选线与分流/ }).click();
-  await poolMode().waitFor();
-  assert.equal(
-    await poolMode().isChecked(),
-    true,
-    "设为当前把备用名单收回成了仅所选",
-  );
-  await page.keyboard.press("Escape");
-  await page.getByRole("radio").filter({ hasText: "DS 专线" }).click();
+  await sel2.waitFor({ state: "hidden" });
+  await page.goto(origin + "/#/settings/relay", {
+    waitUntil: "domcontentloaded",
+  });
+  await page.getByLabel("开启花钱测活").uncheck();
+  await page.getByRole("button", { name: "保存测活设置", exact: true }).click();
+  await page.getByText("测活设置已保存").last().waitFor();
 
-  // 中转站重构阶段 5：项目、导入链接、工具文件。
-  // 项目：头部按钮写着当前项目（演示里 Claude Code 正用着「日常开发」），弹窗里说清楚只换中转那一侧。
-  await page.goto(origin + "/#/relays");
+  // 项目挪到了扩展页（B5 / G1）：只换 MCP / Skills / 提示词，不碰线路；桌面端没有项目。
+  await page.goto(origin + "/#/extensions");
+  const projectClient = page.getByRole("combobox", { name: "项目对哪个软件" });
+  await projectClient.waitFor();
+  assert.equal(
+    await projectClient.locator("option", { hasText: "Claude 桌面端" }).count(),
+    0,
+    "桌面端没有项目，却出现在项目的软件列表里",
+  );
   await page.getByRole("button", { name: /项目：日常开发/ }).click();
   const projDialog = page.locator("dialog[open]");
   await projDialog.getByText(/官方账户和槽位一概不动/).waitFor();
@@ -2568,6 +2695,8 @@ try {
   await page.setViewportSize({ width: 1320, height: 940 });
   await page.keyboard.press("Escape");
   assert.equal(await page.locator("dialog[open]").count(), 0);
+  await page.goto(origin + "/#/relays");
+  await page.locator(".qb-st-ctl").waitFor();
   // 导入链接：粘贴一条给 CC Switch 的链接 → 确认框里 Key 只有打码的 → 确认了才导入，导完停在中转站页。
   await page.getByRole("button", { name: "从链接导入", exact: true }).click();
   await page
@@ -2786,9 +2915,10 @@ try {
     "SillyTavern card: seven tabs, arrow keys switch; versions tab: release list, downgrade names itself and still gates on Node, swap back to the kept copy",
     "SillyTavern card console tab: a failed start is recognized with a hint, colors are rendered not printed, the previous run is one click away",
     "SillyTavern card library tabs: character detail, to trash with its chats and back, world entries whose Esc closes only the entry dialog, extension check then update, every tab without overflow at 680px",
-    "relay router settings: selected mode by default refuses scheduling, legacy queue grants no permission, empty pool cannot save, retest only changes breaker state, strict mode saves and reads back, authorized pool requires explicit per-line checks and reads them back; aggregate and network controls preserve permissions and fit two widths",
-    "relay schedule dispatch: explicit pool permits scheduling, tiers and liveness fit two widths, paid probing defaults off and records enabled cost, pool pin preserves fallback permission, unpin clears it, scheduler owns pool ordering, ordinary route selection returns to selected mode and stops scheduling",
-    "stage 5: the project dialog says it only touches the relay side and creates from the current state, a pasted ccswitch link shows only a masked key and imports after confirming onto the relay page, the tool files tab switches between OpenClaw / Hermes / Pi without overflow and saves an edit; stage 6: the sessions tab filters by source, reads a session with its resume command, deletes only after confirming and restores from the trash without overflow",
+    "relay page in place (third mockup): no range card, rows are not clickable, auto-select refuses without backups; the chart switches requests / tokens / price from one header row; the selection dialog's first screen (backups with skip and pricier marks, three presets, next-request order) and its advanced fold (aggregate models, re-check, ranking) share one save; backups read back on the card and rows; auto-select shows the real debounce; set-current asks in the row only while auto-select is on; removal asks in the row; a paused current line and an aggregate hit turn the recent-request line into a warning with retry only for breakers; no overflow at 1320/680",
+    "settings relay tab: the listen scope changes only after confirming, the proxy saves without refilling its box, probe settings save explicitly; with paid probing on, re-check sends free probes first and paid ones only after a second click; no overflow at 1320/680",
+    "projects moved from the relay page header to the extensions page: no desktop entry, the dialog says it only touches the relay side and creates from the current state, no overflow at 1320/680",
+    "stage 5: a pasted ccswitch link shows only a masked key and imports after confirming onto the relay page, the tool files tab switches between OpenClaw / Hermes / Pi without overflow and saves an edit; stage 6: the sessions tab filters by source, reads a session with its resume command, deletes only after confirming and restores from the trash without overflow",
     "stage 7: the three background switches in settings start unchecked; other CLI tools check for a new version and hold back the update when Node is too old, an uninstalled Hermes offers only its official script; the environment-variable cleanup ticks nothing and offers only current-user variables; no overflow at 680px",
   ];
   writeFileSync(

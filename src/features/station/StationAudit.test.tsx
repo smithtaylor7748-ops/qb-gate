@@ -39,7 +39,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 it("requires an explicit temporary key and keeps failures visible without replay", async () => {
-  render(<StationAudit routes={[route]} focus="r" />);
+  render(<StationAudit route={route} />);
   await screen.findByText("价目表不可用");
   const run = screen.getByRole("button", {
     name: "开始检验",
@@ -87,7 +87,7 @@ it("obtains management credentials from the site login without using a model key
       };
     return [];
   });
-  render(<StationAudit routes={[route]} focus="r" />);
+  render(<StationAudit route={route} />);
   await waitFor(() =>
     expect(
       (screen.getByLabelText("站点账号 / 邮箱") as HTMLInputElement).disabled,
@@ -116,7 +116,7 @@ it("obtains management credentials from the site login without using a model key
   );
 });
 it("requires separate extra-cost consent for the seventh call", async () => {
-  render(<StationAudit routes={[route]} />);
+  render(<StationAudit route={route} />);
   await screen.findByText("价目表不可用");
   fireEvent.change(screen.getByLabelText("检验模型"), {
     target: { value: "fixture-model" },

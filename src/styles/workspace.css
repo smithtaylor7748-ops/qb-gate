@@ -2658,3 +2658,22 @@ body:has(.official-page) {
   font-size: var(--text-xs);
   color: var(--text-3);
 }
+
+/* 扩展中心页头的「项目」入口（2026-11-15 从中转站页头挪过来）。 */
+.qb-ext-projects {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.qb-ext-projects select {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 8px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  min-width: 0;
+}

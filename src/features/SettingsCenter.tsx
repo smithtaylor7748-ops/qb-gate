@@ -21,6 +21,10 @@ import { useAction, useWorkspace } from "../lib/workspace";
 import { Button, ExternalLink, Modal } from "../ui";
 import { ManagedDirControl } from "../pages/managed/ManagedPanel";
 import { QUOTA_AUTO_STEPS } from "./overview/QuotaRefreshAll";
+import {
+  ProbeSettingsPanel,
+  RouterNetworkSettings,
+} from "./station/StationNetworkSettings";
 import packageInfo from "../../package.json";
 
 export default function SettingsCenter() {
@@ -36,6 +40,7 @@ export default function SettingsCenter() {
       <nav className="qb-tabs" aria-label="设置分类">
         {[
           ["general", "常规"],
+          ["relay", "中转站"],
           ["backups", "备份与恢复"],
           ["help", "帮助与来源"],
           ["advanced", "高级维护"],
@@ -49,7 +54,9 @@ export default function SettingsCenter() {
           </NavLink>
         ))}
       </nav>
-      {section === "backups" ? (
+      {section === "relay" ? (
+        <RelayShared />
+      ) : section === "backups" ? (
         <Backups />
       ) : section === "help" ? (
         <Help />
@@ -65,6 +72,27 @@ export default function SettingsCenter() {
     </>
   );
 }
+/**
+ * 中转站本机路由**五个软件共用**的那几样（2026-11-15，D8）：监听范围与路由口令、出站代理、测活频率与预算。
+ * 原来挂在每个软件的「选线与分流」弹窗里，文案还写着「三个软件共用」。每个软件自己的备用线路、
+ * 自动选线偏好仍在中转站页的「选线与分流」里。
+ */
+function RelayShared() {
+  return (
+    <section className="qb-detail">
+      <h2>中转站 · 五个软件共用</h2>
+      <p className="qb-muted">
+        Claude Code、Claude 桌面端、Codex、Gemini CLI、Grok Build
+        走本机路由时共用下面这几样，在这里改一次五个软件一起变。每个软件自己的备用线路、自动选线偏好在中转站页右列的「选线与分流」里。
+      </p>
+      <h2 className="qb-subheading">本机路由的网络</h2>
+      <RouterNetworkSettings />
+      <h2 className="qb-subheading">测活</h2>
+      <ProbeSettingsPanel />
+    </section>
+  );
+}
+
 /** 一行开关：设置里的那个键、标题、底下那行小字。 */
 type Toggle = [keyof Preferences, string, string];
 function General() {
@@ -170,7 +198,7 @@ function General() {
       ))}
       <h2 className="qb-subheading">后台运行</h2>
       <p className="qb-muted">
-        门禁、看门狗、本机路由和智能调度都在面板进程里跑：关窗口只是收进托盘，托盘菜单的「退出
+        门禁、看门狗、本机路由和自动选线都在面板进程里跑：关窗口只是收进托盘，托盘菜单的「退出
         QB Gate」才真的停。
       </p>
       <AutostartRow />
