@@ -32,12 +32,18 @@ export function StationAdmissionStatus({
   error?: string | null;
   onRefresh?: () => void;
 }) {
+  // 能发请求的 = 当前线路 + 备用线路（2026-11-14 起当前线路不必在名单里，R1）。
+  const current =
+    status?.selection?.current ??
+    status?.pending_route ??
+    status?.current_route ??
+    null;
+  const inPlay = new Set([
+    ...(current ? [current] : []),
+    ...(settings?.routing_mode === "pool" ? settings.allowed_routes : []),
+  ]);
   const ids = new Set([
-    ...(settings?.routing_mode === "pool"
-      ? settings.allowed_routes
-      : [status?.pending_route ?? status?.current_route].filter(
-          (id): id is string => !!id,
-        )),
+    ...inPlay,
     ...Object.keys(settings?.admission.route_limits ?? {}),
     ...(status?.admission.map((row) => row.route_id) ?? []),
   ]);
@@ -75,14 +81,14 @@ export function StationAdmissionStatus({
               {settings.routing_mode === "pool" &&
               settings.admission.overflow_to_pool &&
               settings.pool_strategy === "least-loaded"
-                ? "名单内优先空闲线路"
-                : "优先所选线路"}
+                ? "在当前线路和备用线路里按负载分"
+                : "先用当前线路"}
             </span>
             <span>
               {settings.routing_mode === "pool" &&
               settings.admission.overflow_to_pool
-                ? "容量溢出分流已开启"
-                : "容量溢出分流已关闭"}
+                ? "本机限额满了分流到备用线路：开"
+                : "本机限额满了分流到备用线路：关"}
             </span>
             <span>
               {settings.admission.max_wait_ms > 0 &&
@@ -92,16 +98,13 @@ export function StationAdmissionStatus({
             </span>
           </div>
           {ids.size === 0 ? (
-            <p className="qb-st-note">尚未选线，也未设置线路容量。</p>
+            <p className="qb-st-note">还没有当前线路，也没设线路容量。</p>
           ) : (
             <div className="qb-st-admission-routes">
               {[...ids].map((id) => {
                 const row = byId.get(id);
                 const limit = settings.admission.route_limits[id];
-                const allowed =
-                  settings.routing_mode === "pool"
-                    ? settings.allowed_routes.includes(id)
-                    : id === (status.pending_route ?? status.current_route);
+                const allowed = inPlay.has(id);
                 return (
                   <article
                     className="qb-st-admission-route"
@@ -112,7 +115,7 @@ export function StationAdmissionStatus({
                       <strong>{routeLabel(id)}</strong>
                       {!allowed && (
                         <span className="qb-st-pill qb-st-pill--unknown">
-                          不在当前允许范围
+                          不是当前线路或备用线路
                         </span>
                       )}
                       {row?.reason && (

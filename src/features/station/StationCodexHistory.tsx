@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 
 import { stationApi, type CodexHistoryHome } from "../../lib/station";
 import { useToast } from "../../ui";
+import { ConfirmButton } from "./InlineConfirm";
 
 export default function StationCodexHistory() {
   const toast = useToast();
@@ -176,19 +177,21 @@ export default function StationCodexHistory() {
                         {b.restored ? (
                           <span className="qb-st-dim">已还原</span>
                         ) : (
-                          <button
-                            className="qb-st-iconbtn"
+                          // A5：原来一点就还原。
+                          <ConfirmButton
+                            label="还原"
                             disabled={busy}
-                            onClick={() =>
+                            danger={false}
+                            message="把这次并进来的会话按账本逐处改回原来的桶；并桶之后 Codex 往这些会话里接着写的内容不会丢。"
+                            confirmLabel="确认还原"
+                            onConfirm={() =>
                               void run(
                                 () =>
                                   stationApi.codexHistoryRestore(h.id, b.id),
                                 "还原好了：那几个会话回到原来的桶",
                               )
                             }
-                          >
-                            还原
-                          </button>
+                          />
                         )}
                       </li>
                     ))}

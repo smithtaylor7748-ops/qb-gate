@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import type { EndpointLatency } from "../../lib/generated/EndpointLatency";
 import { stationApi, type StationEndpoints } from "../../lib/station";
 import { Button, useToast } from "../../ui";
+import { ConfirmButton } from "./InlineConfirm";
 
 export default function StationEndpointsPanel({
   providerId,
@@ -132,18 +133,19 @@ export default function StationEndpointsPanel({
                     >
                       设为主地址
                     </button>
-                    <button
-                      className="qb-st-iconbtn"
+                    {/* A5：原来一点就删。 */}
+                    <ConfirmButton
+                      label="删除"
+                      ariaLabel={`删掉备用地址 ${e.url}`}
                       disabled={busy}
-                      aria-label={`删掉备用地址 ${e.url}`}
-                      onClick={() =>
+                      message={`删掉备用地址 ${e.url}：主地址连不上时不再改打它，删了要重新填。`}
+                      confirmLabel="确认删除"
+                      onConfirm={() =>
                         void run(() =>
                           stationApi.removeEndpoint(providerId, e.url),
                         )
                       }
-                    >
-                      删除
-                    </button>
+                    />
                   </span>
                 </td>
               </tr>

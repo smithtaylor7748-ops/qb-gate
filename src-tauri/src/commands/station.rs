@@ -1544,17 +1544,6 @@ pub fn station_usage_report(
     qb_app::usecase::relay_usage_ops::report(&db, client.map(client_key), days)
 }
 
-/// 首页总量：按客户端汇总本机完整记录，短窗按小时滚动，None 包含归档。
-#[tauri::command]
-pub fn station_usage_totals(
-    state: State<'_, AppState>,
-    client: Client,
-    hours: Option<u32>,
-) -> Result<qb_app::usecase::relay_usage_ops::RelayUsageTotals> {
-    let db = flushed_logs(&state)?;
-    qb_app::usecase::relay_usage_ops::totals(&db, client_key(client), hours)
-}
-
 /// 首页总量、每线路请求数与柱状趋势共享同一完整统计窗口；不受日志页条数限制。
 #[tauri::command]
 pub fn station_usage_overview(

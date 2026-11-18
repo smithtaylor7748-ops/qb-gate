@@ -654,7 +654,7 @@ export default function RelayUsage() {
                             title={r.error ?? r.fault ?? undefined}
                           >
                             {permissionDenied
-                              ? "本机拒绝 · 超出允许范围"
+                              ? "本机拒绝 · 不是当前线路或备用线路"
                               : capacityDenied
                                 ? "本机繁忙 · 请求容量限制"
                                 : (r.status ?? "—")}

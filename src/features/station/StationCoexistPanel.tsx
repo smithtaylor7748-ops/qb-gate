@@ -16,6 +16,7 @@ import type { CoexistStatus } from "../../lib/generated/CoexistStatus";
 import type { CoexistTool } from "../../lib/generated/CoexistTool";
 import { stationApi } from "../../lib/station";
 import { useToast } from "../../ui";
+import { ConfirmButton } from "./InlineConfirm";
 
 export default function StationCoexistPanel({ routeId }: { routeId: string }) {
   const toast = useToast();
@@ -66,7 +67,7 @@ export default function StationCoexistPanel({ routeId }: { routeId: string }) {
         这几个工具直接连站点：
         <b>站点地址和这条线的 Key 会明文写进它们自己的配置文件</b>
         ，谁能读那个文件谁就拿得到 Key。只改 QB Gate
-        写的那一条，你自己配的供应商不动。写进去的模型清单取自这条线的「模型映射」（没写就写不进去）；
+        写的那一条，你自己配的供应商不动。写进去的模型清单取自这条线的「线路模型映射」（没写就写不进去）；
         之后换 Key、改映射要回来再点一次「更新」。
       </p>
       <div className="qb-st-tw">
@@ -115,19 +116,20 @@ export default function StationCoexistPanel({ routeId }: { routeId: string }) {
                       {r.written ? "更新" : "写入"}
                     </button>
                     {r.written && (
-                      <button
-                        className="qb-st-iconbtn"
+                      // A5：原来一点就删。
+                      <ConfirmButton
+                        label="删除"
+                        ariaLabel={`从 ${r.label} 删掉这条线`}
                         disabled={busy}
-                        aria-label={`从 ${r.label} 删掉这条线`}
-                        onClick={() =>
+                        message={`从 ${r.label} 的配置里删掉 QB Gate 写的那一条（你自己配的不动）。在 ${r.label} 里选着它的话，那边要另选一个。`}
+                        confirmLabel="确认删除"
+                        onConfirm={() =>
                           void run(
                             () => stationApi.coexistRemove(routeId, r.tool),
                             `从 ${r.label} 删掉了 QB Gate 写的那一条`,
                           )
                         }
-                      >
-                        删除
-                      </button>
+                      />
                     )}
                   </span>
                 </td>

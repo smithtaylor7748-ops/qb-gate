@@ -668,6 +668,31 @@
 .modal-title--danger {
   color: var(--danger);
 }
+.modal-close {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.modal-close:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.modal-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.modal-head-actions + .modal-close {
+  margin-left: 0;
+}
 .modal-body {
   padding: 0 16px 12px;
   overflow-y: auto;

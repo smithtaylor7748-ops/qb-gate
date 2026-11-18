@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 import Button from "./Button";
 
 interface ModalProps {
@@ -131,6 +131,19 @@ export function Modal({
         </h2>
         {headerActions && (
           <div className="modal-head-actions">{headerActions}</div>
+        )}
+        {/* 右上角的 ×（2026-11-15）：原来只能按 Esc 或点外面，不少人不知道。
+            关不掉的时候（正在执行破坏性操作）不画 —— 画一个点了没反应的 × 更糟。 */}
+        {dismissible && (
+          <button
+            type="button"
+            className="modal-close"
+            aria-label="关闭窗口"
+            title="关闭（Esc）"
+            onClick={onClose}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
         )}
       </div>
       <div className="modal-body">{children}</div>

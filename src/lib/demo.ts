@@ -1807,6 +1807,9 @@ const R_CHEAP = rid("claude-code", "moxi", "DS 低价组");
 const R_DESK = rid("claude-desktop", "example", "桌面端专用组");
 const R_DESK2 = rid("claude-desktop", "moxi", "DS 低价组");
 const R_CODEX = rid("codex", "moxi", "GPT 标准组");
+// 2026-11-15：Codex 底下第二条线，当它的备用线路 —— 好让截图里看得见「当前线路暂停中，这期间改用备用线路」
+// 的黄色提示行、「比当前线路贵」的标记（它标称 ×1.6，比当前那条实测的 ×1.16 贵）。
+const R_CODEX2 = rid("codex", "example", "GPT 备用组");
 
 const stationRoutes = [
   {
@@ -1988,6 +1991,33 @@ const stationRoutes = [
     output_markup: null,
     rates_model: "gpt-5",
   },
+  {
+    // Codex 的备用线路（演示：当前线路熔断着时这一条接手）。没检验过：倍率写「标称 · 未核实」。
+    id: R_CODEX2,
+    client: "codex",
+    station_id: "example",
+    group: "GPT 备用组",
+    credential_id: "cred-1",
+    nominal_rate: 1.6,
+    latest_mult: null,
+    last_audit_ms: null,
+    protocols: { anthropic: null, openai_chat: true, openai_responses: true },
+    rates: {
+      model_ratio: null,
+      completion_ratio: null,
+      cache_ratio: null,
+      create_cache_ratio: null,
+      group_ratio: 1.6,
+      peak_rate: null,
+      per_request_price: null,
+      input_price: null,
+      cache_read_price: null,
+      cache_write_price: null,
+      output_price: null,
+    },
+    output_markup: null,
+    rates_model: null,
+  },
 ];
 
 /** 演示里的路由状态。按软件各记一份，跟真后端的 `ClientRouter` 对齐。 */
@@ -2001,9 +2031,13 @@ let stationTurnstateTakeover: string | null = null;
 let stationTurnstateEnabled = false;
 let stationTurnstateTeam = false;
 const stationCurrent: Record<string, string> = {
-  // 只有 Claude Code 选了上游 —— 另外两个显示「还没选上游」，
-  // 那是刚装完面板的真实样子，也让「三个软件各走各的」一眼看得出来。
+  // Claude Code 是最常见的样子：有当前线路、没有备用线路（严格单线）。
   "claude-code": R_MAIN,
+  // 2026-11-15 截图用：桌面端有当前线路，最近一发是客户端选了聚合模型、直达另一条线（黄色提示行）；
+  // Codex 的当前线路熔断着、正在用备用线路（黄色提示行 + 「重试主线」）。
+  // Gemini CLI、Grok Build 没有线路，那是刚装完面板的样子。
+  "claude-desktop": R_DESK,
+  codex: R_CODEX,
 };
 
 /**
@@ -2041,7 +2075,14 @@ const routerSettingsOf = (client: string): RouterSettings => {
     aggregate: { enabled: false, members: [], models: {}, keys: {} },
   };
 };
-const stationRouterSettings: Record<string, RouterSettings> = {};
+const stationRouterSettings: Record<string, RouterSettings> = {
+  // Codex：GPT 备用组是它的备用线路（见 `stationCurrent` 那一段）。
+  codex: {
+    ...routerSettingsOf("codex"),
+    routing_mode: "pool",
+    allowed_routes: [R_CODEX2],
+  },
+};
 /** 站点的备用地址（阶段 4），按站点各记一份。演示里 example 站自带一个备用地址。 */
 const stationEndpoints: Record<string, StationEndpoints> = {
   example: {
@@ -2392,6 +2433,14 @@ const stationNetwork: RouterNetworkView = {
  * 好让「熔断中 · 还要几分钟」和「立刻重测」在截图里看得见。
  */
 const stationBreakers: Record<string, BreakerView[]> = {
+  // Codex 的当前线路余额不足、熔断着（一小时）：主页那一行变黄、写「这期间改用备用线路」并给「重试主线」。
+  codex: [
+    {
+      route_id: R_CODEX,
+      state: "open",
+      open_until_ms: BigInt(Date.now() + 52 * 60_000),
+    },
+  ],
   "claude-code": [
     {
       route_id: R_CLAUDE,
@@ -2568,11 +2617,35 @@ function demoSelectionOf(who: string): SelectionView {
             using: first !== head.route_id ? first : null,
           }
         : null,
-    aggregate: null,
-    pricier_backups: [],
+    aggregate: demoAggregateHit[who] ?? null,
+    pricier_backups: backups.filter((id) => {
+      // 跟真后端一样按折过充值比例的真实倍率比；比不出来的不算。演示里用「标称 × 实测倍数」。
+      const real = (rid: string | null) => {
+        const r = stationRoutes.find((x) => x.id === rid);
+        return r?.nominal_rate == null
+          ? null
+          : r.nominal_rate * (r.latest_mult ?? 1);
+      };
+      const mine = real(current);
+      const other = real(id);
+      return id !== current && mine != null && other != null && other > mine;
+    }),
     problem: null,
   };
 }
+
+/**
+ * 最近一次聚合模型直达（`RouterStatus.selection.aggregate`）。演示里桌面端最近一发是客户端选了聚合模型、
+ * 直达「DS 低价组」：主页那一行变黄，写清钱花在哪条线上。
+ */
+const demoAggregateHit: Record<string, SelectionView["aggregate"]> = {
+  "claude-desktop": {
+    route_id: R_DESK2,
+    model: "claude-fable-qbg-482913",
+    at_ms: BigInt(Date.now() - 3 * 60_000),
+    latest: true,
+  },
+};
 
 /** 演示里一条线的测活状况。熔断着的那条测活也判死（余额不足），对得上熔断那一格。 */
 function demoLivenessOf(who: string, id: string): LineLiveness {
@@ -4483,23 +4556,6 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       (args?.client as string | null | undefined) ?? null,
       Number(args?.days ?? 7),
     ),
-  station_usage_totals: (args) => {
-    if (args?.hours == null) return demoRelayUsage(String(args?.client), 0).totals;
-    const totals = blankTotals();
-    const since = Date.now() - Number(args.hours) * 3_600_000;
-    for (const row of stationLogs) {
-      if (row.client !== args.client || Number(row.at_ms) < since) continue;
-      addTotals(totals, {
-        requests: 1, failed: row.fault == null && row.status != null && row.status < 300 ? 0 : 1,
-        input_tokens: row.input_tokens == null ? null : Number(row.input_tokens),
-        output_tokens: row.output_tokens == null ? null : Number(row.output_tokens),
-        cache_read_tokens: row.cache_read_tokens == null ? null : Number(row.cache_read_tokens),
-        cache_write_tokens: row.cache_write_tokens == null ? null : Number(row.cache_write_tokens),
-        station_cost: row.station_cost, official_cost: row.official_cost,
-      });
-    }
-    return totals;
-  },
   station_usage_requests: (args) => demoRelayRequests(args),
   station_usage_overview: (args) => {
     const through = Date.now();

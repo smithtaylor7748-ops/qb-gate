@@ -34,7 +34,6 @@ import type { ProbeResult } from "./generated/ProbeResult";
 import type { SiteQuota } from "./generated/SiteQuota";
 import type { UsageScript } from "./generated/UsageScript";
 import type { RelayUsageReport } from "./generated/RelayUsageReport";
-import type { RelayUsageTotals } from "./generated/RelayUsageTotals";
 import type { RelayUsageOverview } from "./generated/RelayUsageOverview";
 import type { RelayRequestPage } from "./generated/RelayRequestPage";
 import type { Schedule } from "./generated/Schedule";
@@ -147,10 +146,6 @@ export const stationApi = {
    */
   usageReport: (client: Client | null, days: number) =>
     call<RelayUsageReport>("station_usage_report", { client, days }),
-
-  /** 首页按滚动时间窗统计全部本机记录；null 包含已归档用量。 */
-  usageTotals: (client: Client, hours: number | null) =>
-    call<RelayUsageTotals>("station_usage_totals", { client, hours }),
 
   /** 总量、线路计数和时间桶共享同一次完整查询；全部历史按天包含归档。 */
   usageOverview: (

@@ -251,18 +251,9 @@
   color: var(--text-3);
   font-size: 11px;
 }
-.audit-balance {
+/* 余额 2026-11-15 起只在中转站页站点卡表头显示（D6），这里不再有余额那一格。 */
+.audit-connected > .qb-st-confirm {
   grid-column: 1 / -1;
-  padding: 14px;
-  background: var(--surface-2);
-  border-radius: 9px;
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-}
-.audit-balance b {
-  font: 19px var(--mono);
 }
 .audit-inline-actions {
   grid-column: 1 / -1;

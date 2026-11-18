@@ -1,13 +1,10 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import { StationUsageKpis } from "./StationUsageKpis";
-const mock = vi.hoisted(() => ({ call: vi.fn() }));
-vi.mock("../../lib/ipc", () => ({ call: mock.call }));
-afterEach(() => {
-  cleanup();
-  mock.call.mockReset();
-});
+// 首页四格只照 `station_usage_overview` 那一次查询的总数显示（2026-11-15 起没有单独的总数命令了）；
+// 换软件时丢掉旧回复那一条在 StationUsageChart.test.tsx 的 Harness 里。
+import { afterEach, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { StationUsageKpiValues } from "./StationUsageKpis";
+afterEach(cleanup);
 
 const totals = {
   requests: 2201,
@@ -20,45 +17,28 @@ const totals = {
   official_cost: 1,
 };
 
-it("shows rolling usage without a site bill or loaded log page, with all four token categories", async () => {
-  mock.call.mockResolvedValue(totals);
-  render(<StationUsageKpis client="codex" range="1h" />);
-  expect(await screen.findByText("155")).toBeTruthy();
+it("shows rolling usage with all four token categories", () => {
+  render(<StationUsageKpiValues totals={totals} error={false} range="1h" />);
+  expect(screen.getByText("155")).toBeTruthy();
   expect(screen.getByText("2,201")).toBeTruthy();
   expect(screen.getByText("<$0.01")).toBeTruthy();
-  expect(mock.call).toHaveBeenCalledWith("station_usage_totals", {
-    client: "codex",
-    hours: 1,
-  });
   expect(screen.getByText(/USD 站内额度估算/)).toBeTruthy();
 });
 
-it("keeps unknown cost unknown and refetches for the client and all-time range", async () => {
-  mock.call.mockResolvedValue({ ...totals, station_cost: null });
-  const view = render(<StationUsageKpis client="codex" range="24h" />);
-  expect(await screen.findByText(/缺少用量或站内价格，无法估算/)).toBeTruthy();
-  expect(screen.queryByText("$0.00")).toBeNull();
-  view.rerender(<StationUsageKpis client="claude-code" range="all" />);
-  await waitFor(() =>
-    expect(mock.call).toHaveBeenCalledWith("station_usage_totals", {
-      client: "claude-code",
-      hours: null,
-    }),
+it("keeps unknown cost unknown instead of showing $0.00", () => {
+  render(
+    <StationUsageKpiValues
+      totals={{ ...totals, station_cost: null }}
+      error={false}
+      range="24h"
+    />,
   );
+  expect(screen.getByText(/缺少用量或站内价格，无法估算/)).toBeTruthy();
+  expect(screen.queryByText("$0.00")).toBeNull();
 });
 
-it("ignores a stale response after switching to another client", async () => {
-  let resolveOld: ((value: typeof totals) => void) | undefined;
-  mock.call.mockImplementation((_cmd, args) =>
-    args.client === "codex"
-      ? new Promise((resolve) => {
-          resolveOld = resolve;
-        })
-      : Promise.resolve({ ...totals, requests: 8 }),
-  );
-  const view = render(<StationUsageKpis client="codex" range="7d" />);
-  view.rerender(<StationUsageKpis client="claude-code" range="7d" />);
-  expect(await screen.findByText("8")).toBeTruthy();
-  resolveOld?.(totals);
-  await waitFor(() => expect(screen.queryByText("2,201")).toBeNull());
+it("says the read failed rather than showing zeros", () => {
+  render(<StationUsageKpiValues totals={null} error range="7d" />);
+  expect(screen.getAllByText(/读取本机用量失败/).length).toBe(3);
+  expect(screen.queryByText("0")).toBeNull();
 });

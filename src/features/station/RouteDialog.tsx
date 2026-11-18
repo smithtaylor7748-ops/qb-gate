@@ -74,13 +74,6 @@ function fromTri(v: Tri): boolean | null {
 
 const SEP = ""; // Route::make_id 的分隔符
 
-/**
- * 大图标按钮的几种配色。点一下换下一个。
- *
- * ⛔ 只引 `tokens.css` 的变量。这里是「哪几个变量」的列表，不是色值表。
- */
-const TINTS = ["accent", "ok", "warn", "danger"] as const;
-
 const CLIENT_NAME: Record<Client, string> = {
   "claude-code": "Claude Code",
   "claude-desktop": "Claude 桌面端",
@@ -134,13 +127,11 @@ export default function RouteDialog({
   const [website, setWebsite] = useState("");
   /** 充值比例：1 美元站内额度付几元。站点级，空 = 按 1 算。 */
   const [topup, setTopup] = useState("");
-  const [tint, setTint] = useState(0);
   // ---- 接入
   const [group, setGroup] = useState("");
   const [key, setKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [baseUrl, setBaseUrl] = useState("");
-  const [fullUrl, setFullUrl] = useState(false);
   // ---- 高级
   const [advanced, setAdvanced] = useState(false);
   const [rate, setRate] = useState("");
@@ -199,7 +190,6 @@ export default function RouteDialog({
     setShowKey(false);
     setAdvanced(false);
     setKey("");
-    setFullUrl(false);
     setPresetFilter("");
     setChosen(null);
     setPromoted(0);
@@ -487,17 +477,6 @@ export default function RouteDialog({
           你会当成官方推荐，排查时先怀疑自己的 Key。
         </p>
 
-        {/* ------------------------------------------------ 大图标 */}
-        <div className="qb-st-icon">
-          <button
-            className={`tile tile--${TINTS[tint]}`}
-            title="换个颜色 —— 只影响这张卡怎么认，不影响任何行为"
-            onClick={() => setTint((t) => (t + 1) % TINTS.length)}
-          >
-            {(name.trim()[0] ?? "＋").toUpperCase()}
-          </button>
-        </div>
-
         {/* ------------------------------------------------ 站点名 / 备注 */}
         <div className="qb-st-two">
           <Field
@@ -579,8 +558,8 @@ export default function RouteDialog({
           label="API Key"
           hint={
             editing
-              ? "留空 = 不改动已经绑着的那把。这里填的只用来探测。"
-              : "只用来探测。真正绑给这条线的那把在「高级选项」里挑。"
+              ? "留空 = 不改动已经绑着的那把；填了新的，保存时加密存下、换掉这条线原来那把。⚡ 探测也用它。"
+              : "保存时加密存下、绑给这条线（本机路由转发时换上它，不进客户端配置）。⚡ 探测也用它。"
           }
         >
           <div className="qb-st-inline">
@@ -620,18 +599,6 @@ export default function RouteDialog({
             </button>
           </div>
         </Field>
-
-        <label className="qb-st-check">
-          <input
-            type="checkbox"
-            checked={fullUrl}
-            onChange={(e) => setFullUrl(e.target.checked)}
-          />
-          完整 URL 端点模式
-        </label>
-        <p className="qb-st-note">
-          开了就原样用这个地址，不追加 <code>/v1/messages</code>。
-        </p>
 
         {/* ------------------------------------------------ 备用地址（阶段 4，多端点）：站点已经存在时才有 */}
         {editing && (
@@ -704,7 +671,7 @@ export default function RouteDialog({
         {/* ------------------------------------------------ 模型映射（这条线） */}
         <details className="qb-st-adv">
           <summary>
-            模型映射 · 只对这条线
+            线路模型映射 · 只对这条线
             {mappedCount(tiers, pairs) > 0 &&
               ` · 已设 ${mappedCount(tiers, pairs)} 项`}
           </summary>
@@ -784,8 +751,8 @@ export default function RouteDialog({
           </p>
 
           <Field
-            label="这个分组用哪把 Key"
-            hint="站点建好之后才挑得了 —— 新站点先保存一次，再回来绑"
+            label="改用这个站点已存的另一把 Key"
+            hint="上面「API Key」留空时才看这里；填了新 Key 就以新的为准。新站点还没有存过的 Key，直接填上面那一格。"
           >
             <select
               value={credentialId}

@@ -167,9 +167,13 @@ export default function ConfigPane({ client }: { client: Client }) {
 
           <div>
             <div className="qb-st-cfghd">
-              <span className="qb-st-k">模型映射</span>
+              {/* D3：三处「模型映射」原来同名不同义。这一处写进 Claude Code 的环境变量（客户端每个角色请求什么模型名），
+                  线路那一处叫「线路模型映射」（本机路由转发时换），聚合那一处叫「发布哪些模型」。 */}
+              <span className="qb-st-k">客户端模型名 · 整个软件共用</span>
               <span className="qb-st-note">
-                空着 = 原样透传。<b>1M</b> 那一格是在模型名末尾加
+                Claude Code
+                每个角色向本机路由请求哪个模型名（写进它的环境变量）；换线不改这里，要按线换名用线路上的「线路模型映射」。空着
+                = 原样透传。<b>1M</b> 那一格是在模型名末尾加
                 <code>[1M]</code> 后缀 —— 没有对应的环境变量，就是这么写的。
               </span>
               <span style={{ flex: 1 }} />
@@ -341,7 +345,7 @@ function DesktopNote() {
     <p className="qb-st-note">
       桌面端走的是它自己的<b>第三方网关模式</b>（<code>deploymentMode: 3p</code>
       ）—— 这份配置由「启动」那一步自动写好，指向本机路由。
-      <br />⛔ 这里没有快捷开关和模型映射：那六个键是{" "}
+      <br />⛔ 这里没有快捷开关和客户端模型名：那几个键是{" "}
       <b>Claude Code 的环境变量</b>， 桌面端不读它们。要手动调什么，直接改下面的
       JSON。
       <br />⚠ 这个文件跟 <code>mcpServers</code> 共用，面板只并入不覆盖 ——

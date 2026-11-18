@@ -281,7 +281,6 @@ pub fn run() {
             commands::station::station_remove_route,
             commands::station::station_logs,
             commands::station::station_usage_report,
-            commands::station::station_usage_totals,
             commands::station::station_usage_overview,
             commands::session_manager::sessions_list,
             commands::session_manager::sessions_read,

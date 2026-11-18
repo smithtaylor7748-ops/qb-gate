@@ -1810,44 +1810,6 @@
   border-radius: var(--radius-md);
 }
 
-/* 居中大图标。点一下换颜色 —— 只是给人认卡片用的，不影响任何行为。 */
-.qb-st-icon {
-  display: flex;
-  justify-content: center;
-}
-.qb-st-icon .tile {
-  width: 72px;
-  height: 72px;
-  font: inherit;
-  font-size: 30px;
-  font-weight: 600;
-  cursor: pointer;
-  border-radius: 18px;
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  background: var(--surface-2);
-}
-.qb-st-icon .tile--accent {
-  color: var(--accent);
-  background: var(--accent-bg);
-  border-color: var(--accent-border);
-}
-.qb-st-icon .tile--ok {
-  color: var(--ok);
-  background: var(--ok-bg);
-  border-color: var(--ok-border);
-}
-.qb-st-icon .tile--warn {
-  color: var(--warn);
-  background: var(--warn-bg);
-  border-color: var(--warn-border);
-}
-.qb-st-icon .tile--danger {
-  color: var(--danger);
-  background: var(--danger-bg);
-  border-color: var(--danger-border);
-}
-
 .qb-st-two {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -2006,4 +1968,212 @@
   font-weight: 500;
   color: var(--text-2);
   border-bottom: 1px solid var(--border);
+}
+
+/* ================================================================ 2026-11-15 中转站页面改造（第三版样机）
+   版面不动，只在原位上改：柱状图上方并成一行、右列「选线与分流」卡片第二行写备用线路、
+   「最近请求实际去向」兼做提示行、线路行整行不可点、就地确认。
+   ⛔ 颜色只引 tokens.css 的变量。 */
+
+/* 柱状图上方那一行：左边「柱状图」下拉框当标题 + 一句总量，右边时间范围、粒度、用量明细。 */
+.qb-st-chart-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+.qb-st-chart-head select {
+  font: inherit;
+  font-size: 11.5px;
+  padding: 3px 7px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  min-width: 0;
+}
+.qb-st-chart-head select.qb-st-chart-metric {
+  font-weight: 500;
+  font-size: 12px;
+}
+.qb-st-chart-sum {
+  font-size: 11px;
+  color: var(--text-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.qb-st-chart-ctl {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* 右列「选线与分流」：两行（标题 + 备用线路）。 */
+.qb-st-schedcfg.qb-st-selcard {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  text-align: left;
+}
+.qb-st-selcard-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.qb-st-selcard-sub .qb-st-pill {
+  margin-right: 2px;
+}
+.qb-st-selcard-title {
+  white-space: nowrap;
+}
+.qb-st-selcard-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+.qb-st-selcard.is-direct,
+.qb-st-schedbtn[aria-disabled="true"] .sub {
+  color: var(--text-3);
+}
+.qb-st-selcard.is-direct {
+  opacity: 0.7;
+}
+
+/* 「最近请求实际去向」出问题时变黄兼做提示（主线暂停、聚合模型直达）。 */
+.qb-st-recent-route.warn {
+  padding: 8px 10px;
+  color: var(--warn);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-radius: 10px;
+  align-items: center;
+}
+.qb-st-recent-route.warn > span {
+  color: var(--text);
+}
+.qb-st-recent-route .qb-st-iconbtn--text {
+  margin-left: auto;
+}
+
+/* 线路行整行不可点（A1）：去掉手型与整行悬停变色，只留当前线路的底色。 */
+.qb-st-row {
+  cursor: default;
+}
+.qb-st-row:hover {
+  background: var(--surface);
+}
+.qb-st-row.on:hover {
+  background: var(--accent-bg);
+}
+.qb-st-rowask {
+  margin: 2px 0 8px;
+}
+
+/* 就地确认：一句后果 + ［确认］［取消］。 */
+.qb-st-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 7px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-radius: 8px;
+  min-width: 0;
+}
+.qb-st-confirm.danger {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+}
+.qb-st-confirm .msg {
+  flex: 1 1 260px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.qb-st-confirm .qb-st-iconbtn,
+.qb-st-iconbtn--text {
+  width: auto;
+  padding: 3px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.qb-st-iconbtn--danger:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger-border);
+}
+
+/* 选线与分流弹窗：当前线路那一行、下一次请求、三档偏好、唯一的保存。 */
+.qb-st-form tr.qb-st-cur > td {
+  background: var(--accent-bg);
+}
+.qb-st-form td .qb-st-pill {
+  margin-left: 6px;
+}
+.qb-st-plan {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.qb-st-routing-options.qb-st-presets3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.qb-st-advanced > summary {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.qb-st-savebar {
+  position: sticky;
+  /* 弹窗正文底下有 12px 内边距：贴住滚动区的真底边，不然内容会从那 12px 里露出来。 */
+  bottom: -12px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 12px;
+  padding: 10px 0 12px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.qb-st-savebar > .qb-st-nudge {
+  flex: 1 0 100%;
+}
+.qb-st-savebar > .qb-st-inline {
+  margin-left: auto;
+}
+
+/* 设置 → 中转站：五个软件共用的那几样。 */
+.qb-st-settings-block {
+  max-width: 760px;
+}
+.qb-st-settings-block .qb-st-sect:first-child {
+  margin-top: 0;
+}
+.qb-st-settings-block [role="radiogroup"] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+@media (max-width: 600px) {
+  .qb-st-routing-options.qb-st-presets3 {
+    grid-template-columns: 1fr;
+  }
+  .qb-st-chart-ctl {
+    margin-left: 0;
+  }
 }
