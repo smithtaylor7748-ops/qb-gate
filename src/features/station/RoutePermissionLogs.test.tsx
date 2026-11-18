@@ -118,7 +118,9 @@ it("preserves an attempted route in usage history and marks only empty attempts 
   expect(within(blocked).getByText("未发往上游")).toBeTruthy();
   expect(within(attempted).queryByText("未发往上游")).toBeNull();
   expect(within(attempted).getByText(/free/)).toBeTruthy();
-  expect(screen.getAllByText("本机拒绝 · 不是当前线路或备用线路")).toHaveLength(2);
+  expect(screen.getAllByText("本机拒绝 · 不是当前线路或备用线路")).toHaveLength(
+    2,
+  );
 });
 
 it("does not describe a local admission refusal as upstream rate limiting", async () => {

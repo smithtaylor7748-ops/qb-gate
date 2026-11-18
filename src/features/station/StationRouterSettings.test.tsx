@@ -272,6 +272,10 @@ it("refuses to overwrite settings that changed elsewhere after the dialog opened
   );
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await screen.findByText(/被别处改过/);
+  // 拒了之后重读最新的：读完那句话还在（原来放在 error 里，重读一开头就被清掉了）。
+  await waitFor(() => expect(reads).toBe(3));
+  await screen.findByText("备用线路");
+  expect(screen.getByText(/被别处改过/)).toBeTruthy();
   expect(writes()).toHaveLength(0);
   expect(mock.ok).not.toHaveBeenCalled();
 });

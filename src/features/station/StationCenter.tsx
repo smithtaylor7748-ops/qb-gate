@@ -578,6 +578,15 @@ function StationBoard({
       if (clientRef.current !== client) return;
       showSchedule(next);
       if (next.enabled) {
+        // C1：开的那一刻明说它会做什么；备用线路里有比当前线路贵的，点名说出来（会被换上去花更多钱）。
+        const pricier = selection?.pricier_backups ?? [];
+        toast.ok(
+          `自动选线已开：只在当前线路和备用线路里按偏好换当前线路，备用名单不动；面板关掉即停${
+            pricier.length
+              ? `。备用线路里 ${pricier.map(routeLabel).join("、")} 比当前线路贵`
+              : ""
+          }`,
+        );
         setIgnite(true);
         window.clearTimeout(igniteTimer.current);
         igniteTimer.current = window.setTimeout(() => setIgnite(false), 1200);

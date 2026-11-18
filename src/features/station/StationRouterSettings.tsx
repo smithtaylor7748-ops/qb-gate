@@ -115,6 +115,11 @@ export default function StationRouterSettings({
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [dispatch, setDispatch] = useState<DispatchParams | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * 上一次保存因为「打开之后被别处改过」被拒了。⛔ 单独一份 state：拒了之后要重读最新的，
+   * 而重读开头会清 `error` —— 放在 `error` 里的话这句话刚出现就被清掉。下一次存成功才清。
+   */
+  const [stale, setStale] = useState(false);
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
   // 聚合模型每条线「发布哪些模型」的输入框原文：边打边理会把刚打的逗号吃掉，存的时候才拆。
@@ -307,12 +312,11 @@ export default function StationRouterSettings({
       const done = await write;
       if (!currentPage()) return;
       if (done.stale) {
-        setError(
-          "这份设置在你打开弹窗之后被别处改过（比如另一个窗口存过、开了自动选线），这次没有保存。已读回最新的，请再改一次。",
-        );
+        setStale(true);
         setReload((v) => v + 1);
         return;
       }
+      setStale(false);
       const { saved, schedule } = done;
       setLoaded({
         settings: saved,
@@ -904,6 +908,14 @@ export default function StationRouterSettings({
 
       {/* ------------------------------------------------ 唯一的保存 */}
       <div className="qb-st-savebar">
+        {stale && (
+          <div className="qb-st-nudge" role="alert">
+            <span aria-hidden="true">⚠</span>
+            <span>
+              这份设置在你打开弹窗之后被别处改过（比如另一个窗口存过、开了自动选线），刚才那次没有保存。上面已经是读回的最新设置，请再改一次。
+            </span>
+          </div>
+        )}
         {error && (
           <div className="qb-st-nudge" role="alert">
             <span aria-hidden="true">⚠</span>
