@@ -29,9 +29,14 @@ assert.deepEqual(manifest.host_permissions, [
   ...sitePatterns(DEFAULT_SITES),
 ]);
 mkdirSync(destination, { recursive: true });
-// 单测（*.node.mjs）不进分发目录；别的都要（页面、脚本、样式、图标）。
+// 单测（*.node.mjs）与开发者手动走查（连独立测试桥用的）不进分发目录；别的都要（页面、脚本、样式、图标）。
 const files = readdirSync(source, { recursive: true, withFileTypes: true })
-  .filter((entry) => entry.isFile() && !entry.name.endsWith(".node.mjs"))
+  .filter(
+    (entry) =>
+      entry.isFile() &&
+      !entry.name.endsWith(".node.mjs") &&
+      entry.name !== "MANUAL-CHECK.zh-CN.md",
+  )
   .map((entry) =>
     resolve(entry.parentPath ?? entry.path, entry.name).slice(
       source.length + 1,

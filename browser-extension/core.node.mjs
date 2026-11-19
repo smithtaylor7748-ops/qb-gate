@@ -330,26 +330,27 @@ test("block rules survive restarts (dynamic) and the allow rule outranks them (s
   assert.deepEqual(allowRules([]), []);
 });
 
-test("the blocked page only ever returns to a protected http(s) address", () => {
+test("the blocked page only ever returns to a plain http(s) address", () => {
   const page = blockedPage(
     "chrome-extension://id/blocked.html",
     "https://claude.ai/new?a=1#x",
   );
   const search = new URL(page).search;
+  assert.equal(returnTarget(search), "https://claude.ai/new?a=1#x");
+  // 移出名单之后照样能回去（它已经不受保护了）。
   assert.equal(
-    returnTarget(search, DEFAULT_SITES),
-    "https://claude.ai/new?a=1#x",
+    returnTarget(`?from=${encodeURIComponent("https://example.org/a")}`),
+    "https://example.org/a",
   );
   for (const from of [
-    "https://evil.test/",
     "javascript:alert(1)",
     "file:///C:/x",
+    "chrome://settings",
+    "https://user:pass@claude.ai/",
+    "not a url",
   ])
-    assert.equal(
-      returnTarget(`?from=${encodeURIComponent(from)}`, DEFAULT_SITES),
-      null,
-    );
-  assert.equal(returnTarget("", DEFAULT_SITES), null);
+    assert.equal(returnTarget(`?from=${encodeURIComponent(from)}`), null, from);
+  assert.equal(returnTarget(""), null);
 });
 
 test("the popup shows one status and one main button for every state", () => {
@@ -402,6 +403,24 @@ test("the popup shows one status and one main button for every state", () => {
     }).detail,
     /原来 1\.1\.1\.1，现在 1\.1\.1\.2/,
   );
+  // 桥说过放行、但这会儿不算数：不能照搬桥那句「可以放行」。
+  const recheck = describe({
+    ...base,
+    protect: true,
+    hold: "recheck",
+    status: allowed(),
+  });
+  assert.match(recheck.title, /正在核实/);
+  assert.equal(recheck.primary, null);
+  const expired = describe({
+    ...base,
+    protect: true,
+    hold: "expired",
+    status: allowed(),
+  });
+  assert.match(expired.title, /有一阵没回话/);
+  assert.doesNotMatch(expired.detail, /可以放行/);
+  assert.equal(expired.primary.action, "retry");
   assert.equal(offlineReason({ code: "panel_exit" }), "QB Gate 面板已退出");
   assert.equal(offlineReason({ code: "x", reason: "a\nb" }), "a b");
 });

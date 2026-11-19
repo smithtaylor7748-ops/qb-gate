@@ -10,6 +10,8 @@ export const PROTOCOL = 2;
 export const PING_MS = 5_000;
 /** 握手（连上 → 收到 welcome）最多等多久；端口被别的程序占着、不回话时靠它放弃。 */
 export const HANDSHAKE_MS = 8_000;
+/** 桥每 2 秒推一次状态；这么久一条消息都没收到，就当连接已经坏了（比如睡醒之后的半开连接），断开重连。 */
+export const SILENCE_MS = 15_000;
 /** 桥给的 ttl_ms 只信这么多：心跳每 2 秒一次，正常 10 秒。 */
 export const MAX_TTL_MS = 60_000;
 /** 动态规则（浏览器重启也还在）与会话规则（重启就没了）的编号。 */
@@ -404,12 +406,20 @@ export function blockedPage(base, from) {
   return `${base}?from=${encodeURIComponent(from)}`;
 }
 
-/** 拦截页拿到的「原来要去的网址」：只认受保护网站上的 http / https 地址。 */
-export function returnTarget(search, sites) {
+/**
+ * 拦截页拿到的「原来要去的网址」：只认 http / https（拦截页只由插件自己打开，网页打不开它）。
+ * 那个网站后来被移出了名单的话也照样回去 —— 它已经不受保护了。
+ */
+export function returnTarget(search) {
   try {
     const from = new URLSearchParams(search).get("from");
     if (!from || from.length > 4096) return null;
-    return protectedSite(from, sites) ? new URL(from).href : null;
+    const url = new URL(from);
+    return ["http:", "https:"].includes(url.protocol) &&
+      !url.username &&
+      !url.password
+      ? url.href
+      : null;
   } catch {
     return null;
   }
@@ -484,12 +494,30 @@ export function describe(state) {
       secondary: pause,
     };
   }
-  if (!status || status.checking || state.verifying) {
+  if (
+    state.hold === "recheck" ||
+    !status ||
+    status.checking ||
+    state.verifying
+  ) {
     return {
       tone: "warn",
       title: "正在核实出口 IP…",
-      detail: "核实之前受保护网站先拦着，通常几秒钟。",
+      detail:
+        state.hold === "recheck"
+          ? "浏览器的网络或代理刚变过，先拦着，等 QB Gate 复查完出口（通常几秒钟）。"
+          : "核实之前受保护网站先拦着，通常几秒钟。",
       primary: null,
+      secondary: pause,
+    };
+  }
+  if (state.hold === "expired") {
+    return {
+      tone: "danger",
+      title: "已拦截：QB Gate 有一阵没回话",
+      detail:
+        "放行只在 QB Gate 一直回话时有效（每 2 秒一次）。面板可能卡住了，或者电脑刚睡醒；它一回话就会自动恢复。",
+      primary: { action: "retry", label: "重试连接" },
       secondary: pause,
     };
   }

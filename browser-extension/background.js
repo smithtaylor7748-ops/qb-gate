@@ -14,6 +14,7 @@ import {
   HANDSHAKE_MS,
   PING_MS,
   PROTOCOL,
+  SILENCE_MS,
   StatusTracker,
   acceptClaim,
   allowRules,
@@ -320,6 +321,19 @@ function closeConnection(c, reason) {
   }
 }
 
+/** 连接看着还开着、其实早就不通了（睡醒之后的半开连接）：不等关闭握手，直接当它断了。 */
+function abandon(c, reason) {
+  c.ending ??= reason;
+  c.ws.onclose = null;
+  c.ws.onmessage = null;
+  try {
+    c.ws.close();
+  } catch {
+    /* already closing */
+  }
+  void onSocketClosed(c);
+}
+
 /** 主动丢掉当前连接（换配对、忘掉配对）：不排重连。 */
 function dropConnection() {
   const c = conn;
@@ -437,6 +451,7 @@ async function onSocketMessage(c, data) {
     closeConnection(c, "收到了无法识别的消息");
     return;
   }
+  c.heard = clocks();
   if (message.type === "rejected") return rejected(c, message);
   if (c.phase === "hello") {
     if (
@@ -479,7 +494,11 @@ async function onSocketMessage(c, data) {
     notBefore = 0;
     setLink("connected");
     c.ping = setInterval(() => {
-      if (c === conn && c.ws.readyState === WebSocket.OPEN)
+      if (c !== conn) return;
+      const [now, wall] = clocks();
+      if (now - c.heard[0] > SILENCE_MS || wall - c.heard[1] > SILENCE_MS)
+        return abandon(c, "QB Gate 有一阵没回话了，正在重新连接");
+      if (c.ws.readyState === WebSocket.OPEN)
         c.ws.send(JSON.stringify({ type: "ping" }));
     }, PING_MS);
     await onStateChange();
@@ -738,6 +757,11 @@ async function retry() {
     ensureConnected();
     return;
   }
+  // 桥说过放行、但一阵没回话了：这条连接多半已经不通，直接重连。
+  if (tracker.status?.allow && !tracker.allowed(...clocks())) {
+    abandon(conn, "QB Gate 有一阵没回话了，正在重新连接");
+    return;
+  }
   notBefore = 0;
   drive();
 }
@@ -760,6 +784,14 @@ async function setSites(list) {
 function publicState() {
   const status = tracker.status;
   const allowed = allowedNow() && appliedAllow;
+  const trusted = tracker.allowed(...clocks());
+  // 桥说过放行、但这会儿不算数：网络变了在等复查，或者放行到期了（桥一阵没回话）。
+  const hold =
+    protect && !allowed && !trusted && conn?.phase === "ready" && status?.allow
+      ? status.checked_at < tracker.freshAfter
+        ? "recheck"
+        : "expired"
+      : null;
   return {
     version: VERSION,
     extensionId: chrome.runtime.id,
@@ -774,7 +806,11 @@ function publicState() {
     verifying:
       protect &&
       link === "connected" &&
-      (armBusy || !status || (!status.armed && status.code === "not_armed")),
+      (armBusy ||
+        !status ||
+        (!status.armed && status.code === "not_armed") ||
+        (trusted && !allowed)),
+    hold,
     status: status
       ? {
           code: status.code,

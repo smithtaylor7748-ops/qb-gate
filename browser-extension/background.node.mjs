@@ -87,6 +87,8 @@ function makeBridge(clock) {
     ip: IP_A,
     onArm: null,
     onClaim: null,
+    last: null,
+    silent: false,
     status(extra = {}) {
       return {
         type: "status",
@@ -118,9 +120,26 @@ function makeBridge(clock) {
     get socket() {
       return bridge.sockets.at(-1);
     },
+    /** 记下「现在的状态」：心跳照它原样再发（晚到的旧回包不算）。 */
+    remember(value) {
+      if (!bridge.last || value.seq >= bridge.last.seq) bridge.last = value;
+      return value;
+    },
     push(value) {
       bridge.seq = Math.max(bridge.seq, value.seq ?? bridge.seq);
-      bridge.socket.emit(value);
+      bridge.socket.emit(bridge.remember(value));
+    },
+    /** 跟真的桥一样：恢复保护时带的出口跟现在的不一样，就是「出口变了」。 */
+    arm(body) {
+      if (body?.baseline && body.baseline !== bridge.ip)
+        return bridge.status({
+          armed: true,
+          code: "ip_changed",
+          reason: "出口 IP 已变化",
+          ip: bridge.ip,
+          baseline: body.baseline,
+        });
+      return bridge.allow();
     },
     async receive(socket, message) {
       if (message.type === "hello") {
@@ -156,7 +175,7 @@ function makeBridge(clock) {
           port: bridge.port,
         });
         bridge.seq += 1;
-        socket.emit(bridge.status());
+        socket.emit(bridge.remember(bridge.status()));
       }
     },
     async fetch(url, init = {}) {
@@ -170,11 +189,16 @@ function makeBridge(clock) {
         return bridge.onClaim(body, Number(port), reply);
       if (pathname === "/v2/disarm") {
         bridge.seq += 1;
-        return reply(bridge.status({ reason: "已暂停浏览器保护" }));
+        return reply(
+          bridge.remember(bridge.status({ reason: "已暂停浏览器保护" })),
+        );
       }
       if (pathname === "/v2/arm") {
         bridge.seq += 1;
-        return reply(bridge.onArm ? await bridge.onArm(body) : bridge.allow());
+        const value = bridge.onArm
+          ? await bridge.onArm(body)
+          : bridge.arm(body);
+        return reply(bridge.remember(value));
       }
       return reply({ error: "not found" }, 404);
     },
@@ -211,6 +235,17 @@ function makeBridge(clock) {
       setImmediate(() => this.onclose?.());
     }
   };
+  // 心跳：每 2 秒把现在的状态原样再发一次（silent 时不发，模拟面板卡住）。
+  clock.setInterval(() => {
+    const socket = bridge.socket;
+    if (
+      !bridge.silent &&
+      socket?.readyState === 1 &&
+      socket.session &&
+      bridge.last
+    )
+      socket.emit(bridge.last);
+  }, 2_000);
   return bridge;
 }
 
@@ -491,12 +526,19 @@ test("an allow expires after ttl_ms without heartbeats, and after a sleep that o
   const t = await boot({ local: paired({ protect: true, baseline: IP_A }) });
   await t.clock.advance(0);
   assert.equal((await t.state()).allowed, true);
+  await t.clock.advance(30_000);
+  assert.equal((await t.state()).allowed, true, "心跳在，放行一直有效");
+  t.bridge.silent = true; // 桥不出声了（面板卡住），连接没断
   await t.clock.advance(9_900);
   assert.equal((await t.state()).allowed, true);
-  await t.clock.advance(300); // 桥不出声：放行到期
-  assert.equal((await t.state()).allowed, false);
+  await t.clock.advance(300);
+  const held = await t.state();
+  assert.equal(held.allowed, false, "放行到期");
+  assert.equal(held.hold, "expired");
+  assert.match(core.describe(held).title, /有一阵没回话/);
   assert.deepEqual(t.rules.session, []);
   // 心跳回来就续上；然后睡一觉：单调钟没走、墙上时钟跳了一分钟，醒来第一个闹钟就撤放行。
+  t.bridge.silent = false;
   t.bridge.push(t.bridge.allow());
   await settle(80);
   assert.equal((await t.state()).allowed, true);
@@ -773,4 +815,53 @@ test("protected sites can be changed only to valid domains, and the rules follow
     ),
     "ignored",
   );
+});
+
+test("a connection that stays silent for 15 seconds is dropped and re-established", async () => {
+  const t = await boot({ local: paired({ protect: true, baseline: IP_A }) });
+  await t.clock.advance(0);
+  const first = t.bridge.socket;
+  t.bridge.silent = true;
+  await t.clock.advance(14_000);
+  assert.equal(t.bridge.socket, first, "15 秒之内不断");
+  assert.equal((await t.state()).hold, "expired");
+  await t.clock.advance(6_100);
+  assert.equal(first.readyState, 3, "一直没回话的连接被丢掉");
+  await t.clock.advance(1_500);
+  assert.notEqual(t.bridge.socket, first, "重新连上");
+  t.bridge.silent = false;
+  await t.clock.advance(1_000);
+  const s = await t.state();
+  assert.equal(s.link, "connected");
+  assert.equal(s.allowed, true, "同一个出口：按上次放行的出口核过就放行");
+});
+
+test("after reconnecting, a different exit than the remembered one is never allowed silently", async () => {
+  const t = await boot({ local: paired({ protect: true, baseline: IP_A }) });
+  await t.clock.advance(0);
+  t.bridge.ip = IP_B;
+  t.bridge.socket.close(); // 面板那边断开（比如重启）
+  await t.clock.advance(0);
+  await t.clock.advance(2_000);
+  const s = await t.state();
+  assert.equal(s.link, "connected");
+  assert.equal(s.allowed, false);
+  assert.equal(s.status.code, "ip_changed");
+  assert.equal(core.describe(s).primary.action, "reallow");
+});
+
+test("「重试连接」while the bridge is silent drops the stale connection right away", async () => {
+  const t = await boot({ local: paired({ protect: true, baseline: IP_A }) });
+  await t.clock.advance(0);
+  const first = t.bridge.socket;
+  t.bridge.silent = true;
+  await t.clock.advance(11_000);
+  assert.equal((await t.state()).hold, "expired");
+  t.bridge.silent = false;
+  assert.equal((await t.send({ type: "retry" })).ok, true);
+  await t.clock.advance(0);
+  assert.equal(first.readyState, 3);
+  await t.clock.advance(1_500);
+  assert.notEqual(t.bridge.socket, first);
+  assert.equal((await t.state()).allowed, true);
 });

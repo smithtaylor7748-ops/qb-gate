@@ -13,6 +13,7 @@
     "demo": "vite --mode demo",
     "test": "vitest run",
     "test:browser-extension": "node --test browser-extension/*.node.mjs",
+    "test:browser-extension:e2e": "node scripts/browser-extension-e2e.mjs",
     "build:browser-extension": "node scripts/build-browser-extension.mjs",
     "types:generate": "cargo run --manifest-path src-tauri/Cargo.toml --example export-types --quiet",
     "test:ui": "node scripts/ui-regression.mjs",

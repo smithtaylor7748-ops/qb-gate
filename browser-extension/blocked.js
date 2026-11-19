@@ -3,7 +3,7 @@
 //
 // 拦截页：说清楚为什么拦、下一步点哪里；放行了（或保护被暂停了）就回到原来的页面。
 // 这一页只由插件自己打开（后台切标签页过来），不对网页开放。
-import { returnTarget } from "./core.js";
+import { protectedSite, returnTarget } from "./core.js";
 import { $, feedback, renderStatus, runAction, send } from "./ui.js";
 
 let busy = false;
@@ -17,14 +17,20 @@ function goBack(target) {
 
 async function refresh() {
   const state = await send("state");
-  const target = returnTarget(location.search, state.sites);
+  const target = returnTarget(location.search);
   const host = target ? new URL(target).hostname : null;
   $("headline").textContent = host ? `${host} 被拦下了` : "受保护网站被拦下了";
   $("target").textContent = target ? `原来要打开：${target}` : "";
   $("return").hidden = !target;
   $("return-note").hidden = !target;
   renderStatus($("status"), state, onAction, { busy });
-  if (state.allowed || !state.protect) goBack(target);
+  // 放行了、暂停了、或者这个网站已经不在名单里了：回原来的页面。
+  if (
+    state.allowed ||
+    !state.protect ||
+    (target && !protectedSite(target, state.sites))
+  )
+    goBack(target);
 }
 
 function onAction(action) {
@@ -39,11 +45,10 @@ function onAction(action) {
     });
 }
 
-$("return").onclick = () =>
-  void send("state").then((state) => {
-    const target = returnTarget(location.search, state.sites);
-    if (target) location.assign(target);
-  });
+$("return").onclick = () => {
+  const target = returnTarget(location.search);
+  if (target) location.assign(target);
+};
 $("options").onclick = () => void send("options");
 void refresh().catch((error) => feedback($("feedback"), error.message, true));
 setInterval(() => {
