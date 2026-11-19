@@ -37,3 +37,27 @@ fn the_main_window_starts_hidden_and_the_panel_reveals_it() {
         .expect("要有 main 窗口");
     assert_eq!(main["visible"], false);
 }
+
+/// 浏览器助手插件随安装包走（2026-11-19）：`build/browser-extension` 装进安装目录的 `browser-extension`。
+/// 面板「打开插件文件夹」在安装版里按资源目录拼这个名字（`browser_link::folder::FOLDER_NAME`），
+/// 两头对不上，安装版就永远报「没找到插件文件夹」。
+#[test]
+fn the_installer_carries_the_browser_extension_folder() {
+    let config = config();
+    let resources = config["bundle"]["resources"]
+        .as_object()
+        .expect("bundle.resources 必须是映射");
+    assert_eq!(
+        resources
+            .get("../build/browser-extension/")
+            .and_then(|v| v.as_str()),
+        Some(format!("{}/", qb_app::browser_link::folder::FOLDER_NAME).as_str()),
+        "插件分发目录要装进安装目录的 browser-extension 文件夹"
+    );
+    // 打包前先构建插件（build.rs 也会跑，这一句让 `npm run tauri build` 的输出里看得见）。
+    let before = config["build"]["beforeBuildCommand"].as_str().unwrap_or("");
+    assert!(
+        before.contains("build:browser-extension"),
+        "beforeBuildCommand 要构建插件：{before}"
+    );
+}

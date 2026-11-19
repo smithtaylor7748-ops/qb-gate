@@ -195,6 +195,8 @@ pub fn run() {
             commands::browser_companion::browser_companion_connect,
             commands::browser_companion::browser_companion_reconnect,
             commands::browser_companion::browser_companion_unpair,
+            commands::browser_companion::browser_companion_folder,
+            commands::browser_companion::browser_companion_open_folder,
             commands::probe::browser_probe_wait,
             commands::probe::browser_probe_last,
             commands::install::managed_history,

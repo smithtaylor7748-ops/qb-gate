@@ -16,10 +16,41 @@
 //!
 //! ⚠ **清单进没进去要回读核对，别看构建退出码。** 命令见那份文档。
 fn main() {
+    browser_extension();
     let mut windows = tauri_build::WindowsAttributes::new();
     windows = windows.app_manifest(include_str!("qb-gate.manifest"));
     // 清单改了要重新构建 —— 少了这一行，改完清单跑 build 会直接命中缓存。
     println!("cargo:rerun-if-changed=qb-gate.manifest");
     tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows))
         .expect("构建 Tauri 应用失败（多半是清单 XML 写坏了）");
+}
+
+/// 浏览器助手插件的分发目录（2026-11-19）。
+///
+/// `tauri.conf.json` 的 `bundle.resources` 把仓库根 `build/browser-extension` 装进安装目录的
+/// `browser-extension` 文件夹；`tauri-build` 编译时就要求它存在（不在就整个构建失败）。
+/// 所以在这里先跑一次 `scripts/build-browser-extension.mjs`：干净克隆直接 `cargo test` 也过得去，
+/// 改了插件源码、`cargo` 重编时开发版的「打开插件文件夹」也跟着是新的。
+///
+/// 那个脚本只在内容变了时写文件、保留源文件的修改时间 —— 不然 `tauri-build` 给资源登记的
+/// `rerun-if-changed` 会让每次编译都当成资源变了。
+fn browser_extension() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    println!("cargo:rerun-if-changed=../browser-extension");
+    println!("cargo:rerun-if-changed=../scripts/build-browser-extension.mjs");
+    let built = root.join("build/browser-extension/manifest.json");
+    let ran = std::process::Command::new("node")
+        .arg(root.join("scripts/build-browser-extension.mjs"))
+        .current_dir(&root)
+        .status();
+    match ran {
+        Ok(status) if status.success() => {}
+        // 没装 Node、脚本断言失败：已有一份就接着用（提醒一句），一份都没有就停，说清楚怎么做。
+        other if built.exists() => println!(
+            "cargo:warning=没能重新构建浏览器助手插件（{other:?}），沿用已有的 build/browser-extension"
+        ),
+        other => panic!(
+            "构建浏览器助手插件失败（{other:?}）。安装 Node.js 22 以上后在仓库根跑 npm run build:browser-extension"
+        ),
+    }
 }

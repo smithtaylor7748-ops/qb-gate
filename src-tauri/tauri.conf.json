@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && npm run build:browser-extension",
     "frontendDist": "../dist"
   },
   "app": {
@@ -41,7 +41,8 @@
       "../LICENSE-ADDITIONAL-TERMS.md": "licenses/LICENSE-ADDITIONAL-TERMS.md",
       "../LICENSE-COMMERCIAL.md": "licenses/LICENSE-COMMERCIAL.md",
       "../THIRD_PARTY_NOTICES.txt": "licenses/THIRD_PARTY_NOTICES.txt",
-      "../docs/dependencies.json": "licenses/dependencies.json"
+      "../docs/dependencies.json": "licenses/dependencies.json",
+      "../build/browser-extension/": "browser-extension/"
     },
     "shortDescription": "Local AI client workspace",
     "license": "AGPL-3.0-only",

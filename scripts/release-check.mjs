@@ -36,6 +36,13 @@ for (const [file, needle] of [
   ["README.en.md", "Based on QB Gate, Copyright (C) 2026 smithtaylor7748-ops."],
   ["README.md", "基于 QB Gate，版权所有 (C) 2026 smithtaylor7748-ops。"],
   ["src-tauri/tauri.conf.json", "licenses/LICENSE-ADDITIONAL-TERMS.md"],
+  // 浏览器助手插件（2026-11-19）：随安装包装进安装目录，发版另附一份 zip。插件目录里也带着附加条款。
+  [
+    "src-tauri/tauri.conf.json",
+    '"../build/browser-extension/": "browser-extension/"',
+  ],
+  [".github/workflows/release.yml", "QB-Gate-Browser-Extension.zip"],
+  ["scripts/build-browser-extension.mjs", "LICENSE-ADDITIONAL-TERMS.md"],
   [".github/workflows/release.yml", "LICENSE-ADDITIONAL-TERMS.md"],
   [
     "src/features/SettingsCenter.tsx",

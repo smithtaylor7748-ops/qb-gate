@@ -26,6 +26,12 @@ jobs:
       - run: cargo fmt --all --check
       - run: npm test
       - run: npm run types:check
+      - run: npm run test:browser-extension
+      # 浏览器助手插件的分发目录（build/browser-extension）。安装包从这里取（tauri.conf.json 的
+      # bundle.resources → 安装目录下的 browser-extension），下面还要把它打成发布附件。
+      # src-tauri/build.rs 与 beforeBuildCommand 也会跑它；这里单独一步，失败时一眼看得出是插件。
+      - name: Build the browser extension
+        run: npm run build:browser-extension
       - run: cargo test --locked --workspace
       - run: npx playwright install chromium
       - run: npm run test:ui
@@ -43,7 +49,20 @@ jobs:
           $current = @(Get-ChildItem dist-installers -Filter "*_${version}_x64-setup.exe")
           if ($current.Count -ne 1) { throw "expected one installer for $version, found $($current.Count)" }
           Copy-Item -LiteralPath $current[0].FullName -Destination (Join-Path dist-installers 'QB-Gate-Windows-x64-setup.exe')
-          $releaseLines = Get-ChildItem dist-installers -Filter '*.exe' | ForEach-Object {
+          # 浏览器助手插件另附一份 zip（固定文件名，README 直链 releases/latest/download/QB-Gate-Browser-Extension.zip）。
+          # 里面顶层是 browser-extension 文件夹，跟安装包装进安装目录的那一份是同一批文件。
+          $extension = (Resolve-Path build/browser-extension).Path
+          if (-not (Test-Path (Join-Path $extension 'manifest.json'))) { throw 'build/browser-extension has no manifest.json' }
+          # 安装包里到底有没有插件：看 Tauri 生成的 NSIS 脚本里有没有往 browser-extension 装 manifest.json 那一行。
+          $nsi = Get-ChildItem target/release/nsis -Recurse -Filter installer.nsi | Select-Object -First 1
+          if (-not $nsi -or -not (Select-String -LiteralPath $nsi.FullName -SimpleMatch 'browser-extension\manifest.json' -Quiet)) { throw 'the installer does not carry browser-extension\manifest.json' }
+          $extensionVersion = (Get-Content (Join-Path $extension 'manifest.json') -Raw | ConvertFrom-Json).version
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = Join-Path (Resolve-Path dist-installers) 'QB-Gate-Browser-Extension.zip'
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($extension, $zip, [System.IO.Compression.CompressionLevel]::Optimal, $true)
+          Write-Host "browser extension $extensionVersion -> $zip"
+          # SHA256SUMS 收安装包和插件 zip。面板的一键更新只认安装包那两行（self_update::expected_sha256），别的行它跳过。
+          $releaseLines = Get-ChildItem dist-installers | Where-Object { $_.Extension -in '.exe', '.zip' } | ForEach-Object {
             '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
           }
           $releaseLines | Set-Content dist-installers/SHA256SUMS.txt -Encoding ascii

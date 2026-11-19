@@ -413,11 +413,12 @@ mod tests {
         );
     }
 
-    /// `release.yml` 写出来的就是这个形状：两个空格分隔，带版本号那份的文件名里有空格。
+    /// `release.yml` 写出来的就是这个形状：两个空格分隔，带版本号那份的文件名里有空格；
+    /// 2026-11-19 起还多一行浏览器助手插件的 zip（这里不认它，也不能被它带偏）。
     #[test]
     fn sums_as_the_release_workflow_writes_them() {
         let sums = format!(
-            "{H1}  QB Gate_0.25.4_x64-setup.exe\r\n{H1}  QB-Gate-Windows-x64-setup.exe\r\n"
+            "{H2}  QB-Gate-Browser-Extension.zip\r\n{H1}  QB Gate_0.25.4_x64-setup.exe\r\n{H1}  QB-Gate-Windows-x64-setup.exe\r\n"
         );
         assert_eq!(expected_sha256(&sums, "0.25.4").unwrap(), H1);
     }
