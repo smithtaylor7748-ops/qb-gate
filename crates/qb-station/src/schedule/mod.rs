@@ -9,13 +9,17 @@
 //!
 //! # 预设不是魔法数字
 //!
-//! 三个预设都能用「勾哪几项 + 设哪条底线」完整写出来,界面上照着念就行:
+//! 几个预设都能用「勾哪几项 + 设哪条底线」完整写出来,界面上照着念就行:
 //!
 //! | 预设 | 勾 | 底线 |
 //! |---|---|---|
+//! | 省钱（**默认**，[`Prefs::saving`]） | 便宜 | 成功率 ≥ 95% |
 //! | 写代码 | 稳 + 快 | 首字 P95 ≤ 3s |
 //! | 跑批量 | 便宜 | 成功率 ≥ 95% |
 //! | 对话 | 快 | 成功率 ≥ 99% |
+//!
+//! 默认原来是「写代码」（2026-11-14 改的）：它不看价格，便宜的线慢一点自动选线就把首选换到贵的上去，
+//! 而使用者打开它多半是为了省钱。成功率那条底线是为了不让「便宜但老出错」的线当首选。
 
 pub mod breaker;
 pub mod cheap;
@@ -26,7 +30,7 @@ pub mod rank;
 pub use breaker::{BreakerSettings, Outcome, Permit, RouteBreaker, State};
 pub use cheap::{cheap_values, cost_per_token, CheapBasis, CheapInput};
 pub use dispatch::{
-    dispatch, Dispatch, DispatchMemory, DispatchParams, DispatchRow, LineFacts, Pin, Tier,
+    dispatch, Dispatch, DispatchMemory, DispatchParams, DispatchRow, LineFacts, Tier,
 };
 pub use rank::{rank, AxisScore, FloorMiss, Ranking, Row, HYSTERESIS, INDISTINGUISHABLE_SPREAD};
 
@@ -99,6 +103,20 @@ pub struct Prefs {
 }
 
 impl Prefs {
+    /// 省钱：便宜,成功率 ≥ 95%。**新建自动选线的默认偏好**（[`Schedule::new`]）。
+    ///
+    /// ⛔ 界面上「默认」那一档必须跟这里一样（`StationSchedule.tsx` 的 `DEFAULT_PREFS`）——
+    /// 原来界面写的是「便宜 + 快 + 稳」、后台是「稳 + 快」，两边说的不是同一个默认。
+    pub fn saving() -> Self {
+        Self {
+            axes: vec![Axis::Cheap],
+            floors: Floors {
+                min_success_rate: Some(0.95),
+                ..Default::default()
+            },
+        }
+    }
+
     /// 写代码：稳 + 快,首字 P95 ≤ 3s。
     pub fn coding() -> Self {
         Self {
@@ -170,7 +188,7 @@ pub struct Schedule {
 }
 
 impl Schedule {
-    /// 刚建出来的那一份:关着,偏好是「写代码」那一档。
+    /// 刚建出来的那一份:关着,偏好是「省钱」那一档（[`Prefs::saving`]）。已经存过的偏好不动。
     ///
     /// 默认关着是有理由的 —— 自动换上游会花钱,而且换的是使用者正在用的
     /// 那条线。这种事必须由他自己点一下。
@@ -178,7 +196,7 @@ impl Schedule {
         Self {
             client,
             enabled: false,
-            prefs: Prefs::coding(),
+            prefs: Prefs::saving(),
             last_switch_ms: None,
             last_note: String::new(),
             dispatch: DispatchParams::default(),

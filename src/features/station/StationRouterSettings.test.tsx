@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+// 「选线与分流」弹窗（2026-11-15 第三版样机）：第一屏备用线路 + 自动选线偏好 + 下一次请求，
+// 其余在「高级设置」里；整个弹窗只有一个「保存」，旧草稿不能盖掉新状态。
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
@@ -8,6 +10,8 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import type { PlanSkip } from "../../lib/generated/PlanSkip";
+import type { PlanStep } from "../../lib/generated/PlanStep";
 import type { Route, RouterSettings, RouterStatus } from "../../lib/station";
 import StationRouterSettings from "./StationRouterSettings";
 
@@ -17,6 +21,8 @@ vi.mock("../../ui", async (original) => ({
   ...(await original<typeof import("../../ui")>()),
   useToast: () => ({ ok: mock.ok, error: vi.fn(), info: vi.fn() }),
 }));
+// 「检测与排名」那一块点开才挂，这里不测它。
+vi.mock("./StationDispatch", () => ({ default: () => <div>检测表</div> }));
 
 const settings: RouterSettings = {
   client: "codex",
@@ -30,7 +36,7 @@ const settings: RouterSettings = {
     max_wait_ms: 0,
     max_waiters: 0,
   },
-  max_attempts: 3,
+  max_attempts: 2,
   first_byte_timeout_secs: 60,
   idle_timeout_secs: 300,
   non_streaming_timeout_secs: 600,
@@ -49,7 +55,18 @@ const settings: RouterSettings = {
   },
   aggregate: { enabled: false, members: [], models: {}, keys: {} },
 };
-const routes = ["free", "paid"].map<Route>((id) => ({
+const schedule = (client = "codex") => ({
+  client,
+  enabled: false,
+  prefs: {
+    axes: ["cheap"],
+    floors: { min_success_rate: 0.95, max_ttft_p95_ms: null, max_rate: null },
+  },
+  dispatch: { margin: 0.08, min_samples: 3, confirm: 2 },
+  last_switch_ms: null,
+  last_note: "",
+});
+const routes = ["main", "cheap", "pricey"].map<Route>((id) => ({
   id,
   client: "codex",
   station_id: id,
@@ -85,19 +102,54 @@ const routes = ["free", "paid"].map<Route>((id) => ({
   },
   upstream_format: null,
 }));
-const status = {
-  current_route: "paid",
-  pending_route: "free",
-  breakers: [],
-} as unknown as RouterStatus;
+const step = (
+  route_id: string,
+  role: PlanStep["role"],
+  skip: PlanSkip | null = null,
+): PlanStep => ({
+  route_id,
+  role,
+  skip,
+  until_ms: null,
+  missing_models: [],
+});
+const statusWith = (
+  selection: Partial<RouterStatus["selection"]> = {},
+): RouterStatus =>
+  ({
+    current_route: "main",
+    pending_route: null,
+    breakers: [],
+    selection: {
+      current: "main",
+      backups: [],
+      auto_select: false,
+      plan: {
+        current: "main",
+        steps: [step("main", "current")],
+        first: "main",
+        max_attempts: 2,
+        strict_single: true,
+      },
+      paused: null,
+      aggregate: null,
+      pricier_backups: [],
+      problem: null,
+      ...selection,
+    },
+  }) as unknown as RouterStatus;
 const writes = () =>
   mock.call.mock.calls.filter(
     ([command]) => command === "station_router_settings_save",
   );
+const scheduleWrites = () =>
+  mock.call.mock.calls.filter(
+    ([command]) => command === "station_schedule_set",
+  );
 const props = {
   client: "codex" as const,
   routes,
-  status,
+  status: statusWith(),
   label: (route: Route) => route.group,
 };
 
@@ -105,71 +157,130 @@ beforeEach(() => {
   mock.call.mockReset();
   mock.ok.mockReset();
   mock.call.mockImplementation(async (command, args) => {
-    if (command === "station_router_settings") return structuredClone(settings);
-    if (
-      command === "station_schedules" ||
-      command === "station_aggregate_models"
-    )
-      return [];
+    if (command === "station_router_settings")
+      return { ...structuredClone(settings), client: args.client };
+    if (command === "station_schedules")
+      return [schedule("codex"), schedule("claude-code")];
+    if (command === "station_aggregate_models") return [];
     if (command === "station_router_settings_save") return args.settings;
-    if (command === "station_router_network")
-      return { scope: "loopback", key: null, outbound_proxy: null, port: 3157 };
-    if (command === "station_dispatch_queue")
-      return { order: ["paid", "free"] };
+    if (command === "station_schedule_set")
+      return {
+        ...schedule(args.client),
+        prefs: args.prefs,
+        dispatch: args.dispatch,
+      };
     return null;
   });
 });
 afterEach(cleanup);
 
-it("does not turn an old fallback queue into approval when opened or switched to pool", async () => {
+it("opens without saving, approves nothing on its own and has no single-line radio", async () => {
   render(<StationRouterSettings {...props} />);
-  await screen.findByRole("radio", { name: /仅所选线路/ });
+  await screen.findByText("备用线路");
   expect(writes()).toHaveLength(0);
-  fireEvent.click(screen.getByRole("radio", { name: /允许所勾选线路/ }));
+  expect(scheduleWrites()).toHaveLength(0);
+  // 「仅所选线路 / 允许所勾选线路」单选框删了：名单空就是只用当前线路。
+  expect(screen.queryByRole("radio", { name: /仅所选线路/ })).toBeNull();
+  expect(screen.queryByRole("radio", { name: /允许所勾选线路/ })).toBeNull();
+  // 当前线路不用勾；另外两条都没勾 —— 旧数据不构成授权。
   const checks = screen.getAllByRole("checkbox", {
-    name: /允许使用/,
+    name: /加为备用线路/,
   }) as HTMLInputElement[];
-  expect(checks.map((input) => input.checked)).toEqual([false, false]);
+  expect(checks.map((c) => c.checked)).toEqual([false, false]);
+  expect(screen.getByText("当前线路 · 不用勾，永远可用")).toBeTruthy();
   expect(
-    mock.call.mock.calls.some(
-      ([command]) => command === "station_dispatch_queue",
-    ),
-  ).toBe(false);
+    screen.getByText("只用「main」，失败直接报错（没有备用线路）"),
+  ).toBeTruthy();
 });
 
-it("requires the pending selection and saves policy with the allowlist in one transaction", async () => {
+it("saves backups without requiring the current line in the list, in one save", async () => {
   const onSaved = vi.fn();
   render(<StationRouterSettings {...props} onSaved={onSaved} />);
-  fireEvent.click(await screen.findByRole("radio", { name: /允许所勾选线路/ }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "允许使用「paid」" }));
-  fireEvent.click(screen.getByRole("button", { name: "保存" }));
-  await screen.findByText("请把当前所选线路勾入允许名单，再保存。");
-  expect(writes()).toHaveLength(0);
-  fireEvent.click(screen.getByRole("checkbox", { name: "允许使用「free」" }));
+  fireEvent.click(
+    await screen.findByRole("checkbox", { name: "把「pricey」加为备用线路" }),
+  );
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "把「cheap」加为备用线路" }),
+  );
+  // 往前挪：cheap 排到 pricey 前面。
+  fireEvent.click(screen.getByRole("button", { name: "把「cheap」往前挪" }));
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
   expect(writes()).toHaveLength(1);
   expect(writes()[0][1].settings).toMatchObject({
     routing_mode: "pool",
-    allowed_routes: ["paid", "free"],
+    allowed_routes: ["cheap", "pricey"],
   });
-  expect(
-    mock.call.mock.calls.some(
-      ([command]) => command === "station_dispatch_queue_save",
-    ),
-  ).toBe(false);
+  // 偏好没改就不写偏好。
+  expect(scheduleWrites()).toHaveLength(0);
 });
 
-it("requires an explicit current choice before authorizing pool use", async () => {
-  render(<StationRouterSettings {...props} status={null} />);
-  fireEvent.click(await screen.findByRole("radio", { name: /允许所勾选线路/ }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "允许使用「free」" }));
+it("clearing every backup saves strict single-line mode", async () => {
+  const original = mock.call.getMockImplementation()!;
+  mock.call.mockImplementation((command, args) =>
+    command === "station_router_settings"
+      ? Promise.resolve({
+          ...settings,
+          routing_mode: "pool",
+          allowed_routes: ["cheap"],
+        })
+      : original(command, args),
+  );
+  render(<StationRouterSettings {...props} />);
+  fireEvent.click(
+    await screen.findByRole("checkbox", { name: "把「cheap」加为备用线路" }),
+  );
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
-  await screen.findByText("请先在中转站页选择一条线路，再设置允许名单。");
-  expect(writes()).toHaveLength(0);
+  await waitFor(() => expect(writes()).toHaveLength(1));
+  expect(writes()[0][1].settings).toMatchObject({
+    routing_mode: "selected",
+    allowed_routes: [],
+  });
 });
 
-it("keeps failed saves out of the effective state and prevents edits during an outstanding save", async () => {
+it("a preference preset is a draft until the one save, then goes out with the backups", async () => {
+  render(<StationRouterSettings {...props} />);
+  fireEvent.click(await screen.findByRole("radio", { name: /速度/ }));
+  expect(scheduleWrites()).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(scheduleWrites()).toHaveLength(1));
+  expect(scheduleWrites()[0][1]).toMatchObject({
+    client: "codex",
+    enabled: null,
+    prefs: { axes: ["fast"] },
+  });
+});
+
+it("refuses to overwrite settings that changed elsewhere after the dialog opened", async () => {
+  const original = mock.call.getMockImplementation()!;
+  let reads = 0;
+  mock.call.mockImplementation((command, args) => {
+    if (command === "station_router_settings") {
+      reads += 1;
+      // 第二次读（保存前的核对）时库里已经是别人存的那份。
+      return Promise.resolve(
+        reads === 1
+          ? structuredClone(settings)
+          : { ...settings, routing_mode: "pool", allowed_routes: ["pricey"] },
+      );
+    }
+    return original(command, args);
+  });
+  render(<StationRouterSettings {...props} />);
+  fireEvent.click(
+    await screen.findByRole("checkbox", { name: "把「cheap」加为备用线路" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await screen.findByText(/被别处改过/);
+  // 拒了之后重读最新的：读完那句话还在（原来放在 error 里，重读一开头就被清掉了）。
+  await waitFor(() => expect(reads).toBe(3));
+  await screen.findByText("备用线路");
+  expect(screen.getByText(/被别处改过/)).toBeTruthy();
+  expect(writes()).toHaveLength(0);
+  expect(mock.ok).not.toHaveBeenCalled();
+});
+
+it("keeps failed saves out of the effective state and locks edits while saving", async () => {
   const original = mock.call.getMockImplementation()!;
   let rejectSave: (error: Error) => void = () => {};
   mock.call.mockImplementation((command, args) =>
@@ -181,80 +292,76 @@ it("keeps failed saves out of the effective state and prevents edits during an o
   );
   const onSaved = vi.fn();
   render(<StationRouterSettings {...props} onSaved={onSaved} />);
-  const radio = await screen.findByRole("radio", { name: /仅所选线路/ });
+  const box = await screen.findByRole("checkbox", {
+    name: "把「cheap」加为备用线路",
+  });
+  fireEvent.click(box);
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await waitFor(() => expect(writes()).toHaveLength(1));
-  expect(radio.closest("fieldset")?.disabled).toBe(true);
+  expect(box.closest("fieldset")?.disabled).toBe(true);
   rejectSave(new Error("transaction failed"));
   await screen.findByText("transaction failed");
   expect(onSaved).not.toHaveBeenCalled();
   expect(mock.ok).not.toHaveBeenCalled();
-  expect(radio.closest("fieldset")?.disabled).toBe(false);
+  expect(box.closest("fieldset")?.disabled).toBe(false);
 });
 
-it("starts without admission limits and saves load distribution only with an explicit pool", async () => {
-  render(<StationRouterSettings {...props} />);
-  await screen.findByRole("radio", { name: /仅所选线路/ });
-  expect(screen.queryByRole("radio", { name: /优先空闲线路/ })).toBeNull();
-  expect(
-    (screen.getByLabelText("free · 同时进行的请求上限") as HTMLInputElement)
-      .value,
-  ).toBe("0");
-  expect(
-    (screen.getByLabelText("free · 使用已查询的额度状态") as HTMLInputElement)
-      .checked,
-  ).toBe(false);
-  fireEvent.change(screen.getByLabelText("free · 同时进行的请求上限"), {
-    target: { value: "2" },
-  });
-  fireEvent.change(screen.getByLabelText("free · 每分钟请求上限"), {
-    target: { value: "30" },
-  });
-  fireEvent.click(screen.getByLabelText("free · 使用已查询的额度状态"));
-  fireEvent.change(screen.getByLabelText("最多等待（毫秒）"), {
-    target: { value: "3000" },
-  });
-  fireEvent.change(screen.getByLabelText("每条线路最多排队请求数"), {
-    target: { value: "4" },
-  });
-  fireEvent.click(screen.getByRole("radio", { name: /允许所勾选线路/ }));
-  fireEvent.click(
-    screen.getByRole("checkbox", { name: "容量不足时分流到其他允许线路" }),
-  );
-  fireEvent.click(screen.getByRole("radio", { name: /优先空闲线路/ }));
-  expect(writes()).toHaveLength(0);
-  expect(
-    (
-      screen.getByRole("checkbox", {
-        name: "允许使用「free」",
-      }) as HTMLInputElement
-    ).checked,
-  ).toBe(false);
-  fireEvent.click(screen.getByRole("checkbox", { name: "允许使用「free」" }));
-  fireEvent.click(screen.getByRole("button", { name: "保存" }));
-  await waitFor(() => expect(mock.ok).toHaveBeenCalledOnce());
-  expect(writes()).toHaveLength(1);
-  expect(writes()[0][1].settings).toMatchObject({
-    routing_mode: "pool",
-    allowed_routes: ["free"],
-    pool_strategy: "least-loaded",
-    admission: {
-      overflow_to_pool: true,
-      route_limits: { free: { max_concurrent: 2, rpm: 30, check_quota: true } },
-      max_wait_ms: 3000,
-      max_waiters: 4,
-    },
-  });
-});
-
-it("displays priority while overflow is disabled and retains the explicit load choice for re-enabling", async () => {
+it("shows why a backup is skipped, offers retry only for breakers, and marks pricier backups", async () => {
   const original = mock.call.getMockImplementation()!;
   mock.call.mockImplementation((command, args) =>
     command === "station_router_settings"
       ? Promise.resolve({
           ...settings,
           routing_mode: "pool",
-          allowed_routes: ["free", "paid"],
+          allowed_routes: ["cheap", "pricey"],
+        })
+      : original(command, args),
+  );
+  render(
+    <StationRouterSettings
+      {...props}
+      status={statusWith({
+        backups: ["cheap", "pricey"],
+        pricier_backups: ["pricey"],
+        plan: {
+          current: "main",
+          steps: [
+            step("main", "current"),
+            step("cheap", "backup", "rate-limited"),
+            step("pricey", "backup", "breaker-rejected"),
+          ],
+          first: "main",
+          max_attempts: 2,
+          strict_single: false,
+        },
+      })}
+    />,
+  );
+  await screen.findByText("第 1 备用");
+  expect(screen.getByText("比当前线路贵")).toBeTruthy();
+  expect(
+    screen.getByText(/限流中，跳过/, { selector: ".qb-st-pill" }),
+  ).toBeTruthy();
+  expect(
+    screen.getByText(/熔断中，跳过/, { selector: ".qb-st-pill" }),
+  ).toBeTruthy();
+  // 只有熔断那一条给「重试这条」。
+  expect(screen.getAllByRole("button", { name: "重试这条" })).toHaveLength(1);
+  expect(
+    screen.getByText(
+      "main → cheap（限流中，跳过） → pricey（熔断中，跳过） · 一次最多试 2 条",
+    ),
+  ).toBeTruthy();
+});
+
+it("turning capacity split off resets how it splits, and limits save with the backups", async () => {
+  const original = mock.call.getMockImplementation()!;
+  mock.call.mockImplementation((command, args) =>
+    command === "station_router_settings"
+      ? Promise.resolve({
+          ...settings,
+          routing_mode: "pool",
+          allowed_routes: ["cheap"],
           pool_strategy: "least-loaded",
           admission: { ...settings.admission, overflow_to_pool: true },
         })
@@ -264,23 +371,24 @@ it("displays priority while overflow is disabled and retains the explicit load c
   const load = (await screen.findByRole("radio", {
     name: /优先空闲线路/,
   })) as HTMLInputElement;
-  const priority = screen.getByRole("radio", {
-    name: /首选与备用/,
-  }) as HTMLInputElement;
-  const overflow = screen.getByRole("checkbox", {
-    name: "容量不足时分流到其他允许线路",
-  });
   expect(load.checked).toBe(true);
-  fireEvent.click(overflow);
+  fireEvent.change(screen.getByLabelText("cheap · 同时进行的请求上限"), {
+    target: { value: "2" },
+  });
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: "本机限额满了时分流到备用线路" }),
+  );
   expect(load.checked).toBe(false);
   expect(load.disabled).toBe(true);
-  expect(priority.checked).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await waitFor(() => expect(mock.ok).toHaveBeenCalledOnce());
-  expect(writes()[0][1].settings.admission.overflow_to_pool).toBe(false);
-  fireEvent.click(overflow);
-  expect(load.checked).toBe(true);
-  expect(load.disabled).toBe(false);
+  expect(writes()[0][1].settings).toMatchObject({
+    pool_strategy: "priority",
+    admission: {
+      overflow_to_pool: false,
+      route_limits: { cheap: { max_concurrent: 2 } },
+    },
+  });
 });
 
 it("ignores the old client's save response after changing client", async () => {
@@ -306,7 +414,9 @@ it("ignores the old client's save response after changing client", async () => {
   const mounted = render(
     <StationRouterSettings {...props} onSaved={onSaved} />,
   );
-  await screen.findByRole("radio", { name: /仅所选线路/ });
+  fireEvent.click(
+    await screen.findByRole("checkbox", { name: "把「cheap」加为备用线路" }),
+  );
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await waitFor(() => expect(finish).toBeDefined());
   mounted.rerender(
@@ -326,7 +436,7 @@ it.each(["-1", "1.5"])(
   "refuses invalid admission input %s without sending a save",
   async (value) => {
     render(<StationRouterSettings {...props} />);
-    fireEvent.change(await screen.findByLabelText("free · 每分钟请求上限"), {
+    fireEvent.change(await screen.findByLabelText("main · 每分钟请求上限"), {
       target: { value },
     });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));

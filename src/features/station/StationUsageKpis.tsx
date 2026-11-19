@@ -1,58 +1,6 @@
-import { useEffect, useState } from "react";
-import type { Client } from "../../lib/generated/Client";
 import type { RelayUsageTotals } from "../../lib/generated/RelayUsageTotals";
-import { stationApi } from "../../lib/station";
 import { usd } from "../../lib/usageFormat";
 import { mtok, rangeOf, tokenMix, type RangeId } from "./shared";
-
-/** 首页用量读完整汇总；不依赖站点账单、现有线路或已加载的日志页。 */
-export function StationUsageKpis({
-  client,
-  range,
-}: {
-  client: Client;
-  range: RangeId;
-}) {
-  const [totals, setTotals] = useState<RelayUsageTotals | null>(null);
-  const [error, setError] = useState(false);
-  useEffect(() => {
-    let dropped = false;
-    let pending = false;
-    setTotals(null);
-    setError(false);
-    const refresh = async () => {
-      if (pending) return;
-      pending = true;
-      try {
-        const next = await stationApi.usageTotals(
-          client,
-          range === "all" ? null : rangeOf(range).hours,
-        );
-        if (!dropped) {
-          setTotals(next);
-          setError(false);
-        }
-      } catch {
-        if (!dropped) {
-          setTotals(null);
-          setError(true);
-        }
-      } finally {
-        pending = false;
-      }
-    };
-    void refresh();
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void refresh();
-    }, 5000);
-    return () => {
-      dropped = true;
-      window.clearInterval(timer);
-    };
-  }, [client, range]);
-
-  return <StationUsageKpiValues totals={totals} error={error} range={range} />;
-}
 
 /** 首页与趋势共用一次查询的结果，避免刷新时总数和各条线路相互对不上。 */
 export function StationUsageKpiValues({

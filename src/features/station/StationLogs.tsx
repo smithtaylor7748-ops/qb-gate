@@ -21,7 +21,7 @@
  *
  * # 一发请求可能试过好几条线
  *
- * 自动故障转移开着时，这条线失败之后会改用下一条。所以「这条线的记录」= 试过它的那些，
+ * 勾了备用线路时，这条线失败之后会改用下一条。所以「这条线的记录」= 试过它的那些，
  * 不只是最后落在它上面的；表里写明最后是哪条线回的话。
  *
  * # ⛔ 没有「来源 / 客户端」筛选
@@ -76,7 +76,7 @@ const FAULT_LABEL: Record<string, string> = {
   "not-served": "这条线不接",
   "client-request": "请求本身的问题",
   "client-abort": "客户端断开",
-  "route-permission-denied": "线路超出允许范围",
+  "route-permission-denied": "不是当前线路或备用线路",
   "route-admission-denied": "本机请求容量限制",
   "rectify-media": "图片降级后重试",
   "rectify-opaque-state": "去掉别家状态后重试",
@@ -570,7 +570,9 @@ function tokenTitle(r: RouterRequest): string | undefined {
 function StatusPill({ log }: { log: RouterRequest }) {
   const s = log.status;
   if (log.fault === "route-permission-denied")
-    return <span className="pill pill--warn">本机拒绝 · 超出允许范围</span>;
+    return (
+      <span className="pill pill--warn">本机拒绝 · 不是当前线路或备用线路</span>
+    );
   if (log.fault === "route-admission-denied")
     return <span className="pill pill--warn">本机繁忙 · 请求容量限制</span>;
   // 状态码是 2xx 但流里报了失败 / 半路断了：按故障说，不显示成绿色的 200。

@@ -18,7 +18,10 @@ import type { DispatchQueue } from "./generated/DispatchQueue";
 import type { DispatchParams } from "./generated/DispatchParams";
 import type { DispatchView } from "./generated/DispatchView";
 import type { ProbeAttempt } from "./generated/ProbeAttempt";
+import type { ProbeNowResult } from "./generated/ProbeNowResult";
 import type { ProbeSettings } from "./generated/ProbeSettings";
+import type { SelectionView } from "./generated/SelectionView";
+import type { SetCurrentResult } from "./generated/SetCurrentResult";
 import type { ListenScope } from "./generated/ListenScope";
 import type { RouterNetworkView } from "./generated/RouterNetworkView";
 import type { RouterRequest } from "./generated/RouterRequest";
@@ -31,7 +34,6 @@ import type { ProbeResult } from "./generated/ProbeResult";
 import type { SiteQuota } from "./generated/SiteQuota";
 import type { UsageScript } from "./generated/UsageScript";
 import type { RelayUsageReport } from "./generated/RelayUsageReport";
-import type { RelayUsageTotals } from "./generated/RelayUsageTotals";
 import type { RelayUsageOverview } from "./generated/RelayUsageOverview";
 import type { RelayRequestPage } from "./generated/RelayRequestPage";
 import type { Schedule } from "./generated/Schedule";
@@ -73,7 +75,10 @@ export type {
   DispatchQueue,
   DispatchView,
   ProbeAttempt,
+  ProbeNowResult,
   ProbeSettings,
+  SelectionView,
+  SetCurrentResult,
   ListenScope,
   Prefs,
   RouterNetworkView,
@@ -98,17 +103,18 @@ export const stationApi = {
     call<RouterStatus>("station_router_status", { client }),
 
   /**
-   * 选一条上游。
+   * 「设为当前」：只换这个软件的当前线路，**备用名单不动**。手动换线只有这一个入口。
    *
-   * `immediate` 为假时**下一发请求才生效** —— 换上游绝不影响正在飞的那一条。
+   * 下一发请求就用它（正在飞的那一条不受影响）。自动选线开着时会被关掉：先看
+   * `status.selection.auto_select` 在生效前提示一句，回来的 `auto_select_stopped` 如实说关没关。
    *
    * 切的是**哪个软件**的上游，由后端按这条线自己的 `client` 决定，
    * 前端不传 —— 拿界面停在哪个分页当依据的话，只要两者对不上
    * （切完分页还没重渲染、深链接直接打进来），就会把 A 软件的上游
    * 换成一条属于 B 软件的线，账记到 B 头上而且看不出来。
    */
-  selectRoute: (routeId: string, immediate: boolean) =>
-    call<RouterStatus>("station_select_route", { routeId, immediate }),
+  setCurrent: (routeId: string) =>
+    call<SetCurrentResult>("station_set_current", { routeId }),
 
   /**
    * 站点卡表头的余额 / 编程套餐额度（中转站重构阶段 6 · U3），用这条线路那把 Key 问。
@@ -140,10 +146,6 @@ export const stationApi = {
    */
   usageReport: (client: Client | null, days: number) =>
     call<RelayUsageReport>("station_usage_report", { client, days }),
-
-  /** 首页按滚动时间窗统计全部本机记录；null 包含已归档用量。 */
-  usageTotals: (client: Client, hours: number | null) =>
-    call<RelayUsageTotals>("station_usage_totals", { client, hours }),
 
   /** 总量、线路计数和时间桶共享同一次完整查询；全部历史按天包含归档。 */
   usageOverview: (
@@ -177,19 +179,17 @@ export const stationApi = {
   turnstateDisable: () => call<RouterStatus>("station_turnstate_disable", {}),
 
   /**
-   * 启动这个软件，走某一条上游。
+   * 启动这个软件，走**当前线路**（要换线先「设为当前」，启动不再顺手换线）。
    *
-   * 后端一口气做三件事：切上游 → 拉起本机路由 → 起客户端进程（用那个
-   * 走本机路由的环境，没有就现建）。
+   * 后端一口气做两件事：拉起本机路由 → 起客户端进程（用那个走本机路由的环境，没有就现建）。
    *
-   * ⛔ **不要在前端把这三步拆开做。** 拆开的话中间任何一步失败都会留下
-   * 一个半成品状态：上游切了、路由起了、客户端没起来 —— 而界面显示
+   * ⛔ **不要在前端把这两步拆开做。** 拆开的话中间任何一步失败都会留下
+   * 一个半成品状态：路由起了、客户端没起来 —— 而界面显示
    * 「运行中」，使用者回终端敲 `claude`，那个 claude 走的还是官方。
    */
-  launch: (client: Client, routeId?: string, workingDir?: string) =>
+  launch: (client: Client, workingDir?: string) =>
     call<Session>("station_launch", {
       client,
-      routeId: routeId ?? null,
       workingDir: workingDir ?? null,
     }),
 
@@ -205,10 +205,15 @@ export const stationApi = {
   logs: (limit?: number) =>
     call<RouterRequest[]>("station_logs", { limit: limit ?? null }),
 
-  /** 这个软件的本机路由设置（故障转移、三种超时、熔断参数、整流器开关）。 */
+  /** 这个软件的本机路由设置（备用线路、三种超时、熔断参数、整流器开关……）。 */
   routerSettings: (client: Client) =>
     call<RouterSettings>("station_router_settings", { client }),
-  /** 存了立刻生效（下一发就按新的来；熔断器的当前状态不动）。不合格的整份不存、报原因。 */
+  /**
+   * 存了立刻生效（下一发就按新的来；熔断器的当前状态不动）。不合格的整份不存、报原因。
+   *
+   * 备用线路就是 `allowed_routes`（按排的顺序），改它用 {@link withBackups} 一起把 `routing_mode` 设对：
+   * `routing_mode: "selected"` 等于清空名单（严格单线），名单存空会顺带关掉自动选线。
+   */
   saveRouterSettings: (settings: RouterSettings) =>
     call<RouterSettings>("station_router_settings_save", { settings }),
   /**
@@ -275,8 +280,8 @@ export const stationApi = {
   /** ⛔ 给线路 = 直连（桌面端配置里写那条线的真 Key）；`null` = 改回经本机路由。重开桌面端才生效。 */
   setDesktopDirect: (routeId: string | null) =>
     call<DesktopDirectView>("station_desktop_direct_set", { routeId }),
-  // 项目（阶段 5，cc-switch 的 M4）：只换中转那一侧（线路、派单顺序、中转环境里的 MCP / Skills / 提示词），
-  // ⛔ 不碰官方账户和槽位。项目列表各软件共用，「当前项目」每个软件各记各的。
+  // 项目（阶段 5，cc-switch 的 M4）：只换中转环境里的 MCP / Skills / 提示词，⛔ 不碰线路（2026-11-14 起）、
+  // 不碰官方账户和槽位；桌面端没有项目。项目列表各软件共用，「当前项目」每个软件各记各的。
   /** 项目列表和每个软件的当前项目。 */
   projects: () => call<ProjectsView>("projects_list"),
   /** 把这个软件现在的样子存成一个项目，并记成它的当前项目。 */
@@ -322,7 +327,7 @@ export const stationApi = {
   refreshHealth: () => call<RouteHealthView[]>("station_refresh_health"),
 
   /**
-   * 排一次序。**只排不换** —— 换上游是 `selectRoute` 的事。
+   * 排一次序。**只排不换** —— 换上游是 `setCurrent` 的事。只排当前线路 + 备用线路（自动选线真会挑的那几条）。
    *
    * ⛔ `client` 不能省：整池一起排会排出一条属于别的软件的线，
    * 那条线的 Key 是给别人配的，账记到另一头而每一发请求都成功。
@@ -390,20 +395,17 @@ export const stationApi = {
   dispatchView: (client: Client) =>
     call<DispatchView>("station_dispatch_view", { client }),
   /**
-   * 「立刻测」：不看到没到点。免费的一律测；花钱的只在打开了花钱测活、今天预算还够时测。
-   * `routeId` 不给 = 这个软件的每一条。
+   * 「重新检测」：只测当前线路和备用线路（`routeId` 不给 = 这几条都测），不看到没到点。
+   *
+   * 两步：`paid` 不给 / `false` 只发免费的，开着花钱测活时回 `paid_pending` 与 `paid_estimate_cny`（一分钱不花）；
+   * 使用者点头后带 `paid: true` 再调一次，才发花钱的那几条（今天的预算还够才发）。
    */
-  probeNow: (client: Client, routeId?: string | null) =>
-    call<ProbeAttempt[]>("station_probe_now", {
+  probeNow: (client: Client, routeId?: string | null, paid = false) =>
+    call<ProbeNowResult>("station_probe_now", {
       client,
       routeId: routeId ?? null,
+      paid,
     }),
-  /**
-   * 钉住一条线：下一发请求换过去，4 小时内调度不换走它（它挂了就不算）。
-   * `routeId` 传 `null` = 取消钉住、交回调度。
-   */
-  pin: (client: Client, routeId: string | null) =>
-    call<DispatchQueue>("station_pin", { client, routeId }),
   /** 测活设置（三个软件共用）：花钱测活开关（默认关）、每日预算、间隔。不合格整份不存。 */
   saveProbeSettings: (settings: ProbeSettings) =>
     call<ProbeSettings>("station_probe_settings_save", { settings }),
@@ -417,6 +419,23 @@ export const stationApi = {
   models: (routeId: string) =>
     call<StationModelsView>("station_models", { routeId }),
 };
+
+/**
+ * 换备用线路名单：名单和存储字段 `routing_mode` 一起设对（非空 = `pool`，空 = `selected` 严格单线）。
+ *
+ * 后端存的时候也会再理一遍（`RouterSettings::normalized`）：`selected` 一律清空名单，名单空一律落成 `selected`。
+ * 这里只是让存下去的跟界面上的一致 —— 只改名单、忘了改 `routing_mode` 的话，旧值是 `selected` 时名单会被清掉。
+ */
+export function withBackups(
+  settings: RouterSettings,
+  backups: string[],
+): RouterSettings {
+  return {
+    ...settings,
+    allowed_routes: backups,
+    routing_mode: backups.length ? "pool" : "selected",
+  };
+}
 
 /**
  * New API 的倍率为 1 时每百万 token 多少美元（站内额度）。

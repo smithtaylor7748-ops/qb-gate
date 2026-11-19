@@ -104,6 +104,19 @@ impl UpstreamSwitch {
         }
     }
 
+    /// 线路改了站点名 / 分组，id 跟着变了：选择跟着迁到新 id（还是同一条线，使用者自己改的）。
+    /// 不算一次换手。
+    pub fn rename_route(&mut self, old: &str, new: &str) {
+        for slot in [&mut self.current, &mut self.pending] {
+            if slot.as_deref() == Some(old) {
+                *slot = Some(new.to_string());
+            }
+        }
+        if self.pending == self.current {
+            self.pending = None;
+        }
+    }
+
     /// 直接落定一条线,不排队。
     ///
     /// 只给「第一次选上游」和「使用者手动指定」用 —— 调度器**不许**走这里,
@@ -207,21 +220,43 @@ impl ClientRouter {
             selection.forget_route(route_id);
         }
     }
+
+    /// 线路的 id 变了（改了站点名 / 分组）：各软件的选择跟着迁过去。
+    pub fn rename_route(&mut self, old: &str, new: &str) {
+        for selection in self.per_client.values_mut() {
+            selection.rename_route(old, new);
+        }
+    }
 }
 
 /// 一个软件的本机路由设置（cc-switch 的 `AppProxyConfig`，每个 app 一行）。
 ///
 /// 存在 `router_settings` 表里，一个软件一行；没存过就是 [`RouterSettings::for_client`] 那一份。
+///
+/// # 选线只有三个概念（2026-11-14）
+///
+/// | 概念 | 在哪 |
+/// |---|---|
+/// | 当前线路 | 派单队列的 `current`（[`DispatchQueue`]），一个软件一条 |
+/// | 备用线路 | 这里的 [`allowed_routes`](Self::allowed_routes)：使用者勾的、按他排的顺序。**空 = 严格单线** |
+/// | 自动选线 | `schedule::Schedule`：一个开关 + 偏好，只在「当前线路 + 备用线路」里挑首选 |
+///
+/// 能访问哪些线路只由「当前线路 + 备用名单」定。[`routing_mode`](Self::routing_mode) 只是存储字段，
+/// 永远跟「名单空不空」对得上 —— 对不上的由 [`normalized`](Self::normalized) 按不扩大许可的方向理顺。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(default)]
 pub struct RouterSettings {
     pub client: Client,
-    /// 唯一的跨线路授权开关。旧配置没有此字段时只用当前线路；旧 auto_failover 不构成授权。
+    /// 存储字段：`pool` = 有备用线路，`selected` = 没有（严格单线）。**不是一个独立的开关** ——
+    /// 逻辑一律问 [`has_backups`](Self::has_backups)。存的时候两者对不上：`selected` 赢（名单清空）。
+    /// 旧配置没有此字段时只用当前线路；旧 auto_failover 不构成授权。
     pub routing_mode: RoutingMode,
-    /// 使用者明确允许的线路，顺序也是未启用智能排序时的备用顺序。新增线路不会自动加入。
+    /// 备用线路：使用者明确勾选的名单，顺序就是备用顺序（**只存这一份**；自动选线排出的顺序不改它）。
+    /// 新增线路不会自动加入。当前线路可以在里面，也可以不在。
     pub allowed_routes: Vec<String>,
-    /// 授权池内优先/备用，或按当前并发占用分摊；仅 pool 生效。
+    /// 容量分流怎么分：优先当前线路、满了才去备用，或按当前并发占用分摊。只在开了
+    /// [`overflow_to_pool`](AdmissionSettings::overflow_to_pool) 时有意义；分流关着时一律是 `priority`。
     pub pool_strategy: PoolStrategy,
     /// 可选的本机发送限制。旧配置保持不限并发、不限 RPM、不等候。
     pub admission: AdmissionSettings,
@@ -292,7 +327,10 @@ pub struct RouteLimits {
 #[ts(export)]
 #[serde(default)]
 pub struct AdmissionSettings {
-    /// 容量不足时向授权池分流；默认关闭。不开启时只在当前候选上有限等待或返回繁忙。
+    /// **本机自己的**并发 / RPM 限额不够时向备用线路分流；默认关闭。不开启时只在当前候选上有限等待或返回繁忙。
+    ///
+    /// ⛔ 只管本机限额。上游自己说「限流」（429 与它的 Retry-After 窗口）、额度证据说「用光了」是线路的故障，
+    /// 有备用线路就按故障备用去下一条，跟这个开关无关（2026-11-14）。
     pub overflow_to_pool: bool,
     pub route_limits: std::collections::BTreeMap<String, RouteLimits>,
     /// 最多等候毫秒数；0 = 不排队。
@@ -385,19 +423,92 @@ impl Default for RectifierSwitches {
     }
 }
 
+/// 一发请求默认最多试几条线（含当前线路）。
+pub const DEFAULT_MAX_ATTEMPTS: u32 = 2;
+
 impl RouterSettings {
+    /// 有没有备用线路。**跨线路的事一律问这里**，不单看 [`routing_mode`](Self::routing_mode)、
+    /// 也不单看名单：两样都得说「有」才算有 —— 少一样就是严格单线，不扩大许可。
+    pub fn has_backups(&self) -> bool {
+        self.routing_mode == RoutingMode::Pool && !self.allowed_routes.is_empty()
+    }
+
+    /// 备用名单（按使用者排的顺序）。严格单线时是空的。
+    pub fn backups(&self) -> &[String] {
+        if self.has_backups() {
+            &self.allowed_routes
+        } else {
+            &[]
+        }
+    }
+
+    /// 把几个会互相打架的字段理顺。读库、存库、装进本机路由三处都过一遍，所以落到哪一层都是同一个样子。
+    ///
+    /// - `selected` ⇒ 备用名单清空。旧版里「仅所选线路」时名单可以留着、但不算授权；升上来不能让它变成有备用。
+    /// - 名单空 ⇒ `selected`。
+    /// - 没开容量分流 ⇒ 分法复位成「优先当前线路」。原来关掉分流后「优先空闲线路」还存着，
+    ///   再开分流就立刻按负载把请求分到别的站。
+    pub fn normalized(mut self) -> Self {
+        if self.routing_mode == RoutingMode::Selected {
+            self.allowed_routes.clear();
+        }
+        self.routing_mode = if self.allowed_routes.is_empty() {
+            RoutingMode::Selected
+        } else {
+            RoutingMode::Pool
+        };
+        if !self.admission.overflow_to_pool {
+            self.pool_strategy = PoolStrategy::Priority;
+        }
+        self
+    }
+
+    /// 线路改了站点名 / 分组，id 从 `old` 变成 `new`：备用名单、发送限制、聚合名单里的引用跟着迁，位置不变。
+    /// 聚合模型的 key 登记也跟过去 —— 还是同一条线，客户端手里的旧 id 照样指着它。
+    pub fn rename_route(&mut self, old: &str, new: &str) {
+        fn swap(list: &mut Vec<String>, old: &str, new: &str) {
+            if list.iter().any(|id| id == new) {
+                list.retain(|id| id != old);
+            } else {
+                for id in list.iter_mut().filter(|id| *id == old) {
+                    *id = new.to_string();
+                }
+            }
+        }
+        swap(&mut self.allowed_routes, old, new);
+        swap(&mut self.aggregate.members, old, new);
+        if let Some(limits) = self.admission.route_limits.remove(old) {
+            self.admission
+                .route_limits
+                .entry(new.to_string())
+                .or_insert(limits);
+        }
+        if let Some(models) = self.aggregate.models.remove(old) {
+            self.aggregate
+                .models
+                .entry(new.to_string())
+                .or_insert(models);
+        }
+        for target in self.aggregate.keys.values_mut().filter(|id| *id == old) {
+            *target = new.to_string();
+        }
+    }
+
     /// 默认值照 cc-switch 的 `proxy_config` 表（claude 一行、codex 一行），熔断的连续次数仍是 QB Gate 的 5。
     ///
     /// | | 最多试几条 | 首包 | 静默 | 非流式 | 错误率 / 最少样本 |
     /// |---|---|---|---|---|---|
-    /// | Claude Code / 桌面端 | 6 | 90 | 180 | 600 | 0.7 / 15 |
-    /// | Codex、Grok Build | 3 | 60 | **300** | 600 | 0.6 / 10 |
+    /// | Claude Code / 桌面端 | **2** | 90 | 180 | 600 | 0.7 / 15 |
+    /// | Codex、Grok Build | **2** | 60 | **300** | 600 | 0.6 / 10 |
     /// | Gemini CLI | 同 Claude Code | | | | |
     ///
-    /// 只有一处跟 cc-switch 不一样：Codex 的静默超时它是 120 秒，这里取 Codex 自己的默认
-    /// （`stream_idle_timeout_ms` = 300 秒）。推理很久才出下一段的长回合会安静好几分钟，
-    /// 路由比客户端自己先掐断，等于替它做了一个它没要的决定（原来路由根本没有静默超时）。
-    /// Grok Build（阶段 4）也说 Responses、也跑长推理，取 Codex 那一套。
+    /// 跟 cc-switch 不一样的两处：
+    ///
+    /// - 一发最多试几条它是 6（Claude）/ 3（Codex），这里都是 [`DEFAULT_MAX_ATTEMPTS`]（2026-11-14）：
+    ///   每试一条都可能已经开始计费，默认只试「当前线路 + 一条备用」。存过的值不动。
+    /// - Codex 的静默超时它是 120 秒，这里取 Codex 自己的默认（`stream_idle_timeout_ms` = 300 秒）。
+    ///   推理很久才出下一段的长回合会安静好几分钟，路由比客户端自己先掐断，等于替它做了一个它没要的决定
+    ///   （原来路由根本没有静默超时）。Grok Build（阶段 4）也说 Responses、也跑长推理，取 Codex 那一套。
     pub fn for_client(client: Client) -> Self {
         let codex = matches!(client, Client::Codex | Client::GrokBuild);
         Self {
@@ -406,7 +517,7 @@ impl RouterSettings {
             allowed_routes: Vec::new(),
             pool_strategy: PoolStrategy::Priority,
             admission: AdmissionSettings::default(),
-            max_attempts: if codex { 3 } else { 6 },
+            max_attempts: DEFAULT_MAX_ATTEMPTS,
             first_byte_timeout_secs: if codex { 60 } else { 90 },
             idle_timeout_secs: if codex { 300 } else { 180 },
             non_streaming_timeout_secs: 600,
@@ -440,11 +551,8 @@ impl RouterSettings {
                 break;
             }
         }
-        if self.routing_mode == RoutingMode::Pool && self.allowed_routes.is_empty() {
-            problems.push("请明确勾选允许使用的线路，空名单不能启用自动选线".to_string());
-        }
         if self.allowed_routes.len() > 64 {
-            problems.push("允许使用的线路最多 64 条".to_string());
+            problems.push("备用线路最多 64 条".to_string());
         }
         if !(1..=20).contains(&self.max_attempts) {
             problems.push(format!(
@@ -597,11 +705,20 @@ pub fn mask_proxy_url(url: &str) -> String {
     }
 }
 
-/// 一个软件的派单队列（落盘的那一份，存在 `dispatch_queue` 表里，一个软件一行）。
+/// 一个软件的派单队列（落盘的那一份，存在 `dispatch_queue` 表里，一个软件一行）：当前线路，
+/// 加上自动选线这一轮的记录。
 ///
-/// 在允许线路池内，当前那条失败时按 `order` 往下试（见 [`RouterSettings::routing_mode`]）。
-/// 调度关着时 `order` 是使用者在「路由设置」里手动排的；**调度开着时由调度排**
-/// （`schedule::dispatch`，中转站重构阶段 2），连同钉住、防抖记忆和这一轮的结论一起存在这里。
+/// # ⛔ 备用顺序不在这里（2026-11-14）
+///
+/// 备用顺序只存一份：[`RouterSettings::allowed_routes`]（使用者勾的、按他排的顺序）。原来这里还有一个
+/// `order`，跟名单顺序互相覆盖 —— 存设置时拿名单盖它，调度一跳又拿排出来的盖回去。现在：
+///
+/// - 自动选线关着：当前线路失败时就按名单顺序往下试；
+/// - 自动选线开着：它每一跳在「当前线路 + 备用名单」里重排，排出的顺序只放在本机路由的内存里，
+///   和这里的 [`rows`](Self::rows)（给界面看这一轮是怎么排的；面板重启后第一跳之前先照它接着用）。
+///   **不改名单**；关掉自动选线立刻回到名单顺序。
+///
+/// 旧数据里的 `order`、`pin`（钉住，已删）读得进来、不认。
 ///
 /// **为什么要落盘**：原来当前上游只在内存里，面板一重启就没了，客户端下一发收到 503
 /// 「还没选上游」（交接文档 §2.12 第 5 条，2026-10-24 照代码核过）。
@@ -610,19 +727,15 @@ pub fn mask_proxy_url(url: &str) -> String {
 #[serde(default)]
 pub struct DispatchQueue {
     pub client: Client,
-    /// 上次选中的那条（使用者手动选、或调度换过去的）。面板重启后从这里接着用。
+    /// 当前线路（使用者「设为当前」的、或自动选线换过去的）。面板重启后从这里接着用。
     pub current: Option<String>,
-    /// 当前那条失败时依次改用谁。当前那条不必在里面；删掉的线读的时候跳过。
-    pub order: Vec<String>,
     /// 上次改的时刻（毫秒）。
     pub updated_ms: i64,
-    /// 钉住的那条（调度开着时手动选的线钉 4 小时，除非它挂了）。
-    pub pin: Option<crate::schedule::Pin>,
     /// 防抖的记忆（挑战者、连续领先几轮）。
     pub memory: crate::schedule::DispatchMemory,
-    /// 调度这一轮排出来的每一行（档位、为什么）。调度关着时是空的。
+    /// 自动选线这一轮排出来的每一行（档位、为什么），按排出的顺序。自动选线关着时是空的。
     pub rows: Vec<crate::schedule::DispatchRow>,
-    /// 调度这一轮的告警。
+    /// 自动选线这一轮的告警。
     pub alerts: Vec<String>,
 }
 
@@ -633,6 +746,110 @@ impl DispatchQueue {
             ..Default::default()
         }
     }
+
+    /// 自动选线这一轮排出的顺序（第一条是它定的当前线路）。没排过就是空的。
+    pub fn scheduled_order(&self) -> Vec<String> {
+        self.rows.iter().map(|r| r.route_id.clone()).collect()
+    }
+
+    /// 线路的 id 变了：当前线路和这一轮记录里的引用跟着迁。
+    pub fn rename_route(&mut self, old: &str, new: &str) {
+        if self.current.as_deref() == Some(old) {
+            self.current = Some(new.to_string());
+        }
+        for row in self.rows.iter_mut().filter(|r| r.route_id == old) {
+            row.route_id = new.to_string();
+        }
+        if self.memory.challenger.as_deref() == Some(old) {
+            self.memory.challenger = Some(new.to_string());
+        }
+    }
+
+    /// 自动选线停了：这一轮的记录（顺序、防抖记忆、告警）作废。当前线路不动。
+    pub fn clear_round(&mut self) {
+        self.memory = Default::default();
+        self.rows.clear();
+        self.alerts.clear();
+    }
+}
+
+/// 下一发请求实际会按什么顺序试（界面主页那一行「下一次请求：A → B → C」）。
+///
+/// 由本机路由照它真正转发时的那套规矩现算（`RouterState::route_plan`）：当前线路打头，后面是备用线路
+/// （自动选线开着时按它排的顺序），再把熔断中、上游限流窗口内、额度证据说用光了的标出来。
+/// 界面**只照实显示**，不自己再算一遍 —— 再算一遍就是两份判定。
+///
+/// 「这条线没有这个模型」是按模型记的，要等请求来了才知道，所以每一步只列出它眼下缺哪些模型。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RoutePlan {
+    /// 当前线路（排队等下一发生效的那条优先）。`None` = 还没设，下一发会回「还没选上游」。
+    pub current: Option<String>,
+    /// 依次会试的线：第一步是当前线路，后面是备用。被跳过的也列着，带原因。
+    pub steps: Vec<PlanStep>,
+    /// 下一发实际先打哪条。当前线路被跳过时是排在最前的那条能用的备用线；
+    /// 所有线都在熔断时仍是当前线路（本机路由不凭空回 503）。`None` = 这一发会被本机直接回「繁忙」
+    /// （没有哪条线现在能发），或者还没设当前线路。
+    pub first: Option<String>,
+    /// 一发最多试几条（[`RouterSettings::max_attempts`]）。被跳过的不占次数。
+    pub max_attempts: u32,
+    /// 没有备用线路：只用当前线路，失败直接报错、不换站。这时熔断不拦发送。
+    pub strict_single: bool,
+}
+
+/// 最近一次聚合模型直达（主页的提示条用：客户端选了 `qbg` 开头的模型，这一发不看当前线路、
+/// 不换线、不碰熔断，钱花在 `route_id` 那条线上）。只在本机路由的内存里，面板重启就没了。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AggregateHit {
+    /// 直达的那条线。
+    pub route_id: String,
+    /// 客户端请求里写的那个聚合模型 id。
+    pub model: String,
+    pub at_ms: i64,
+    /// 它就是这个软件最近一发模型请求（之后还没有走普通派单的请求）。
+    pub latest: bool,
+}
+
+/// [`RoutePlan`] 里的一步。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PlanStep {
+    pub route_id: String,
+    pub role: PlanRole,
+    /// 这一步会不会被跳过、为什么。`None` = 轮到它就会试。
+    pub skip: Option<PlanSkip>,
+    /// 跳过到什么时候（毫秒）。不知道就是 `None`。
+    pub until_ms: Option<i64>,
+    /// 这条线眼下被记成「没有」的模型（6 小时内请求这些模型会跳过它）。
+    pub missing_models: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlanRole {
+    /// 当前线路。
+    Current,
+    /// 备用线路。
+    Backup,
+}
+
+/// 一步为什么会被跳过。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlanSkip {
+    /// 熔断中，上游明确拒绝过（余额不足 / Key 失效 / 没权限），暂停一小时；充了值可以「重试主线」。
+    BreakerRejected,
+    /// 熔断中，连着出错（5xx / 超时）。到点自动放一发去探。
+    BreakerFailing,
+    /// 上游说限流了（429），还在它给的等待时间里。
+    RateLimited,
+    /// 开了额度检查，最近一次查到的是明确用光了。
+    QuotaExhausted,
+    /// 前面能试的已经够 [`RoutePlan::max_attempts`] 条了，正常轮不到它。
+    OverLimit,
 }
 
 /// 一发请求试过的一条线。
@@ -922,7 +1139,8 @@ mod tests {
                 claude.idle_timeout_secs,
                 claude.non_streaming_timeout_secs
             ),
-            (6, 90, 180, 600)
+            (2, 90, 180, 600),
+            "一发默认只试当前线路 + 一条备用：每试一条都可能已经开始计费"
         );
         let codex = RouterSettings::for_client(Client::Codex);
         assert_eq!(
@@ -931,22 +1149,140 @@ mod tests {
                 codex.first_byte_timeout_secs,
                 codex.idle_timeout_secs
             ),
-            (3, 60, 300),
+            (2, 60, 300),
             "Codex 的静默超时不比它自己的默认（300 秒）短"
         );
+        for client in [Client::ClaudeDesktop, Client::GeminiCli, Client::GrokBuild] {
+            assert_eq!(
+                RouterSettings::for_client(client).max_attempts,
+                DEFAULT_MAX_ATTEMPTS
+            );
+        }
         assert_eq!(codex.breaker.min_requests, 10);
         assert_eq!(
             claude.breaker.trip_after_consecutive, 5,
             "连续次数仍是 QB Gate 的 5"
         );
         assert!(claude.rectifier.enabled && claude.rectifier.thinking_signature);
-        // 存下来的缺字段按默认补。
+        // 存下来的缺字段按默认补；**存过的值不动**（旧库里的 6 还是 6）。
         let parsed: RouterSettings =
-            serde_json::from_str(r#"{"client":"codex","max_attempts":2,"auto_failover":true}"#)
+            serde_json::from_str(r#"{"client":"codex","max_attempts":6,"auto_failover":true}"#)
                 .unwrap();
-        assert_eq!(parsed.max_attempts, 2);
+        assert_eq!(parsed.max_attempts, 6);
         assert_eq!(parsed.routing_mode, RoutingMode::Selected);
         assert!(parsed.allowed_routes.is_empty());
+        assert!(!parsed.normalized().has_backups());
+    }
+
+    /// 存储字段 `routing_mode` 跟「名单空不空」永远对得上；对不上时按**不扩大许可**的方向理顺。
+    #[test]
+    fn routing_mode_always_agrees_with_the_backup_list_and_never_widens_permission() {
+        let base = RouterSettings::for_client(Client::Codex);
+        // 旧版「仅所选线路」+ 名单里留着几条：那几条从来不算授权，升上来也不能变成有备用。
+        let old_selected = RouterSettings {
+            routing_mode: RoutingMode::Selected,
+            allowed_routes: vec!["a".into(), "b".into()],
+            ..base.clone()
+        };
+        assert!(!old_selected.has_backups(), "没理顺之前也不算有备用");
+        let n = old_selected.normalized();
+        assert_eq!(n.routing_mode, RoutingMode::Selected);
+        assert!(n.allowed_routes.is_empty() && n.backups().is_empty());
+        // 名单空却标着 pool：就是严格单线。
+        let empty_pool = RouterSettings {
+            routing_mode: RoutingMode::Pool,
+            allowed_routes: Vec::new(),
+            ..base.clone()
+        };
+        assert!(!empty_pool.has_backups());
+        assert_eq!(empty_pool.normalized().routing_mode, RoutingMode::Selected);
+        // 有名单的 pool 照旧，顺序不动。
+        let pool = RouterSettings {
+            routing_mode: RoutingMode::Pool,
+            allowed_routes: vec!["b".into(), "a".into()],
+            ..base.clone()
+        }
+        .normalized();
+        assert!(pool.has_backups());
+        assert_eq!(pool.backups(), ["b", "a"]);
+        // 理顺两次跟一次一样。
+        assert_eq!(pool.clone().normalized(), pool);
+    }
+
+    /// 关掉分流时「优先空闲线路」不许留着：再开分流就会立刻按负载把请求分到别的站。
+    #[test]
+    fn turning_overflow_off_resets_the_split_strategy_and_old_rows_read_as_reset() {
+        let old: RouterSettings = serde_json::from_str(
+            r#"{"client":"claude-code","routing_mode":"pool","allowed_routes":["a"],
+                "pool_strategy":"least-loaded","admission":{"overflow_to_pool":false}}"#,
+        )
+        .unwrap();
+        let n = old.normalized();
+        assert_eq!(n.pool_strategy, PoolStrategy::Priority);
+        assert!(n.has_backups(), "复位分法不动备用名单");
+        let mut on = n.clone();
+        on.admission.overflow_to_pool = true;
+        on.pool_strategy = PoolStrategy::LeastLoaded;
+        assert_eq!(
+            on.clone().normalized().pool_strategy,
+            PoolStrategy::LeastLoaded,
+            "分流开着时使用者选的分法照留"
+        );
+    }
+
+    /// 线路改了站点名 / 分组（id 变了）：引用跟着迁到新 id，位置不变；不是清空。
+    #[test]
+    fn renaming_a_route_moves_every_reference_to_the_new_id_in_place() {
+        let mut s = RouterSettings {
+            routing_mode: RoutingMode::Pool,
+            allowed_routes: vec!["x".into(), "old".into(), "y".into()],
+            ..RouterSettings::for_client(Client::ClaudeCode)
+        };
+        s.admission.route_limits.insert(
+            "old".into(),
+            RouteLimits {
+                max_concurrent: 2,
+                ..Default::default()
+            },
+        );
+        s.aggregate.members = vec!["old".into()];
+        s.aggregate.models.insert("old".into(), vec!["m".into()]);
+        s.aggregate.keys.insert("k".into(), "old".into());
+        s.rename_route("old", "new");
+        assert_eq!(s.allowed_routes, ["x", "new", "y"]);
+        assert_eq!(s.admission.route_limits["new"].max_concurrent, 2);
+        assert!(!s.admission.route_limits.contains_key("old"));
+        assert_eq!(s.aggregate.members, ["new"]);
+        assert_eq!(s.aggregate.models["new"], ["m"]);
+        assert_eq!(
+            s.aggregate.keys["k"], "new",
+            "客户端手里的旧聚合 id 照样指着这条线"
+        );
+        // 新 id 已经在名单里：不重复。
+        let mut dup = RouterSettings {
+            allowed_routes: vec!["old".into(), "new".into()],
+            routing_mode: RoutingMode::Pool,
+            ..RouterSettings::for_client(Client::ClaudeCode)
+        };
+        dup.rename_route("old", "new");
+        assert_eq!(dup.allowed_routes, ["new"]);
+
+        let mut sw = UpstreamSwitch::new();
+        sw.set_now("old");
+        let before = sw.switches();
+        sw.rename_route("old", "new");
+        assert_eq!(sw.current(), Some("new"));
+        assert_eq!(sw.switches(), before, "改名不算换手");
+        sw.request_switch("other");
+        sw.rename_route("other", "other2");
+        assert_eq!(sw.pending(), Some("other2"));
+
+        let mut q = DispatchQueue {
+            current: Some("old".into()),
+            ..DispatchQueue::new(Client::ClaudeCode)
+        };
+        q.rename_route("old", "new");
+        assert_eq!(q.current.as_deref(), Some("new"));
     }
 
     #[test]
@@ -1067,8 +1403,27 @@ mod tests {
         let q: DispatchQueue =
             serde_json::from_str(r#"{"client":"codex","order":["a","b"]}"#).unwrap();
         assert_eq!(q.client, Client::Codex);
-        assert_eq!(q.order, ["a", "b"]);
         assert_eq!(q.current, None);
+        assert!(q.scheduled_order().is_empty());
+    }
+
+    /// 旧版的派单队列带着 `order`（第二份备用顺序）和 `pin`（钉住，已删）：读得进来、一样都不认。
+    #[test]
+    fn an_old_dispatch_queue_with_an_order_and_a_pin_reads_and_both_are_ignored() {
+        let q: DispatchQueue = serde_json::from_str(
+            r#"{"client":"codex","current":"a","order":["b","c"],
+                "pin":{"route_id":"c","until_ms":99999999999999},
+                "rows":[{"route_id":"a","tier":"pinned","position":1,"score":null,"samples":0,"reason":"你手动选的，钉住"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(q.current.as_deref(), Some("a"));
+        let back = serde_json::to_value(&q).unwrap();
+        assert!(back.get("order").is_none() && back.get("pin").is_none());
+        assert_eq!(
+            q.rows[0].tier,
+            crate::schedule::Tier::Qualified,
+            "旧的「钉住」档按合格读"
+        );
     }
 
     #[test]

@@ -98,12 +98,12 @@ impl RelayUsageTotals {
     }
 }
 
-/// 首页总量：短窗精确到毫秒；全部包含已归档的日汇总，不受日志分页上限影响。
-/// 短窗最多 7 天，落在 30 天明细保留期内；只读本机库。
-pub fn totals(db: &Repository, client: &str, hours: Option<u32>) -> Result<RelayUsageTotals> {
-    totals_at(db, client, hours, Local::now().timestamp_millis())
-}
-
+/// 按滚动窗口直接汇总（短窗精确到毫秒；全部包含已归档的日汇总）。
+///
+/// 首页原来有一条单独的命令用它（`station_usage_totals`），2026-11-15 首页改成跟柱状图共用
+/// `overview` 那一次查询之后，那条命令没人调了、连同它删了。这里留着当测试的对照：
+/// `overview` 的总数必须跟这条独立的算法对得上。
+#[cfg(test)]
 fn totals_at(
     db: &Repository,
     client: &str,

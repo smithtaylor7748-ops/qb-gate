@@ -7,7 +7,7 @@
 //!
 //! # 一发请求怎么走
 //!
-//! 对派单顺序里的每一条线（当前那条打头，见 [`RouterState::candidates`]）：
+//! 对这一发要试的每一条线（当前线路打头、后面是备用线路，见 [`RouterState::candidates`]）：
 //!
 //! 1. 试满 [`RouterSettings::max_attempts`] 条就停；「这条线没有这个模型」的 6 小时内跳过。
 //! 2. 向熔断器要放行（半开只放一发）；只有一条线时不问（cc-switch 同样如此）。
@@ -27,7 +27,9 @@
 //!
 //! - 只有一条线时它不碰熔断；这里**照样记**（QB Gate 原来就记，排序要用）。
 //! - 所有线都在熔断时它回 503；这里**仍打当前那一条**：原来就是这样，不凭空制造死局。
-//! - 默认只用当前线路；只有显式授权的线路池允许跨线重试。
+//! - 默认只用当前线路；只有使用者勾了备用线路才跨线重试（备用名单空 = 严格单线，失败直接报错）。
+//! - 上游限流（429 和它的 Retry-After 窗口）、额度证据说用光了：有备用就去下一条，跟容量分流开关无关；
+//!   只有本机自己的并发 / RPM 限额才看分流开关（见 `admission` 模块头那张表）。
 //! - 转给中转线路的请求一律 `accept-encoding: identity`：要从响应里读用量、认出 2xx 里的错，
 //!   而 reqwest 没开解压（⛔ 不许开 `gzip`，开了它会悄悄改写流）。cc-switch 只在 SSE 路径这么做。
 //! - 404 / 409 / 451 换线但不伤熔断（`Fault::NotServedHere`）；cc-switch 是可重试且记失败。
@@ -290,6 +292,7 @@ pub(super) async fn relay(
         may_wait: true,
         requires_overflow: false,
         pool_waiter: None,
+        skip_line_faults: false,
     };
     let rectifier = rectifier_config(settings.rectifier);
 
@@ -299,10 +302,11 @@ pub(super) async fn relay(
     let mut attempted = 0usize;
     let mut last: Option<(Failure, Fault)> = None;
     let mut last_admission = None;
-    let pool_wait = routed
-        && settings.routing_mode == RoutingMode::Pool
-        && settings.admission.overflow_to_pool
-        && lines.len() > 1;
+    // 这一发能不能换线：使用者勾了备用线路，而且眼下真有不止一条可试。
+    let failover = routed && settings.has_backups() && lines.len() > 1;
+    // 本机限额满了才往备用分：另外要开容量分流。
+    let overflow = failover && settings.admission.overflow_to_pool;
+    let pool_wait = overflow;
     let mut overflowed = false;
     let mut deferred = Vec::new();
     let mut pool_waiter = None;
@@ -433,6 +437,7 @@ pub(super) async fn relay(
                         && settings.pool_strategy
                             == qb_station::router::PoolStrategy::LeastLoaded
                         && line.route_id != first.route_id)),
+            skip_line_faults: failover,
             ..ctx
         };
         let mut result = try_line(&line_ctx, &line, &body).await;
@@ -490,15 +495,23 @@ pub(super) async fn relay(
                 {
                     record.log.upstream_model = previous_upstream_model;
                 }
-                if !candidate_had_actual && pool_wait && rejection.reason != "quota-exhausted" {
+                // 线路自己的故障（上游限流窗口、额度用光）不进等候：等它没有意义，有备用就直接换。
+                let line_fault = admission::is_line_fault(rejection.reason);
+                if !candidate_had_actual && pool_wait && !line_fault {
                     deferred.push(line.clone());
                 }
                 last_admission = Some(rejection);
-                if routed
-                    && settings.routing_mode == RoutingMode::Pool
-                    && settings.admission.overflow_to_pool
-                {
+                // 上游限流 / 额度用光 = 这条线的故障：有备用就去下一条，跟容量分流开关无关（C2）。
+                // 本机自己的并发 / RPM 满了才看分流开关；分出去的那几发记 `overflowed`，中途关掉分流就不再发。
+                let advance = if line_fault {
+                    failover
+                } else if overflow {
                     overflowed = true;
+                    true
+                } else {
+                    false
+                };
+                if advance {
                     while next_index < lines.len() {
                         let candidate = lines[next_index].clone();
                         next_index += 1;
@@ -574,8 +587,7 @@ pub(super) async fn relay(
                     class.fault.label(),
                     failure.error
                 );
-                let go_on =
-                    class.retry_next && settings.routing_mode == RoutingMode::Pool && routed;
+                let go_on = class.retry_next && failover;
                 last = Some((failure, class.fault));
                 if !go_on {
                     break;
@@ -659,6 +671,8 @@ struct LineCtx<'a> {
     may_wait: bool,
     requires_overflow: bool,
     pool_waiter: Option<&'a admission::Waiting>,
+    /// 后面还有备用线路：这条线自己的故障（上游限流窗口、额度用光）不等，交回去换下一条。
+    skip_line_faults: bool,
 }
 
 /// 这条线这一发：选了哪种转换、发什么、打哪儿、响应怎么换回去。
@@ -1107,6 +1121,7 @@ async fn attempt(ctx: &LineCtx<'_>, line: &Upstream, plan: &LinePlan) -> Attempt
             requires_overflow: ctx.requires_overflow,
             pool_waiter: ctx.pool_waiter,
             strict_source: false,
+            skip_line_faults: ctx.skip_line_faults,
         },
     )
     .await
@@ -1874,6 +1889,7 @@ mod tests {
     use hyper::Request;
     use hyper_util::rt::TokioIo;
     use qb_proxy::model_mapper::ModelMapping;
+    use qb_station::router::RoutingMode;
     use std::net::Ipv4Addr;
 
     /// 假上游这一次怎么回。
@@ -2005,7 +2021,7 @@ mod tests {
         }
     }
 
-    /// 一个软件两条线：`a` 是当前那条，`b` 排在派单顺序里。
+    /// 一个软件两条线：`a` 是当前线路，`b` 在备用名单里。
     async fn two_lines(
         client: Client,
         a: Upstream,
@@ -3044,6 +3060,117 @@ mod tests {
         }
     }
 
+    /// C2：上游 429 的那一发换到备用线，之后 Retry-After 窗口里的几发**也**去备用线 —— 原来这几发在本机被直接拒掉、不换线。
+    /// 容量分流开关开不开结果一样：它只管本机自己的并发 / RPM 限额。
+    #[tokio::test]
+    async fn an_upstream_429_and_its_retry_window_both_move_to_the_backup_whatever_the_overflow_switch(
+    ) {
+        for overflow in [false, true] {
+            let (a, a_hits) =
+                stub(Script::json(429, r#"{"error":{"message":"rate limited"}}"#)).await;
+            let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+            let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
+                s.admission.overflow_to_pool = overflow;
+            })
+            .await;
+            assert_eq!(post(&h, "/v1/messages", r#"{"model":"m"}"#).await.0, 200);
+            assert_eq!(
+                (a_hits.lock().unwrap().len(), b_hits.lock().unwrap().len()),
+                (1, 1),
+                "分流 {overflow}：第一发 A 429 之后去 B"
+            );
+            // 把 A 的等待窗口拉长，第二发一定落在窗口里。
+            h.state
+                .lock()
+                .unwrap()
+                .remember_rate_limit("a", Some(60_000));
+            let now = chrono::Utc::now().timestamp_millis();
+            let plan = h.state.lock().unwrap().route_plan(Client::ClaudeCode, now);
+            assert_eq!(plan.steps[0].skip, Some(PlanSkip::RateLimited));
+            assert_eq!(plan.first.as_deref(), Some("b"), "主页那一行照实说先打 B");
+            let (status, _) = post(&h, "/v1/messages", r#"{"model":"m"}"#).await;
+            assert_eq!(
+                status, 200,
+                "分流 {overflow}：窗口里也去备用线，不在本机回繁忙"
+            );
+            assert_eq!(
+                (a_hits.lock().unwrap().len(), b_hits.lock().unwrap().len()),
+                (1, 2),
+                "窗口里不再打 A"
+            );
+            let log = last_log(&h).await;
+            assert_eq!(log.route_id, "b");
+            assert_eq!(
+                log.attempts
+                    .iter()
+                    .map(|t| t.route_id.as_str())
+                    .collect::<Vec<_>>(),
+                ["b"],
+                "本机跳过 A 不伪造一次对 A 的尝试"
+            );
+        }
+    }
+
+    /// 没有备用线路：上游 429 原样回；它的等待窗口里本机回「繁忙」（没设等候），绝不换站。
+    #[tokio::test]
+    async fn without_backups_a_429_comes_back_as_is_and_its_window_answers_busy_without_switching()
+    {
+        let (a, a_hits) = stub(Script::json(429, r#"{"error":{"message":"rate limited"}}"#)).await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
+            s.allowed_routes.clear();
+        })
+        .await;
+        assert_eq!(post(&h, "/v1/messages", r#"{"model":"m"}"#).await.0, 429);
+        h.state
+            .lock()
+            .unwrap()
+            .remember_rate_limit("a", Some(60_000));
+        let now = chrono::Utc::now().timestamp_millis();
+        let plan = h.state.lock().unwrap().route_plan(Client::ClaudeCode, now);
+        assert!(plan.strict_single);
+        assert_eq!(plan.first, None, "这一发会被本机回繁忙");
+        assert_eq!(post(&h, "/v1/messages", r#"{"model":"m"}"#).await.0, 429);
+        assert_eq!(a_hits.lock().unwrap().len(), 1);
+        assert!(b_hits.lock().unwrap().is_empty(), "没有备用线路却换了站");
+        assert_eq!(
+            last_log(&h).await.fault.as_deref(),
+            Some("route-admission-denied")
+        );
+    }
+
+    /// 额度证据明确说当前线路用光了（开了额度检查）：跟上游 429 一样是线路的故障，有备用就去备用，不看分流开关。
+    #[tokio::test]
+    async fn an_exhausted_quota_on_the_current_line_moves_to_the_backup_without_the_overflow_switch(
+    ) {
+        let (a, a_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let (b, b_hits) = stub(Script::json(200, CLAUDE_OK)).await;
+        let h = two_lines(Client::ClaudeCode, line("a", a), line("b", b), |s| {
+            s.admission.overflow_to_pool = false;
+            s.admission.route_limits.insert(
+                "a".into(),
+                qb_station::router::RouteLimits {
+                    check_quota: true,
+                    ..Default::default()
+                },
+            );
+        })
+        .await;
+        {
+            let mut s = h.state.lock().unwrap();
+            let generation = s.quota_generation();
+            let now = chrono::Utc::now().timestamp_millis();
+            s.publish_quota(generation, "a", now, Some(false));
+            assert_eq!(
+                s.route_plan(Client::ClaudeCode, now).steps[0].skip,
+                Some(PlanSkip::QuotaExhausted)
+            );
+        }
+        assert_eq!(post(&h, "/v1/messages", r#"{"model":"m"}"#).await.0, 200);
+        assert!(a_hits.lock().unwrap().is_empty());
+        assert_eq!(b_hits.lock().unwrap().len(), 1);
+    }
+
     #[tokio::test]
     async fn pool_ignores_an_unapproved_route_in_the_old_queue() {
         let (a, _) = stub(Script::json(502, "bad gateway")).await;
@@ -3692,6 +3819,34 @@ mod tests {
         assert_eq!(log.route_id, "b");
         assert_eq!(log.model, "qbg-claude-zhipu--glm-5");
         assert_eq!(log.upstream_model, "glm-5");
+        // 主页提示条：最近一发是聚合直达 b 的（当前线路照旧是 a —— 钱花在 b 上）。
+        let hit = h
+            .state
+            .lock()
+            .unwrap()
+            .aggregate_recent(Client::ClaudeCode)
+            .expect("聚合直达要记下来");
+        assert_eq!(
+            (hit.route_id.as_str(), hit.model.as_str(), hit.latest),
+            ("b", "qbg-claude-zhipu--glm-5", true)
+        );
+        assert_eq!(
+            h.state
+                .lock()
+                .unwrap()
+                .current(Client::ClaudeCode)
+                .as_deref(),
+            Some("a")
+        );
+        // 之后来了一发普通模型：那次聚合直达还在，但已经不是最近一发。
+        assert_eq!(post(&h, "/v1/messages", r#"{"model":"m"}"#).await.0, 200);
+        let hit = h
+            .state
+            .lock()
+            .unwrap()
+            .aggregate_recent(Client::ClaudeCode)
+            .unwrap();
+        assert!(!hit.latest);
     }
 
     #[tokio::test]

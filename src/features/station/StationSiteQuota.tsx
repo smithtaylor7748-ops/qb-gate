@@ -73,7 +73,7 @@ function detail(q: SiteQuota, group: string): string {
     `按「${group || "默认分组"}」那把 Key 问的 · ${clock(q.fetched_at)} 问的`,
   );
   lines.push(
-    "打开中转站页时 5 分钟内问过就不再问；点右边的图标再问一次。只显示，调度不看它。",
+    "打开中转站页时 5 分钟内问过就不再问；点右边的图标再问一次。只显示，自动选线不看它。",
   );
   return lines.join("\n");
 }

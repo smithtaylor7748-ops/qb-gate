@@ -32,7 +32,7 @@ it("does not turn absent metrics into zero usage or retained pool settings into 
       routeLabel={label}
     />,
   );
-  expect(screen.getByText("优先所选线路")).toBeTruthy();
+  expect(screen.getByText("先用当前线路")).toBeTruthy();
   expect(screen.getByText("不排队 · 容量不足时返回本机繁忙")).toBeTruthy();
   expect(screen.getAllByText("未知")).toHaveLength(3);
   expect(screen.getAllByText("上限 未设置")).toHaveLength(2);
@@ -120,4 +120,28 @@ it("labels refresh errors as stale snapshots and allows an explicit status refre
   expect(screen.getByRole("alert").textContent).toContain("下方保留上次快照");
   fireEvent.click(screen.getByRole("button", { name: "刷新状态" }));
   expect(refresh).toHaveBeenCalledOnce();
+});
+
+it("the current line counts as usable even when it is not in the backup list", () => {
+  render(
+    <StationAdmissionStatus
+      settings={
+        {
+          ...settings,
+          routing_mode: "pool",
+          allowed_routes: ["paid"],
+        } as RouterSettings
+      }
+      status={
+        {
+          ...status,
+          selection: { current: "free" },
+        } as unknown as RouterStatus
+      }
+      routeLabel={label}
+    />,
+  );
+  expect(screen.getByText("免费站")).toBeTruthy();
+  expect(screen.getByText("付费站")).toBeTruthy();
+  expect(screen.queryByText("不是当前线路或备用线路")).toBeNull();
 });

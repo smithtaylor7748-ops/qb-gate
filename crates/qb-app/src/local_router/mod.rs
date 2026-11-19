@@ -50,7 +50,10 @@ use hyper::body::Bytes;
 use hyper::{Response, StatusCode};
 use qb_contract::domain::Client;
 use qb_proxy::model_mapper::ModelMapping;
-use qb_station::router::{ClientRouter, RouterRequest, RouterSettings, RoutingMode};
+use qb_station::router::{
+    AggregateHit, ClientRouter, PlanRole, PlanSkip, PlanStep, RoutePlan, RouterRequest,
+    RouterSettings,
+};
 use qb_station::schedule::{Outcome, RouteBreaker};
 use qb_station::turnstate::{self, AccountKind, Injection, Policy, Store};
 use std::collections::{HashMap, VecDeque};
@@ -311,8 +314,15 @@ pub struct RouterState {
     dropped_logs: u64,
     /// 每个软件的路由设置。没设过的按 [`RouterSettings::for_client`]。
     settings: HashMap<Client, RouterSettings>,
-    /// 每个软件的派单顺序：当前那条失败时依次改用谁。当前那条不必在里面。
+    /// 每个软件**自动选线排出的**备用顺序（只在内存里，自动选线关着时是空的）。
+    /// ⛔ 它只排序、不授权：能试哪些线只看当前线路 + 备用名单（[`route_allowed`](Self::route_allowed)）；
+    /// 名单里有、这里没排到的接在后面。关掉自动选线就清空，回到名单顺序。
     queue: HashMap<Client, Vec<String>>,
+    /// 每个软件最近一次聚合模型直达（主页提示用），带着那一发的序号。
+    aggregate_hits: HashMap<Client, (AggregateHit, u64)>,
+    /// 每个软件最近一发模型请求的序号，跟 `aggregate_hits` 里的比，就知道最近一发是不是聚合直达的。
+    request_seq: HashMap<Client, u64>,
+    next_seq: u64,
     /// 「这条线没有这个模型」：`(线路, 模型) → 到什么时候为止跳过`。
     missing_models: HashMap<(String, String), i64>,
     /// 官方 Codex 的 turn-state。
@@ -414,9 +424,7 @@ impl RouterState {
     /// route_id 用固定常量 [`OFFICIAL_CODEX_ROUTE_ID`] —— 一台机器只有一条官方线,
     /// 固定下来才认得出、才好在 [`replace_upstreams`](Self::replace_upstreams) 里保住它。
     pub fn arm_official_codex(&mut self) {
-        let mut settings = self.settings(Client::Codex);
-        settings.routing_mode = RoutingMode::Selected;
-        self.set_settings(settings);
+        // 官方线当前时只许官方线（`route_allowed`），备用名单不必为此清掉。
         self.put_upstream(Upstream {
             route_id: OFFICIAL_CODEX_ROUTE_ID.to_string(),
             base_url: OFFICIAL_CODEX_BASE.to_string(),
@@ -558,7 +566,11 @@ impl RouterState {
     }
 
     /// 换一份路由设置。这个软件那几条线的熔断参数跟着换（不动它们现在的状态）。
+    ///
+    /// 先过一遍 [`RouterSettings::normalized`]：装进来的永远是「存储字段跟名单对得上」的那一份，
+    /// 不管它是从库里读的、界面传的，还是测试里手写的。
     pub fn set_settings(&mut self, settings: RouterSettings) {
+        let settings = settings.normalized();
         let client = settings.client;
         let ids = self.client_routes(client);
         for id in ids {
@@ -569,22 +581,33 @@ impl RouterState {
         self.settings.insert(client, settings);
     }
 
-    /// 所有发包路径共用的线路授权。当前/待用线路的选择不等于许可其它线路。
+    /// 所有发包路径共用的线路许可：**当前线路 + 备用名单**，别的一概不许。
+    ///
+    /// - 当前线路（排队等下一发生效的那条优先）：使用者「设为当前」的，或自动选线从名单里换过去的；
+    /// - 备用名单：只在当前线路还在时才算 —— 当前线路删了，什么都不许（下一发如实回「还没选上游」，
+    ///   不悄悄改用备用线）；当前是官方 Codex 那条线时也不算（官方身份的请求不许落到中转的 Key 上）。
+    ///
     /// 读最新状态，撤销授权或删除线路会阻止尚未开始的重试；已发出的请求不会被撤回。
     pub fn route_allowed(&self, client: Client, route_id: &str) -> bool {
         if !self.upstreams.contains_key(route_id) {
             return false;
         }
-        let selected = self.pending(client).or_else(|| self.current(client));
-        let settings = self.settings(client);
-        match settings.routing_mode {
-            RoutingMode::Selected => selected.as_deref() == Some(route_id),
-            RoutingMode::Pool => {
-                selected.is_some_and(|id| {
-                    self.upstreams.contains_key(&id) && settings.allowed_routes.contains(&id)
-                }) && settings.allowed_routes.iter().any(|id| id == route_id)
-            }
+        let Some(selected) = self.pending(client).or_else(|| self.current(client)) else {
+            return false;
+        };
+        if selected == route_id {
+            return true;
         }
+        let Some(current) = self.upstreams.get(&selected) else {
+            return false;
+        };
+        if matches!(current.auth, UpstreamAuth::OAuthPassthrough) {
+            return false;
+        }
+        self.settings(client)
+            .backups()
+            .iter()
+            .any(|id| id == route_id)
     }
 
     /// 删除提交后立即撤销运行期发送许可，避免等待完整上游重载期间仍用旧拷贝。
@@ -596,6 +619,7 @@ impl RouterState {
             settings.admission.route_limits.remove(route_id);
             settings.aggregate.members.retain(|id| id != route_id);
             settings.aggregate.models.remove(route_id);
+            *settings = settings.clone().normalized();
         }
         for queue in self.queue.values_mut() {
             queue.retain(|id| id != route_id);
@@ -603,6 +627,35 @@ impl RouterState {
         self.breakers.remove(route_id);
         self.missing_models.retain(|(id, _), _| id != route_id);
         self.invalidate_quota();
+    }
+
+    /// 线路改了站点名 / 分组，id 从 `old` 变成 `new`：当前线路、备用名单、聚合名单、自动选线排的顺序
+    /// 里的引用都迁到新 id，**不清空**（还是同一条线，使用者自己改的）。
+    ///
+    /// 调用方随后照常重装上游（`replace_upstreams`）：旧 id 的上游、熔断、限流记忆在那一步清掉 ——
+    /// 改了分组可能就换了 Key 和价，旧的健康状态不该带过去。持锁做完这两步，中间没有请求看得到半成品。
+    pub fn rename_route(&mut self, old: &str, new: &str) {
+        if old == new {
+            return;
+        }
+        self.switch.rename_route(old, new);
+        for settings in self.settings.values_mut() {
+            settings.rename_route(old, new);
+        }
+        for queue in self.queue.values_mut() {
+            if queue.iter().any(|id| id == new) {
+                queue.retain(|id| id != old);
+            } else {
+                for id in queue.iter_mut().filter(|id| *id == old) {
+                    *id = new.to_string();
+                }
+            }
+        }
+        for (hit, _) in self.aggregate_hits.values_mut() {
+            if hit.route_id == old {
+                hit.route_id = new.to_string();
+            }
+        }
     }
 
     /// 这个软件的聚合模型此刻发布哪些 —— 模型发现由本机路由自己答的就是这一份，设置弹窗的预览也读它。
@@ -625,7 +678,7 @@ impl RouterState {
             .collect()
     }
 
-    /// 这个软件的派单顺序（不含没有上游的线）。
+    /// 这个软件自动选线排出的备用顺序（不含没有上游的线）。自动选线关着时是空的。
     pub fn queue(&self, client: Client) -> Vec<String> {
         self.queue
             .get(&client)
@@ -638,13 +691,14 @@ impl RouterState {
             .unwrap_or_default()
     }
 
-    /// 定这个软件的派单顺序。当前那条失败时，按这个顺序依次改用下一条。
+    /// 自动选线排好一轮之后交过来的顺序（关掉自动选线时传空的，回到名单顺序）。只排序、不授权。
     pub fn set_queue(&mut self, client: Client, order: Vec<String>) {
         self.queue.insert(client, order);
     }
 
-    /// 这一发要依次试的线：当前那条打头（就是这一发绑到的那份拷贝），后面跟派单顺序里的其余几条
-    /// （去重、去掉没有上游的、去掉官方线）。自动故障转移关着时只有当前那一条。
+    /// 这一发要依次试的线：当前那条打头（就是这一发绑到的那份拷贝），后面跟备用线路 ——
+    /// 自动选线开着时按它排的顺序，名单里它没排到的接在后面；关着时就是名单顺序。去重、去掉没有上游的、
+    /// 去掉官方线。没有备用线路（严格单线）时只有当前那一条。
     ///
     /// **不按 `max_attempts` 截断**：熔断着、被跳过的线不占次数，次数由重试循环自己数
     /// （cc-switch 同样如此）。
@@ -654,8 +708,8 @@ impl RouterState {
         }
         let mut lines = vec![first.clone()];
         let settings = self.settings(client);
-        if settings.routing_mode == RoutingMode::Pool {
-            // 定时队列只提供排序，不提供授权；明确许可但尚未排序的线接在后面。
+        if settings.has_backups() {
+            // 自动选线的顺序只提供排序，不提供授权；名单里有、它没排到的接在后面。
             for id in self
                 .queue(client)
                 .into_iter()
@@ -678,6 +732,123 @@ impl RouterState {
         }
         self.order_by_load(client, &mut lines);
         lines
+    }
+
+    /// 下一发请求实际会按什么顺序试（[`RoutePlan`]）。**跟转发时是同一套规矩**：同一个 [`candidates`]、
+    /// 同一份熔断器、同一份上游限流 / 额度记忆，界面照它显示「下一次请求：A → B → C」。
+    ///
+    /// - 只有一条线能试（严格单线）时不问熔断（`forward::relay` 同样如此），熔断不算跳过；
+    /// - 上游限流窗口、额度用光算跳过：有备用就去下一条（`forward::relay` 的 C2），没有备用就等或回繁忙；
+    /// - 全都熔断着时仍打当前那一条（不凭空回 503）；
+    /// - 本机自己的并发 / RPM 限额是瞬时的（默认也不开），不在这里。
+    pub fn route_plan(&self, client: Client, now_ms: i64) -> RoutePlan {
+        let settings = self.settings(client);
+        let current = self.pending(client).or_else(|| self.current(client));
+        let mut plan = RoutePlan {
+            current: current.clone(),
+            max_attempts: settings.max_attempts.max(1),
+            strict_single: true,
+            ..Default::default()
+        };
+        let Some(first) = current.as_deref().and_then(|id| self.upstreams.get(id)) else {
+            return plan;
+        };
+        let lines = self.candidates(client, first);
+        if lines.is_empty() {
+            return plan;
+        }
+        let single = lines.len() == 1;
+        plan.strict_single = single;
+        for line in &lines {
+            let breaker = (!single)
+                .then(|| self.breakers.get(&line.route_id))
+                .flatten()
+                .filter(|b| b.tripped(now_ms))
+                .map(|b| {
+                    let why = if b.last_trip() == Some(Outcome::Rejected) {
+                        PlanSkip::BreakerRejected
+                    } else {
+                        PlanSkip::BreakerFailing
+                    };
+                    (why, b.open_until_ms())
+                });
+            let (skip, until_ms) = match self.admission_block(client, &line.route_id, now_ms) {
+                Some((why, until)) => (Some(why), until),
+                None => match breaker {
+                    Some((why, until)) => (Some(why), until),
+                    None => (None, None),
+                },
+            };
+            let mut missing_models: Vec<String> = self
+                .missing_models
+                .iter()
+                .filter(|((id, _), until)| id == &line.route_id && now_ms < **until)
+                .map(|((_, model), _)| model.clone())
+                .collect();
+            missing_models.sort();
+            plan.steps.push(PlanStep {
+                route_id: line.route_id.clone(),
+                role: if line.route_id == first.route_id {
+                    PlanRole::Current
+                } else {
+                    PlanRole::Backup
+                },
+                skip,
+                until_ms,
+                missing_models,
+            });
+        }
+        let mut budget = plan.max_attempts;
+        for step in plan.steps.iter_mut().filter(|s| s.skip.is_none()) {
+            if budget == 0 {
+                step.skip = Some(PlanSkip::OverLimit);
+                continue;
+            }
+            budget -= 1;
+            if plan.first.is_none() {
+                plan.first = Some(step.route_id.clone());
+            }
+        }
+        let all_tripped = plan.steps.iter().all(|s| {
+            matches!(
+                s.skip,
+                Some(PlanSkip::BreakerRejected | PlanSkip::BreakerFailing)
+            )
+        });
+        if plan.first.is_none() && all_tripped {
+            plan.first = Some(first.route_id.clone());
+        }
+        plan
+    }
+
+    /// 一发模型请求过了聚合那一层（`server::handle`）：直达了哪条线（`None` = 没走聚合，照常派单）。
+    pub(crate) fn note_request(&mut self, client: Client, hit: Option<(&str, &str)>, now_ms: i64) {
+        self.next_seq += 1;
+        let seq = self.next_seq;
+        self.request_seq.insert(client, seq);
+        if let Some((route_id, model)) = hit {
+            self.aggregate_hits.insert(
+                client,
+                (
+                    AggregateHit {
+                        route_id: route_id.to_string(),
+                        model: model.to_string(),
+                        at_ms: now_ms,
+                        latest: true,
+                    },
+                    seq,
+                ),
+            );
+        }
+    }
+
+    /// 这个软件最近一次聚合模型直达（只在内存里，面板重启就没了）。`latest` = 它就是最近一发。
+    pub fn aggregate_recent(&self, client: Client) -> Option<AggregateHit> {
+        let (hit, seq) = self.aggregate_hits.get(&client)?;
+        Some(AggregateHit {
+            latest: self.request_seq.get(&client) == Some(seq),
+            ..hit.clone()
+        })
     }
 
     /// 这个软件名下的线路 id（按 `Route::make_id` 的前缀认）。
@@ -1523,6 +1694,193 @@ mod tests {
             Some("r1"),
             "换上游不该立刻生效"
         );
+    }
+
+    fn bare(id: &str) -> Upstream {
+        Upstream {
+            route_id: id.into(),
+            base_url: format!("https://{id}.test/v1"),
+            auth: UpstreamAuth::ApiKey(format!("key-{id}")),
+            ..Default::default()
+        }
+    }
+
+    fn with_backups(s: &mut RouterState, client: Client, backups: &[&str]) {
+        let mut settings = s.settings(client);
+        settings.routing_mode = qb_station::router::RoutingMode::Pool;
+        settings.allowed_routes = backups.iter().map(|id| id.to_string()).collect();
+        s.set_settings(settings);
+    }
+
+    /// 能访问的只有「当前线路 + 备用名单」：「设为当前」换一条不在名单里的线，名单照旧有效；
+    /// 新加的线不自动进名单；当前线路删了，备用也一概不许。
+    #[test]
+    fn only_the_current_line_and_the_backup_list_are_allowed_and_new_lines_never_are() {
+        let cc = Client::ClaudeCode;
+        let mut s = RouterState::default();
+        for id in ["a", "b", "c"] {
+            s.put_upstream(bare(id));
+        }
+        assert!(!s.route_allowed(cc, "a"), "还没设当前线路：什么都不许");
+        with_backups(&mut s, cc, &["a", "b"]);
+        s.set_now(cc, "a");
+        assert!(s.route_allowed(cc, "a") && s.route_allowed(cc, "b"));
+        assert!(!s.route_allowed(cc, "c"));
+        // 设为当前：c。名单一个字都不动，a、b 照旧是备用。
+        s.set_now(cc, "c");
+        assert_eq!(s.settings(cc).backups(), ["a", "b"]);
+        assert!(["a", "b", "c"].iter().all(|id| s.route_allowed(cc, id)));
+        let order: Vec<String> = s
+            .candidates(cc, &bare("c"))
+            .into_iter()
+            .map(|u| u.route_id)
+            .collect();
+        assert_eq!(order, ["c", "a", "b"], "当前线路打头，备用按名单顺序");
+        // 新加一条线：不自动进名单，也不许发。
+        s.put_upstream(bare("d"));
+        assert!(!s.route_allowed(cc, "d"));
+        // 当前线路删了：备用也不许（不悄悄改用备用线）。
+        s.remove_upstream("c");
+        assert!(!s.route_allowed(cc, "a") && !s.route_allowed(cc, "b"));
+        assert_eq!(
+            s.settings(cc).backups(),
+            ["a", "b"],
+            "名单留着，等下一条当前线路"
+        );
+        // 名单清空 = 严格单线：只有当前那一条。
+        s.set_now(cc, "a");
+        with_backups(&mut s, cc, &[]);
+        assert!(s.route_allowed(cc, "a") && !s.route_allowed(cc, "b"));
+        assert_eq!(s.candidates(cc, &bare("a")).len(), 1);
+    }
+
+    /// 官方 Codex 是当前线路时，备用名单不算数：官方身份的请求不许落到中转的 Key 上。
+    #[test]
+    fn backups_never_apply_while_the_official_codex_line_is_current() {
+        let mut s = RouterState::default();
+        s.put_upstream(bare("relay"));
+        with_backups(&mut s, Client::Codex, &["relay"]);
+        s.arm_official_codex();
+        assert!(s.route_allowed(Client::Codex, OFFICIAL_CODEX_ROUTE_ID));
+        assert!(!s.route_allowed(Client::Codex, "relay"));
+        assert_eq!(
+            s.settings(Client::Codex).backups(),
+            ["relay"],
+            "挂上官方线不清使用者的名单"
+        );
+    }
+
+    /// 自动选线排的顺序只排序、不授权：名单外的线排在里面也不试；名单里它没排到的接在后面。
+    #[test]
+    fn the_auto_select_order_sorts_backups_but_never_authorizes_outsiders() {
+        let cc = Client::ClaudeCode;
+        let mut s = RouterState::default();
+        for id in ["a", "b", "c", "x"] {
+            s.put_upstream(bare(id));
+        }
+        with_backups(&mut s, cc, &["a", "b", "c"]);
+        s.set_now(cc, "a");
+        s.set_queue(cc, vec!["x".into(), "c".into()]);
+        let order: Vec<String> = s
+            .candidates(cc, &bare("a"))
+            .into_iter()
+            .map(|u| u.route_id)
+            .collect();
+        assert_eq!(order, ["a", "c", "b"]);
+    }
+
+    /// 下一发的顺序（主页那一行）：跟转发同一套规矩 —— 严格单线不问熔断；熔断、上游限流、额度用光算跳过；
+    /// 超出最多试几条的标出来；全都熔断着时仍打当前那一条。
+    #[test]
+    fn the_route_plan_follows_the_same_rules_as_forwarding() {
+        let cc = Client::ClaudeCode;
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut s = RouterState::default();
+        assert_eq!(s.route_plan(cc, now).first, None, "没设当前线路");
+        for id in ["a", "b", "c"] {
+            s.put_upstream(bare(id));
+        }
+        s.set_now(cc, "a");
+        for _ in 0..10 {
+            s.breaker_mut("a", cc).record(Outcome::ServerError, now);
+        }
+        // 严格单线：熔断不拦发送，也不报成跳过（E6）。
+        let p = s.route_plan(cc, now);
+        assert!(p.strict_single);
+        assert_eq!(p.steps.len(), 1);
+        assert_eq!((p.steps[0].skip, p.first.as_deref()), (None, Some("a")));
+
+        with_backups(&mut s, cc, &["b", "c"]);
+        let mut settings = s.settings(cc);
+        settings.max_attempts = 1;
+        s.set_settings(settings);
+        s.mark_model_missing("b", "m-x", now);
+        let p = s.route_plan(cc, now);
+        assert!(!p.strict_single);
+        let ids: Vec<&str> = p.steps.iter().map(|x| x.route_id.as_str()).collect();
+        assert_eq!(ids, ["a", "b", "c"]);
+        assert_eq!(p.steps[0].role, PlanRole::Current);
+        assert_eq!(p.steps[0].skip, Some(PlanSkip::BreakerFailing));
+        assert!(p.steps[0].until_ms.is_some_and(|t| t > now));
+        assert_eq!(p.steps[1].role, PlanRole::Backup);
+        assert_eq!(p.steps[1].skip, None);
+        assert_eq!(p.steps[1].missing_models, ["m-x"]);
+        assert_eq!(p.steps[2].skip, Some(PlanSkip::OverLimit), "一发只试 1 条");
+        assert_eq!(p.first.as_deref(), Some("b"));
+
+        // Key 失效 / 余额不足：确定性故障那一档；上游限流窗口优先报。
+        s.breaker_mut("b", cc).record(Outcome::Rejected, now);
+        s.remember_rate_limit("c", Some(60_000));
+        let p = s.route_plan(cc, now);
+        assert_eq!(p.steps[1].skip, Some(PlanSkip::BreakerRejected));
+        assert_eq!(p.steps[2].skip, Some(PlanSkip::RateLimited));
+        assert_eq!(p.first, None, "能试的都被挡了");
+
+        // 全都熔断着：仍打当前那一条，不凭空回 503。
+        for _ in 0..10 {
+            s.breaker_mut("c", cc).record(Outcome::ServerError, now);
+        }
+        s.admissions.remove("c");
+        let p = s.route_plan(cc, now);
+        assert_eq!(p.first.as_deref(), Some("a"));
+    }
+
+    /// 线路改了站点名 / 分组：运行期的当前线路、备用名单、自动选线排的顺序都跟着新 id 走；旧 id 的上游重装时清掉。
+    #[test]
+    fn renaming_a_route_at_runtime_keeps_it_current_and_in_the_backups() {
+        let cc = Client::ClaudeCode;
+        let mut s = RouterState::default();
+        for id in ["a", "b"] {
+            s.put_upstream(bare(id));
+        }
+        with_backups(&mut s, cc, &["a", "b"]);
+        s.set_now(cc, "a");
+        s.set_queue(cc, vec!["b".into(), "a".into()]);
+        let switches = s.switches();
+        s.rename_route("a", "a2");
+        s.replace_upstreams(vec![bare("a2"), bare("b")]);
+        assert_eq!(s.current(cc).as_deref(), Some("a2"));
+        assert_eq!(s.settings(cc).backups(), ["a2", "b"]);
+        assert_eq!(s.queue(cc), ["b", "a2"]);
+        assert!(s.route_allowed(cc, "a2") && !s.route_allowed(cc, "a"));
+        assert_eq!(s.switches(), switches, "改名不算换手");
+    }
+
+    #[test]
+    fn the_latest_request_says_whether_it_went_through_an_aggregate_model() {
+        let cc = Client::ClaudeCode;
+        let mut s = RouterState::default();
+        assert!(s.aggregate_recent(cc).is_none());
+        s.note_request(cc, Some(("b", "qbg-claude-x--m")), 10);
+        let hit = s.aggregate_recent(cc).unwrap();
+        assert_eq!(
+            (hit.route_id.as_str(), hit.at_ms, hit.latest),
+            ("b", 10, true)
+        );
+        s.note_request(Client::Codex, None, 11);
+        assert!(s.aggregate_recent(cc).unwrap().latest, "别的软件的请求不算");
+        s.note_request(cc, None, 12);
+        assert!(!s.aggregate_recent(cc).unwrap().latest);
     }
 
     #[test]

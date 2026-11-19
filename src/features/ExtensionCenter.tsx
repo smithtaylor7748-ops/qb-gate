@@ -33,6 +33,8 @@ import SkillsPanel from "./SkillsPanel";
 import PromptsPanel from "./PromptsPanel";
 import ToolFilesPanel from "./ToolFilesPanel";
 import SessionsPanel from "./SessionsPanel";
+import StationProjects from "./station/StationProjects";
+import { STATION_CLIENTS } from "./station/shared";
 
 const KIND_ICON = {
   application: Blocks,
@@ -49,6 +51,48 @@ const KIND_ICON = {
  */
 const SURFACED = new Set(["codex-egress", "antigravity-ui"]);
 
+/** 项目只对这几个软件有（桌面端没有 MCP / Skills / 提示词，所以没有项目）。 */
+const PROJECT_CLIENTS = STATION_CLIENTS.filter(
+  (c) => c.id !== "claude-desktop",
+);
+
+/**
+ * 「项目」入口（2026-11-15 从中转站页头挪过来，B5 / G1）。
+ *
+ * 项目只换一个软件中转环境里勾着的 MCP / Skills、用的提示词 —— 跟这一页管的是同一样东西，
+ * 放在中转站页头会让人以为它跟线路有关（2026-11-14 起它不碰线路，R1）。官方账户和槽位一概不动。
+ */
+function ProjectsEntry({ onApplied }: { onApplied: () => void }) {
+  const [client, setClient] = useSession<Client>(
+    "extensions.project.client",
+    "claude-code",
+  );
+  const picked =
+    PROJECT_CLIENTS.find((c) => c.id === client) ?? PROJECT_CLIENTS[0];
+  return (
+    <div className="qb-ext-projects">
+      <select
+        aria-label="项目对哪个软件"
+        title="项目按软件各记各的：选一个软件，再打开它的项目"
+        value={picked.id}
+        onChange={(e) => setClient(e.target.value as Client)}
+      >
+        {PROJECT_CLIENTS.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+      <StationProjects
+        key={picked.id}
+        client={picked.id}
+        clientName={picked.name}
+        onApplied={onApplied}
+      />
+    </div>
+  );
+}
+
 export default function ExtensionCenter() {
   const { id } = useParams();
   const catalog = useCatalog();
@@ -63,6 +107,8 @@ export default function ExtensionCenter() {
     [],
   );
   const selected = catalog.data?.find((m) => m.id === id);
+  // 换了项目，MCP / Skills / 提示词三个分页要重读（项目换的就是它们）。
+  const [projectBump, setProjectBump] = useState(0);
   // 精选目录里默认只露出三个应用。两个 MCP、两个 Skill 是「装了也没人开」的陈列品，
   // 装过的照常显示（下面的 `installed` 放行）—— 谁要是已经装过某一条，
   // 升级不该让它从界面上凭空消失，所以这几条留在 `extension-catalog.json` 里、只在前端收起。
@@ -106,6 +152,7 @@ export default function ExtensionCenter() {
           <h1>扩展中心</h1>
           <p>发现适合你的能力，再装进需要它的环境。</p>
         </div>
+        <ProjectsEntry onApplied={() => setProjectBump((n) => n + 1)} />
       </header>
       <div className="qb-tabs" role="tablist">
         {[
@@ -132,11 +179,11 @@ export default function ExtensionCenter() {
         ))}
       </div>
       {tab === "mcp" ? (
-        <McpPanel />
+        <McpPanel key={projectBump} />
       ) : tab === "skills" ? (
-        <SkillsPanel />
+        <SkillsPanel key={projectBump} />
       ) : tab === "prompts" ? (
-        <PromptsPanel />
+        <PromptsPanel key={projectBump} />
       ) : tab === "toolfiles" ? (
         <ToolFilesPanel />
       ) : tab === "sessions" ? (

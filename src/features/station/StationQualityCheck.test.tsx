@@ -85,36 +85,14 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
 });
-it("compares only matching conditions and stores scores without response content", async () => {
+it("the old five-question manual import is gone; only the legacy restore remains, and only when needed", async () => {
   render(<StationQualityCheck route="relay-a" />);
   await waitFor(() => expect(status).toHaveBeenCalled());
-  fireEvent.click(screen.getByText("高级：原五题手动导入与历史记录"));
-  fireEvent.change(screen.getByLabelText("测试模型"), {
-    target: { value: "chosen-model" },
-  });
-  fireEvent.change(screen.getByLabelText("测试结果"), {
-    target: {
-      value: JSON.stringify({
-        q1: 25,
-        q2: "B",
-        q3: 64,
-        q4: -10,
-        q5: 4,
-        privateNote: "DO_NOT_SAVE_BODY",
-      }),
-    },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "检查并记录" }));
-  expect(screen.getByText(/相同条件已记录 1 次/)).toBeTruthy();
-  expect(localStorage.getItem("qb-quality-check-v1")).not.toContain(
-    "DO_NOT_SAVE_BODY",
-  );
-  fireEvent.change(screen.getByLabelText("测试模型"), {
-    target: { value: "another-model" },
-  });
-  expect(screen.getByText(/相同条件已记录 0 次/)).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "清除测试记录" }));
-  expect(localStorage.getItem("qb-quality-check-v1")).toBeNull();
+  expect(screen.queryByText(/原五题手动导入/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "清除测试记录" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "恢复旧 turn-state 配置" }),
+  ).toBeNull();
 });
 
 it("shows actionable backend errors without persisting their text", async () => {

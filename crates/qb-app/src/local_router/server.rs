@@ -204,6 +204,12 @@ async fn handle(
         aggregate::Decision::Answer(response) => return Ok(response),
         aggregate::Decision::Pinned(line) => (line, forward::Mode::Pinned),
     };
+    // 主页那条「聚合模型生效中」的提示：记下这一发是不是聚合直达的（直达了哪条线、客户端写的哪个模型）。
+    if let Ok(mut s) = state.lock() {
+        let hit = (mode == forward::Mode::Pinned)
+            .then_some((upstream.route_id.as_str(), record.log.model.as_str()));
+        s.note_request(caller, hit, now_ms);
+    }
 
     // 官方 Codex turn-state 模式:保留客户端自带的 OAuth,不剥不换、不进重试。见 `UpstreamAuth`。
     // 聚合选中的线永远是中转线路（`aggregate::relayable`），到不了这一支。

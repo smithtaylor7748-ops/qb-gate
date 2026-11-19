@@ -589,7 +589,7 @@ export default function StationQualityCheck({
         </select>
       </label>
       <p className="qb-st-note">
-        模型与推理强度必须由所选上游支持，不支持会记录为请求失败。请求不带已有聊天历史，期间不自动切换线路。
+        模型与推理强度必须由所选线路或账户支持，不支持会记录为请求失败。请求不带已有聊天历史，期间不自动切换线路。
       </p>
       <h4 className="qb-st-sect">选择检测方法</h4>
       <label className="qb-st-check">
@@ -876,10 +876,8 @@ export default function StationQualityCheck({
           </table>
         </div>
       )}
-      <details>
-        <summary>高级：原五题手动导入与历史记录</summary>
-        <StationQualityLegacy route={route} />
-      </details>
+      {/* 原来这里折着「原五题手动导入与历史记录」，2026-11-15 删了（E4）；只留旧 turn-state 接管的恢复入口，检测到才出现。 */}
+      <StationQualityLegacy />
     </div>
   );
 }

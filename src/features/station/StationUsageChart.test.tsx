@@ -88,10 +88,52 @@ it("combines a long history without dropping counts or compressing missing dates
   });
   expect(size).toBe(7);
   expect(bars).toHaveLength(58);
-  expect(bars.reduce((sum, b) => sum + b.value, 0)).toBe(2204);
+  expect(bars.reduce((sum, b) => sum + (b.value ?? 0), 0)).toBe(2204);
   expect(bars[0].key).toBe(String(start));
   expect(bars[1].value).toBe(0);
   expect(bars[bars.length - 1].value).toBe(3);
+});
+
+it("token and price bars use the KPI totals and never draw a missing bucket as zero", () => {
+  const known: RelayUsageTotals = {
+    requests: 3,
+    failed: 0,
+    input_tokens: 100,
+    output_tokens: 20,
+    cache_read_tokens: null,
+    cache_write_tokens: 5,
+    station_cost: 0.5,
+    official_cost: 2,
+  };
+  const data: RelayUsageOverview = {
+    ...overview,
+    totals: known,
+    buckets: [
+      { ...overview.buckets[0], totals: known },
+      // 有请求、一类 token、一分钱都没记到：不画柱，提示框写「没记到」。
+      { ...overview.buckets[1], totals: totals(2) },
+    ],
+  };
+  const tokens = requestBars(data, "tokens").bars;
+  expect(tokens[0].value).toBe(125);
+  expect(tokens[0].rows).toContainEqual(["缓存读", "没记到"]);
+  expect(tokens[1].value).toBeNull();
+  expect(tokens[1].missing).toBe("没记到");
+  const cost = requestBars(data, "cost").bars;
+  expect(cost[0].value).toBe(0.5);
+  expect(cost[1].value).toBeNull();
+  render(
+    <StationUsageChart
+      data={data}
+      error={null}
+      metric="tokens"
+      onMetric={() => {}}
+    />,
+  );
+  expect(screen.getByRole("combobox", { name: "柱状图" })).toBeTruthy();
+  expect(
+    screen.getByText(/本机完整记录 · 125 Token · 每小时一柱/),
+  ).toBeTruthy();
 });
 
 function Harness({ client }: { client: Client }) {

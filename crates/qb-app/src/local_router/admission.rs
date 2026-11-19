@@ -1,9 +1,24 @@
 //! 本机准入：同步锁内领取并发名额与 RPM，异步有限等待，名额随真实响应流释放。
 //! 未知额度不猜；只读已经查询的明确可用性，不在请求路径查数据库或联网。
+//!
+//! # 拒绝分两类（2026-11-14）
+//!
+//! | 拒绝原因 | 是谁的事 | 有备用线路时 |
+//! |---|---|---|
+//! | `retry-after`（上游 429 之后它给的等待窗口）、`quota-exhausted`（额度证据说用光了） | **这条线**的故障 | 按故障备用去下一条，跟容量分流开关无关；不等 |
+//! | `rpm`、`concurrency`（本机自己的限额，默认关）、`queue-full`、`wait-timeout` | 本机的容量 | 只有开了 [`overflow_to_pool`](qb_station::router::AdmissionSettings::overflow_to_pool) 才分到备用，否则有界等待或回繁忙 |
+//!
+//! 原来两类都看分流开关：上游 429 的那一发换了线，之后 Retry-After 窗口里的几发却在本机直接被拒、不换线。
+//! 没有备用线路时两类都一样：等（设了等候的话）或回繁忙。
 
 use super::*;
 use qb_station::router::{PoolStrategy, QuotaAdmissionState, RouteAdmissionView, RouteLimits};
 use std::time::{Duration, Instant};
+
+/// 这个拒绝原因是不是线路自己的故障（有备用就去下一条）。见模块头那张表。
+pub(super) fn is_line_fault(reason: &str) -> bool {
+    matches!(reason, "retry-after" | "quota-exhausted")
+}
 
 const QUOTA_FRESH_MS: i64 = 300_000;
 const MAX_RETRY_MS: i64 = 3_600_000;
@@ -169,7 +184,8 @@ impl RouterState {
         Ok(())
     }
 
-    /// 同步发包入口。后台探测不排队，和真实流量共用容量/RPM；手动探测可显式指定非当前线。
+    /// 同步发包入口。后台探测不排队，和真实流量共用容量/RPM。`require_permission` = 只许测当前线路和备用线路
+    /// （手动「重新检测」和自动选线的测活都要；自动选线的另外由调用方核「它还开着」）。
     pub fn admit_probe(
         state: &Arc<Mutex<Self>>,
         client: Client,
@@ -198,9 +214,6 @@ impl RouterState {
                 && live.model_map == source.model_map
                 && live.model_exact == source.model_exact
         }) {
-            return None;
-        }
-        if require_permission && s.settings(client).routing_mode != RoutingMode::Pool {
             return None;
         }
         s.try_admit(
@@ -267,9 +280,35 @@ impl RouterState {
             .collect()
     }
 
+    /// 这条线此刻会不会因为「线路自己的故障」被跳过（上游限流窗口、额度用光），到什么时候。
+    /// 给 [`RouterState::route_plan`] 用，跟 [`try_admit`](Self::try_admit) 看的是同一份记忆。
+    pub(super) fn admission_block(
+        &self,
+        client: Client,
+        route: &str,
+        now: i64,
+    ) -> Option<(qb_station::router::PlanSkip, Option<i64>)> {
+        use qb_station::router::PlanSkip;
+        let a = self.admissions.get(route)?;
+        let limits = self
+            .settings(client)
+            .admission
+            .route_limits
+            .get(route)
+            .cloned()
+            .unwrap_or_default();
+        if a.quota_state(&limits, now) == QuotaAdmissionState::Exhausted {
+            let until = a.quota.map(|(at, _)| at + QUOTA_FRESH_MS);
+            return Some((PlanSkip::QuotaExhausted, until));
+        }
+        a.retry_at
+            .filter(|at| *at > now)
+            .map(|at| (PlanSkip::RateLimited, Some(at)))
+    }
+
     pub(super) fn order_by_load(&self, client: Client, lines: &mut [Upstream]) {
         let settings = self.settings(client);
-        if settings.routing_mode != RoutingMode::Pool
+        if !settings.has_backups()
             || !settings.admission.overflow_to_pool
             || settings.pool_strategy != PoolStrategy::LeastLoaded
         {
@@ -338,6 +377,7 @@ impl RouterState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use qb_station::router::RoutingMode;
 
     async fn acquire(
         state: &Arc<Mutex<RouterState>>,
@@ -727,7 +767,7 @@ pub(super) async fn pause_pool(
             .lock()
             .map_err(|_| Rejection::new("permission", None))?;
         if !s.route_allowed(client, anchor)
-            || s.settings(client).routing_mode != RoutingMode::Pool
+            || !s.settings(client).has_backups()
             || !s.settings(client).admission.overflow_to_pool
         {
             return Err(Rejection::new("permission", None));
@@ -777,7 +817,7 @@ pub(super) async fn pause_pool(
         .lock()
         .map_err(|_| Rejection::new("permission", None))?;
     if !s.route_allowed(client, anchor)
-        || s.settings(client).routing_mode != RoutingMode::Pool
+        || !s.settings(client).has_backups()
         || !s.settings(client).admission.overflow_to_pool
     {
         return Err(Rejection::new("permission", None));
@@ -804,6 +844,8 @@ pub(super) struct WaitPolicy<'a> {
     pub requires_overflow: bool,
     pub pool_waiter: Option<&'a Waiting>,
     pub strict_source: bool,
+    /// 这一发后面还有备用线路可试：线路自己的故障（[`is_line_fault`]）不等，立刻交回去换下一条。
+    pub skip_line_faults: bool,
 }
 
 pub(super) async fn acquire_from(
@@ -880,7 +922,9 @@ pub(super) async fn acquire_from(
                     });
                 }
                 Err(rejection) => {
-                    if matches!(rejection.reason, "permission" | "quota-exhausted") {
+                    if matches!(rejection.reason, "permission" | "quota-exhausted")
+                        || (wait.skip_line_faults && is_line_fault(rejection.reason))
+                    {
                         return Err(rejection);
                     }
                     let settings = s.settings(client).admission;

@@ -102,7 +102,7 @@ it("never describes a local permission refusal as an upstream circuit breaker", 
       credentials={[]}
     />,
   );
-  await screen.findAllByText("本机拒绝 · 超出允许范围");
+  await screen.findAllByText("本机拒绝 · 不是当前线路或备用线路");
   expect(screen.queryByText("403 · 熔断")).toBeNull();
   expect(screen.getAllByText("未发往上游")).toHaveLength(1);
 });
@@ -118,7 +118,9 @@ it("preserves an attempted route in usage history and marks only empty attempts 
   expect(within(blocked).getByText("未发往上游")).toBeTruthy();
   expect(within(attempted).queryByText("未发往上游")).toBeNull();
   expect(within(attempted).getByText(/free/)).toBeTruthy();
-  expect(screen.getAllByText("本机拒绝 · 超出允许范围")).toHaveLength(2);
+  expect(screen.getAllByText("本机拒绝 · 不是当前线路或备用线路")).toHaveLength(
+    2,
+  );
 });
 
 it("does not describe a local admission refusal as upstream rate limiting", async () => {

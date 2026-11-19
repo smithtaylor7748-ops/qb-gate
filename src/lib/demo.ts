@@ -20,12 +20,15 @@ import type { ClaudeZhOutcome } from "./generated/ClaudeZhOutcome";
 import type { CodexLocaleOutcome } from "./generated/CodexLocaleOutcome";
 import type { CodexLocaleStatus } from "./generated/CodexLocaleStatus";
 import type { BreakerView } from "./generated/BreakerView";
-import type { DispatchPin } from "./generated/DispatchPin";
 import type { DispatchRow } from "./generated/DispatchRow";
 import type { DispatchTier } from "./generated/DispatchTier";
 import type { LineLiveness } from "./generated/LineLiveness";
+import type { PaidProbePlan } from "./generated/PaidProbePlan";
+import type { PlanStep } from "./generated/PlanStep";
 import type { ProbeAttempt } from "./generated/ProbeAttempt";
+import type { ProbeNowResult } from "./generated/ProbeNowResult";
 import type { ProbeSettings } from "./generated/ProbeSettings";
+import type { SelectionView } from "./generated/SelectionView";
 import type { SchedulerAction } from "./generated/SchedulerAction";
 import type { RouterRequest } from "./generated/RouterRequest";
 import type { ListenScope } from "./generated/ListenScope";
@@ -1848,6 +1851,9 @@ const R_CHEAP = rid("claude-code", "moxi", "DS 低价组");
 const R_DESK = rid("claude-desktop", "example", "桌面端专用组");
 const R_DESK2 = rid("claude-desktop", "moxi", "DS 低价组");
 const R_CODEX = rid("codex", "moxi", "GPT 标准组");
+// 2026-11-15：Codex 底下第二条线，当它的备用线路 —— 好让截图里看得见「当前线路暂停中，这期间改用备用线路」
+// 的黄色提示行、「比当前线路贵」的标记（它标称 ×1.6，比当前那条实测的 ×1.16 贵）。
+const R_CODEX2 = rid("codex", "example", "GPT 备用组");
 
 const stationRoutes = [
   {
@@ -2029,6 +2035,33 @@ const stationRoutes = [
     output_markup: null,
     rates_model: "gpt-5",
   },
+  {
+    // Codex 的备用线路（演示：当前线路熔断着时这一条接手）。没检验过：倍率写「标称 · 未核实」。
+    id: R_CODEX2,
+    client: "codex",
+    station_id: "example",
+    group: "GPT 备用组",
+    credential_id: "cred-1",
+    nominal_rate: 1.6,
+    latest_mult: null,
+    last_audit_ms: null,
+    protocols: { anthropic: null, openai_chat: true, openai_responses: true },
+    rates: {
+      model_ratio: null,
+      completion_ratio: null,
+      cache_ratio: null,
+      create_cache_ratio: null,
+      group_ratio: 1.6,
+      peak_rate: null,
+      per_request_price: null,
+      input_price: null,
+      cache_read_price: null,
+      cache_write_price: null,
+      output_price: null,
+    },
+    output_markup: null,
+    rates_model: null,
+  },
 ];
 
 /** 演示里的路由状态。按软件各记一份，跟真后端的 `ClientRouter` 对齐。 */
@@ -2042,9 +2075,13 @@ let stationTurnstateTakeover: string | null = null;
 let stationTurnstateEnabled = false;
 let stationTurnstateTeam = false;
 const stationCurrent: Record<string, string> = {
-  // 只有 Claude Code 选了上游 —— 另外两个显示「还没选上游」，
-  // 那是刚装完面板的真实样子，也让「三个软件各走各的」一眼看得出来。
+  // Claude Code 是最常见的样子：有当前线路、没有备用线路（严格单线）。
   "claude-code": R_MAIN,
+  // 2026-11-15 截图用：桌面端有当前线路，最近一发是客户端选了聚合模型、直达另一条线（黄色提示行）；
+  // Codex 的当前线路熔断着、正在用备用线路（黄色提示行 + 「重试主线」）。
+  // Gemini CLI、Grok Build 没有线路，那是刚装完面板的样子。
+  "claude-desktop": R_DESK,
+  codex: R_CODEX,
 };
 
 /**
@@ -2061,7 +2098,8 @@ const routerSettingsOf = (client: string): RouterSettings => {
     pool_strategy: "priority",
     session_recovery: { strip_item_ids: false, filter_encrypted_content: false },
     admission: { overflow_to_pool: false, route_limits: {}, max_wait_ms: 0, max_waiters: 0 },
-    max_attempts: codex ? 3 : 6,
+    // 2026-11-14 起两个软件都是 2（当前线路 + 一条备用），跟 `RouterSettings::for_client` 一样。
+    max_attempts: 2,
     first_byte_timeout_secs: codex ? 60 : 90,
     idle_timeout_secs: codex ? 300 : 180,
     non_streaming_timeout_secs: 600,
@@ -2081,7 +2119,14 @@ const routerSettingsOf = (client: string): RouterSettings => {
     aggregate: { enabled: false, members: [], models: {}, keys: {} },
   };
 };
-const stationRouterSettings: Record<string, RouterSettings> = {};
+const stationRouterSettings: Record<string, RouterSettings> = {
+  // Codex：GPT 备用组是它的备用线路（见 `stationCurrent` 那一段）。
+  codex: {
+    ...routerSettingsOf("codex"),
+    routing_mode: "pool",
+    allowed_routes: [R_CODEX2],
+  },
+};
 /** 站点的备用地址（阶段 4），按站点各记一份。演示里 example 站自带一个备用地址。 */
 const stationEndpoints: Record<string, StationEndpoints> = {
   example: {
@@ -2131,8 +2176,6 @@ let demoProjects: Project[] = [
     name: "日常开发",
     slots: {
       "claude-code": {
-        route: R_MAIN,
-        queue: [R_CHEAP],
         mcp: [],
         skills: [],
         prompt: "prompt-demo",
@@ -2150,17 +2193,18 @@ const demoProjectsView = (): ProjectsView => ({
     .map((p) => ({ ...p, slots: { ...p.slots } })),
   current: { ...demoProjectCurrent },
 });
-/** 这个软件现在的样子（演示里只有线路和派单顺序是真有状态的）。 */
+/** 这个软件中转环境现在的样子。项目不碰线路（2026-11-14），桌面端没有项目。 */
 const demoProjectSnapshot = (who: string) => ({
-  route: stationCurrent[who] ?? null,
-  queue: [...(stationDispatch[who] ?? [])],
-  mcp: who === "claude-desktop" ? null : [],
-  skills: who === "claude-desktop" ? null : [],
-  prompt:
-    who === "claude-desktop"
-      ? null
-      : (demoPromptActive[`${who}:relay`] ?? null),
+  mcp: [],
+  skills: [],
+  prompt: demoPromptActive[`${who}:relay`] ?? null,
 });
+const demoNoProjects = (who: string) => {
+  if (who === "claude-desktop")
+    throw new Error(
+      "桌面端没有项目：项目只管中转环境里的 MCP / Skills / 提示词，桌面端没有这几样（换线路请用中转站页的「设为当前」）",
+    );
+};
 /** 导入链接（阶段 5 · X4）的演示数据：粘贴什么都当成这一条站点链接（Key 只有打码的，跟真后端一样）。 */
 const DEMO_DEEPLINK_PROVIDER: DeepLinkView = {
   kind: "provider",
@@ -2428,15 +2472,19 @@ const stationNetwork: RouterNetworkView = {
   outbound_proxy: null,
   port: 15721,
 };
-/** 派单顺序。Claude Code 排了一条替补，好让弹窗里那张表两种状态都看得见。 */
-const stationDispatch: Record<string, string[]> = {
-  "claude-code": [R_CHEAP],
-};
 /**
  * 熔断器不在「正常」的那几条。演示里让 Claude Code 的高倍组熔断着（余额不足关一小时），
  * 好让「熔断中 · 还要几分钟」和「立刻重测」在截图里看得见。
  */
 const stationBreakers: Record<string, BreakerView[]> = {
+  // Codex 的当前线路余额不足、熔断着（一小时）：主页那一行变黄、写「这期间改用备用线路」并给「重试主线」。
+  codex: [
+    {
+      route_id: R_CODEX,
+      state: "open",
+      open_until_ms: BigInt(Date.now() + 52 * 60_000),
+    },
+  ],
   "claude-code": [
     {
       route_id: R_CLAUDE,
@@ -2463,65 +2511,52 @@ const stationProbeSettings: ProbeSettings = {
   paid_min_interval_min: 10,
   paid_max_interval_min: 120,
 };
-/** 钉住的那条（按软件）。调度开着时手动选的线钉 4 小时 —— 跟真后端 `PIN_MS` 一样。 */
-const stationPins: Record<string, DispatchPin> = {};
-const DEMO_PIN_MS = 4 * 3600_000;
 /** 每条线上次测活是什么时候（「立刻测」会刷新它）。没有 = 演示里按「十分钟前」算。 */
 const stationProbedAt: Record<string, number> = {};
 /** 今天花钱测活花了多少元（演示里只有开了花钱测活再点「立刻测」才会涨）。 */
 let stationProbeSpent: [number, number] = [0, 0];
-/** 动作日志，新的在前。 */
+/** 动作日志，新的在前。演示里没有调度在跑，所以一直是空的（真后端只给调度换线、改顺序、紧急测活记动作）。 */
 const stationActions: SchedulerAction[] = [];
 
-function demoAction(
-  client: string,
-  kind: string,
-  routeId: string | null,
-  note: string,
-) {
-  stationActions.unshift({
-    id: `demo-action-${stationActions.length + 1}`,
-    at_ms: BigInt(Date.now()),
-    client,
-    kind,
-    route_id: routeId,
-    note,
-  });
+/** 这个软件的备用线路（按排的顺序）。严格单线时是空的 —— 跟 `RouterSettings::backups` 一样。 */
+function demoBackupsOf(who: string): string[] {
+  const policy = stationRouterSettings[who] ?? routerSettingsOf(who);
+  return policy.routing_mode === "pool" ? [...policy.allowed_routes] : [];
+}
+
+/** 当前线路（排队那条优先）+ 备用名单，去重 —— 跟 `station_ops::auto_select_pool` 一样。 */
+function demoPoolOf(who: string): string[] {
+  const current = stationPending[who] ?? stationCurrent[who];
+  const pool = current ? [current] : [];
+  for (const id of demoBackupsOf(who)) if (!pool.includes(id)) pool.push(id);
+  return pool;
 }
 
 /**
- * 演示里的派单：跟真后端同一套分档（钉住 → 合格 → 兜底 → 故障），熔断着的那条排最后、
- * 照样留在队列里（永不全关）。调度关着时队列是手动排的那份，档位那几列是空的。
+ * 演示里的派单：跟真后端同一套分档（合格 → 兜底 → 故障），熔断着的那条排最后、
+ * 照样留在队列里（永不全关）。只排当前线路 + 备用名单；自动选线关着时顺序就是备用名单，档位那几列是空的。
  *
  * 低价组演示成「没过底线、兜底」：那一档在截图里要看得见，而它恰好是成功率最差的那条。
  */
 function demoDispatchOf(who: string) {
-  const policy = stationRouterSettings[who] ?? routerSettingsOf(who);
-  const routes = stationRoutes.filter((r) => r.client === who && policy.routing_mode === "pool" && policy.allowed_routes.includes(r.id));
+  const pool = demoPoolOf(who);
+  const routes = stationRoutes.filter(
+    (r) => r.client === who && pool.includes(r.id),
+  );
   const open = new Set(
     (stationBreakers[who] ?? [])
       .filter((b) => b.state === "open")
       .map((b) => b.route_id),
   );
   const sched = stationSchedules.find((x) => x.client === who);
-  const held = stationPins[who];
-  const pin = held && Number(held.until_ms) > Date.now() ? held : null;
   const tierOf = (id: string): DispatchTier =>
-    open.has(id)
-      ? "faulty"
-      : pin?.route_id === id
-        ? "pinned"
-        : id === R_CHEAP
-          ? "fallback"
-          : "qualified";
+    open.has(id) ? "faulty" : id === R_CHEAP ? "fallback" : "qualified";
   const rank: Record<DispatchTier, number> = {
-    pinned: 0,
-    qualified: 1,
-    fallback: 2,
-    faulty: 3,
+    qualified: 0,
+    fallback: 1,
+    faulty: 2,
   };
   const reason: Record<DispatchTier, string> = {
-    pinned: "你手动选的，钉住",
     qualified: "合格",
     fallback: "稳没过线，兜底",
     faulty: "熔断中",
@@ -2530,12 +2565,11 @@ function demoDispatchOf(who: string) {
     (a, b) =>
       rank[tierOf(a.id)] - rank[tierOf(b.id)] || a.id.localeCompare(b.id),
   );
-  if (!sched?.enabled || policy.routing_mode !== "pool") {
+  if (!sched?.enabled || demoBackupsOf(who).length === 0) {
     return {
-      order: policy.routing_mode === "pool" ? [...(stationDispatch[who] ?? policy.allowed_routes)].filter((id) => policy.allowed_routes.includes(id)) : [],
+      order: pool,
       rows: [] as DispatchRow[],
       alerts: [] as string[],
-      pin,
     };
   }
   const rows: DispatchRow[] = sorted.map((r, i) => ({
@@ -2549,9 +2583,9 @@ function demoDispatchOf(who: string) {
   }));
   const alerts =
     routes.length === 1
-      ? ["只有 1 条线，挂了没有可以换的 —— 再加一条线才谈得上调度"]
+      ? ["只有 1 条线，没有备用：它一坏这个软件就停。多勾几条备用线路，自动选线才有得挑"]
       : [];
-  return { order: sorted.map((r) => r.id), rows, alerts, pin };
+  return { order: sorted.map((r) => r.id), rows, alerts };
 }
 
 function demoQueueOf(who: string) {
@@ -2559,14 +2593,103 @@ function demoQueueOf(who: string) {
   return {
     client: who,
     current: stationCurrent[who] ?? null,
-    order: d.order,
     updated_ms: BigInt(Date.now()),
-    pin: d.pin,
     memory: { challenger: null, streak: 0, signature: null },
     rows: d.rows,
     alerts: d.alerts,
   };
 }
+
+/**
+ * 演示里的选线全貌（`RouterStatus.selection`）：跟真后端同一套规矩 —— 当前线路打头，后面是备用；
+ * 只有一条能试时不问熔断（严格单线）；熔断着的跳过，全都熔断着时仍打当前那一条；超出最多试几条的标出来。
+ */
+function demoSelectionOf(who: string): SelectionView {
+  const policy = stationRouterSettings[who] ?? routerSettingsOf(who);
+  const current = stationPending[who] ?? stationCurrent[who] ?? null;
+  const backups = demoBackupsOf(who);
+  const open = new Map(
+    (stationBreakers[who] ?? [])
+      .filter((b) => b.state === "open")
+      .map((b) => [b.route_id, b.open_until_ms] as const),
+  );
+  const order = current ? demoPoolOf(who) : [];
+  const single = order.length <= 1;
+  const steps: PlanStep[] = order.map((id) => ({
+    route_id: id,
+    role: id === current ? "current" : "backup",
+    skip: !single && open.has(id) ? "breaker-rejected" : null,
+    until_ms: !single ? (open.get(id) ?? null) : null,
+    missing_models: [],
+  }));
+  let budget = policy.max_attempts;
+  let first: string | null = null;
+  for (const step of steps) {
+    if (step.skip) continue;
+    if (budget === 0) {
+      step.skip = "over-limit";
+      continue;
+    }
+    budget -= 1;
+    first ??= step.route_id;
+  }
+  if (
+    first == null &&
+    current &&
+    steps.length > 0 &&
+    steps.every((s) => s.skip === "breaker-rejected")
+  )
+    first = current;
+  const head = steps.find((s) => s.role === "current");
+  return {
+    current,
+    backups,
+    auto_select: Boolean(stationSchedules.find((x) => x.client === who)?.enabled),
+    plan: {
+      current,
+      steps,
+      first,
+      max_attempts: policy.max_attempts,
+      strict_single: single,
+    },
+    paused:
+      head?.skip && head.skip !== "over-limit"
+        ? {
+            route_id: head.route_id,
+            reason: head.skip,
+            until_ms: head.until_ms,
+            using: first !== head.route_id ? first : null,
+          }
+        : null,
+    aggregate: demoAggregateHit[who] ?? null,
+    pricier_backups: backups.filter((id) => {
+      // 跟真后端一样按折过充值比例的真实倍率比；比不出来的不算。演示里用「标称 × 实测倍数」。
+      const real = (rid: string | null) => {
+        const r = stationRoutes.find((x) => x.id === rid);
+        return r?.nominal_rate == null
+          ? null
+          : r.nominal_rate * (r.latest_mult ?? 1);
+      };
+      const mine = real(current);
+      const other = real(id);
+      return id !== current && mine != null && other != null && other > mine;
+    }),
+    problem: null,
+  };
+}
+
+/**
+ * 最近一次聚合模型直达（`RouterStatus.selection.aggregate`）。演示里桌面端最近一发是客户端选了聚合模型、
+ * 直达「DS 低价组」：主页那一行变黄，写清钱花在哪条线上。
+ */
+const demoAggregateHit: Record<string, SelectionView["aggregate"]> = {
+  "claude-desktop": {
+    route_id: R_DESK2,
+    model: "claude-fable-qbg-482913",
+    at_ms: BigInt(Date.now() - 3 * 60_000),
+    latest: true,
+  },
+};
 
 /** 演示里一条线的测活状况。熔断着的那条测活也判死（余额不足），对得上熔断那一格。 */
 function demoLivenessOf(who: string, id: string): LineLiveness {
@@ -3793,9 +3916,16 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     turnstate_enabled: stationTurnstateEnabled,
     turnstate_team: stationTurnstateTeam,
     turnstate_takeover: stationTurnstateTakeover,
-    breakers: [
-      ...(stationBreakers[String(args?.client ?? "claude-code")] ?? []),
-    ],
+    // 只列会影响发送的：下一发会试的那几条里，而且不止一条（一条时本机路由不问熔断）。
+    breakers: (() => {
+      const who = String(args?.client ?? "claude-code");
+      const steps = demoSelectionOf(who).plan.steps;
+      if (steps.length <= 1) return [];
+      return (stationBreakers[who] ?? []).filter((b) =>
+        steps.some((s) => s.route_id === b.route_id),
+      );
+    })(),
+    selection: demoSelectionOf(String(args?.client ?? "claude-code")),
     admission: stationRoutes
       .filter((route) => route.client === String(args?.client ?? "claude-code"))
       .map((route) => ({
@@ -3819,11 +3949,11 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       ...Object.values(s.admission.route_limits).flatMap((limit) => limit ? [limit.max_concurrent, limit.rpm] : [])];
     if (capacityValues.some((value) => !Number.isSafeInteger(value) || value < 0))
       throw new Error("请求容量与等待设置必须是大于或等于 0 的整数。");
-    const current = stationPending[s.client] ?? stationCurrent[s.client];
-    if (s.routing_mode === "pool" && (!current || !s.allowed_routes.includes(current)))
-      throw new Error("请将当前所选线路加入允许名单，再保存");
-    if (s.allowed_routes.some((id) => !stationRoutes.some((r) => r.id === id && r.client === s.client && r.credential_id)))
-      throw new Error("允许名单含有不可用或其他软件的线路");
+    // 跟真后端一样：selected = 清空名单（严格单线）；名单空 = selected；分流关就把分法复位成优先当前线路。
+    // 不要求当前线路在名单里：名单是「当前线路出故障时依次改用谁」。
+    const backups = s.routing_mode === "pool" ? [...new Set(s.allowed_routes)] : [];
+    if (backups.some((id) => !stationRoutes.some((r) => r.id === id && r.client === s.client && r.credential_id)))
+      throw new Error("备用线路只能是这个软件自己的中转线路");
     // 跟真后端一样：聚合 key 的登记簿只增不减、界面传来的不认；名单里没 key 的按站点 id 分一个。
     const before =
       stationRouterSettings[s.client] ?? routerSettingsOf(s.client);
@@ -3835,13 +3965,18 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       for (let n = 2; key in keys; n++) key = `${base}-${n}`;
       keys[key] = id;
     }
-    const saved = { ...s, aggregate: { ...s.aggregate, keys } };
+    const saved: RouterSettings = {
+      ...s,
+      allowed_routes: backups,
+      routing_mode: backups.length ? "pool" : "selected",
+      pool_strategy: s.admission.overflow_to_pool ? s.pool_strategy : "priority",
+      aggregate: { ...s.aggregate, keys },
+    };
     stationRouterSettings[s.client] = saved;
-    stationDispatch[s.client] = s.routing_mode === "pool" ? [...s.allowed_routes] : [];
-    if (s.routing_mode === "selected") {
+    if (!backups.length) {
+      // 名单存空：自动选线没得挑了，跟着停。
       const schedule = stationSchedules.find((x) => x.client === s.client);
       if (schedule) schedule.enabled = false;
-      delete stationPins[s.client];
     }
     return { ...saved };
   },
@@ -4161,12 +4296,13 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     return { ...demoHermes };
   },
   tool_files_hermes_web: () => null,
-  // 项目（阶段 5 · M4）。演示里只在内存里记；换项目照真后端：先存回原来那个，再落线路和派单顺序。
+  // 项目（阶段 5 · M4）。演示里只在内存里记；换项目照真后端：先存回原来那个，再落 MCP / Skills / 提示词，不碰线路。
   projects_list: () => demoProjectsView(),
   projects_create: (args) => {
     const who = String(args?.client ?? "claude-code");
     const name = String(args?.name ?? "").trim();
     if (!name) throw new Error("给项目起个名字");
+    demoNoProjects(who);
     const id = `project-${Date.now()}`;
     demoProjects.push({
       id,
@@ -4191,6 +4327,7 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   },
   projects_apply: (args) => {
     const who = String(args?.client ?? "claude-code");
+    demoNoProjects(who);
     const cur = demoProjectCurrent[who];
     const p = demoProjects.find((x) => x.id === args?.id);
     if (!p) throw new Error("没有这个项目");
@@ -4198,33 +4335,16 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     if (before && before.id !== p.id)
       before.slots = { ...before.slots, [who]: demoProjectSnapshot(who) };
     const warnings: string[] = [];
-    const slot = p.slots[who];
-    if (!slot)
+    if (!p.slots[who])
       warnings.push(
         "这个项目还没存过这个软件的设置：记成当前项目，什么都没动（换走时会自动存下）",
       );
-    else {
-      if (slot.route) {
-        if (stationRoutes.some((r) => r.id === slot.route && r.client === who))
-          FIXTURES.station_select_route({
-            routeId: slot.route,
-            immediate: false,
-          });
-        else
-          warnings.push(`项目里存的线路「${slot.route}」已经不在了，上游没换`);
-      }
-      if (slot.queue)
-        if (stationSchedules.find((x) => x.client === who)?.enabled)
-          warnings.push(
-            "智能调度开着：派单顺序归调度排，项目里存的顺序没落（停了调度再换一次项目就会落）",
-          );
-        else stationDispatch[who] = [...slot.queue];
-    }
     demoProjectCurrent[who] = p.id;
     return { view: demoProjectsView(), warnings };
   },
   projects_clear: (args) => {
     const who = String(args?.client ?? "claude-code");
+    demoNoProjects(who);
     const cur = demoProjects.find((x) => x.id === demoProjectCurrent[who]);
     if (cur) cur.slots = { ...cur.slots, [who]: demoProjectSnapshot(who) };
     delete demoProjectCurrent[who];
@@ -4234,10 +4354,11 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   station_dispatch_view: (args) => {
     const who = String(args?.client ?? "claude-code");
     const queue = demoQueueOf(who);
+    const order = demoDispatchOf(who).order;
     const ids = [
-      ...queue.order,
+      ...order,
       ...stationRoutes
-        .filter((r) => r.client === who && !queue.order.includes(r.id))
+        .filter((r) => r.client === who && !order.includes(r.id))
         .map((r) => r.id),
     ];
     return {
@@ -4250,19 +4371,29 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       actions: stationActions.filter((a) => a.client === who).slice(0, 30),
     };
   },
+  // 「重新检测」：只测当前线路 + 备用线路；先只发免费的，花钱的给预估、点头（paid）之后才发 —— 跟真后端一样。
   station_probe_now: (args) => {
     const who = String(args?.client ?? "claude-code");
     const only = args?.routeId as string | null | undefined;
+    const paid = Boolean(args?.paid);
+    const pool = demoPoolOf(who);
+    if (!pool.length)
+      throw new Error("先给这个软件「设为当前」一条线路，再检测");
+    if (only != null && !pool.includes(only))
+      throw new Error("只能检测当前线路和备用线路（名单外的线不测）");
+    if (paid && !stationProbeSettings.paid)
+      throw new Error("花钱测活没开：先在测活设置里打开、设好每日预算");
     const now = Date.now();
     const out: ProbeAttempt[] = [];
+    const pending: PaidProbePlan[] = [];
     for (const r of stationRoutes.filter(
-      (x) => x.client === who && (only == null || x.id === only),
+      (x) => x.client === who && pool.includes(x.id) && (only == null || x.id === only),
     )) {
       stationProbedAt[r.id] = now;
       const dead = (stationBreakers[who] ?? []).some(
         (b) => b.route_id === r.id && b.state === "open",
       );
-      out.push({
+      const free: ProbeAttempt = {
         id: `demo-probe-${r.id}-${now}`,
         route_id: r.id,
         at_ms: BigInt(now),
@@ -4275,44 +4406,36 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
         cost_lo: null,
         cost_hi: null,
         error: dead ? "HTTP 402：上游余额不足，要充值" : null,
-      });
-      if (stationProbeSettings.paid && !dead) {
-        stationProbeSpent = [
-          stationProbeSpent[0] + 0.0004,
-          stationProbeSpent[1] + 0.0011,
-        ];
-        out.push({
-          ...out[out.length - 1],
-          id: `demo-paid-${r.id}-${now}`,
-          model: who === "codex" ? "gpt-6-luna" : "claude-sonnet-5",
-          total_ms: 1180n,
-          first_ms: 860n,
-          paid: true,
-          cost_lo: 0.0004,
-          cost_hi: 0.0011,
-        });
-      }
-    }
-    return new Promise((done) => setTimeout(done, 600)).then(() => out);
-  },
-  station_pin: (args) => {
-    const who = String(args?.client ?? "claude-code");
-    const id = (args?.routeId as string | null | undefined) ?? null;
-    if (id) {
-      const policy = stationRouterSettings[who] ?? routerSettingsOf(who);
-      if (policy.routing_mode !== "pool" || !policy.allowed_routes.includes(id))
-        throw new Error("只能固定允许名单内的线路");
-      stationPins[who] = {
-        route_id: id,
-        until_ms: BigInt(Date.now() + DEMO_PIN_MS),
       };
-      if (stationCurrent[who] !== id) stationPending[who] = id;
-      demoAction(who, "pin", id, "固定池内首选 4 小时，仍允许名单内备用");
-    } else {
-      delete stationPins[who];
-      demoAction(who, "unpin", null, "取消钉住，交回调度");
+      if (!paid) out.push(free);
+      if (!stationProbeSettings.paid || dead) continue;
+      const model = who === "codex" ? "gpt-6-luna" : "claude-sonnet-5";
+      if (!paid) {
+        pending.push({ route_id: r.id, model, cost_cny: 0.0011 });
+        continue;
+      }
+      stationProbeSpent = [
+        stationProbeSpent[0] + 0.0004,
+        stationProbeSpent[1] + 0.0011,
+      ];
+      out.push({
+        ...free,
+        id: `demo-paid-${r.id}-${now}`,
+        model,
+        total_ms: 1180n,
+        first_ms: 860n,
+        paid: true,
+        cost_lo: 0.0004,
+        cost_hi: 0.0011,
+      });
     }
-    return demoQueueOf(who);
+    const result: ProbeNowResult = {
+      attempts: out,
+      paid_pending: pending,
+      paid_estimate_cny: pending.reduce((sum, p) => sum + p.cost_cny, 0),
+      over_budget: 0,
+    };
+    return new Promise((done) => setTimeout(done, 600)).then(() => result);
   },
   station_probe_settings_save: (args) => {
     const next = args?.settings as ProbeSettings;
@@ -4371,42 +4494,32 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     stationTurnstateTakeover = null;
     return FIXTURES.station_router_status({ client: "codex" });
   },
-  // 切哪个软件的上游，由**这条线自己的 client** 决定 —— 跟真后端同一条规矩。
-  // 拿参数里的 client 当依据的话，演示就验不出那个 bug。
-  station_select_route: (args) => {
-    const route = stationRoutes.find(
-      (r) => r.id === args?.id || r.id === args?.routeId,
-    );
-    if (route) {
-      const who = route.client;
-      stationRouterSettings[who] = { ...(stationRouterSettings[who] ?? routerSettingsOf(who)), routing_mode: "selected" };
-      const schedule = stationSchedules.find((x) => x.client === who);
-      if (schedule) schedule.enabled = false;
-      delete stationPins[who];
-      stationDispatch[who] = [];
-      if (args?.immediate) {
-        // `set_now`：直接落定，顺手撤掉排队。
-        if (stationCurrent[who] !== route.id) stationSwitches += 1;
-        stationCurrent[who] = route.id;
-        delete stationPending[who];
-      } else if (stationCurrent[who] === route.id) {
-        // `request_switch`：换成当前这条等于取消排队。
-        delete stationPending[who];
-      } else {
-        stationPending[who] = route.id;
-      }
+  // 「设为当前」：切哪个软件的上游，由**这条线自己的 client** 决定 —— 跟真后端同一条规矩。
+  // 拿参数里的 client 当依据的话，演示就验不出那个 bug。只换当前线路，备用名单不动；自动选线开着就关掉、如实说。
+  station_set_current: (args) => {
+    const route = stationRoutes.find((r) => r.id === args?.routeId);
+    if (!route) throw new Error("没有这条线路");
+    const who = route.client;
+    const schedule = stationSchedules.find((x) => x.client === who);
+    const stopped = Boolean(schedule?.enabled);
+    if (schedule) {
+      schedule.enabled = false;
+      schedule.last_note = "";
     }
-    return FIXTURES.station_router_status({ client: route?.client });
+    // `set_now`：直接落定，顺手撤掉排队。
+    if (stationCurrent[who] !== route.id) stationSwitches += 1;
+    stationCurrent[who] = route.id;
+    delete stationPending[who];
+    return {
+      status: FIXTURES.station_router_status({ client: who }),
+      auto_select_stopped: stopped,
+    };
   },
-  // 一个动作干三件事：切上游 → 拉路由 → 起客户端进程。演示里前两件照做，
-  // 第三件回一条假会话 —— ⛔ 但**不能只做前两件**：那样演示里点完「启动」
+  // 一个动作干两件事：拉路由 → 起客户端进程，走当前线路。演示里第一件照做，
+  // 第二件回一条假会话 —— ⛔ 但**不能只做第一件**：那样演示里点完「启动」
   // 看起来一切正常，而真机上少起的恰恰是最容易漏的那一步。
   station_launch: (args) => {
     const who = String(args?.client ?? "claude-code");
-    // 带 routeId = 行上的「指定这一条再启动」，后端走 set_now；
-    // 不带 = 右列的「启动」，选中的是哪条就走哪条，一点不动。
-    if (args?.routeId)
-      FIXTURES.station_select_route({ routeId: args.routeId, immediate: true });
     stationRouterUp = true;
     // 起完就当第一发请求已经发出去了：排队那条落定（对应后端 `begin()`）。
     const queued = stationPending[who];
@@ -4455,10 +4568,21 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   station_schedule_set: (args) => {
     const who = String(args?.client ?? "claude-code");
     const policy = stationRouterSettings[who] ?? routerSettingsOf(who);
-    if (args?.enabled && (policy.routing_mode !== "pool" || !policy.allowed_routes.length))
-      throw new Error("先在路由设置中勾选允许使用的线路并保存");
     const s =
       stationSchedules.find((x) => x.client === who) ?? stationSchedules[0];
+    if (args?.enabled && !s.enabled) {
+      // 跟真后端 `prepare_auto_select` 一样：要有备用、有当前线路；当前线路不在名单里就放进名单最前面。
+      if (!demoBackupsOf(who).length)
+        throw new Error("先勾上至少一条备用线路，自动选线才有得挑");
+      const current = stationPending[who] ?? stationCurrent[who];
+      if (!current)
+        throw new Error("先给这个软件设一条当前线路，再开自动选线");
+      if (!policy.allowed_routes.includes(current))
+        stationRouterSettings[who] = {
+          ...policy,
+          allowed_routes: [current, ...policy.allowed_routes],
+        };
+    }
     if (args?.enabled != null) {
       s.enabled = Boolean(args.enabled);
       s.last_note = s.enabled ? "现任仍然是最好的那条" : "";
@@ -4476,23 +4600,6 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       (args?.client as string | null | undefined) ?? null,
       Number(args?.days ?? 7),
     ),
-  station_usage_totals: (args) => {
-    if (args?.hours == null) return demoRelayUsage(String(args?.client), 0).totals;
-    const totals = blankTotals();
-    const since = Date.now() - Number(args.hours) * 3_600_000;
-    for (const row of stationLogs) {
-      if (row.client !== args.client || Number(row.at_ms) < since) continue;
-      addTotals(totals, {
-        requests: 1, failed: row.fault == null && row.status != null && row.status < 300 ? 0 : 1,
-        input_tokens: row.input_tokens == null ? null : Number(row.input_tokens),
-        output_tokens: row.output_tokens == null ? null : Number(row.output_tokens),
-        cache_read_tokens: row.cache_read_tokens == null ? null : Number(row.cache_read_tokens),
-        cache_write_tokens: row.cache_write_tokens == null ? null : Number(row.cache_write_tokens),
-        station_cost: row.station_cost, official_cost: row.official_cost,
-      });
-    }
-    return totals;
-  },
   station_usage_requests: (args) => demoRelayRequests(args),
   station_usage_overview: (args) => {
     const through = Date.now();

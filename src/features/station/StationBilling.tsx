@@ -9,6 +9,7 @@ import {
 import { call } from "../../lib/ipc";
 import type { StationBillingSettings } from "../../lib/generated/StationBillingSettings";
 import { Button } from "../../ui";
+import { InlineConfirm } from "./InlineConfirm";
 import BrowserCompanionCard from "../security/BrowserCompanionCard";
 
 export default function StationBilling({
@@ -28,6 +29,8 @@ export default function StationBilling({
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  /** 「断开」点了、还没确认（A5：原来一点就删掉本机保存的账单登录）。 */
+  const [askDisconnect, setAskDisconnect] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   useEffect(() => {
@@ -154,17 +157,7 @@ export default function StationBilling({
               {settings.user_id ? "用户 " + settings.user_id : "已连接"}
             </p>
           </div>
-          <div className="audit-balance">
-            <small>账户余额 · 上次读取</small>
-            <b>
-              {settings.balance == null
-                ? "—"
-                : settings.balance.toLocaleString(undefined, {
-                    maximumFractionDigits: 4,
-                  })}{" "}
-              <small>{settings.currency}</small>
-            </b>
-          </div>
+          {/* D6：余额原来这里、主页站点卡表头各显示一份（来源还不一样）。2026-11-15 起只在站点卡表头显示。 */}
           <div className="audit-inline-actions">
             <Button
               disabled={locked}
@@ -182,12 +175,25 @@ export default function StationBilling({
             </Button>
             <Button
               variant="ghost"
-              disabled={locked}
-              onClick={() => void disconnect()}
+              disabled={locked || askDisconnect}
+              onClick={() => setAskDisconnect(true)}
             >
               断开
             </Button>
           </div>
+          {askDisconnect && (
+            <InlineConfirm
+              danger
+              busy={locked}
+              message="断开：删掉本机保存的这家后台登录。查套路从此读不到这家的账单，要用得重新登录。"
+              confirmLabel="确认断开"
+              onCancel={() => setAskDisconnect(false)}
+              onConfirm={() => {
+                setAskDisconnect(false);
+                void disconnect();
+              }}
+            />
+          )}
         </div>
       ) : (
         <>

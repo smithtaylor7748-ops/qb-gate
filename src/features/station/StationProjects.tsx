@@ -4,8 +4,9 @@
  * 照 cc-switch 的项目切换器：头部一个按钮写着当前项目，点开是项目列表 —— 换到哪个、按现在的样子新建、
  * 不使用项目、改名、删除。cc-switch 是弹出菜单 + 管理对话框两层；QB Gate 没有弹出菜单组件，并成一个弹窗。
  *
- * 项目存的是**这个软件**的：选的线路、派单顺序、中转环境里勾着的 MCP / Skills、用的提示词（桌面端只有前两样）。
- * ⛔ 官方账户和槽位一概不动。换项目时现在的样子先存回原来那个项目（cc-switch 同样），所以不另给「重拍」。
+ * 项目存的是**这个软件**中转环境里勾着的 MCP / Skills、用的提示词。⛔ 2026-11-14 起不碰线路（换线路只有「设为当前」），
+ * 桌面端没有这几样所以没有项目。⛔ 官方账户和槽位一概不动。换项目时现在的样子先存回原来那个项目（cc-switch 同样），
+ * 所以不另给「重拍」。
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -27,7 +28,7 @@ export default function StationProjects({
 }: {
   client: Client;
   clientName: string;
-  /** 换了项目（线路、派单顺序可能变了），中转站页要重读状态。 */
+  /** 换了项目之后（MCP / Skills / 提示词可能变了）。 */
   onApplied?: () => void;
 }) {
   const toast = useToast();
@@ -57,7 +58,6 @@ export default function StationProjects({
 
   const currentId = view?.current[client] ?? null;
   const current = view?.projects.find((p) => p.id === currentId) ?? null;
-  const desktop = client === "claude-desktop";
 
   /** 跑一个改动；回来的是列表就落列表，是换项目的结果就连提醒一起落。 */
   const run = async (
@@ -115,7 +115,7 @@ export default function StationProjects({
           setWarnings([]);
           void load();
         }}
-        title={`项目：一键换 ${clientName} 中转那一侧的线路、派单顺序${desktop ? "" : "、MCP / Skills / 提示词"}`}
+        title={`项目：一键换 ${clientName} 中转环境里的 MCP / Skills / 提示词（不换线路）`}
         aria-haspopup="dialog"
       >
         {current ? `项目：${current.name}` : "不使用项目"}
@@ -154,11 +154,10 @@ export default function StationProjects({
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <p className="qb-st-note">
-            项目是中转那一侧的一套设置：{clientName}选的线路、派单顺序
-            {desktop
-              ? "（桌面端没有 MCP / Skills / 提示词那几样）"
-              : "，中转环境里勾着的 MCP / Skills 和用的提示词"}
-            。换项目时，现在的样子先存回原来那个项目；
+            项目是{clientName}中转环境里的一套扩展：勾着的 MCP / Skills
+            和用的提示词。
+            <b>项目不换线路</b>
+            （换线路用中转站页的「设为当前」）。换项目时，现在的样子先存回原来那个项目；
             <b>官方账户和槽位一概不动</b>
             。项目列表各软件共用，当前项目每个软件各记各的。
           </p>

@@ -3,7 +3,10 @@ import type { RouteLimits } from "./RouteLimits";
 
 export type AdmissionSettings = { 
 /**
- * 容量不足时向授权池分流；默认关闭。不开启时只在当前候选上有限等待或返回繁忙。
+ * **本机自己的**并发 / RPM 限额不够时向备用线路分流；默认关闭。不开启时只在当前候选上有限等待或返回繁忙。
+ *
+ * ⛔ 只管本机限额。上游自己说「限流」（429 与它的 Retry-After 窗口）、额度证据说「用光了」是线路的故障，
+ * 有备用线路就按故障备用去下一条，跟这个开关无关（2026-11-14）。
  */
 overflow_to_pool: boolean, route_limits: { [key in string]?: RouteLimits }, 
 /**

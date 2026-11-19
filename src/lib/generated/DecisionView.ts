@@ -3,7 +3,7 @@ import type { CheapBasis } from "./CheapBasis";
 import type { Ranking } from "./Ranking";
 
 /**
- * 排一次序。**只排,不换** —— 换上游是 [`station_select_route`] 的事,
+ * 排一次序。**只排,不换** —— 换上游是 [`station_set_current`] 的事,
  * 那一步要由使用者或明确的自动调度触发,不能藏在一个「看看排名」的命令里。
  */
 export type DecisionView = { ranking: Ranking, 
