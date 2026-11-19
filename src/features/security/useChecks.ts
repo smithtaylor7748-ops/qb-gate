@@ -39,7 +39,7 @@ const FAILED = "security.failed";
 export const CHECK_LABEL: Record<CheckId, string> = {
   purity: "IP 纯净度",
   dns: "DNS 泄露",
-  signals: "环境体检",
+  signals: "中文环境",
   iplock: "IP 锁",
   egress: "出口一致性",
 };

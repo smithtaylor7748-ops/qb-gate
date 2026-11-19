@@ -17,6 +17,8 @@ const ROUTES = [
   "extensions",
   // 0.26.0：反重力汉化与审批的插件面板（规则表里一整行正则、日志行都是最容易横向撑爆的）。
   "extensions/antigravity-ui",
+  // 2026-11-19：浏览器助手（插件在面板里唯一的家：三步安装、每个浏览器一行、受保护网站）。
+  "extensions/browser-companion",
   // （2026-09-25 加过 `extensions/claude-desktop-zh-cn`；09-27 Claude 汉化撤掉，那一页没了。）
   // 0.32.0：用量明细。三个 side 各走一遍 —— 它们的空态与数据源都不一样，
   // 而「Codex 没有按模型分项」那一格只有 gpt 这一档才出现。
@@ -1720,19 +1722,26 @@ try {
   await page
     .getByRole("button", { name: "使用 Chrome 已登录账户", exact: true })
     .click();
-  await page.getByText("Chrome 浏览器助手", { exact: true }).waitFor();
-  // 协议 2（2026-11-14）：配对不再复制粘贴 —— 卡片上没有配对码、没有口令。
+  // 2026-11-19：查套路里只剩一句说明 + 连接结果 + 跳到「扩展 → 浏览器助手」，配对在那一页做。
+  const billingPointer = page
+    .getByRole("dialog")
+    .getByTestId("companion-pointer");
+  await billingPointer.getByText(/^已连接：Chrome 158/).waitFor();
+  // 协议 2（2026-11-14）：配对不再复制粘贴 —— 没有配对码、没有口令。
   assert.equal(await page.getByRole("dialog").locator("textarea").count(), 0);
-  await page.getByText("已配对 0 个浏览器", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "连接浏览器", exact: true }).click();
-  await page.getByText("Chrome 131", { exact: true }).waitFor();
-  await page.getByText("放行中", { exact: true }).waitFor();
-  // 演示里浏览器「打开成功」：不该再露出认领地址。
-  assert.equal(await page.getByText("/link#c=", { exact: false }).count(), 0);
+  assert.equal(
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "连接浏览器" })
+      .count(),
+    0,
+    "查套路里不该再有一整张配对卡",
+  );
+  await billingPointer
+    .getByRole("button", { name: "打开浏览器助手页", exact: true })
+    .waitFor();
   await page.setViewportSize({ width: 680, height: 940 });
-  await assertNoOverflow(page, "Chrome companion pairing in billing");
-  await page.getByRole("button", { name: "解除配对", exact: true }).click();
-  await page.getByText("已配对 0 个浏览器", { exact: true }).waitFor();
+  await assertNoOverflow(page, "Chrome companion pointer in billing");
   await page.getByRole("button", { name: "账号密码", exact: true }).click();
   await page.setViewportSize({ width: 1320, height: 940 });
   await page.getByLabel("站点账号 / 邮箱").fill("demo-user");
@@ -2888,6 +2897,139 @@ try {
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
 
+  // 浏览器助手（2026-11-19，P3）：从侧栏「扩展」两下点到；三步安装、连接状态三种样子
+  // （已连接 + 保护开着、没连上、要一键重连）、「连接浏览器」、一键重连没打开浏览器时给地址、
+  // 解除配对先在原位确认；「中文环境」小窗里只剩跳转；Ctrl+K 搜「插件」「Chrome」都到这一页。
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await page.goto(origin + "/#/", { waitUntil: "domcontentloaded" });
+  await page
+    .getByRole("navigation", { name: "主导航" })
+    .locator('a[href="#/extensions"]')
+    .click();
+  await page.getByRole("heading", { name: "扩展中心", exact: true }).waitFor();
+  await page.getByRole("tab", { name: "发现" }).click();
+  await page.getByTestId("browser-companion-card").click();
+  assert.match(page.url(), /#\/extensions\/browser-companion$/);
+  await page
+    .getByRole("heading", { name: "浏览器助手", exact: true })
+    .waitFor();
+  for (const step of [
+    "打开插件文件夹",
+    "在 Chrome 里加载它",
+    "回到这里点「连接浏览器」",
+  ])
+    await page.getByRole("heading", { name: step, exact: true }).waitFor();
+  await page
+    .getByText("C:\\Users\\demo\\AppData\\Local\\QB Gate\\browser-extension", {
+      exact: false,
+    })
+    .waitFor();
+  await page
+    .getByRole("button", { name: "打开插件文件夹", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "复制 chrome://extensions" })
+    .waitFor();
+  const companionRows = page.getByTestId("companion-pairing");
+  await companionRows.first().waitFor();
+  assert.equal(await companionRows.count(), 3);
+  await companionRows
+    .filter({ hasText: "Chrome 158" })
+    .filter({ hasText: "保护开着 · 放行中" })
+    .filter({ hasText: "已连接" })
+    .waitFor();
+  await companionRows
+    .filter({ hasText: "Edge 157" })
+    .filter({ hasText: "没连上" })
+    .waitFor();
+  await companionRows
+    .filter({ hasText: "工作资料" })
+    .filter({ hasText: "要一键重连" })
+    .waitFor();
+  for (const site of [
+    "claude.ai",
+    "claude.com",
+    "anthropic.com",
+    "claudeusercontent.com",
+  ])
+    await page.locator(".qb-companion-sites li", { hasText: site }).waitFor();
+  await page.getByRole("button", { name: "连接浏览器", exact: true }).click();
+  await page.getByText("已连接：Chrome 158", { exact: true }).waitFor();
+  // 演示里「连接浏览器」替你打开了浏览器：不该露出认领地址。
+  assert.equal(await page.getByText("/link#c=", { exact: false }).count(), 0);
+  await page.getByRole("button", { name: "一键重连", exact: true }).click();
+  await page.getByText(/没能替你打开浏览器/).waitFor();
+  await page
+    .getByText("http://127.0.0.1:53125/link#c=", { exact: false })
+    .waitFor();
+  for (const width of [1320, 680]) {
+    await page.setViewportSize({ width, height: 940 });
+    await assertNoOverflow(page, `browser companion page ${width}`);
+    // 会滚的是 `.qb-main` 不是文档，`fullPage` 拍不全：截图时把窗口拉高，整页一张。
+    await page.setViewportSize({ width, height: 2400 });
+    await page.screenshot({
+      path: `${ARTIFACT_ROOT}/screenshots/browser-companion-${width}.png`,
+    });
+  }
+  await page.setViewportSize({ width: 1320, height: 940 });
+  await page
+    .getByRole("button", { name: "解除 Edge 157 的配对", exact: true })
+    .click();
+  // 先在原位问一句，没点确认之前那一行还在。
+  await page.getByText(/解除之后 Edge 157 里的插件立刻断开/).waitFor();
+  assert.equal(await companionRows.filter({ hasText: "Edge 157" }).count(), 1);
+  await page.screenshot({
+    path: `${ARTIFACT_ROOT}/screenshots/browser-companion-unpair.png`,
+  });
+  await page
+    .getByRole("group", { name: "确认操作" })
+    .getByRole("button", { name: "解除配对", exact: true })
+    .click();
+  await companionRows
+    .filter({ hasText: "Edge 157" })
+    .waitFor({ state: "detached" });
+  assert.equal(await companionRows.count(), 2);
+  // 快速跳转：「插件」「Chrome」「浏览器助手」都落到这一页。
+  for (const word of ["插件", "Chrome", "浏览器助手"]) {
+    await page.goto(origin + "/#/software", { waitUntil: "domcontentloaded" });
+    await page.keyboard.press("Control+k");
+    await page
+      .getByRole("textbox", { name: "搜索功能、账户、服务商或扩展" })
+      .fill(word);
+    await page
+      .locator(".qb-search-results button")
+      .filter({ hasText: "浏览器助手" })
+      .first()
+      .click();
+    await page
+      .getByRole("heading", { name: "浏览器助手", exact: true })
+      .waitFor();
+    assert.match(page.url(), /#\/extensions\/browser-companion$/, word);
+  }
+  // 「中文环境」小窗里只剩一句说明 + 跳转；点了小窗关掉、落在这一页。
+  await page.goto(origin + "/#/", { waitUntil: "domcontentloaded" });
+  await page
+    .locator("button.scorecell", { hasText: "中文环境" })
+    .first()
+    .click();
+  const signalsSheet = page.locator("dialog[open]");
+  // 小窗标题是「名字 + <small>副标题</small>」，整段文字连在一起，按标题元素认。
+  await signalsSheet
+    .locator(".qb-modal-title", { hasText: /^中文环境/ })
+    .waitFor();
+  assert.equal(
+    await signalsSheet.getByText("环境体检", { exact: false }).count(),
+    0,
+    "小窗里不该再出现「环境体检」这个旧叫法",
+  );
+  await signalsSheet
+    .getByRole("button", { name: "打开浏览器助手页", exact: true })
+    .click();
+  await page.locator("dialog[open]").waitFor({ state: "detached" });
+  await page
+    .getByRole("heading", { name: "浏览器助手", exact: true })
+    .waitFor();
+
   assert.deepEqual(errors, []);
   const flows = [
     "catalog isolation",
@@ -2918,6 +3060,7 @@ try {
     "settings relay tab: the listen scope changes only after confirming, the proxy saves without refilling its box, probe settings save explicitly; with paid probing on, re-check sends free probes first and paid ones only after a second click; no overflow at 1320/680",
     "projects moved from the relay page header to the extensions page: no desktop entry, the dialog says it only touches the relay side and creates from the current state, no overflow at 1320/680",
     "stage 5: a pasted ccswitch link shows only a masked key and imports after confirming onto the relay page, the tool files tab switches between OpenClaw / Hermes / Pi without overflow and saves an edit; stage 6: the sessions tab filters by source, reads a session with its resume command, deletes only after confirming and restores from the trash without overflow",
+    "browser companion: two clicks from the sidebar (extensions, then the card); three install steps with the extension folder; connected-and-protected, disconnected and needs-relink rows; connect in the demo backend, relink shows the claim address when no browser opened; unpair asks in place first; quick jump finds it by plugin / Chrome / name; the Chinese-environment sheet only links here and closes on the way; no overflow at 1320/680",
     "stage 7: the three background switches in settings start unchecked; other CLI tools check for a new version and hold back the update when Node is too old, an uninstalled Hermes offers only its official script; the environment-variable cleanup ticks nothing and offers only current-user variables; no overflow at 680px",
   ];
   writeFileSync(

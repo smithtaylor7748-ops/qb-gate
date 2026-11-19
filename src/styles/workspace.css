@@ -693,6 +693,172 @@ input[type="checkbox"].ipv6-switch:disabled {
   background: var(--surface-2);
   color: var(--text-2);
 }
+.qb-extension-icon-browser {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+/* 浏览器助手页（2026-11-19）：三步安装、每个浏览器一行、受保护网站、附带功能。 */
+.qb-companion h2 {
+  margin-bottom: 14px;
+}
+.qb-companion-steps {
+  list-style: none;
+  counter-reset: step;
+  padding: 0;
+  margin: 0 0 8px;
+  display: grid;
+  gap: 18px;
+}
+.qb-companion-steps > li {
+  counter-increment: step;
+  position: relative;
+  padding-left: 40px;
+  min-width: 0;
+}
+.qb-companion-steps > li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent-bg);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 13px;
+}
+.qb-companion-steps h3 {
+  margin: 3px 0 6px;
+  font-size: 14px;
+}
+.qb-companion-steps > li > * + * {
+  margin-top: 8px;
+}
+.qb-companion-url code {
+  display: block;
+  font-size: 12px;
+  margin: 6px 0;
+}
+.qb-companion-status-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.qb-companion-status-head h2 {
+  margin: 0 8px 0 0;
+}
+.qb-companion-relink {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.qb-companion-relink p {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.qb-companion-list,
+.qb-companion-extras {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: grid;
+  gap: 10px;
+}
+.qb-companion-row,
+.qb-companion-extras > li {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  min-width: 0;
+}
+.qb-companion-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.qb-companion-row-head small {
+  color: var(--text-3);
+}
+.qb-companion-row-action {
+  margin-left: auto;
+  max-width: 100%;
+}
+/* 「解除配对」带字：`.qb-st-iconbtn` 默认 38px 宽（只放图标），这里按内容撑开、不折行。 */
+.qb-companion-row-action .qb-st-iconbtn {
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.qb-companion-reason,
+.qb-companion-enh {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.qb-companion-sites {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.qb-companion-sites > li {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 12px;
+  background: var(--surface-2);
+}
+.qb-companion-extras > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.qb-companion-extras > li > div {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.qb-companion-extras p {
+  margin: 4px 0 0;
+}
+/* 三个旧入口（中文环境 / 执行锁小窗、查套路）只剩一句说明 + 跳转。 */
+.qb-companion-pointer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background: var(--surface-2);
+}
+.qb-companion-pointer > div {
+  flex: 1 1 240px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.qb-companion-pointer > div p {
+  margin: 4px 0 0;
+}
 .qb-extension-category {
   position: absolute;
   top: 25px;

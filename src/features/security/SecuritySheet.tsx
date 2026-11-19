@@ -9,20 +9,16 @@
  * 窗里是**完整正文**（`objects.tsx` 的 `ObjectDetail`），不是精简版：
  * 小窗里少写一句话，就等于逼人再跳一次页去看全的。
  */
-import { setSession, useSession } from "../../lib/store";
+import { useSession } from "../../lib/store";
 import { Modal } from "../../ui";
 import { OBJECTS, ObjectAction, ObjectDetail, type ObjectId } from "./objects";
 import Ipv6Panel from "./Ipv6Panel";
+import { SHEET_KEY } from "./sheetState";
 
-const KEY = "security.sheet";
-
-/** 打开某一项安全对象的小窗。不在组件里也能调。 */
-export function openSecurity(id: ObjectId): void {
-  setSession<ObjectId | null>(KEY, id);
-}
+export { openSecurity } from "./sheetState";
 
 export default function SecuritySheet() {
-  const [open, setOpen] = useSession<ObjectId | null>(KEY, null);
+  const [open, setOpen] = useSession<ObjectId | null>(SHEET_KEY, null);
   const current = OBJECTS.find((o) => o.id === open);
   return (
     <Modal

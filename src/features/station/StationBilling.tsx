@@ -10,7 +10,7 @@ import { call } from "../../lib/ipc";
 import type { StationBillingSettings } from "../../lib/generated/StationBillingSettings";
 import { Button } from "../../ui";
 import { InlineConfirm } from "./InlineConfirm";
-import BrowserCompanionCard from "../security/BrowserCompanionCard";
+import BrowserCompanionLink from "../browser/BrowserCompanionLink";
 
 export default function StationBilling({
   stationId,
@@ -278,10 +278,10 @@ export default function StationBilling({
           ) : mode === "extension" ? (
             <div className="audit-browser-login">
               <p>
-                在 Chrome 中打开已登录的本站页面，点击 QB Gate
-                插件，选择对应站点后点击“连接查套路”。完成后这里会自动显示账户；读取账户和公开价格不会调用模型。
+                在 Chrome 中打开已登录的本站页面，点工具栏上的 QB Gate
+                浏览器助手，选好对应站点与类型后点「连接已登录账户」。完成后这里会自动显示账户；读取账户和公开价格不会调用模型。
               </p>
-              <BrowserCompanionCard />
+              <BrowserCompanionLink where="billing" />
             </div>
           ) : (
             <div className="audit-browser-login">

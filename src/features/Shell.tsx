@@ -47,6 +47,10 @@ import { Button, Modal, ToastProvider } from "../ui";
 import AccountDialogs from "../pages/accounts/AccountDialogs";
 import Accounts from "./Accounts";
 import SecuritySheet from "./security/SecuritySheet";
+import {
+  BROWSER_COMPANION_NAME,
+  BROWSER_COMPANION_PATH,
+} from "./browser/where";
 import UpdateDialog from "./UpdateDialog";
 import DeepLinkHost from "./DeepLinkImport";
 import {
@@ -307,6 +311,14 @@ function Layout() {
       detail: n.hint,
       path: n.path,
     })),
+    // 浏览器助手（2026-11-19）不在扩展目录里（插件随安装包自带），单独补一条：搜「浏览器助手」「插件」「Chrome」都能到。
+    {
+      key: "feature:browser-companion",
+      label: BROWSER_COMPANION_NAME,
+      detail:
+        "扩展 · Chrome / Edge 插件、打开插件文件夹、连接浏览器、受保护网站",
+      path: BROWSER_COMPANION_PATH,
+    },
     // 酒馆 2026-09-29 起是面板的内置功能、不在扩展目录里了 —— 不补这几条，搜「酒馆」什么都搜不到。
     // 酒馆本体（版本、控制台、角色卡、世界书、扩展、备份与回收站）在软件页的 SillyTavern 卡；
     // 三条桥的设置在三个账户页「酒馆」磁贴右上角（带 `?bridge=<家>` 进去自动打开那一家的弹窗）。

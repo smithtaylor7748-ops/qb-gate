@@ -38,7 +38,7 @@ import {
 } from "./DnsPanel";
 import { EgressResult, EgressRunButton, EgressWhy } from "./EgressPanel";
 import EnvironmentDiagnostics from "./EnvironmentDiagnostics";
-import BrowserCompanionCard from "./BrowserCompanionCard";
+import BrowserCompanionLink from "../browser/BrowserCompanionLink";
 import {
   BrowserProbeCard,
   LocalCheckup,
@@ -70,7 +70,8 @@ export const OBJECTS: SecurityObject[] = [
   { id: "dns", name: "DNS 泄露", sub: "解析回显 + 网卡配置", icon: Globe },
   {
     id: "signals",
-    name: "环境体检",
+    // 评分卡上那一格叫「中文环境」，小窗标题跟它一样（2026-11-19 统一；原来小窗叫「环境体检」）。
+    name: "中文环境",
     sub: "浏览器指纹 + 本机检查",
     icon: Stethoscope,
   },
@@ -119,7 +120,7 @@ export function ObjectDetail({ id }: { id: ObjectId }) {
       return (
         <>
           <SignalsScore />
-          <BrowserCompanionCard />
+          <BrowserCompanionLink where="signals" />
           <BrowserProbeCard />
           <SignalsBreakdown />
           <SignalsFixable />
@@ -140,7 +141,7 @@ export function ObjectDetail({ id }: { id: ObjectId }) {
     case "lock":
       return (
         <>
-          <BrowserCompanionCard />
+          <BrowserCompanionLink where="lock" />
           <LockPanel />
         </>
       );
