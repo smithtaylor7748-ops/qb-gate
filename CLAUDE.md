@@ -1,6 +1,6 @@
 # 改这个仓库之前先读这里
 
-Chrome 浏览器助手（协议 2，2026-11-14，未发布）：`browser-extension/` 与 `qb-app::browser_link` 只经使用者在面板点出来的一次性认领页配对（不粘贴；认领码 5 分钟、一次性、只在 URL 片段里），保护开启与配对分开。口令按配对 DPAPI 落盘、长期有效，配对之后只交换 HMAC 证明、桥先证明；没配对过不监听任何端口，端口让系统挑、落盘复用、被占用另挑并给「一键重连」，不写死、不扫端口段，不用 Native Messaging / 注册表。多个浏览器资料各连各的（上限 8）。保护只拦受保护的网站，不关全部窗口、不调用全局进程关停；桥只给「放 / 不放 + 原因」：出口变化（含白名单内换 IP）、未知、手动关门、代次变化、过期、面板下线 / 断联一律不放行，异步开启不得覆盖较新的停止；面板正常退出先发 `offline`。线协议只看 DESIGN-NOTES「浏览器助手连接协议（协议 2）」，`/v1/*` 已替换为 410；开发桥 `cargo run -p qb-app --example browser-link-dev` 不碰真实数据、不开数据库，单测同样只用临时目录与假站点。会话仅从当次指定站点导入，后台核验后加密；不接收密码/刷新令牌、不写日志。公开价格匿名读取并按单位、分组、来源版本与5分钟时效接入现有查价，不能成为实扣证据。插件 0.2.0（2026-11-15）：拦截是 declarativeNetRequest **动态规则**（重启仍在）、放行是**会话规则**（重启即无），后台醒来第一件事撤放行；主框架用 block 再由插件切到拦截页，**不许改成 redirect / web_accessible_resources**（固定 ID 会让网页探测到插件）。只认未过期的 `allow`（两个时钟都看），15 秒无消息即断开重连；只有出口变了要使用者点「重新放行」，其余带上次放行的出口自动再核（至少 15 秒退避）。保护默认关、点了「开启保护」才装规则、「暂停保护」即全撤；受保护名单只在插件里（默认 claude.ai / claude.com / anthropic.com / claudeusercontent.com）。扩展 ID `dffmajnemniojfblgfhenndeeelbjgoh` 由 manifest 公钥固定，公开、不作鉴权；插件颜色用 `browser-extension/tokens.css`（面板 tokens.css 的副本，单测逐字节核对）。插件回归 `npm run test:browser-extension`（CI 跑）、真实浏览器 `npm run test:browser-extension:e2e`（只用本机已装 Edge / Chrome 的临时资料目录 + 独立测试桥，不下载浏览器、不碰真实资料）、分发目录 `npm run build:browser-extension`；应用版本号仍到明确出包时才调整。
+Chrome 浏览器助手（协议 2，2026-11-14，未发布）：`browser-extension/` 与 `qb-app::browser_link` 只经使用者在面板点出来的一次性认领页配对（不粘贴；认领码 5 分钟、一次性、只在 URL 片段里），保护开启与配对分开。口令按配对 DPAPI 落盘、长期有效，配对之后只交换 HMAC 证明、桥先证明；没配对过不监听任何端口，端口让系统挑、落盘复用、被占用另挑并给「一键重连」，不写死、不扫端口段，不用 Native Messaging / 注册表。多个浏览器资料各连各的（上限 8）。保护只拦受保护的网站，不关全部窗口、不调用全局进程关停；桥只给「放 / 不放 + 原因」：出口变化（含白名单内换 IP）、未知、手动关门、代次变化、过期、面板下线 / 断联一律不放行，异步开启不得覆盖较新的停止；面板正常退出先发 `offline`。线协议只看 DESIGN-NOTES「浏览器助手连接协议（协议 2）」，`/v1/*` 已替换为 410；开发桥 `cargo run -p qb-app --example browser-link-dev` 不碰真实数据、不开数据库，单测同样只用临时目录与假站点。会话仅从当次指定站点导入，后台核验后加密；不接收密码/刷新令牌、不写日志。公开价格匿名读取并按单位、分组、来源版本与5分钟时效接入现有查价，不能成为实扣证据。插件 0.2.0（2026-11-15）：拦截是 declarativeNetRequest **动态规则**（重启仍在）、放行是**会话规则**（重启即无），后台醒来第一件事撤放行；主框架用 block 再由插件切到拦截页，**不许改成 redirect / web_accessible_resources**（固定 ID 会让网页探测到插件）。只认未过期的 `allow`（两个时钟都看），15 秒无消息即断开重连；只有出口变了要使用者点「重新放行」，其余带上次放行的出口自动再核（至少 15 秒退避）。保护默认关、点了「开启保护」才装规则、「暂停保护」即全撤；受保护名单只在插件里（默认 claude.ai / claude.com / anthropic.com / claudeusercontent.com）。扩展 ID `dffmajnemniojfblgfhenndeeelbjgoh` 由 manifest 公钥固定，公开、不作鉴权；插件颜色用 `browser-extension/tokens.css`（面板 tokens.css 的副本，单测逐字节核对）。插件回归 `npm run test:browser-extension`（CI 跑）、真实浏览器 `npm run test:browser-extension:e2e`（只用本机已装 Edge / Chrome 的临时资料目录 + 独立测试桥，不下载浏览器、不碰真实资料）、分发目录 `npm run build:browser-extension`；应用版本号仍到明确出包时才调整。**插件随安装包分发（2026-11-19）**：分发目录是仓库根 `build/browser-extension`（**不许放回 `dist/`**，`vite build` 每次清空它），`tauri.conf.json` 的 `bundle.resources` 装进安装目录 `browser-extension`、`beforeBuildCommand` 先构建插件，`src-tauri/build.rs` 编译时也跑那个脚本（只在内容变了时写、保留修改时间，否则 cargo 每次都重编）；发版另附 `QB-Gate-Browser-Extension.zip`（固定名，进 `SHA256SUMS.txt`，`release.yml` 核 NSIS 脚本里有 `browser-extension\manifest.json`）。面板入口只有「扩展 → 浏览器助手」（`src/features/browser/`，`/extensions/browser-companion`，Ctrl+K 搜「插件」「Chrome」可达）；「中文环境」「执行锁」小窗与查套路只留一句说明 + 跳转（`BrowserCompanionLink`），不再挂配对卡。「打开插件文件夹」位置从 Tauri 资源目录拼（开发版先找仓库 `build/`），找不到照实说找过哪里、下一步怎么做，认文件夹看 manifest 的名字「QB Gate 浏览器助手」。插件里写死的四个叫法（「扩展 → 浏览器助手」「连接浏览器」「一键重连」「打开插件文件夹」）有单测核对，改叫法连插件一起改。评分卡那一格与小窗标题统一叫「中文环境」。
 
 给接手这个项目的人（以及 AI 助手）看的硬规矩。每一条都是踩出来的，不是推理出来的。
 
@@ -158,7 +158,7 @@ Code 页里的会话（包括正在开发这个仓库的那条 AI 对话）全�
 中转站重构分支（还没发版）阶段 1–4 加到 139 + 26，阶段 5 收工时 139 + 27：多了「项目弹窗 · 粘贴导入链接 · 工具文件」一个流程；
 阶段 6 收工时 **151 + 27**：中转用量页 `relays/usage` 那条路由的 12 个组合，会话分页、用量脚本、站点余额并进已有的流程；
 阶段 7 收工时 **151 + 28**：多了「后台运行三个开关 · 其他命令行工具 · 清理环境变量」一个流程；
-2026-11-15 中转站页面改造之后 **151 + 29**：原来两条中转站流程（路由设置、调度派单）按新页面改写成一条，新加「设置 → 中转站」与「项目挪到扩展页」两条）
+2026-11-15 中转站页面改造之后 **151 + 29**：原来两条中转站流程（路由设置、调度派单）按新页面改写成一条，新加「设置 → 中转站」与「项目挪到扩展页」两条；2026-11-19 浏览器助手页之后 **163 + 30**：`extensions/browser-companion` 那条路由的组合，加「浏览器助手：侧栏两下点到、三种连接状态、解除先确认、Ctrl+K、中文环境小窗跳转」一条）
 和 `cargo deny`（advisories / bans / licenses / sources）
 各自抓过别处抓不到的东西。`cargo test --workspace` 的通过数**只许涨不许跌**
 （0.29.0 是 **1081**，0.30.0 是 **1106**，0.31.0 是 **1110**，0.32.0 是 **1154**，
@@ -1566,7 +1566,7 @@ Claude Code 和 Codex 留在本机的会话记录：列表（按来源筛、搜�
 
 ## 环境变量清理：只删当前用户那一处，先备份、能还原（2026-10-27，中转站重构阶段 7 · X5，照 cc-switch 的 `env_checker.rs` / `env_manager.rs`）
 
-环境体检「本机体检」末尾的「清理环境变量…」（`EnvCleanup.tsx`；修复中心那一节写着去哪找）。后端 `qb-sysenv::sysenv::envvars`，
+「中文环境」小窗（2026-11-19 前标题叫「环境体检」）「本机体检」末尾的「清理环境变量…」（`EnvCleanup.tsx`；修复中心那一节写着去哪找）。后端 `qb-sysenv::sysenv::envvars`，
 命令在 `commands::env_cleanup`（模块名不叫 `envvars`：workspace 里模块名要全局唯一）。
 
 - **「哪些变量算相关」全项目只有一张表**：`envvars::owner_of`（`ANTHROPIC_*` / `CLAUDE_CODE_*` / `CLAUDE_CONFIG_DIR` → Claude Code，
