@@ -2,64 +2,93 @@
 
 [简体中文](README.md) | **English**
 
-**A local AI workspace for Windows and Mac.**
+**One panel for the AI tools on your Windows or Mac machine.**
 
-Manage official Claude, GPT (Codex) and Antigravity accounts, connect API routes, install CLI tools, and inspect usage and network conditions in one desktop app. Official accounts sit behind the IP gate, which checks your network exit before launch and keeps monitoring it while apps run; API routes use your own keys and are not subject to the gate.
-
-Items marked 🆕 are new or changed in 0.25.15.
+Official Claude, Codex and Antigravity accounts, your own API relay routes, the command-line tools installed on your computer, and your browser and network environment — all in one place. Official accounts sit behind the IP gate: if your network exit looks wrong, they don't run. Relay routes use your own API keys and are not bound by the gate.
 
 ## Download
 
-| Platform | Requirements                             | Installer                                                                                                                                                                                                                                       |
-| -------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Windows  | Windows 10 / 11, x64                     | [Download EXE](https://github.com/smithtaylor7748-ops/qb-gate/releases/latest/download/QB-Gate-Windows-x64-setup.exe) · [Stable release](https://github.com/smithtaylor7748-ops/qb-gate/releases/latest)                                        |
+| Platform | Requirements                             | Download                                                                                                                                                                                                                                       |
+| -------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows  | Windows 10 / 11, x64                     | [Download EXE](https://github.com/smithtaylor7748-ops/qb-gate/releases/latest/download/QB-Gate-Windows-x64-setup.exe) · [Release page](https://github.com/smithtaylor7748-ops/qb-gate/releases/latest)                                         |
 | macOS    | Apple Silicon (M1 or newer), macOS 13.3+ | [Download DMG](https://github.com/smithtaylor7748-ops/qb-gate/releases/download/macos-v0.25.14-preview.1/QB-Gate-macOS-arm64.dmg) · [Mac preview release](https://github.com/smithtaylor7748-ops/qb-gate/releases/tag/macos-v0.25.14-preview.1) |
 
-On Windows, run the installer; check for updates in Settings, and existing installations are notified when they open the panel. On Mac, open the DMG and drag the app into Applications; see the [Mac installation guide](docs/MACOS.zh-CN.md) for first launch, permissions and updates. The app interface is currently in Simplified Chinese.
+- **Windows**: run the installer. When a new version is out, the panel tells you on launch and updates with one click.
+- **The browser helper (a Chrome extension) is installed together with the Windows app** — no separate download. In the panel, go to "扩展 → 浏览器助手" (Extensions → Browser helper) and click "打开插件文件夹" (open extension folder). The release page also carries a standalone zip of the extension.
+- **Mac**: open the DMG and drag the app into Applications. See the [Mac installation guide](docs/MACOS.zh-CN.md) for first launch and permissions. The Mac preview is still 0.25.14-preview.1 and does not have the changes below yet.
 
-> The Mac preview is still 0.25.14-preview.1 and does **not** include the 0.25.15 changes marked 🆕 below yet; it will be updated separately.
+The app interface is in Simplified Chinese.
 
-## Features
+## What's new in 0.25.16
 
-| Feature                      | What you can do                                                                                                                                                                                                                                                                                            |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Official accounts**        | Manage account slots for Claude, Codex and Antigravity IDE, switch accounts manually, open official clients to sign in, and view credential status, quotas and usage.                                                                                                                                      |
-| **IP gate**                  | Configure IP and country allowlists for official accounts: check before launch, poll every 1–30 seconds while apps run (5 seconds by default), and close managed sessions when the exit is not allowed or cannot be verified. Inspect logs, re-verify, or pause the gate.                                  |
-| **Close all Claude** 🆕      | Now leans toward closing too much rather than too little: processes named claude.exe and the MCP servers, terminals and tools Claude started are closed together, and processes that are already exiting no longer show as errors. GPT, Gemini, Antigravity and the shared tavern keep running.            |
-| **API routes**               | Manage providers, API keys, models and routes. Use a selected route or configure fallback and scheduling within a route pool, then inspect request history, latency and costs. 🆕 Routes are no longer bound by the IP gate: they start without a proxy, and an exit change does not close relay sessions. |
-| **Chrome browser helper** 🆕 | After pairing the extension with the panel, turn on IP protection for the current Chrome profile and send browser check results to the panel; the plan checker can reuse New API / Sub2API accounts already signed in to Chrome and read public model prices.                                              |
-| **Network diagnostics**      | Inspect IP quality, DNS resolution, proxies and routes, IPv6, browser environment signals and exit consistency; compare UDP / HTTP exits, proxy runtime rules and ASN network types on demand.                                                                                                             |
-| **Software management**      | Discover, install and update CLIs such as Claude Code, Codex CLI and Gemini CLI, track versions and installation progress, and roll back managed Claude Code versions.                                                                                                                                     |
-| **Extensions and projects**  | Manage MCP, Skills, prompts and project configuration, connect SillyTavern bridges, and preview configuration changes before applying them.                                                                                                                                                                |
-| **Usage and pricing**        | Explore usage by date, model and account, estimate equivalent official API costs, and compare subscription plans and API route prices.                                                                                                                                                                     |
+**The browser helper was rebuilt — you can now find it and it works.**
 
-On Windows, the IP gate combines system execution locks with a watchdog. On Mac, it checks launches made through QB Gate and supervises running apps with a watchdog. Software installation and system settings adapt to each platform.
+- It ships with the installer and has its own entry on the Extensions page. Three steps: open the extension folder → load it in Chrome → click "连接浏览器" (connect browser).
+- Pair once and you're done: no pairing code to copy. It reconnects by itself after the panel restarts, the port changes, or the browser restarts.
+- Protection blocks only protected sites: once on, claude.ai and the like open only after QB Gate confirms your exit IP is fine. If the exit changes, can't be verified, or the panel quits, those sites are blocked with the reason shown. Other sites and tabs are never touched.
 
-## Get started
+**The relay page was cleaned up, with the same layout.**
 
-1. **Prepare your tools.** Open Software to discover existing installations or install CLI tools. Links to official desktop app downloads are on the same page.
-2. **Check your network.** Run diagnostics from Official Accounts, open IP Lock, and check and add an approved exit IP.
-3. **Sign in and launch.** Create an account slot and open its official client to sign in. Use the panel to launch, switch accounts and view quotas.
-4. **Connect an API route.** Add the service URL and key under API Routes, choose a model and route, then start the client. Configure a route pool and scheduling rules when you want fallback routes. 🆕 Route launches do not go through the IP gate.
-5. 🆕 **Connect Chrome (optional).** Download the source code archive from the release page, open `chrome://extensions` in Chrome, turn on Developer mode, choose "Load unpacked" and select the `browser-extension` folder. Then generate a pairing code under "Chrome 插件联动" in the panel's environment check and paste it into the extension.
+- Route selection comes down to three ideas: **current route** (changes only when you click "设为当前", set as current), **backup routes** (you pick and order them; used only when the current route fails), and **auto-select** (chooses only among those, cheapest first by default).
+- Clicking a row no longer switches routes, and removing a route or changing the listen scope asks first.
+- The chart switches between requests, tokens and cost. When the current route is paused, the page says why and which backup is in use.
+- A request tries at most 2 routes by default, so a failure costs less across stations.
 
-The usage page shows today, the last 7 days and the last 30 days. Dollar values use official API prices to help compare usage.
+## What it does
 
-## Usage boundaries
+### Official accounts and the IP gate
+
+- Manage account slots for Claude, Codex and Antigravity, switch accounts by hand, sign in through the official clients, and view quotas and usage.
+- Set IP and country allowlists for official accounts: checked before launch and every 1–30 seconds while running (5 by default); managed sessions close when the exit isn't allowed or can't be verified.
+- "Close all Claude" errs on the side of closing too much: the MCP servers, terminals and tools Claude started go down with it.
+
+### Relay routes
+
+- Manage stations, API keys, models and routes; presets for common official services; add routes from a CC Switch import link.
+- Current route + backup routes + auto-select; the local router sends each request to the right route and converts between Claude, OpenAI and Gemini protocols when needed.
+- Request logs, usage details and station balances; the plan checker compares what a station actually charged against real bills.
+
+### Browser helper (Chrome extension)
+
+- With protection on, protected sites (by default claude.ai, claude.com, anthropic.com, claudeusercontent.com and their subdomains; editable in the extension) open only after the exit IP checks out.
+- After a browser restart or an extension background restart, those sites stay blocked until the check passes — no gap.
+- Extras: check the current browser's language, time zone, WebRTC and more; reuse New API / Sub2API accounts already signed in to Chrome in the plan checker; read the public model prices a station publishes.
+
+### Network diagnostics
+
+- IP quality, DNS leaks, proxies and routes, IPv6, browser and Chinese-locale environment, exit consistency.
+- On demand: compare UDP / HTTP exits, proxy runtime rules and ASN network types.
+
+### Software, extensions and usage
+
+- Discover, install, update and roll back Claude Code, Codex CLI, Gemini CLI and other command-line tools; host SillyTavern.
+- Manage MCP, Skills, prompts and "projects" (switch a whole set of MCP / Skills / prompts at once); browse local Claude Code / Codex sessions.
+- Usage by date, model and account, priced at official API rates, and a comparison of subscription plans and relay prices.
+
+## Get started in five minutes
+
+1. **Install tools**: open Software to detect existing installations or install the command-line tools you need.
+2. **Set up the gate**: run the environment check on the official accounts page, open "IP 锁" (IP lock) and add the exit IPs you trust.
+3. **Sign in**: create an account slot, sign in through its official client, then launch and switch from the panel.
+4. **Connect a relay (optional)**: add a station URL and key under Relays, pick a route with "设为当前", then start the client. For fallback, tick a few backup routes under "选线与分流" (route selection).
+5. **Install the browser helper (optional)**: Extensions → 浏览器助手 → "打开插件文件夹"; in Chrome open `chrome://extensions`, turn on Developer mode, choose "Load unpacked" and pick that folder; back in the panel click "连接浏览器", then click "开启保护" (turn on protection) in the extension.
+
+## Usage boundaries (please read)
 
 - **Account switching is always manual.** The panel never reads rate-limit state to switch accounts, never rotates accounts based on quota or errors, and keeps only one account active at a time.
 - **Every account must be your own.**
 - **The IP gate guards against your exit changing while apps run, not against you.** Emergency unlock or deliberately running the dedicated relay copy of Claude Code bypasses it.
-- 🆕 **"Close all Claude" also ends the processes Claude started** (for example a dev server it launched for you); unsaved work in them is lost.
+- **The browser helper covers only the Chrome profile it's installed in.** It blocks after it detects a problem; it is not a firewall and reacts within seconds. Other browsers and profiles are not protected.
+- **"Close all Claude" also ends the processes Claude started** (for example a dev server it launched for you); unsaved work in them is lost.
 
 ## Screenshots
 
 Screenshots use demo data.
 
-| Official accounts                                                                  | API routes                                                                   |
-| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| ![Account slots, network score and launch controls](docs/screenshots/overview.png) | ![API routes, models and request history](docs/screenshots/relays-light.png) |
-| **Accounts and launch**: login slots, quotas, usage and network status             | **Routes and models**: providers, model selection and scheduling             |
+| Official accounts                                                                  | Relays                                                                               |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| ![Account slots, network score and launch controls](docs/screenshots/overview.png) | ![Relays: current route, backup routes and usage](docs/screenshots/relays-light.png) |
+| **Accounts and launch**: login slots, quotas, usage and network status             | **Current and backup routes**: usage chart, route selection and stations             |
 
 | Software management                                                            | Network diagnostics                                                                    |
 | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
@@ -68,7 +97,7 @@ Screenshots use demo data.
 
 ## Documentation and community
 
-- [Mac installation and builds](docs/MACOS.zh-CN.md) · [Windows installation help](docs/ANTIVIRUS.zh-CN.md) · [Known limitations](docs/KNOWN-ISSUES.zh-CN.md) · [Releases](https://github.com/smithtaylor7748-ops/qb-gate/releases)
+- [Mac installation and builds](docs/MACOS.zh-CN.md) · [Windows installation help (antivirus false positives)](docs/ANTIVIRUS.zh-CN.md) · [Known limitations](docs/KNOWN-ISSUES.zh-CN.md) · [Browser helper](browser-extension/README.md) · [Releases](https://github.com/smithtaylor7748-ops/qb-gate/releases)
 - [Contributing](CONTRIBUTING.md) · [Architecture](docs/ARCHITECTURE.zh-CN.md) · [Report an issue](https://github.com/smithtaylor7748-ops/qb-gate/issues)
 - QQ group: `1109462206` · [LINUX DO community](https://linux.do/)
 

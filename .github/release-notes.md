@@ -1,16 +1,12 @@
-<!-- release-notes: 0.25.15 -->
+<!-- release-notes: 0.25.16 -->
 <!-- zh -->
 
-修复「一键关闭所有 Claude」和 IP 锁关闭 Claude 时频繁报错、关不干净的问题：已经在退出或已经退出的进程不再被当成没关掉，Claude 页的关闭中途出错也会把其余步骤做完。一键关闭改为「宁可错杀，不可放过」，会连同 Claude 拉起的 MCP 服务器、命令行和它启动的工具一起关掉；GPT、Gemini、反重力和共用的酒馆不受影响。
+浏览器助手重做：插件跟着安装包一起装好，在面板「扩展 → 浏览器助手」里三步装上；配对一次长期有效，面板或浏览器重启后自己连回来。保护改为只拦受保护的网站（默认 claude.ai 等），QB Gate 确认出口 IP 正常才放行，其他网站一律不碰。旧版插件（0.1.0）连不上新面板，请按新页面重新装一次。
 
-中转站不再受官方账户 IP 锁的约束：不开代理也能启动中转，出口 IP 变化不会关掉中转会话或影响其中的搜索功能，官方账户的 IP 锁保持不变。
-
-新增 Chrome 浏览器助手：与面板配对后可单独为当前 Chrome 资料开启 IP 保护；查套路可复用 Chrome 中已登录的 New API / Sub2API 账户，并读取站点公开的模型价格。
+中转站页面理顺，版面不变：选线只剩「当前线路、备用线路、自动选线」三样，点「设为当前」才会换线，不会再点一下整行就切走；柱状图能切换看请求数、Token 或花费；当前线路被暂停时直接告诉你原因和改用了哪条备用线路。一次请求默认最多试 2 条线路，项目只管 MCP / Skills / 提示词、不再碰线路，五个软件共用的设置挪到「设置 → 中转站」。
 
 <!-- en -->
 
-Fix frequent errors and incomplete shutdowns when closing Claude with "Close all Claude" or the IP lock: processes that are already exiting or gone no longer count as failures, and the Claude page finishes every remaining step even if one fails. "Close all Claude" now leans toward closing too much rather than too little, and also stops the MCP servers, terminals, and tools that Claude started; GPT, Gemini, Antigravity, and the shared tavern keep running.
+The browser helper was rebuilt: the extension now installs with the app, and the panel's "Extensions → 浏览器助手" page walks you through three steps. Pair once and it reconnects by itself after the panel or browser restarts. Protection now blocks only protected sites (claude.ai and similar by default) until QB Gate confirms your exit IP, and never touches other sites. The old 0.1.0 extension can't connect to the new panel; reinstall it from the new page.
 
-Relay stations are no longer bound by the official-account IP lock: relays start without a proxy, and an exit IP change no longer stops relay sessions or breaks their search. The IP lock for official accounts is unchanged.
-
-Add the Chrome browser helper: once paired with the panel, it can turn on IP protection for the current Chrome profile, and the plan checker can reuse New API / Sub2API accounts already signed in to Chrome and read the public model prices those sites publish.
+The relay page was cleaned up with the same layout: route selection comes down to current route, backup routes and auto-select; routes change only when you click "设为当前", never by clicking a row; the chart switches between requests, tokens and cost; and when the current route is paused, the page says why and which backup is in use. A request tries at most 2 routes by default, projects only switch MCP / Skills / prompts and no longer touch routes, and settings shared by all five apps moved to Settings → Relays.
