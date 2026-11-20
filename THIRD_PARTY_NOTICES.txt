@@ -103346,7 +103346,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 
 ========================================================================
 
-cargo: zip@9.0.2
+cargo: zip@9.0.5
 Source: https://github.com/zip-rs/zip2
 Declared license: MIT
 LICENSE

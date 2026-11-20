@@ -25,7 +25,12 @@ yanked = "deny"
 # unic-common、unic-ucd-ident、unic-ucd-version）全是 tauri 往下拉的，
 # 升 tauri 才能动，设成 deny 只会让 CI 长期红着没人看。
 unmaintained = "workspace"
-ignore = []
+ignore = [
+  # chrono 被宣布无人维护（2026-11），所有版本都算，没有可升的版本。它是时间戳与日期计算的地基，
+  # 十几个 workspace crate 直接在用；换成 jiff / time 是一整轮迁移，不能塞进发版里顺手做。
+  # 这条只报「没人维护」，不是漏洞；漏洞仍是硬门。迁移之前这里放行，迁完删掉这一行。
+  { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no safe upgrade; migration to jiff/time is tracked in docs/KNOWN-ISSUES.zh-CN.md" },
+]
 
 [licenses]
 # 本项目是 AGPL-3.0-only。允许清单只放跟它相容、且社区公认宽松的那几类。
