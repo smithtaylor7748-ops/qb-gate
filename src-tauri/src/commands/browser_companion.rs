@@ -1,11 +1,22 @@
-//! Chrome 浏览器助手（协议 2）。连接桥在 `qb_app::browser_link`，这里只做三件它不做的事：
+//! Chrome 浏览器助手（协议 2）。连接桥在 `qb_app::browser_link`，这里做它不做的事：
 //! 打开默认浏览器、写审计日志、把面板的门禁状态与内嵌资源交给它。
 //!
 //! 「连接浏览器」「一键重连」只由界面上的点击触发；面板启动时只在**已经配对过**时恢复监听。
+//!
+//! 另有插件文件夹的两条（2026-11-19）：安装包把插件装进安装目录下的 `browser-extension`
+//! （`tauri.conf.json` 的 `bundle.resources`），「打开插件文件夹」「复制路径」指的就是它；
+//! 开发版先找仓库里 `npm run build:browser-extension` 构建出来的那份。位置一律从 Tauri 的
+//! 资源目录拼，不写死。
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::{audit, error::Result, AppState};
+use crate::{
+    audit,
+    error::{GateError, Result},
+    AppState,
+};
+use qb_app::browser_link::folder::{self, BrowserExtensionFolder, ExtensionFolderSource};
 use qb_app::{browser_link, browser_probe::AssetSource};
 
 struct CompanionAssets(tauri::AppHandle);
@@ -74,6 +85,74 @@ pub async fn browser_companion_unpair(
     pairing_id: String,
 ) -> Result<browser_link::BrowserLinkStatus> {
     link(&app, &state).unpair(&pairing_id).await
+}
+
+/// 按优先级列出插件文件夹可能在的地方。
+///
+/// 开发版（`debug_assertions`）先看仓库里构建出来的那份 —— 改了插件源码、`cargo` 重编时
+/// `build.rs` 会重新构建它；再看资源目录（`tauri-build` 也会复制一份到 `target` 里）。
+/// 安装版只看资源目录，也就是面板安装目录。
+fn folder_candidates(app: &tauri::AppHandle) -> Vec<(PathBuf, ExtensionFolderSource)> {
+    use tauri::Manager;
+    let mut out = Vec::new();
+    #[cfg(debug_assertions)]
+    out.push((
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("build")
+            .join(folder::FOLDER_NAME),
+        ExtensionFolderSource::Development,
+    ));
+    if let Ok(resources) = app.path().resource_dir() {
+        out.push((
+            resources.join(folder::FOLDER_NAME),
+            ExtensionFolderSource::Installed,
+        ));
+    }
+    out
+}
+
+fn locate_folder(app: &tauri::AppHandle) -> BrowserExtensionFolder {
+    let mut found = folder::locate(&folder_candidates(app));
+    // `..` 留在路径里，复制出去的那串不好认；能化简就化简（`canonicalize` 会加 `\\?\` 前缀，去掉）。
+    if let Some(path) = found.path.as_deref() {
+        if let Ok(clean) = tidy_path(PathBuf::from(path)) {
+            found.path = Some(clean);
+        }
+    }
+    found
+}
+
+fn tidy_path(path: PathBuf) -> std::io::Result<String> {
+    let full = std::fs::canonicalize(path)?.display().to_string();
+    Ok(full
+        .strip_prefix(r"\\?\")
+        .map(str::to_string)
+        .unwrap_or(full))
+}
+
+/// 插件文件夹在哪（只读，不打开任何东西）。「复制路径」用它。
+#[tauri::command]
+pub fn browser_companion_folder(app: tauri::AppHandle) -> BrowserExtensionFolder {
+    locate_folder(&app)
+}
+
+/// 「打开插件文件夹」：在资源管理器里打开它。找不到、打不开都照实报错，附下一步。
+#[tauri::command]
+pub fn browser_companion_open_folder(app: tauri::AppHandle) -> Result<BrowserExtensionFolder> {
+    use tauri_plugin_opener::OpenerExt;
+    let found = locate_folder(&app);
+    let Some(path) = found.path.clone() else {
+        return Err(GateError::Other(
+            found.problem.unwrap_or_else(|| "没找到插件文件夹。".into()),
+        ));
+    };
+    app.opener().open_path(&path, None::<&str>).map_err(|e| {
+        GateError::Other(format!(
+            "打不开插件文件夹（{e}）。点「复制路径」，在资源管理器地址栏里粘贴打开：{path}"
+        ))
+    })?;
+    Ok(found)
 }
 
 /// 面板启动时调：配对过才恢复监听；没配对过什么都不做（不开任何端口）。

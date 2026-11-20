@@ -115,6 +115,7 @@ fn main() {
         qb_app::browser_link::BrowserLinkCheck::export_all_to(&root)?;
         qb_app::browser_link::BrowserLinkClaim::export_all_to(&root)?;
         qb_app::browser_link::BrowserLinkClaimState::export_all_to(&root)?;
+        qb_app::browser_link::folder::BrowserExtensionFolder::export_all_to(&root)?;
         qb_app::usecase::browser_station::BrowserStation::export_all_to(&root)?;
         qb_app::usecase::browser_station::BrowserStationPrice::export_all_to(&root)?;
         qb_app::usecase::browser_station::BrowserStationPrices::export_all_to(&root)?;

@@ -16,6 +16,7 @@
 //! - 面板正常退出先给每条连接发 `offline`，再断开；异常断开没有这条消息。两种情况插件都拦。
 //! - 这一层不认识 Tauri、不写审计日志、不打开浏览器：事件交给调用方给的回调（[`Config::events`]）。
 
+pub mod folder;
 mod link_auth;
 mod link_store;
 #[cfg(test)]

@@ -49,3 +49,5 @@ auth.json
 /test-results/
 /playwright-report/
 /dist-installers/
+# 浏览器助手插件的分发目录（scripts/build-browser-extension.mjs 产出，安装包从这里取）
+/build/

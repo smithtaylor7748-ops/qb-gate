@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Blocks,
   Download,
+  Globe,
   Plug,
   Search,
   Sparkles,
@@ -35,6 +36,13 @@ import ToolFilesPanel from "./ToolFilesPanel";
 import SessionsPanel from "./SessionsPanel";
 import StationProjects from "./station/StationProjects";
 import { STATION_CLIENTS } from "./station/shared";
+import BrowserCompanionPage from "./browser/BrowserCompanionPage";
+import {
+  BROWSER_COMPANION_BLURB,
+  BROWSER_COMPANION_ID,
+  BROWSER_COMPANION_NAME,
+  BROWSER_COMPANION_PATH,
+} from "./browser/where";
 
 const KIND_ICON = {
   application: Blocks,
@@ -135,6 +143,14 @@ export default function ExtensionCenter() {
             (tab !== "updates" || i.version !== m.version),
         )),
   );
+  // 浏览器助手是面板自带的（插件随安装包放在安装目录里），不在扩展目录里：单独一张卡、单独一页。
+  if (id === BROWSER_COMPANION_ID) return <BrowserCompanionPage />;
+  const showCompanion =
+    tab === "discover" &&
+    (category === "all" || category === "application") &&
+    `${BROWSER_COMPANION_NAME} Chrome Edge 插件 ${BROWSER_COMPANION_BLURB}`
+      .toLowerCase()
+      .includes(search.toLowerCase());
   if (selected)
     return (
       <>
@@ -226,6 +242,24 @@ export default function ExtensionCenter() {
             </p>
           )}
           <div className="qb-catalog-grid">
+            {showCompanion && (
+              <Link
+                className="qb-extension-card"
+                to={BROWSER_COMPANION_PATH}
+                data-testid="browser-companion-card"
+              >
+                <div className="qb-extension-icon qb-extension-icon-browser">
+                  <Globe size={25} />
+                </div>
+                <span className="qb-extension-category">浏览器插件</span>
+                <h3>{BROWSER_COMPANION_NAME}</h3>
+                <p>{BROWSER_COMPANION_BLURB}</p>
+                <div className="qb-extension-foot">
+                  <span>随 QB Gate 自带 · Chrome / Edge</span>
+                  <ArrowRight size={17} />
+                </div>
+              </Link>
+            )}
             {list.map((m) => {
               const Icon = KIND_ICON[m.kind];
               const installed = installations.filter(
@@ -259,7 +293,7 @@ export default function ExtensionCenter() {
               );
             })}
           </div>
-          {!list.length && !catalog.loading && (
+          {!list.length && !showCompanion && !catalog.loading && (
             <div className="qb-empty">
               <Blocks size={30} />
               <h3>

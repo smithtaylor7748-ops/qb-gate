@@ -652,51 +652,121 @@ const demoEnv: EnvHit[] = [
 
 /** 演示的真实浏览器报告：点过「用默认浏览器测」才有。 */
 let demoProbeReport: BrowserReport | null = null;
-/** 演示的浏览器助手：点「连接浏览器」之后多一个已连接的 Chrome（不开任何端口）。 */
-let demoBrowserPaired = false;
+/**
+ * 演示的浏览器助手（不开任何端口）。三个浏览器资料各一种样子：
+ * 已连接且保护开着、断开（浏览器没开）、要「一键重连」（原来的端口被占了）。
+ * 「解除配对」去掉那一个；「连接浏览器」把第一个放回来并显示「已连接」；
+ * 「一键重连」演示「没能替你打开浏览器」那一档（界面要把地址给出来）。
+ */
+const DEMO_BROWSERS = [
+  "0123456789abcdef",
+  "fedcba9876543210",
+  "a1b2c3d4e5f60718",
+];
+const demoBrowserPairs = new Set(DEMO_BROWSERS);
+let demoBrowserClaim: "claimed" | "pending" | null = null;
 function demoBrowserLinkStatus() {
   const now = Math.floor(Date.now() / 1000);
+  const blocked = (code: "disconnected", reason: string) => ({
+    allow: false,
+    code,
+    reason,
+    armed: true,
+    checking: false,
+    ip: null,
+    baseline: "203.0.113.10",
+    checked_at: now - 7200,
+  });
+  const all = [
+    {
+      pairing_id: DEMO_BROWSERS[0],
+      label: "Chrome 158",
+      extension_id: "dffmajnemniojfblgfhenndeeelbjgoh",
+      extension_version: "0.2.0",
+      paired_at: now - 86400 * 3,
+      connected: true,
+      needs_relink: false,
+      protection: {
+        allow: true,
+        code: "allowed" as const,
+        reason: "出口 IP 203.0.113.10 已核实，放行受保护的网站",
+        armed: true,
+        checking: false,
+        ip: "203.0.113.10",
+        baseline: "203.0.113.10",
+        checked_at: now - 4,
+      },
+      enhancement_json: JSON.stringify({
+        webrtc_policy: "disable_non_proxied_udp",
+        proxy_mode: "system",
+        proxy_control: "controllable_by_this_extension",
+      }),
+    },
+    {
+      pairing_id: DEMO_BROWSERS[1],
+      label: "Edge 157",
+      extension_id: "dffmajnemniojfblgfhenndeeelbjgoh",
+      extension_version: "0.2.0",
+      paired_at: now - 86400 * 10,
+      connected: false,
+      needs_relink: false,
+      protection: blocked(
+        "disconnected",
+        "这个浏览器没连着面板（浏览器没开，或刚重启还没连回来），受保护的网站先拦着",
+      ),
+      enhancement_json: null,
+    },
+    {
+      pairing_id: DEMO_BROWSERS[2],
+      label: "Chrome 158（工作资料）",
+      extension_id: "dffmajnemniojfblgfhenndeeelbjgoh",
+      extension_version: "0.2.0",
+      paired_at: now - 86400,
+      connected: false,
+      needs_relink: true,
+      protection: blocked(
+        "disconnected",
+        "面板换了端口，这个浏览器还在找原来那个：点「一键重连」",
+      ),
+      enhancement_json: null,
+    },
+  ].filter((p) => demoBrowserPairs.has(p.pairing_id));
+  const listening = all.length > 0;
   return {
-    listening: demoBrowserPaired,
-    port: demoBrowserPaired ? 53124 : null,
-    relink_needed: false,
-    pairings: demoBrowserPaired
-      ? [
-          {
-            pairing_id: "0123456789abcdef",
-            label: "Chrome 131",
-            extension_id: "abcdefghijklmnopabcdefghijklmnop",
-            extension_version: "0.2.0",
-            paired_at: now - 3600,
-            connected: true,
-            needs_relink: false,
-            protection: {
-              allow: true,
-              code: "allowed" as const,
-              reason: "出口 IP 已核实，可以放行",
-              armed: true,
-              checking: false,
-              ip: "203.0.113.10",
-              baseline: "203.0.113.10",
-              checked_at: now,
-            },
-            enhancement_json: null,
-          },
-        ]
-      : [],
-    last_check: demoBrowserPaired
+    listening,
+    port: listening ? 53124 : null,
+    relink_needed: all.some((p) => p.needs_relink),
+    pairings: all,
+    last_check: listening
       ? {
           ip: "203.0.113.10",
           allowed: true,
           code: "allowed" as const,
           reason: "出口 IP 203.0.113.10 在白名单内",
-          checked_at: now,
+          checked_at: now - 4,
         }
       : null,
-    claim: null,
+    claim:
+      demoBrowserClaim === null
+        ? null
+        : {
+            state: demoBrowserClaim,
+            expires_at: now + 240,
+            browser: demoBrowserClaim === "claimed" ? "Chrome 158" : null,
+            problem: null,
+          },
     problem: null,
   };
 }
+const DEMO_EXTENSION_PATH =
+  "C:\\Users\\demo\\AppData\\Local\\QB Gate\\browser-extension";
+const demoExtensionFolder = {
+  path: DEMO_EXTENSION_PATH,
+  source: "installed" as const,
+  version: "0.2.0",
+  problem: null,
+  searched: [DEMO_EXTENSION_PATH],
+};
 function demoBrowserReport(): BrowserReport {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -1358,20 +1428,33 @@ const antigravityRules: DangerRules = {
  * 2. 只有 IDE 那一半的（从旧清单升上来的形状）—— 它会显示「并入…」；
  * 3. 只有 CLI 那一半且还没登的。
  */
-let nativeBridgeConfig: import("./generated/AntigravityBridgeConfig").AntigravityBridgeConfig = {
-  account_id: "", port: 5004, model: "", system_prompt: "",
-};
+let nativeBridgeConfig: import("./generated/AntigravityBridgeConfig").AntigravityBridgeConfig =
+  {
+    account_id: "",
+    port: 5004,
+    model: "",
+    system_prompt: "",
+  };
 let nativeBridgeRunning = false;
-const nativeBridgeModels = new Map<string, import("./generated/AntigravityBridgeModel").AntigravityBridgeModel[]>();
+const nativeBridgeModels = new Map<
+  string,
+  import("./generated/AntigravityBridgeModel").AntigravityBridgeModel[]
+>();
 function nativeBridgeStatus(): import("./generated/AntigravityBridgeStatus").AntigravityBridgeStatus {
   return {
     running: nativeBridgeRunning,
     config: { ...nativeBridgeConfig },
     url: `http://127.0.0.1:${nativeBridgeConfig.port}/v1`,
-    account_label: agAccounts.find((a) => a.id === nativeBridgeConfig.account_id)?.label ?? null,
-    accounts: agAccounts.filter((a) => a.ide_dir).map((a) => ({ id: a.id, label: a.label, logged_in: a.ide_logged_in })),
+    account_label:
+      agAccounts.find((a) => a.id === nativeBridgeConfig.account_id)?.label ??
+      null,
+    accounts: agAccounts
+      .filter((a) => a.ide_dir)
+      .map((a) => ({ id: a.id, label: a.label, logged_in: a.ide_logged_in })),
     models: nativeBridgeModels.get(nativeBridgeConfig.account_id) ?? [],
-    detail: nativeBridgeRunning ? "演示：正在使用所选 IDE 账户与模型" : "未运行；手动读取模型后启动，仅使用所选 IDE 账户。",
+    detail: nativeBridgeRunning
+      ? "演示：正在使用所选 IDE 账户与模型"
+      : "未运行；手动读取模型后启动，仅使用所选 IDE 账户。",
   };
 }
 
@@ -2096,8 +2179,16 @@ const routerSettingsOf = (client: string): RouterSettings => {
     routing_mode: "selected",
     allowed_routes: [],
     pool_strategy: "priority",
-    session_recovery: { strip_item_ids: false, filter_encrypted_content: false },
-    admission: { overflow_to_pool: false, route_limits: {}, max_wait_ms: 0, max_waiters: 0 },
+    session_recovery: {
+      strip_item_ids: false,
+      filter_encrypted_content: false,
+    },
+    admission: {
+      overflow_to_pool: false,
+      route_limits: {},
+      max_wait_ms: 0,
+      max_waiters: 0,
+    },
     // 2026-11-14 起两个软件都是 2（当前线路 + 一条备用），跟 `RouterSettings::for_client` 一样。
     max_attempts: 2,
     first_byte_timeout_secs: codex ? 60 : 90,
@@ -2583,7 +2674,9 @@ function demoDispatchOf(who: string) {
   }));
   const alerts =
     routes.length === 1
-      ? ["只有 1 条线，没有备用：它一坏这个软件就停。多勾几条备用线路，自动选线才有得挑"]
+      ? [
+          "只有 1 条线，没有备用：它一坏这个软件就停。多勾几条备用线路，自动选线才有得挑",
+        ]
       : [];
   return { order: sorted.map((r) => r.id), rows, alerts };
 }
@@ -2644,7 +2737,9 @@ function demoSelectionOf(who: string): SelectionView {
   return {
     current,
     backups,
-    auto_select: Boolean(stationSchedules.find((x) => x.client === who)?.enabled),
+    auto_select: Boolean(
+      stationSchedules.find((x) => x.client === who)?.enabled,
+    ),
     plan: {
       current,
       steps,
@@ -3779,12 +3874,16 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       request_id: request.request_id,
       target_id: request.target.id,
       target_label: official
-        ? codexSlots.find((s) => s.id === request.target.id)?.label ?? request.target.id
-        : stationRoutes.find((r) => r.id === request.target.id)?.group ?? request.target.id,
+        ? (codexSlots.find((s) => s.id === request.target.id)?.label ??
+          request.target.id)
+        : (stationRoutes.find((r) => r.id === request.target.id)?.group ??
+          request.target.id),
       target_kind: request.target.kind,
       requested_model: request.model,
       actual_model: cancelled ? null : request.model,
-      source_stamp: cancelled ? null : `demo-source-v1:${request.target.kind}:${request.target.id}`,
+      source_stamp: cancelled
+        ? null
+        : `demo-source-v1:${request.target.kind}:${request.target.id}`,
       protocol: official ? "codex-cli" : "responses",
       status: cancelled ? "cancelled" : "completed",
       text: cancelled ? "" : '{"answer":21}',
@@ -3936,7 +4035,10 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
         retry_at_ms: null,
         reason: null,
         quota_checked_at_ms: null,
-        quota_state: stationRouterSettings[route.client]?.admission.route_limits[route.id]?.check_quota ? "unknown" : "disabled",
+        quota_state: stationRouterSettings[route.client]?.admission
+          .route_limits[route.id]?.check_quota
+          ? "unknown"
+          : "disabled",
       })),
   }),
   station_router_settings: (args) => {
@@ -3945,14 +4047,29 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   },
   station_router_settings_save: (args) => {
     const s = args?.settings as RouterSettings;
-    const capacityValues = [s.admission.max_wait_ms, s.admission.max_waiters,
-      ...Object.values(s.admission.route_limits).flatMap((limit) => limit ? [limit.max_concurrent, limit.rpm] : [])];
-    if (capacityValues.some((value) => !Number.isSafeInteger(value) || value < 0))
+    const capacityValues = [
+      s.admission.max_wait_ms,
+      s.admission.max_waiters,
+      ...Object.values(s.admission.route_limits).flatMap((limit) =>
+        limit ? [limit.max_concurrent, limit.rpm] : [],
+      ),
+    ];
+    if (
+      capacityValues.some((value) => !Number.isSafeInteger(value) || value < 0)
+    )
       throw new Error("请求容量与等待设置必须是大于或等于 0 的整数。");
     // 跟真后端一样：selected = 清空名单（严格单线）；名单空 = selected；分流关就把分法复位成优先当前线路。
     // 不要求当前线路在名单里：名单是「当前线路出故障时依次改用谁」。
-    const backups = s.routing_mode === "pool" ? [...new Set(s.allowed_routes)] : [];
-    if (backups.some((id) => !stationRoutes.some((r) => r.id === id && r.client === s.client && r.credential_id)))
+    const backups =
+      s.routing_mode === "pool" ? [...new Set(s.allowed_routes)] : [];
+    if (
+      backups.some(
+        (id) =>
+          !stationRoutes.some(
+            (r) => r.id === id && r.client === s.client && r.credential_id,
+          ),
+      )
+    )
       throw new Error("备用线路只能是这个软件自己的中转线路");
     // 跟真后端一样：聚合 key 的登记簿只增不减、界面传来的不认；名单里没 key 的按站点 id 分一个。
     const before =
@@ -3969,7 +4086,9 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       ...s,
       allowed_routes: backups,
       routing_mode: backups.length ? "pool" : "selected",
-      pool_strategy: s.admission.overflow_to_pool ? s.pool_strategy : "priority",
+      pool_strategy: s.admission.overflow_to_pool
+        ? s.pool_strategy
+        : "priority",
       aggregate: { ...s.aggregate, keys },
     };
     stationRouterSettings[s.client] = saved;
@@ -4387,7 +4506,10 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     const out: ProbeAttempt[] = [];
     const pending: PaidProbePlan[] = [];
     for (const r of stationRoutes.filter(
-      (x) => x.client === who && pool.includes(x.id) && (only == null || x.id === only),
+      (x) =>
+        x.client === who &&
+        pool.includes(x.id) &&
+        (only == null || x.id === only),
     )) {
       stationProbedAt[r.id] = now;
       const dead = (stationBreakers[who] ?? []).some(
@@ -4575,8 +4697,7 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       if (!demoBackupsOf(who).length)
         throw new Error("先勾上至少一条备用线路，自动选线才有得挑");
       const current = stationPending[who] ?? stationCurrent[who];
-      if (!current)
-        throw new Error("先给这个软件设一条当前线路，再开自动选线");
+      if (!current) throw new Error("先给这个软件设一条当前线路，再开自动选线");
       if (!policy.allowed_routes.includes(current))
         stationRouterSettings[who] = {
           ...policy,
@@ -4593,8 +4714,22 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     return { ...s };
   },
   station_logs: () => stationLogs,
-  deeplink_handler_status: () => ({ enabled: false, registered: false, can_restore: false, dev_build: false, handler: null, user_choice: false }),
-  deeplink_handler_set: (args) => ({ enabled: Boolean(args?.enabled), registered: Boolean(args?.enabled), can_restore: Boolean(args?.enabled), dev_build: false, handler: args?.enabled ? "QB Gate" : null, user_choice: false }),
+  deeplink_handler_status: () => ({
+    enabled: false,
+    registered: false,
+    can_restore: false,
+    dev_build: false,
+    handler: null,
+    user_choice: false,
+  }),
+  deeplink_handler_set: (args) => ({
+    enabled: Boolean(args?.enabled),
+    registered: Boolean(args?.enabled),
+    can_restore: Boolean(args?.enabled),
+    dev_build: false,
+    handler: args?.enabled ? "QB Gate" : null,
+    user_choice: false,
+  }),
   station_usage_report: (args) =>
     demoRelayUsage(
       (args?.client as string | null | undefined) ?? null,
@@ -4605,28 +4740,65 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
     const through = Date.now();
     const client = String(args?.client);
     const hours = args?.hours == null ? null : Number(args.hours);
-    const granularity = hours == null ? "day" : hours > 24 && args?.granularity === "minute" ? "hour" : String(args?.granularity ?? "hour");
-    const rows = demoUsageItems.filter(x => x.client === client && (!args?.routeId || x.route === args.routeId));
-    const timed = rows.map(x => ({...x, at:new Date(`${x.day}T${String(x.hour ?? 0).padStart(2,"0")}:00:00`).getTime()}));
-    const since = hours == null ? Math.min(through, ...timed.map(x=>x.at)) : through - hours*3_600_000;
-    const inRange = timed.filter(x=>x.at>=since && x.at<=through);
+    const granularity =
+      hours == null
+        ? "day"
+        : hours > 24 && args?.granularity === "minute"
+          ? "hour"
+          : String(args?.granularity ?? "hour");
+    const rows = demoUsageItems.filter(
+      (x) =>
+        x.client === client && (!args?.routeId || x.route === args.routeId),
+    );
+    const timed = rows.map((x) => ({
+      ...x,
+      at: new Date(
+        `${x.day}T${String(x.hour ?? 0).padStart(2, "0")}:00:00`,
+      ).getTime(),
+    }));
+    const since =
+      hours == null
+        ? Math.min(through, ...timed.map((x) => x.at))
+        : through - hours * 3_600_000;
+    const inRange = timed.filter((x) => x.at >= since && x.at <= through);
     const totals = blankTotals();
-    for(const row of inRange) addTotals(totals,row.totals);
+    for (const row of inRange) addTotals(totals, row.totals);
     const width = granularity === "minute" ? 300_000 : 3_600_000;
-    const bucketStart = (at:number) => {
-      const date=new Date(at);
-      if(granularity === "day") {date.setHours(0,0,0,0);return date.getTime();}
-      return Math.floor(at/width)*width;
+    const bucketStart = (at: number) => {
+      const date = new Date(at);
+      if (granularity === "day") {
+        date.setHours(0, 0, 0, 0);
+        return date.getTime();
+      }
+      return Math.floor(at / width) * width;
     };
-    const buckets = new Map<number, {start_ms:number;end_ms:number;totals:RelayUsageTotals}>();
-    for(let at=bucketStart(since);at<=through;) {
-      const end=new Date(at);
-      if(granularity === "day") end.setDate(end.getDate()+1); else end.setTime(at+width);
-      buckets.set(at,{start_ms:at,end_ms:end.getTime(),totals:blankTotals()});
-      at=end.getTime();
+    const buckets = new Map<
+      number,
+      { start_ms: number; end_ms: number; totals: RelayUsageTotals }
+    >();
+    for (let at = bucketStart(since); at <= through;) {
+      const end = new Date(at);
+      if (granularity === "day") end.setDate(end.getDate() + 1);
+      else end.setTime(at + width);
+      buckets.set(at, {
+        start_ms: at,
+        end_ms: end.getTime(),
+        totals: blankTotals(),
+      });
+      at = end.getTime();
     }
-    for(const row of inRange) {const b=buckets.get(bucketStart(row.at));if(b) addTotals(b.totals,row.totals);}
-    return {since_ms:since,through_ms:through,granularity,totals,by_route:demoGroups(inRange,x=>[x.route,x.route]),buckets:[...buckets.values()]};
+    for (const row of inRange) {
+      const b = buckets.get(bucketStart(row.at));
+      if (b) addTotals(b.totals, row.totals);
+    }
+    return {
+      since_ms: since,
+      through_ms: through,
+      granularity,
+      totals,
+      by_route: demoGroups(inRange, (x) => [x.route, x.route]),
+      buckets: [...buckets.values()],
+    };
   },
   sessions_list: (args) => demoSessionList(args),
   sessions_read: (args) => demoSessionRead(String(args?.id)),
@@ -4771,7 +4943,8 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   gate_status: () => gate,
   gate_check_interval_save: (args) => {
     const seconds = Number(args?.seconds);
-    if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30) throw new Error("检查间隔须为1–30秒的整数");
+    if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30)
+      throw new Error("检查间隔须为1–30秒的整数");
     settings.gate_check_interval_secs = seconds;
     return { ...settings };
   },
@@ -4874,7 +5047,8 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   browser_probe_last: () => demoProbeReport,
   browser_companion_status: () => demoBrowserLinkStatus(),
   browser_companion_connect: () => {
-    demoBrowserPaired = true;
+    demoBrowserPairs.add(DEMO_BROWSERS[0]);
+    demoBrowserClaim = "claimed";
     return {
       url: "http://127.0.0.1:53124/link#c=" + "0".repeat(64),
       opened: true,
@@ -4883,17 +5057,24 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
       rebound: false,
     };
   },
-  browser_companion_reconnect: () => ({
-    url: "http://127.0.0.1:53124/link#c=" + "1".repeat(64),
-    opened: true,
-    port: 53124,
-    expires_at: Math.floor(Date.now() / 1000) + 300,
-    rebound: false,
-  }),
-  browser_companion_unpair: () => {
-    demoBrowserPaired = false;
+  browser_companion_reconnect: () => {
+    demoBrowserClaim = "pending";
+    return {
+      url: "http://127.0.0.1:53125/link#c=" + "1".repeat(64),
+      opened: false,
+      port: 53125,
+      expires_at: Math.floor(Date.now() / 1000) + 300,
+      rebound: false,
+    };
+  },
+  browser_companion_unpair: (args) => {
+    demoBrowserPairs.delete(String(args?.pairingId));
+    if (demoBrowserPairs.size === 0) demoBrowserClaim = null;
     return demoBrowserLinkStatus();
   },
+  // 插件文件夹：演示里假装是安装版，路径是虚构的演示用户。「打开」不开任何东西。
+  browser_companion_folder: () => demoExtensionFolder,
+  browser_companion_open_folder: () => demoExtensionFolder,
   // 克隆一份：额度演示会就地改槽位（盖上「官方接口」那份），同一个引用 React Query 看不出变了。
   accounts_list: () => structuredClone(accounts),
   accounts_tokens: () => tokenUsage,
@@ -5142,18 +5323,29 @@ const FIXTURES: Record<string, (args?: Record<string, unknown>) => unknown> = {
   },
   tavern_antigravity_models: (args) => {
     const id = String(args?.accountId ?? "");
-    if (!agAccounts.some((a) => a.id === id && a.ide_logged_in)) throw new Error("请选择已登录的 IDE 账户");
-    const models = [{ id: "gemini-demo-text", name: "Gemini 文本模型（演示）" }, { id: "claude-demo-text", name: "Claude 文本模型（演示）" }];
+    if (!agAccounts.some((a) => a.id === id && a.ide_logged_in))
+      throw new Error("请选择已登录的 IDE 账户");
+    const models = [
+      { id: "gemini-demo-text", name: "Gemini 文本模型（演示）" },
+      { id: "claude-demo-text", name: "Claude 文本模型（演示）" },
+    ];
     nativeBridgeModels.set(id, models);
     return models;
   },
   tavern_antigravity_token: () => "demo-native-token-not-a-real-secret",
   tavern_antigravity_start: () => {
-    if (!nativeBridgeModels.get(nativeBridgeConfig.account_id)?.some((m) => m.id === nativeBridgeConfig.model)) throw new Error("先读取并选择这个账户的模型");
+    if (
+      !nativeBridgeModels
+        .get(nativeBridgeConfig.account_id)
+        ?.some((m) => m.id === nativeBridgeConfig.model)
+    )
+      throw new Error("先读取并选择这个账户的模型");
     nativeBridgeRunning = true;
     return nativeBridgeStatus();
   },
-  tavern_antigravity_stop: () => { nativeBridgeRunning = false; },
+  tavern_antigravity_stop: () => {
+    nativeBridgeRunning = false;
+  },
   tavern_gemini_token: () => "demo-token-not-a-real-secret",
   tavern_gemini_quota: (args) =>
     askedOnly("gemini:active", args?.refresh, () => ({

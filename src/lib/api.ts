@@ -22,6 +22,7 @@ import type { AssetItem } from "./generated/AssetItem";
 import type { AuthStyle } from "./generated/AuthStyle";
 import type { BackupEntry } from "./generated/BackupEntry";
 import type { BrowserAudit } from "./generated/BrowserAudit";
+import type { BrowserExtensionFolder } from "./generated/BrowserExtensionFolder";
 import type { BrowserLinkStart } from "./generated/BrowserLinkStart";
 import type { BrowserLinkStatus } from "./generated/BrowserLinkStatus";
 import type { BrowserExtension } from "./generated/BrowserExtension";
@@ -474,6 +475,12 @@ export const api = {
   /** 解除一个浏览器的配对：口令立刻作废、连接立刻断开；最后一个解除后不再监听。 */
   browserCompanionUnpair: (pairingId: string) =>
     call<BrowserLinkStatus>("browser_companion_unpair", { pairingId }),
+  /** 插件文件夹在哪（安装版 = 安装目录下的 browser-extension；开发版 = 仓库里构建出来的那份）。只读。 */
+  browserCompanionFolder: () =>
+    call<BrowserExtensionFolder>("browser_companion_folder"),
+  /** 「打开插件文件夹」：在资源管理器里打开它；找不到 / 打不开时报错里带下一步。 */
+  browserCompanionOpenFolder: () =>
+    call<BrowserExtensionFolder>("browser_companion_open_folder"),
   /**
    * 「这个账户现在还能用吗」—— 拿槽位里的令牌向官方发**一次**最小认证请求。
    *

@@ -292,6 +292,21 @@ manifest 的 `key` 是一把 RSA 公钥，扩展 ID 由它算出：`dffmajnemnio
   跟真装的一样；Chrome 137 起品牌版不认这个开关，改走 `--enable-unsafe-extension-debugging` + 调试协议 `Extensions.loadUnpacked` ——
   这样加载的插件重启后不会自己回来，脚本重启后再加载一次（存的设置还在，动态规则在插件醒来时按存的设置重建）。不下载任何浏览器。
 
+## 2026-11-19（未发布）：浏览器助手的面板入口与随安装包分发
+
+**为什么**：插件做好了却「找不到」—— 安装包不带它（`bundle.resources` 只有许可证），面板里唯一那张卡挂在「中文环境」「执行锁」两个小窗和查套路里，侧栏、扩展页、Ctrl+K 都没有；文档叫人找「环境体检」，评分卡上那一格却叫「中文环境」。
+
+**做法与取舍**：
+
+1. **一个家**：`/extensions/browser-companion`（`src/features/browser/BrowserCompanionPage.tsx`）。它不在扩展目录里（不是可装可卸的扩展，是面板自带的），所以在「发现」分页单独画一张卡、`ExtensionCenter` 见到这个 id 直接渲染这一页；地址与叫法放在 `where.ts`，快速跳转与三个旧入口只引它，不把整页拖进首页那一包。页面沿用扩展详情页的版式（hero + 左正文 + 右栏「插件信息」）。
+2. **三个旧入口只留跳转**（`BrowserCompanionLink`）：一句说明 + 一行连接结果 + 「打开浏览器助手页」。同一份内容两个入口，正是要消灭的那类重复；查套路要知道「连没连上」，所以连接结果留着。小窗是全局只挂一份的，跳走之前要先关掉它 —— `openSecurity` / `closeSecurity` 挪进 `security/sheetState.ts`，不然 `objects.tsx → BrowserCompanionLink → SecuritySheet → objects.tsx` 成环。
+3. **分发目录 `build/browser-extension`**：原来在 `dist/browser-extension`，而 `vite build` 每次清空 `dist/`。`tauri.conf.json` 用目录映射 `"../build/browser-extension/": "browser-extension/"` 装进安装目录。
+4. **`tauri-build` 编译时就要求资源存在**（`tauri-utils` 的 `ResourcePathNotFound`），不处理的话干净克隆连 `cargo test` 都过不了。所以 `src-tauri/build.rs` 先跑一次构建脚本（`node`），失败时已有一份就沿用并警告、一份都没有才停。构建脚本因此改成**增量**：内容没变不写、复制保留源文件的修改时间、源里删掉的分发目录里也删 —— `tauri-build` 给资源里每个文件登记了 `rerun-if-changed`，每次重写会让 cargo 每次都当资源变了重编。`beforeBuildCommand` 与 CI / 发版流程里另有显式的一步，失败时一眼看得出是插件。
+5. **「打开插件文件夹」的位置从 Tauri 资源目录拼**（安装版 = 安装目录），开发版先找仓库 `build/`（`CARGO_MANIFEST_DIR`，只在 `debug_assertions` 下）。认文件夹看 `manifest.json` 的名字（`browser_link::folder::locate`，单测核对仓库里插件的名字没变）；找不到不静默：报找过哪里、下一步（重新运行安装包 / 下载 zip / 开发版先构建）。打开走 opener 插件的 `open_path`，打不开把路径附在报错里让人手动粘。
+6. **发布附件**：`release.yml` 在打包后把同一个目录打成 `QB-Gate-Browser-Extension.zip`（.NET `ZipFile`，顶层带 `browser-extension` 文件夹），和安装包一起进 `SHA256SUMS.txt`；面板的一键更新只认安装包那两行（`self_update::expected_sha256`，单测补了带 zip 行的形状）。打包后再核 Tauri 生成的 NSIS 脚本里有 `browser-extension\manifest.json`，构建退出码证明不了资源进没进去。
+7. **插件写死的四个叫法**（「扩展 → 浏览器助手」「连接浏览器」「一键重连」「打开插件文件夹」）由页面单测从插件源码里核对；默认受保护网站也从 `core.js` 读出来比。面板只显示默认名单（名单只存在插件里，改过之后面板看不到）。
+8. **叫法统一成「中文环境」**：评分卡那一格是人先看到、点下去的那个；小窗标题、进度提示跟它一致。
+
 ## 2026-11-15（未发布）：中转站页面改造 —— 版面不动，只在原位上改
 
 使用者看过三版样机。第一版把主页改成三张卡，被否（「我想要原来的那种布局，柱状图的数据可以有下拉框改为请求数和 token 和价格」）；
