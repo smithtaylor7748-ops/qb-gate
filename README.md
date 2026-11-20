@@ -93,6 +93,11 @@ Claude、Codex、反重力的官方账户，你自己的中转线路，装在电
 | ![软件安装与版本管理](docs/screenshots/software.png) | ![环境检测与处理入口](docs/screenshots/checkup-repair-light.png) |
 | **安装与版本**：工具检测、升级和回滚                 | **检测与处理**：查看明细，按项处理                               |
 
+| 浏览器助手                                                                 |
+| -------------------------------------------------------------------------- |
+| ![浏览器助手：三步装好与各个浏览器的连接状态](docs/screenshots/browser-helper.png) |
+| **三步装好**：打开插件文件夹、在 Chrome 里加载、点「连接浏览器」；下面是每个浏览器的连接与保护状态 |
+
 ## 文档与社区
 
 - [Mac 安装与构建](docs/MACOS.zh-CN.md) · [Windows 安装帮助（杀软误报）](docs/ANTIVIRUS.zh-CN.md) · [已知限制](docs/KNOWN-ISSUES.zh-CN.md) · [浏览器助手说明](browser-extension/README.md) · [版本记录](https://github.com/smithtaylor7748-ops/qb-gate/releases)

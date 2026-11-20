@@ -95,6 +95,11 @@ Screenshots use demo data.
 | ![Software installation and version management](docs/screenshots/software.png) | ![Diagnostic results and available actions](docs/screenshots/checkup-repair-light.png) |
 | **Tools and versions**: discovery, upgrades and rollback                       | **Checks and actions**: inspect and address individual results                         |
 
+| Browser helper                                                                                  |
+| ----------------------------------------------------------------------------------------------- |
+| ![Browser helper: three install steps and each browser's connection](docs/screenshots/browser-helper.png) |
+| **Three steps**: open the extension folder, load it in Chrome, click "连接浏览器"; below, each browser's connection and protection state |
+
 ## Documentation and community
 
 - [Mac installation and builds](docs/MACOS.zh-CN.md) · [Windows installation help (antivirus false positives)](docs/ANTIVIRUS.zh-CN.md) · [Known limitations](docs/KNOWN-ISSUES.zh-CN.md) · [Browser helper](browser-extension/README.md) · [Releases](https://github.com/smithtaylor7748-ops/qb-gate/releases)
